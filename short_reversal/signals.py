@@ -62,16 +62,19 @@ def select_entries(
 ) -> pd.DataFrame:
     """v33 五条件命中。
 
-    A. close < MA60              （下跌趋势）
-    B. up_streak ∈ [3, 10]       （连阳）
-    C. pct_chg ∈ [2%, 6%]        （反弹幅度）
-    D. macd_bar < 0              （MACD 柱转红）
-    E. am60 ∈ [3e7, 3e8]         （流动性）
+    A. close < MA60                       （下跌趋势）
+    B. up_streak ∈ [3, 10]                （连阳）
+    C. pct_chg ∈ [2%, 6%]                 （反弹幅度）
+    D. DIF > 0 & DEA > 0 & |macd_bar| 缩  （动能衰减：MACD 柱在缩短，仍在零轴上方区域）
+    E. am60 ∈ [3e7, 3e8]                  （流动性）
 
     返回 columns=[date, thscode, score, sig_close, sig_ma60, sig_dif, sig_dea,
                    sig_macd_bar, sig_up_streak, sig_pct_chg, sig_max_dt]
     """
-    df = panel_ind.copy()
+    df = panel_ind.copy().reset_index(drop=True)
+
+    # D 条件方向性：DIF/DEA 在零轴上方 + MACD 柱绝对值在缩小
+    df["prev_bar_abs"] = df.groupby("thscode")["macd_bar"].shift(1).abs()
 
     # 流动性窗口预过滤
     df = df[(df["am60"] >= 3e7) & (df["am60"] <= 3e8)]
@@ -83,9 +86,12 @@ def select_entries(
         & (df["up_streak"] <= 10)
         & (df["pct_chg"] >= 0.02)
         & (df["pct_chg"] <= 0.06)
-        & (df["macd_bar"] < 0)
+        & (df["dif"] > 0)
+        & (df["dea"] > 0)
+        & (df["macd_bar"].abs() < df["prev_bar_abs"])
         & df["pct_chg"].notna()
         & df["dif"].notna()
+        & df["prev_bar_abs"].notna()
         & (df["date"] >= pd.Timestamp(start_date))
         & (df["date"] <= pd.Timestamp(end_date))
     ].copy()

@@ -24,7 +24,7 @@ def run_audit(signal_json: Path, db_path: Path) -> list[tuple[str, str, str]]:
       条件A        — close < MA60
       条件B        — up_streak ∈ [3, 10]
       条件C        — pct_chg ∈ [2%, 6%]
-      条件D        — macd_bar < 0
+      条件D        — DIF>0 & DEA>0 & |macd_bar| 在缩小
       条件E        — am60 ∈ [3e7, 3e8]
       数据完整性   — pct_chg 或 dif NaN
     """
@@ -82,9 +82,20 @@ def run_audit(signal_json: Path, db_path: Path) -> list[tuple[str, str, str]]:
             pct = float(r["pct_chg"]) * 100 if pd.notna(r["pct_chg"]) else None
             if pct is None or not (2.0 <= pct <= 6.0):
                 errors.append((code, "条件C", f"pct_chg={pct} 不在 [2,6]"))
-            # D. macd_bar < 0
-            if not (r["macd_bar"] < 0):
-                errors.append((code, "条件D", f"macd_bar={r['macd_bar']} 不 < 0"))
+            # D. DIF > 0 & DEA > 0 & |macd_bar| 在缩小(动能衰减)
+            prev_bar_abs = float(df["macd_bar"].shift(1).abs().iloc[-1]) if len(df) >= 2 else None
+            curr_bar_abs = abs(float(r["macd_bar"])) if pd.notna(r["macd_bar"]) else None
+            cond_d = (
+                pd.notna(r["dif"]) and float(r["dif"]) > 0
+                and pd.notna(r["dea"]) and float(r["dea"]) > 0
+                and curr_bar_abs is not None and prev_bar_abs is not None
+                and curr_bar_abs < prev_bar_abs
+            )
+            if not cond_d:
+                errors.append((
+                    code, "条件D",
+                    f"dif={r['dif']} dea={r['dea']} |macd_bar|={curr_bar_abs} 上一根={prev_bar_abs} (动能未衰减)",
+                ))
             # E. am60 ∈ [3e7, 3e8]
             am = float(r["am60"]) if pd.notna(r["am60"]) else None
             if am is None or not (3e7 <= am <= 3e8):

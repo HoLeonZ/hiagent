@@ -31,24 +31,30 @@ def _select(panel: pd.DataFrame) -> pd.DataFrame:
 
 
 def test_all_five_conditions_pass_triggers_entry():
-    """构造 panel_ind 直接给出 5 条件满足的样本。"""
+    """构造 panel_ind 直接给出 5 条件满足的样本。
+
+    D 条件 (DIF>0 & DEA>0 & |macd_bar| 缩小) 需要前一根 K 线做对照,
+    所以 fixture 给两行:前一根 |macd_bar|=0.3,信号日 |macd_bar|=0.1 (缩短中)。
+    """
     df = pd.DataFrame({
-        "thscode": ["X.SH"],
-        "date": [pd.Timestamp("2025-02-01")],
-        "close": [9.0],
-        "ma60": [10.0],          # A: close < ma60 ✓
-        "up_streak": [5],         # B: in [3, 10] ✓
-        "pct_chg": [0.04],        # C: in [2%, 6%] ✓
-        "macd_bar": [-0.1],       # D ✓
-        "dif": [0.5],             # notna ✓
-        "dea": [0.6],
-        "am60": [1e8],            # E: in [3e7, 3e8] ✓
+        "thscode": ["X.SH", "X.SH"],
+        "date": [pd.Timestamp("2025-02-01"), pd.Timestamp("2025-02-02")],
+        "close": [9.0, 9.0],
+        "ma60": [10.0, 10.0],          # A: close < ma60 ✓
+        "up_streak": [4, 5],             # B: in [3, 10] ✓
+        "pct_chg": [0.03, 0.04],         # C: in [2%, 6%] ✓ (第 2 行)
+        "macd_bar": [-0.3, -0.1],        # D: |0.1| < |0.3| ✓
+        "dif": [0.4, 0.5],               # > 0 ✓
+        "dea": [0.55, 0.6],              # > 0 ✓
+        "am60": [1e8, 1e8],              # E: in [3e7, 3e8] ✓
     })
     entries = select_entries(
         df, tp_pct=0.06,
         start_date="2025-01-01", end_date="2025-12-31",
     )
     assert not entries.empty
+    # 应在第 2 行 (2025-02-02) 命中
+    assert entries.iloc[0]["date"] == pd.Timestamp("2025-02-02")
     for col in ("sig_close", "sig_ma60", "sig_dif", "sig_macd_bar"):
         assert col in entries.columns
 
@@ -56,22 +62,26 @@ def test_all_five_conditions_pass_triggers_entry():
 def test_up_streak_too_short_skipped():
     """连阳数 < 3 → 不命中。
 
-    NOTE: Task 14 接受 legacy leaky `down_break.cumsum()` 模式以达成 39/39
-    byte-parity。该模式将阴线行归入下一组 groupby，导致首根阳线的 up_streak
-    从 2 起算（+1 偏移）。本测试的 close 序列有 3 根阳线，leaky 下在第 2 根
-    阳线（up_streak=3）即命中 B 条件，因其 pct_chg=2.06% 同时命中 C 条件。
-    新断言：1 entry fired at 2025-03-28（up_streak=3, pct_chg=0.020619）。
-    验证「up_streak 太短」的语义仅在 canonical 模式下可用；leaky 下无论
-    几根阳线都会因偏移 +1 而提前一格触发。
+    直接构造 panel_ind,显式让 up_streak=2 (其他 4 条件全部满足),
+    验证 B 条件过滤生效。
     """
-    close = [10.0] * 60 + [9.5, 9.7, 9.9, 10.0] + [10.0] * 35
-    panel = _build_panel(close)
-    entries = _select(panel)
-    # Leaky：up_streak 在第 2 根阳线 row=62 即达 3，配合 pct_chg=2.06% 触发信号
-    assert len(entries) == 1
-    assert entries.iloc[0]["date"] == pd.Timestamp("2025-03-28")
-    assert entries.iloc[0]["sig_up_streak"] == 3
-    assert abs(entries.iloc[0]["sig_pct_chg"] - 0.020619) < 1e-3
+    df = pd.DataFrame({
+        "thscode": ["X.SH", "X.SH"],
+        "date": [pd.Timestamp("2025-02-01"), pd.Timestamp("2025-02-02")],
+        "close": [9.0, 9.0],
+        "ma60": [10.0, 10.0],          # A ✓
+        "up_streak": [2, 2],             # B: 2 (out of [3,10]) ✗
+        "pct_chg": [0.03, 0.04],         # C ✓
+        "macd_bar": [-0.3, -0.1],        # D ✓ (|0.1| < |0.3|)
+        "dif": [0.4, 0.5],               # D ✓
+        "dea": [0.55, 0.6],              # D ✓
+        "am60": [1e8, 1e8],              # E ✓
+    })
+    entries = select_entries(
+        df, tp_pct=0.06,
+        start_date="2025-01-01", end_date="2025-12-31",
+    )
+    assert entries.empty
 
 
 def test_pct_chg_out_of_range_skipped():
