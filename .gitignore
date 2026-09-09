@@ -1,0 +1,23 @@
+# Internal docs — not pushed to remote
+docs/superpowers/
+
+# Maven
+target/
+*.jar
+*.war
+*.ear
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# OS
+Thumbs.db
