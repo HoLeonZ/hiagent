@@ -45,7 +45,7 @@ def compute_panel_indicators(panel: pd.DataFrame) -> pd.DataFrame:
     # 连阳计数：up_day=True 时累加，遇到阴线/NaN 重置
     df["up_day"] = (df["pct_chg"] > 0).fillna(False)
     # 每段连阳的起点 = up_day 由 False/NaN → True 的过渡行
-    prev_up = df["up_day"].shift(1).fillna(False).astype(bool)
+    prev_up = g["up_day"].shift(1).fillna(False).astype(bool)
     df["up_id"] = (df["up_day"] & ~prev_up).astype(int).cumsum()
     df["up_streak"] = df.groupby(["thscode", "up_id"]).cumcount() + 1
     df.loc[~df["up_day"], "up_streak"] = 0
