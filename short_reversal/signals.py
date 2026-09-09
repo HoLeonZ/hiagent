@@ -42,6 +42,13 @@ def compute_panel_indicators(panel: pd.DataFrame) -> pd.DataFrame:
     # am60 — 历史 60 日均成交额
     df["am60"] = g["amount"].transform(lambda s: s.rolling(60, min_periods=60).mean())
 
+    # 趋势持续性辅助：A 条件要求过去 60 日中 close < MA60 的占比 ≥ 60%
+    # 前 60 行 NaN（rolling 需满窗口），信号日 MA60 已就绪时本列也已就绪
+    df["below_ma60"] = (df["close"] < df["ma60"]).astype(float)
+    df["below_ma60_ratio_60"] = g["below_ma60"].transform(
+        lambda s: s.rolling(60, min_periods=60).mean()
+    )
+
     # 连阳计数：up_day=True 时累加，遇到阴线/NaN 重置
     df["up_day"] = (df["pct_chg"] > 0).fillna(False)
     # Task 14 R1 — match legacy v33_mainboard.py:188-193 cumsum of down_break
@@ -62,7 +69,8 @@ def select_entries(
 ) -> pd.DataFrame:
     """v33 五条件命中。
 
-    A. close < MA60                       （下跌趋势）
+    A. close < MA60                       （下跌趋势 + 100 日数据确认：
+                                            过去 60 日中 close < MA60 的天数占比 ≥ 60%）
     B. up_streak ∈ [3, 10]                （连阳）
     C. pct_chg ∈ [2%, 6%]                 （反弹幅度）
     D. DIF > 0 & DEA > 0 & |macd_bar| 缩  （动能衰减：MACD 柱在缩短，仍在零轴上方区域）
@@ -82,6 +90,7 @@ def select_entries(
     # 五条件命中
     hits = df[
         (df["close"] < df["ma60"])
+        & (df["below_ma60_ratio_60"] >= 0.6)
         & (df["up_streak"] >= 3)
         & (df["up_streak"] <= 10)
         & (df["pct_chg"] >= 0.02)

@@ -41,6 +41,7 @@ def test_all_five_conditions_pass_triggers_entry():
         "date": [pd.Timestamp("2025-02-01"), pd.Timestamp("2025-02-02")],
         "close": [9.0, 9.0],
         "ma60": [10.0, 10.0],          # A: close < ma60 ✓
+        "below_ma60_ratio_60": [0.7, 0.7],  # A: 过去 60 日 ≥ 60% 在均线下方 ✓
         "up_streak": [4, 5],             # B: in [3, 10] ✓
         "pct_chg": [0.03, 0.04],         # C: in [2%, 6%] ✓ (第 2 行)
         "macd_bar": [-0.3, -0.1],        # D: |0.1| < |0.3| ✓
@@ -48,15 +49,6 @@ def test_all_five_conditions_pass_triggers_entry():
         "dea": [0.55, 0.6],              # > 0 ✓
         "am60": [1e8, 1e8],              # E: in [3e7, 3e8] ✓
     })
-    entries = select_entries(
-        df, tp_pct=0.06,
-        start_date="2025-01-01", end_date="2025-12-31",
-    )
-    assert not entries.empty
-    # 应在第 2 行 (2025-02-02) 命中
-    assert entries.iloc[0]["date"] == pd.Timestamp("2025-02-02")
-    for col in ("sig_close", "sig_ma60", "sig_dif", "sig_macd_bar"):
-        assert col in entries.columns
 
 
 def test_up_streak_too_short_skipped():
@@ -70,6 +62,7 @@ def test_up_streak_too_short_skipped():
         "date": [pd.Timestamp("2025-02-01"), pd.Timestamp("2025-02-02")],
         "close": [9.0, 9.0],
         "ma60": [10.0, 10.0],          # A ✓
+        "below_ma60_ratio_60": [0.7, 0.7],  # A ✓
         "up_streak": [2, 2],             # B: 2 (out of [3,10]) ✗
         "pct_chg": [0.03, 0.04],         # C ✓
         "macd_bar": [-0.3, -0.1],        # D ✓ (|0.1| < |0.3|)

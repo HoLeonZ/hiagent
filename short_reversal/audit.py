@@ -21,7 +21,7 @@ def run_audit(signal_json: Path, db_path: Path) -> list[tuple[str, str, str]]:
 
     字段标签:
       数据存在     — 缺 K 线 / 当日无数据
-      条件A        — close < MA60
+      条件A        — close < MA60 & 过去 60 日 close<MA60 占比 ≥ 60%
       条件B        — up_streak ∈ [3, 10]
       条件C        — pct_chg ∈ [2%, 6%]
       条件D        — DIF>0 & DEA>0 & |macd_bar| 在缩小
@@ -60,6 +60,7 @@ def run_audit(signal_json: Path, db_path: Path) -> list[tuple[str, str, str]]:
             df["prev_close"] = df["close"].shift(1)
             df["pct_chg"] = (df["close"] - df["prev_close"]) / df["prev_close"]
             df["am60"] = df["amount"].rolling(60, min_periods=60).mean()
+            df["below_ma60"] = (df["close"] < df["ma60"]).astype(float)
             df["up_day"] = (df["pct_chg"] > 0).fillna(False)
             prev_up = df["up_day"].shift(1).fillna(False).astype(bool)
             df["up_id"] = (df["up_day"] & ~prev_up).astype(int).cumsum()
@@ -72,9 +73,14 @@ def run_audit(signal_json: Path, db_path: Path) -> list[tuple[str, str, str]]:
                 continue
             r = row.iloc[0]
 
-            # A. close < MA60
-            if not (r["close"] < r["ma60"]):
-                errors.append((code, "条件A", f"close({r['close']}) < MA60({r['ma60']}) 不成立"))
+            # A. close < MA60 & 过去 60 日 close<MA60 占比 ≥ 60%
+            below_ma60_ratio = float(df["below_ma60"].rolling(60, min_periods=60).mean().iloc[-1]) if "below_ma60" in df.columns else 0.0
+            cond_a = (r["close"] < r["ma60"]) and pd.notna(r["ma60"]) and below_ma60_ratio >= 0.6
+            if not cond_a:
+                errors.append((
+                    code, "条件A",
+                    f"close({r['close']}) < MA60({r['ma60']}) 且 60 日占比 {below_ma60_ratio:.2%} (需 ≥ 60%)",
+                ))
             # B. up_streak ∈ [3, 10]
             if not (3 <= r["up_streak"] <= 10):
                 errors.append((code, "条件B", f"up_streak={r['up_streak']} 不在 [3,10]"))
