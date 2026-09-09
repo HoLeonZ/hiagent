@@ -7,15 +7,17 @@
 ```
 ~/code/
 ├── hiagent/                          # 本仓库（策略代码 + 文档）
-│   ├── dna_strat/                    # 策略核心包
+│   ├── short_reversal/               # 策略核心包（v33 重写版）
 │   │   ├── __init__.py
 │   │   ├── universe.py               # 沪深主板筛选 + 黑名单
-│   │   ├── signals.py                # 指标计算 + A∧B∧C 入场信号
-│   │   ├── trades.py                 # 持仓循环（全局单 key 锁，满仓单只）
-│   │   ├── feed.py                   # 合成 backtrader feed
-│   │   ├── broker.py                 # AShareBroker（万 2.5 / 万 1 / 100 股整手）
-│   │   └── strategy.py               # TradeReplayStrategy（融券 8.6% 按日扣）
-│   ├── backtest_downtrend_short.py   # 主入口（Phase 1 + Phase 2 端到端）
+│   │   ├── signals.py                # 指标计算 + 入场信号
+│   │   ├── trades.py                 # 持仓循环
+│   │   ├── replay_feed.py            # 合成 backtrader feed（Phase 2）
+│   │   ├── replay_broker.py          # AShareBroker（万 1 印花税）
+│   │   ├── replay_strategy.py        # TradeReplayStrategy（融券 8.6% 按日扣）
+│   │   ├── main.py                   # 主入口（Phase 1 + Phase 2 端到端）
+│   │   ├── grid.py / scan.py / audit.py / presets.py
+│   │   └── render_*.py
 │   ├── tests/
 │   │   └── test_downtrend_short.py   # 20 单元测试（用合成数据，无外部依赖）
 │   ├── data/
@@ -39,18 +41,16 @@
 | `backtrader` 1.9.78.123 | pip | 跑真实回测 + 部分单测 |
 | `matplotlib` 3.10.x | conda base | 出图 |
 
-DB 路径可通过环境变量 `DNA_STRAT_DB` 覆盖（`backtest_downtrend_short.py` 顶部 `DB_PATH`）。
+DB 路径可通过环境变量 `DNA_STRAT_DB` 覆盖（`short_reversal/main.py` 顶部 `DB_PATH`）。
 
 ## 测试 / 运行
 
 ```bash
 # 单测（无外部依赖，20/20）
-python3 -m pytest tests/test_downtrend_short.py -v
+python3 -m pytest tests/ -v
 
-# 真实端到端回测
-python3 backtest_downtrend_short.py
-# 默认区间：end = DuckDB 最大日期，start = end - 365 天
-# 产物：data/exports/trades_*.parquet、logs/backtest_*.log、figures/downtrend_short_*.png
+# CLI smoke
+python3 short_reversal/main.py --help
 ```
 
 ## 凭据（仅运行 `hithink-finance-cli` 数据同步时需要）
