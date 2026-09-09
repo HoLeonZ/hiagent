@@ -18,8 +18,19 @@
 │   │   ├── main.py                   # 主入口（Phase 1 + Phase 2 端到端）
 │   │   ├── grid.py / scan.py / audit.py / presets.py
 │   │   └── render_*.py
-│   ├── tests/
-│   │   └── test_downtrend_short.py   # 20 单元测试（用合成数据，无外部依赖）
+│   ├── tests/                        # 单元测试（无外部依赖，用合成数据）
+│   │   ├── __init__.py
+│   │   ├── conftest.py
+│   │   ├── test_audit.py
+│   │   ├── test_feed.py
+│   │   ├── test_grid.py
+│   │   ├── test_parity_v33_mainboard.py
+│   │   ├── test_presets.py
+│   │   ├── test_scan.py
+│   │   ├── test_signals_indicators.py
+│   │   ├── test_signals_select.py
+│   │   ├── test_trades.py
+│   │   └── test_universe.py
 │   ├── data/
 │   │   └── exclude_thscodes.txt      # 黑名单（一行一 thscode，# 注释）
 │   ├── docs/                         # 内部 spec/plan — 不推远端
