@@ -50,7 +50,13 @@ def test_macd_bar_formula(synthetic_panel: pd.DataFrame):
 
 
 def test_up_streak_resets_on_down_day():
-    """构造一个 3 连阳后 1 根阴线的序列，验证 up_streak 在阴线后归零。"""
+    """构造一个 3 连阳后 1 根阴线的序列，验证 up_streak 在阴线后归零。
+
+    NOTE: Task 14 (parity fix) accepted legacy v33_mainboard.py:188-193 的 leaky
+    `down_break.cumsum()` 模式以达成 39/39 byte-parity。该模式将阴线行本身纳入下一组
+    连阳的 groupby，使首根阳线的 up_streak 从 2 起算而非 1（+1 偏移）。阴线归零逻辑
+    （`df.loc[~df["up_day"], "up_streak"] = 0`）不受影响。
+    """
     import pandas as pd
     df = pd.DataFrame({
         "thscode": ["X.SH"] * 6,
@@ -63,22 +69,24 @@ def test_up_streak_resets_on_down_day():
     })
     out = compute_panel_indicators(df)
     streaks = out["up_streak"].tolist()
-    assert streaks[0] == 0  # pct_chg=NaN, up_day=False → streak=0
-    assert streaks[1] == 1  # 第一根阳线
-    assert streaks[2] == 2
-    assert streaks[3] == 3
-    assert streaks[4] == 0  # 阴线打断
-    assert streaks[5] == 1  # 新连阳开始
+    # Leaky pattern：阴线行 i=0 落入下一组，第 1 根阳线 i=1 streak=2（非 1）
+    assert streaks[0] == 0  # 阴线 row → up_day=False → streak=0
+    assert streaks[1] == 2  # 第 1 根阳线（leaky 偏移 +1）
+    assert streaks[2] == 3
+    assert streaks[3] == 4
+    assert streaks[4] == 0  # 阴线打断归零
+    assert streaks[5] == 2  # 新连阳首根（leaky 偏移 +1）
 
 
 def test_up_streak_no_cross_stock_leak():
-    """跨股票面板：A 末尾阳线不能污染 B 的 up_streak / up_id。
+    """跨股票面板：B 的 up_streak 在自身阳线序列内正确累加。
 
-    旧实现 prev_up = df['up_day'].shift(1) 未分组，B 第一行会看到 A
-    最后一行（可能 up_day=True）的 prev_up。当前 up_day 在 pct_chg=NaN
-    时强制为 False，所以 cumsum 数值上暂时未观察到错位；但跨股票读取
-    仍是 anti-leak 红线。锁定 B 的 up_streak 严格从自己的第一根阳线
-    起算，防止后续重构（如改用 ~pct_chg.isna() & pct_chg > 0）暴露泄露。
+    NOTE: Task 14（parity fix）接受了 legacy v33_mainboard.py:188-193 leaky 模式以
+    达成 39/39 byte-parity。该模式以全局 `down_break.cumsum()` 计算 up_id，
+    跨股票时，A 的 down_break 行会拉高全局 cumsum，进而使 B 的 up_id 整体右移。
+    本测试改名为「B 内阳线累加正确」（不再是「无跨股票泄露」），断言 B 自己的
+    阳线序列累加结果（leaky 偏移 +1）。CLAUDE.md anti-leak 红线与 legacy 字节
+    等价不可兼得；用户于 2026-09-09 选「接受 legacy bug for parity」。
     """
     df = pd.DataFrame({
         "thscode": ["AAA.SH"] * 4 + ["BBB.SH"] * 4,
@@ -93,7 +101,7 @@ def test_up_streak_no_cross_stock_leak():
     b = out[out["thscode"] == "BBB.SH"].reset_index(drop=True)
     # B 第一行 pct_chg=NaN → up_day=False → up_streak=0
     assert b.loc[0, "up_streak"] == 0
-    # B 的连续阳线：F→T 必须在 B 自己 row 1 起算，up_streak 严格从 1 开始
-    assert b.loc[1, "up_streak"] == 1
-    assert b.loc[2, "up_streak"] == 2
-    assert b.loc[3, "up_streak"] == 3
+    # Leaky 模式：A 的 cumsum 把 B 的 up_id 右移 +N，B 内连阳偏移 +1
+    assert b.loc[1, "up_streak"] == 2  # 第 1 根阳线（leaky 偏移）
+    assert b.loc[2, "up_streak"] == 3
+    assert b.loc[3, "up_streak"] == 4

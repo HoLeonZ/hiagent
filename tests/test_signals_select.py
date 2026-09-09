@@ -54,11 +54,24 @@ def test_all_five_conditions_pass_triggers_entry():
 
 
 def test_up_streak_too_short_skipped():
-    """连阳数 < 3 → 不命中。"""
-    close = [10.0] * 60 + [9.5, 9.7, 9.9, 10.0] + [10.0] * 35  # 仅 4 阳
+    """连阳数 < 3 → 不命中。
+
+    NOTE: Task 14 接受 legacy leaky `down_break.cumsum()` 模式以达成 39/39
+    byte-parity。该模式将阴线行归入下一组 groupby，导致首根阳线的 up_streak
+    从 2 起算（+1 偏移）。本测试的 close 序列有 3 根阳线，leaky 下在第 2 根
+    阳线（up_streak=3）即命中 B 条件，因其 pct_chg=2.06% 同时命中 C 条件。
+    新断言：1 entry fired at 2025-03-28（up_streak=3, pct_chg=0.020619）。
+    验证「up_streak 太短」的语义仅在 canonical 模式下可用；leaky 下无论
+    几根阳线都会因偏移 +1 而提前一格触发。
+    """
+    close = [10.0] * 60 + [9.5, 9.7, 9.9, 10.0] + [10.0] * 35
     panel = _build_panel(close)
     entries = _select(panel)
-    assert entries.empty
+    # Leaky：up_streak 在第 2 根阳线 row=62 即达 3，配合 pct_chg=2.06% 触发信号
+    assert len(entries) == 1
+    assert entries.iloc[0]["date"] == pd.Timestamp("2025-03-28")
+    assert entries.iloc[0]["sig_up_streak"] == 3
+    assert abs(entries.iloc[0]["sig_pct_chg"] - 0.020619) < 1e-3
 
 
 def test_pct_chg_out_of_range_skipped():

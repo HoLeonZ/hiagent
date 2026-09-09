@@ -44,8 +44,7 @@ def compute_panel_indicators(panel: pd.DataFrame) -> pd.DataFrame:
 
     # 连阳计数：up_day=True 时累加，遇到阴线/NaN 重置
     df["up_day"] = (df["pct_chg"] > 0).fillna(False)
-    # 严格匹配 legacy v33_mainboard.py:188-193 — global cumsum of down_break
-    # + per-(thscode, up_id) cumcount ensures up_streak is byte-identical to legacy.
+    # Task 14 R1 — match legacy v33_mainboard.py:188-193 cumsum of down_break
     df["down_break"] = (~df["up_day"]).astype(int)
     df["up_id"] = df["down_break"].cumsum()
     df["up_streak"] = df.groupby(["thscode", "up_id"]).cumcount() + 1

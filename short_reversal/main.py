@@ -36,7 +36,7 @@ def run_backtest(preset: str, start: str, end: str, db_path: Path) -> dict:
         panel = con.execute(
             "SELECT thscode, date, open, high, low, close, amount, volume FROM v_daily "
             "WHERE date BETWEEN '2024-01-01' AND ? ORDER BY thscode, date",
-            [pd.Timestamp(end).strftime("%Y-%m-%d")],
+            [(pd.Timestamp(end) + pd.Timedelta(days=30)).strftime("%Y-%m-%d")],
         ).fetchdf()
     finally:
         con.close()
@@ -69,6 +69,7 @@ def run_backtest(preset: str, start: str, end: str, db_path: Path) -> dict:
     metrics["preset"] = preset
     metrics["start"] = start
     metrics["end"] = end
+    trades_df = trades_df.assign(entry_date=trades_df["entry_date"].astype(str), exit_date=trades_df["exit_date"].astype(str))
     metrics["trades"] = trades_df.to_dict(orient="records")
     return metrics
 
