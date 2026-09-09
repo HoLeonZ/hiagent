@@ -51,3 +51,65 @@ def compute_panel_indicators(panel: pd.DataFrame) -> pd.DataFrame:
     df.loc[~df["up_day"], "up_streak"] = 0
 
     return df
+
+
+def select_entries(
+    panel_ind: pd.DataFrame,
+    *,
+    tp_pct: float,
+    start_date: str,
+    end_date: str,
+) -> pd.DataFrame:
+    """v33 五条件命中。
+
+    A. close < MA60              （下跌趋势）
+    B. up_streak ∈ [3, 10]       （连阳）
+    C. pct_chg ∈ [2%, 6%]        （反弹幅度）
+    D. macd_bar < 0              （MACD 柱转红）
+    E. am60 ∈ [3e7, 3e8]         （流动性）
+
+    返回 columns=[date, thscode, score, sig_close, sig_ma60, sig_dif, sig_dea,
+                   sig_macd_bar, sig_up_streak, sig_pct_chg, sig_max_dt]
+    """
+    df = panel_ind.copy()
+
+    # 流动性窗口预过滤
+    df = df[(df["am60"] >= 3e7) & (df["am60"] <= 3e8)]
+
+    # 五条件命中
+    hits = df[
+        (df["close"] < df["ma60"])
+        & (df["up_streak"] >= 3)
+        & (df["up_streak"] <= 10)
+        & (df["pct_chg"] >= 0.02)
+        & (df["pct_chg"] <= 0.06)
+        & (df["macd_bar"] < 0)
+        & df["pct_chg"].notna()
+        & df["dif"].notna()
+        & (df["date"] >= pd.Timestamp(start_date))
+        & (df["date"] <= pd.Timestamp(end_date))
+    ].copy()
+
+    if hits.empty:
+        return pd.DataFrame(columns=[
+            "date", "thscode", "score",
+            "sig_close", "sig_ma60", "sig_dif", "sig_dea",
+            "sig_macd_bar", "sig_up_streak", "sig_pct_chg", "sig_max_dt",
+        ])
+
+    # 携带 sig_* 快照（便于审计）
+    hits["sig_close"] = hits["close"]
+    hits["sig_ma60"] = hits["ma60"]
+    hits["sig_dif"] = hits["dif"]
+    hits["sig_dea"] = hits["dea"]
+    hits["sig_macd_bar"] = hits["macd_bar"]
+    hits["sig_up_streak"] = hits["up_streak"]
+    hits["sig_pct_chg"] = hits["pct_chg"]
+    hits["sig_max_dt"] = 0.0  # v33 不依赖 max_dt 阈值；保留列位以兼容审计
+    hits["score"] = 0  # 无打分
+
+    return hits[[
+        "date", "thscode", "score",
+        "sig_close", "sig_ma60", "sig_dif", "sig_dea",
+        "sig_macd_bar", "sig_up_streak", "sig_pct_chg", "sig_max_dt",
+    ]].reset_index(drop=True)
