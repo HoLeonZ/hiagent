@@ -367,6 +367,14 @@ def evaluate_signal_conditions(panel_ind: pd.DataFrame, sig_date: str, preset: d
     cond_a2 = bool(amr is not None and amr >= sig["min_above_ma60_ratio"])
     conditions.append(("", cond_a2,
                        f"过去60日 close>ma60 占比 {fmt(amr, 4)} {'≥' if cond_a2 else '<'} {sig['min_above_ma60_ratio']:.0%}", ""))
+    # A3: close_ma60_buffer（趋势质量增强）
+    buf = sig.get("close_ma60_buffer", 0.0)
+    if buf and buf > 0:
+        thr_buf = ma60 * (1 + buf) if ma60 is not None else None
+        cond_a3 = bool(thr_buf is not None and close >= thr_buf)
+        conditions.append(("", cond_a3,
+                           f"close {close:.2f} {'≥' if cond_a3 else '<'} ma60×{1+buf:.2f}={thr_buf:.2f}",
+                           f"（缓冲 {buf:.0%}，过滤'贴均线'伪趋势）", ""))
     m120 = v("mom120")
     cond_a3 = bool(m120 is not None and m120 >= sig["min_mom120"])
     conditions.append(("", cond_a3,
@@ -559,14 +567,17 @@ def render_html(trades: list[dict], con: duckdb.DuckDBPyConnection,
 
         # 信号条件清单 HTML
         cond_rows = []
-        for label, ok, val1, val2 in conditions:
+        for tup in conditions:
+            label, ok, val1, val2 = tup[0], tup[1], tup[2], tup[3]
+            note = tup[4] if len(tup) > 4 else ""
             if not label and not val1 and not val2:
                 continue
             mark = "✓" if ok else "✗"
             color = "#26a69a" if ok else "#ef5350"
             cell = lambda txt: f'<div class="cond-cell"><span class="mark" style="color:{color}">{mark}</span>{txt}</div>'
             label_html = f'<span class="cond-lbl">{label}</span>' if label else '<span></span>'
-            cond_rows.append(f'<div class="cond-row">{label_html}{cell(val1)}{cell(val2)}</div>')
+            third = f'<div class="cond-note">{note}</div>' if note else '<div></div>'
+            cond_rows.append(f'<div class="cond-row">{label_html}{cell(val1)}{cell(val2)}{third}</div>')
         cond_html = "".join(cond_rows)
 
         # 退出标签
@@ -678,13 +689,14 @@ def _wrap_html(cards_html: str, win_rate: float, avg_pnl: float, n: int,
 
   .conds {{ background: {BG}; border-radius: 4px; padding: 8px; margin-bottom: 8px; font-size: 11px; font-family: {MONO}; }}
   .cond-row {{
-    display: grid; grid-template-columns: 100px 1fr 1fr; gap: 6px;
+    display: grid; grid-template-columns: 100px 1fr 1fr 1fr; gap: 6px;
     padding: 3px 0; border-bottom: 1px solid #1a2026;
   }}
   .cond-row:last-child {{ border-bottom: none; }}
   .cond-lbl {{ color: {TEXT_DIM}; font-weight: 700; }}
   .cond-cell {{ color: {TEXT_BRIGHT}; }}
   .cond-cell .mark {{ margin-right: 4px; font-weight: 700; }}
+  .cond-note {{ color: {TEXT_DIM}; font-style: italic; font-size: 10px; }}
 
   .legend {{
     display: flex; gap: 12px; font-size: 10px; color: {TEXT_DIM};
