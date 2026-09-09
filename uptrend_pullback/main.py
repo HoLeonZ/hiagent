@@ -1,0 +1,79 @@
+"""CLI 入口 — 上升趋势回调做多回测。
+
+用法:
+  python3 -m uptrend_pullback.main --start 2025-09-08 --end 2026-09-08
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+from pathlib import Path
+
+import pandas as pd
+
+from uptrend_pullback.backtest import INITIAL_CAPITAL, run_backtest
+
+DEFAULT_DB = Path.home() / "code/Financial-API/data/market.duckdb"
+
+
+def _fmt(metrics: dict) -> str:
+    m = metrics
+    return "\n".join([
+        f"preset        : {m.get('preset', 'custom')}",
+        f"区间          : {m['start']} → {m['end']}",
+        f"信号数        : {m['signals']}",
+        f"交易笔数      : {m['trades']}   胜率: {m['win_rate']*100:.1f}%",
+        f"期末权益      : {m['final_equity']:,.0f}  (初始 {INITIAL_CAPITAL:,.0f})",
+        f"总收益        : {m['total_return']*100:+.2f}%",
+        f"年化 CAGR     : {m['cagr']*100:+.2f}%",
+        f"Sharpe        : {m['sharpe']:.2f}",
+        f"最大回撤      : {m['max_dd']*100:.2f}%",
+        f"平均持仓天数  : {m['avg_hold_days']:.1f}  (最长 {m['max_hold_days']})",
+        f"退出分布      : TP={m['tp_count']} SL={m['sl_count']} "
+        f"time={m['time_count']} eod={m['eod_count']}",
+        f"平均单笔净收益: {m['avg_net_return']*100:+.2f}%   盈亏比: {m['profit_factor']:.2f}",
+        f"平均仓位占用  : {m['exposure']*100:.1f}%",
+    ])
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="uptrend_pullback 回测入口")
+    parser.add_argument("--preset", default="baseline")
+    parser.add_argument("--start", default="2025-09-08")
+    parser.add_argument("--end", default="2026-09-08")
+    parser.add_argument("--db-path", default=str(DEFAULT_DB))
+    parser.add_argument("--out", default="uptrend_pullback/results/backtest.json")
+    parser.add_argument("--save-trades", default="")
+    parser.add_argument("-v", "--verbose", action="store_true")
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO if args.verbose else logging.WARNING,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+    res = run_backtest(args.preset, args.start, args.end, Path(args.db_path))
+    metrics, trades = res["metrics"], res["trades"]
+
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        json.dumps(metrics, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
+    )
+
+    if args.save_trades:
+        tp = Path(args.save_trades)
+        tp.parent.mkdir(parents=True, exist_ok=True)
+        trades.assign(
+            entry_date=lambda d: d["entry_date"].astype(str),
+            exit_date=lambda d: d["exit_date"].astype(str),
+        ).to_csv(tp, index=False)
+        print(f"逐笔交易已保存: {tp}")
+
+    print(_fmt(metrics))
+    print(f"\n指标已保存: {out}")
+
+
+if __name__ == "__main__":
+    main()

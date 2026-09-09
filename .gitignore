@@ -27,3 +27,8 @@ Thumbs.db
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# Strategy run artifacts
+uptrend_pullback/results/
+data/exports/
+figures/
