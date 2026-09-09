@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_DB = Path("/Users/holeon/Library/Application Support/hithink-finance/data/market.duckdb")
 INITIAL_CAPITAL = 1_000_000.0
 MARGIN_RATE = 0.086
+COMMISSION_RATE = 0.0006  # 万 0.6 双边
+STAMP_DUTY_RATE = 0.001  # 万 1 单边（仅卖出方向：开空 = 卖）
 
 
 def run_backtest(preset: str, start: str, end: str, db_path: Path) -> dict:
@@ -59,15 +61,22 @@ def run_backtest(preset: str, start: str, end: str, db_path: Path) -> dict:
     feed_df = build_synthetic_feed(trades_df, panel)
 
     cerebro = bt.Cerebro(stdstats=False)
-    cerebro.addstrategy(TradeReplayStrategy, trades_df=trades_df, margin_rate=MARGIN_RATE)
-    cerebro.broker = AShareBroker()
+    cerebro.addstrategy(
+        TradeReplayStrategy,
+        trades_df=trades_df,
+        margin_rate=MARGIN_RATE,
+        initial_capital=INITIAL_CAPITAL,
+        position_fraction=1.0,
+    )
+    cerebro.broker = AShareBroker(commission=0.0006, stamp_duty=0.001)
     cerebro.broker.setcash(INITIAL_CAPITAL)
     data = bt.feeds.PandasData(dataname=feed_df)
     cerebro.adddata(data)
     results = cerebro.run()
     final_capital = cerebro.broker.getvalue()
 
-    metrics = _compute_metrics(trades_df, final_capital, start, end)
+    metrics = _compute_metrics(trades_df, start, end)
+    metrics["broker_final_value"] = final_capital  # 留作 backtrader 复盘验证用
     metrics["preset"] = preset
     metrics["start"] = start
     metrics["end"] = end
@@ -76,8 +85,18 @@ def run_backtest(preset: str, start: str, end: str, db_path: Path) -> dict:
     return metrics
 
 
-def _compute_metrics(trades_df: pd.DataFrame, final_capital: float,
-                     start: str, end: str) -> dict:
+def _compute_metrics(trades_df: pd.DataFrame, start: str, end: str) -> dict:
+    """基于 trades 层计算指标，复利用 fixed fractional（每笔占用全 cash）。
+
+    每笔净 pnl = 裸价差 - 真实成本
+      真实成本 = 双边 commission + 单边 stamp_duty (仅开空) + 融券日费 × hold_days
+    复利模型：每笔占用全 cash（即 position_fraction=1.0），cash *= (1 + net_pnl)
+
+    注：Phase 2 backtrader 复盘留作 OHLCV 时点验证（broker_final_value 字段），
+    CAGR / total_yield / final_capital 来自 trades 层精确计算 — backtrader 成交价
+    用 next-bar open，跟 trades.py 里 entry_price (T+1 open) / exit_price (TP/SL
+    阈值) 存在时点偏差，不能直接拿 broker.getvalue() 作 CAGR。
+    """
     if trades_df.empty:
         return {
             "trades": 0, "win_rate": 0.0, "final_capital": INITIAL_CAPITAL,
@@ -85,16 +104,42 @@ def _compute_metrics(trades_df: pd.DataFrame, final_capital: float,
             "avg_pnl": 0.0, "avg_hold_days": 0.0,
             "tp_count": 0, "sl_count": 0, "time_count": 0,
         }
-    pnls = []
+
+    gross_pnls = []
+    net_pnls = []
     for _, t in trades_df.iterrows():
-        pnls.append((t["entry_price"] - t["exit_price"]) / t["entry_price"])
-    n = len(pnls)
-    wins = sum(1 for x in pnls if x > 0)
+        gross = (t["entry_price"] - t["exit_price"]) / t["entry_price"]
+        # 真实成本（占 notional 比例）
+        cost_rate = (
+            COMMISSION_RATE * 2          # 双边佣金
+            + STAMP_DUTY_RATE            # 单边印花税（开空 = 卖）
+            + MARGIN_RATE * t["hold_days"] / 365  # 融券日费
+        )
+        net = gross - cost_rate
+        gross_pnls.append(gross)
+        net_pnls.append(net)
+
+    n = len(net_pnls)
+    wins = sum(1 for x in gross_pnls if x > 0)
     years = max((pd.Timestamp(end) - pd.Timestamp(start)).days / 365.25, 0.5)
+
+    # Fixed fractional 复利：每笔占用全 cash
+    cash = INITIAL_CAPITAL
+    peak = INITIAL_CAPITAL
+    max_dd = 0.0
+    for net in net_pnls:
+        cash *= (1 + net)
+        if cash > peak:
+            peak = cash
+        dd = (peak - cash) / peak
+        if dd > max_dd:
+            max_dd = dd
+
+    final_capital = cash
     total_yield = final_capital / INITIAL_CAPITAL - 1
     cagr = (final_capital / INITIAL_CAPITAL) ** (1 / years) - 1
-    avg_pnl = float(np.mean(pnls))
-    std_pnl = float(np.std(pnls, ddof=1)) if n > 1 else 0.0
+    avg_pnl = float(np.mean(gross_pnls))
+    std_pnl = float(np.std(gross_pnls, ddof=1)) if n > 1 else 0.0
     sharpe = (avg_pnl / std_pnl * math.sqrt(n)) if std_pnl > 0 else 0.0
     avg_hold = float(trades_df["hold_days"].mean())
     tp_n = int((trades_df["exit_reason"] == "TP").sum())
@@ -103,7 +148,7 @@ def _compute_metrics(trades_df: pd.DataFrame, final_capital: float,
     return {
         "trades": n, "win_rate": wins / n,
         "final_capital": final_capital, "total_yield": total_yield,
-        "cagr": cagr, "sharpe": sharpe, "max_dd": 0.0,
+        "cagr": cagr, "sharpe": sharpe, "max_dd": max_dd,
         "avg_pnl": avg_pnl, "avg_hold_days": avg_hold,
         "tp_count": tp_n, "sl_count": sl_n, "time_count": time_n,
     }
