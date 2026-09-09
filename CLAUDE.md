@@ -1,6 +1,6 @@
 # hiagent — A 股下降趋势反弹做空策略
 
-策略仓库。完整 7 模块 + 主入口 + 单测在本目录，运行时所需的 DuckDB / marketdb 由 `~/code/Financial-API/` 提供（不在本仓库打包）。
+策略仓库。`short_reversal/` 单包 + 单测在本目录，运行时所需的 DuckDB / marketdb 由 `~/code/Financial-API/` 提供（不在本仓库打包）。
 
 ## 工作区布局
 
@@ -52,12 +52,12 @@
 | `backtrader` 1.9.78.123 | pip | 跑真实回测 + 部分单测 |
 | `matplotlib` 3.10.x | conda base | 出图 |
 
-DB 路径可通过环境变量 `DNA_STRAT_DB` 覆盖（`short_reversal/main.py` 顶部 `DB_PATH`）。
+DB 路径可通过环境变量 `DNA_STRAT_DB` 覆盖（`short_reversal/main.py` 顶部 `DB_PATH`）。该环境变量名沿用自已删除的 `dna_strat/` 包名，仍被 `tests/test_parity_v33_mainboard.py` 读取，**不要重命名**。
 
 ## 测试 / 运行
 
 ```bash
-# 单测（无外部依赖，20/20）
+# 单测（无外部依赖，37 passed + 2 skipped at last run）
 python3 -m pytest tests/ -v
 
 # CLI smoke

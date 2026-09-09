@@ -1,6 +1,6 @@
 """short_reversal — A 股下降趋势反弹做空策略（v33 重写版）。
 
-分层架构：
+独立分层架构：
   universe → signals → trades (Phase 1) → backtrader (Phase 2) → 指标
 """
 from __future__ import annotations
