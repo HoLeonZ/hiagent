@@ -12,11 +12,11 @@ import duckdb
 import numpy as np
 import pandas as pd
 
-from short_reversal.broker import AShareBroker
-from short_reversal.feed import build_synthetic_feed
+from short_reversal.replay_broker import AShareBroker
+from short_reversal.replay_feed import build_synthetic_feed
 from short_reversal.presets import get_preset
 from short_reversal.signals import compute_panel_indicators, select_entries
-from short_reversal.strategy import TradeReplayStrategy
+from short_reversal.replay_strategy import TradeReplayStrategy
 from short_reversal.trades import pre_simulate_trades
 from short_reversal.universe import load_universe
 

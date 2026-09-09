@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from short_reversal.feed import build_synthetic_feed
+from short_reversal.replay_feed import build_synthetic_feed
 
 
 def test_held_day_uses_real_ohlcv():
