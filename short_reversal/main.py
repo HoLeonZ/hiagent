@@ -47,6 +47,8 @@ def run_backtest(preset: str, start: str, end: str, db_path: Path) -> dict:
     panel_ind = compute_panel_indicators(panel)
     entries = select_entries(
         panel_ind, tp_pct=p["tp_pct"], start_date=start, end_date=end,
+        pct_chg_low=p.get("pct_chg_low", 0.02),
+        pct_chg_high=p.get("pct_chg_high", 0.06),
     )
     trades_df = pre_simulate_trades(
         entries, panel,

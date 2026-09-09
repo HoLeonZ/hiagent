@@ -62,6 +62,8 @@ def run_scan(preset: str, date: str, db_path: Path) -> dict:
     entries = select_entries(
         panel_ind, tp_pct=p["tp_pct"],
         start_date=date, end_date=date,
+        pct_chg_low=p.get("pct_chg_low", 0.02),
+        pct_chg_high=p.get("pct_chg_high", 0.06),
     )
 
     # 把 am60 从 panel_ind merge 回来（select_entries 返回的 sig_* 不含 am60）

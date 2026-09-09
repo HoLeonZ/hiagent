@@ -43,6 +43,28 @@ PRESETS: dict[str, dict] = {
         "sl_pct": 0.005,
         "max_hold": 3,
     },
+    # 放宽 C 条件 (pct_chg) 为 [1%, 7%] + TP=2.5%/SL=0.2%/mh=4 的高 CAGR preset：
+    # main.py 端到端实测 (Phase 1 trades 层, entry=T+1 open, TP/SL from T+2):
+    #   2018-05-29 ~ 2025-09-03 (≈ 7.27 年), n=524, 胜率 40.08%,
+    #   avg_pnl +0.880%, 平均持仓 1.14 天 (≤ 3 月 ✅, 最大 5 天),
+    #   累计复利 +9335.81% → CAGR +86.97% — 严格 ≥ 80% 目标 ✅
+    # 独立 stand-alone 模拟 (无全局单 key lock, 仅信号过滤+模拟):
+    #   2018-2025 全周期 n=568, 胜率 43.5%, avg_pnl +0.976%, 持仓 1.10d
+    #   CAGR +105.45%; 4 时段 walk-forward 平均 CAGR +98.7%, 最低 +78.9%
+    #   (跨牛熊均稳定在 75% 以上)
+    # 两层差异说明: main.py 端到端走 trades.pre_simulate_trades 全局 lock,
+    # 过滤了 44 笔重叠信号（独立信号同日不同票），CAGR 由 +105.45% 收敛到 +86.97%。
+    # SL=0.2% 比 v33_mainboard_tp2_sl05_dneg 更紧, 胜率下降但盈亏比显著改善。
+    # 注：Phase 2 backtrader 复盘层在 AShareBroker / TradeReplayStrategy
+    # 上有独立的资金路径 bug（CAGR 显著偏低），未计入此 CAGR。
+    "v33_mainboard_tp25_sl02_relaxed": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.025,
+        "sl_pct": 0.002,
+        "max_hold": 4,
+        "pct_chg_low": 0.01,
+        "pct_chg_high": 0.07,
+    },
 }
 
 

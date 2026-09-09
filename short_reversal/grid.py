@@ -61,6 +61,8 @@ def run_grid(
     for tp in tp_values:
         entries = select_entries(
             panel_ind, tp_pct=tp, start_date=start, end_date=end,
+            pct_chg_low=p.get("pct_chg_low", 0.02),
+            pct_chg_high=p.get("pct_chg_high", 0.06),
         )
         trades = pre_simulate_trades(
             entries, panel,

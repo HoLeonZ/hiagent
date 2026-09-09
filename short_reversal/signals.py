@@ -66,13 +66,16 @@ def select_entries(
     tp_pct: float,
     start_date: str,
     end_date: str,
+    pct_chg_low: float = 0.02,
+    pct_chg_high: float = 0.06,
 ) -> pd.DataFrame:
     """v33 五条件命中。
 
     A. close < MA60                       （下跌趋势 + 100 日数据确认：
                                             过去 60 日中 close < MA60 的天数占比 ≥ 60%）
     B. up_streak ∈ [3, 10]                （连阳）
-    C. pct_chg ∈ [2%, 6%]                 （反弹幅度）
+    C. pct_chg ∈ [pct_chg_low, pct_chg_high]
+                                          （反弹幅度，默认 [2%, 6%]）
     D. DIF < 0 & DEA < 0 & |macd_bar| 缩  （空头区域反弹衰竭：MACD 在零轴下方，
                                             柱绝对值缩短 — 反弹开始衰减）
     E. am60 ∈ [3e7, 3e8]                  （流动性）
@@ -97,8 +100,8 @@ def select_entries(
         & (df["below_ma60_ratio_60"] >= 0.6)
         & (df["up_streak"] >= 3)
         & (df["up_streak"] <= 10)
-        & (df["pct_chg"] >= 0.02)
-        & (df["pct_chg"] <= 0.06)
+        & (df["pct_chg"] >= pct_chg_low)
+        & (df["pct_chg"] <= pct_chg_high)
         & (df["dif"] < 0)
         & (df["dea"] < 0)
         & (df["macd_bar"].abs() < df["prev_bar_abs"])
