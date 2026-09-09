@@ -114,12 +114,17 @@ def select_entries(
     min_mom120: float = 0.0,
     max_vol_ratio: float = 2.0,
     max_atr_pct: float = 0.10,
+    # 趋势质量增强：解决"贴着均线、MA60 平走"等伪趋势
+    close_ma60_buffer: float = 0.0,
+    ma60_rising_lookback: int = 0,
     regime_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """上升趋势回调做多信号。
 
     A. 趋势在上：close > MA60、MA20 > MA60、过去 60 日 close>MA60 占比 ≥ 阈值、
                  120 日动量 ≥ 阈值
+       （可选）close ≥ MA60 × (1 + close_ma60_buffer)，
+       （可选）MA60 在 ma60_rising_lookback 日内上行
     B. 回调到位：连阴 ∈ [min, max]（reversal 模式看前一日连阴，当日收阳）
     C. 回调可控：距 20 日高点跌幅 ∈ [min_pullback, max_pullback]
     D. 未破位　：close ≥ MA20 × (1 - ma20_tol)，量能 ≤ max_vol_ratio，
@@ -153,8 +158,18 @@ def select_entries(
         & (df["ma20"] > df["ma60"])
         & (df["above_ma60_ratio"] >= min_above_ma60_ratio)
         & (df["mom120"] >= min_mom120)
+    )
+    # A' —— 趋势质量增强（可选）
+    if close_ma60_buffer > 0:
+        mask = mask & (df["close"] >= df["ma60"] * (1 + close_ma60_buffer))
+    if ma60_rising_lookback > 0:
+        # 用 transform shift 比较严格按组，避免跨股票泄漏
+        ma60_now = df["ma60"]
+        ma60_prev = df.groupby("thscode")["ma60"].shift(ma60_rising_lookback)
+        mask = mask & (ma60_now > ma60_prev)
+    mask = mask & (
         # B —— 回调 / 反转
-        & streak_ok
+        streak_ok
         # C —— 回调幅度可控
         & (df["pullback"] <= -min_pullback)
         & (df["pullback"] >= -max_pullback)

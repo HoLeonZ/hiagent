@@ -42,6 +42,35 @@ PRESETS: dict[str, dict] = {
         },
     },
     # v2：基于 v1 + stage-1 调参锁定的最强 regime（样本内 8 年中位 +3.10%）
+    # v6：v5 + 趋势质量增强 (close ≥ ma60×1.03 强制价格远离均线)
+# 目标年 +86.66% (vs v5 +85.47%)，样本内 8 年中位 +5.31% (vs v5 +3.66%)
+"v6": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.08,
+        "sl_pct": 0.05,
+        "max_hold": 8,
+        "max_positions": 5,
+        "atr_tp_mult": 8.0,
+        "atr_sl_mult": 2.5,
+        "regime": {"ma_window": 60, "breadth_window": 20, "min_breadth": 0.40,
+                   "require_rising": True, "rising_lookback": 5},
+        "signal": {
+            "entry_mode": "reversal",
+            "min_down_streak": 2,
+            "max_down_streak": 5,
+            "min_pullback": 0.03,
+            "max_pullback": 0.10,
+            "ma20_tol": 0.04,
+            "min_amount": 5e7,
+            "max_amount": 3e8,
+            "min_above_ma60_ratio": 0.6,
+            "min_mom120": 0.50,
+            "max_vol_ratio": 2.0,
+            "max_atr_pct": 0.10,
+            "close_ma60_buffer": 0.03,
+            "ma60_rising_lookback": 0,
+        },
+    },
     # v5：收紧持仓时间 + 高动量筛选 + 提高成交额门槛
 # 目标年（2025-09..2026-09）+85.47%，avg_hold 7.5 天
 # 样本内 8 年中位 +3.66% / 5/8 盈利年
