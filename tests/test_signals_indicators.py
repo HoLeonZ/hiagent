@@ -65,7 +65,7 @@ def test_up_streak_resets_on_down_day():
         "high":  [10, 11, 12, 13, 12, 13],
         "low":   [10, 11, 12, 13, 12, 13],
         "close": [10, 11, 12, 13, 12, 13],  # close[4]=12 < close[3]=13 阴线
-        "amount": [1e7] * 6,
+        "turnover": [1e7] * 6,
     })
     out = compute_panel_indicators(df)
     streaks = out["up_streak"].tolist()
@@ -95,7 +95,7 @@ def test_up_streak_no_cross_stock_leak():
         "high":  [10, 11, 12, 13,    20, 21, 22, 23],
         "low":   [10, 11, 12, 13,    20, 21, 22, 23],
         "close": [10, 11, 12, 13,    20, 21, 22, 23],  # A 末阳, B 全阳
-        "amount": [1e7] * 8,
+        "turnover": [1e7] * 8,
     })
     out = compute_panel_indicators(df)
     b = out[out["thscode"] == "BBB.SH"].reset_index(drop=True)

@@ -40,7 +40,7 @@ def run_audit(signal_json: Path, db_path: Path) -> list[tuple[str, str, str]]:
         for sig in signals:
             code = sig["thscode"]
             df = con.execute(
-                "SELECT date, open, high, low, close, amount FROM v_daily "
+                "SELECT date, open, high, low, close, turnover FROM v_daily "
                 "WHERE thscode = ? ORDER BY date",
                 [code],
             ).fetchdf()
@@ -59,7 +59,7 @@ def run_audit(signal_json: Path, db_path: Path) -> list[tuple[str, str, str]]:
             df["macd_bar"] = 2 * (df["dif"] - df["dea"])
             df["prev_close"] = df["close"].shift(1)
             df["pct_chg"] = (df["close"] - df["prev_close"]) / df["prev_close"]
-            df["am60"] = df["amount"].rolling(60, min_periods=60).mean()
+            df["am60"] = df["turnover"].rolling(60, min_periods=60).mean()
             df["below_ma60"] = (df["close"] < df["ma60"]).astype(float)
             df["up_day"] = (df["pct_chg"] > 0).fillna(False)
             prev_up = df["up_day"].shift(1).fillna(False).astype(bool)

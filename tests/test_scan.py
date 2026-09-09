@@ -23,7 +23,7 @@ def fake_db(tmp_path: Path) -> Path:
         rows.append({
             "thscode": "600000.SH", "date": d,
             "open": price, "high": price + 0.05,
-            "low": price - 0.05, "close": price, "amount": 5e7,
+            "low": price - 0.05, "close": price, "turnover": 5e7,
         })
     csv = pd.DataFrame(rows).to_csv(index=False)
     # 必须先写文件再 execute(read_csv_auto)

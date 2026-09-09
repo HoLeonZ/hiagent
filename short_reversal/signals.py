@@ -40,7 +40,7 @@ def compute_panel_indicators(panel: pd.DataFrame) -> pd.DataFrame:
     df["pct_chg"] = (df["close"] - prev_close) / prev_close
 
     # am60 — 历史 60 日均成交额
-    df["am60"] = g["amount"].transform(lambda s: s.rolling(60, min_periods=60).mean())
+    df["am60"] = g["turnover"].transform(lambda s: s.rolling(60, min_periods=60).mean())
 
     # 趋势持续性辅助：A 条件要求过去 60 日中 close < MA60 的占比 ≥ 60%
     # 前 60 行 NaN（rolling 需满窗口），信号日 MA60 已就绪时本列也已就绪

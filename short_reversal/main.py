@@ -34,9 +34,9 @@ def run_backtest(preset: str, start: str, end: str, db_path: Path) -> dict:
     con = duckdb.connect(str(db_path), read_only=True)
     try:
         panel = con.execute(
-            "SELECT thscode, date, open, high, low, close, amount, volume FROM v_daily "
-            "WHERE date BETWEEN '2024-01-01' AND ? ORDER BY thscode, date",
-            [(pd.Timestamp(end) + pd.Timedelta(days=30)).strftime("%Y-%m-%d")],
+            "SELECT thscode, date, open, high, low, close, turnover, volume FROM v_daily "
+            "WHERE date BETWEEN ? AND ? ORDER BY thscode, date",
+            [start, (pd.Timestamp(end) + pd.Timedelta(days=30)).strftime("%Y-%m-%d")],
         ).fetchdf()
     finally:
         con.close()

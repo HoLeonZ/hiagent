@@ -34,7 +34,7 @@ def fake_db_with_signal(tmp_path: Path) -> Path:
             "thscode": "600000.SH", "date": d,
             "open": 10.0, "high": 10.5, "low": 9.5,
             "close": 10.0 + 0.01 * (i - 35),  # mild oscillation around 10
-            "amount": 5e7,  # 在 am60 ∈ [3e7, 3e8] 窗口内
+            "turnover": 5e7,  # 在 am60 ∈ [3e7, 3e8] 窗口内
         })
     csv = pd.DataFrame(rows).to_csv(index=False)
     csv_path.write_text(csv, encoding="utf-8")

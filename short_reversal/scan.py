@@ -39,7 +39,7 @@ def run_scan(preset: str, date: str, db_path: Path) -> dict:
         target = pd.Timestamp(date)
         start_window = (target - pd.DateOffset(days=365)).strftime("%Y-%m-%d")
         sql = (
-            "SELECT thscode, date, open, high, low, close, amount "
+            "SELECT thscode, date, open, high, low, close, turnover "
             "FROM v_daily "
             f"WHERE date BETWEEN '{start_window}' AND ? "
             "ORDER BY thscode, date"

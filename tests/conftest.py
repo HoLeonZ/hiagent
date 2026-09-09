@@ -67,6 +67,6 @@ def synthetic_panel() -> "pd.DataFrame":
                 "thscode": code, "date": d,
                 "open": price, "high": price + 0.1,
                 "low": price - 0.1, "close": price,
-                "amount": 1e7,
+                "turnover": 1e7,
             })
     return pd.DataFrame(rows)

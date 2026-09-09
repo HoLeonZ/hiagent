@@ -17,7 +17,7 @@ def _build_panel(close_series: list[float], base_amount: float = 5e7) -> pd.Data
         rows.append({
             "thscode": "X.SH", "date": d,
             "open": c, "high": c + 0.05, "low": c - 0.05, "close": c,
-            "amount": base_amount,
+            "turnover": base_amount,
         })
     return pd.DataFrame(rows)
 

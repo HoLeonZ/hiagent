@@ -245,7 +245,7 @@ def load_panel_for_trade(con: duckdb.DuckDBPyConnection, thscode: str,
     fetch_end = pd.Timestamp(exit_date) + pd.Timedelta(days=POST_EXIT_DAYS)
 
     df = con.execute(
-        "SELECT thscode, date, open, high, low, close, amount, volume "
+        "SELECT thscode, date, open, high, low, close, turnover, volume "
         "FROM v_daily WHERE thscode = ? AND date BETWEEN ? AND ? ORDER BY date",
         [thscode, fetch_start.strftime("%Y-%m-%d"), fetch_end.strftime("%Y-%m-%d")],
     ).fetchdf()
