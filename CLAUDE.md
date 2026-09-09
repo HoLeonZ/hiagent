@@ -61,7 +61,7 @@ DB 路径可通过环境变量 `DNA_STRAT_DB` 覆盖（`short_reversal/main.py` 
 python3 -m pytest tests/ -v
 
 # CLI smoke
-python3 short_reversal/main.py --help
+python3 -m short_reversal.main --help
 ```
 
 ## 凭据（仅运行 `hithink-finance-cli` 数据同步时需要）
