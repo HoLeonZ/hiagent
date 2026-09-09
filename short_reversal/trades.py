@@ -49,7 +49,7 @@ def pre_simulate_trades(
 
     entries = entries_df[["date", "thscode"]].copy()
     entries["date"] = pd.to_datetime(entries["date"])
-    entries = entries.sort_values(["date", "thscode"]).reset_index(drop=True)
+    entries = entries.sort_values("date").reset_index(drop=True)
 
     panel_idx: dict[str, dict] = {}
     for code, sub in panel.groupby("thscode"):
