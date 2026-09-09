@@ -45,8 +45,8 @@ def test_all_five_conditions_pass_triggers_entry():
         "up_streak": [4, 5],             # B: in [3, 10] ✓
         "pct_chg": [0.03, 0.04],         # C: in [2%, 6%] ✓ (第 2 行)
         "macd_bar": [-0.3, -0.1],        # D: |0.1| < |0.3| ✓
-        "dif": [0.4, 0.5],               # > 0 ✓
-        "dea": [0.55, 0.6],              # > 0 ✓
+        "dif": [-0.4, -0.5],             # D: < 0 ✓
+        "dea": [-0.55, -0.6],            # D: < 0 ✓
         "am60": [1e8, 1e8],              # E: in [3e7, 3e8] ✓
     })
 
@@ -66,8 +66,8 @@ def test_up_streak_too_short_skipped():
         "up_streak": [2, 2],             # B: 2 (out of [3,10]) ✗
         "pct_chg": [0.03, 0.04],         # C ✓
         "macd_bar": [-0.3, -0.1],        # D ✓ (|0.1| < |0.3|)
-        "dif": [0.4, 0.5],               # D ✓
-        "dea": [0.55, 0.6],              # D ✓
+        "dif": [-0.4, -0.5],             # D ✓
+        "dea": [-0.55, -0.6],            # D ✓
         "am60": [1e8, 1e8],              # E ✓
     })
     entries = select_entries(

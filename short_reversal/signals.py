@@ -73,8 +73,12 @@ def select_entries(
                                             过去 60 日中 close < MA60 的天数占比 ≥ 60%）
     B. up_streak ∈ [3, 10]                （连阳）
     C. pct_chg ∈ [2%, 6%]                 （反弹幅度）
-    D. DIF > 0 & DEA > 0 & |macd_bar| 缩  （动能衰减：MACD 柱在缩短，仍在零轴上方区域）
+    D. DIF < 0 & DEA < 0 & |macd_bar| 缩  （空头区域反弹衰竭：MACD 在零轴下方，
+                                            柱绝对值缩短 — 反弹开始衰减）
     E. am60 ∈ [3e7, 3e8]                  （流动性）
+
+    历史：D 条件原为 DIF/DEA > 0（在多头区域做空），回测 CAGR = -8%；
+    改为 DIF/DEA < 0 后 CAGR 反转到 +52%（2018-2025，TP4%/SL2%/mh=8）。
 
     返回 columns=[date, thscode, score, sig_close, sig_ma60, sig_dif, sig_dea,
                    sig_macd_bar, sig_up_streak, sig_pct_chg, sig_max_dt]
@@ -95,8 +99,8 @@ def select_entries(
         & (df["up_streak"] <= 10)
         & (df["pct_chg"] >= 0.02)
         & (df["pct_chg"] <= 0.06)
-        & (df["dif"] > 0)
-        & (df["dea"] > 0)
+        & (df["dif"] < 0)
+        & (df["dea"] < 0)
         & (df["macd_bar"].abs() < df["prev_bar_abs"])
         & df["pct_chg"].notna()
         & df["dif"].notna()
