@@ -1,7 +1,9 @@
 """CLI 入口 — 上升趋势回调做多回测。
 
 用法:
-  python3 -m uptrend_pullback.main --start 2025-09-08 --end 2026-09-08
+  python3 -m uptrend_pullback.main --preset v6 --start 2025-09-08 --end 2026-09-08
+  python3 -m uptrend_pullback.main --engine simulate --preset v6 ...   # 自定义事件循环（对照）
+  python3 -m uptrend_pullback.main --engine backtrader --no-verify ... # 仅 Phase 1，不跑 backtrader
 """
 from __future__ import annotations
 
@@ -13,6 +15,7 @@ from pathlib import Path
 import pandas as pd
 
 from uptrend_pullback.backtest import INITIAL_CAPITAL, run_backtest
+from uptrend_pullback.backtrader_engine import run_backtrader_backtest
 
 DEFAULT_DB = Path.home() / "code/Financial-API/data/market.duckdb"
 
@@ -45,6 +48,18 @@ def main() -> None:
     parser.add_argument("--db-path", default=str(DEFAULT_DB))
     parser.add_argument("--out", default="uptrend_pullback/results/backtest.json")
     parser.add_argument("--save-trades", default="")
+    parser.add_argument(
+        "--engine",
+        choices=("backtrader", "simulate"),
+        default="backtrader",
+        help="回测引擎：backtrader（默认，Phase 1 + backtrader Phase 2 验证）"
+             " / simulate（自定义事件循环，对照用）",
+    )
+    parser.add_argument(
+        "--no-verify",
+        action="store_true",
+        help="仅跑 Phase 1（portfolio.py），跳过 backtrader 验证（仅 --engine backtrader 生效）",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -53,8 +68,17 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    res = run_backtest(args.preset, args.start, args.end, Path(args.db_path))
+    if args.engine == "simulate":
+        res = run_backtest(args.preset, args.start, args.end, Path(args.db_path))
+    else:
+        res = run_backtrader_backtest(
+            args.preset, args.start, args.end, Path(args.db_path),
+            verify=not args.no_verify,
+        )
     metrics, trades = res["metrics"], res["trades"]
+    metrics["engine"] = args.engine + (
+        "" if args.engine == "simulate" else (" (no-verify)" if args.no_verify else "")
+    )
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
