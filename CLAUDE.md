@@ -1,42 +1,59 @@
-# hiagent
+# hiagent — A 股下降趋势反弹做空策略
 
+策略仓库。完整 7 模块 + 主入口 + 单测在本目录，运行时所需的 DuckDB / marketdb 由 `~/code/Financial-API/` 提供（不在本仓库打包）。
 
 ## 工作区布局
 
 ```
 ~/code/
-├── hiagent/               # 本项目（仅承载 CLAUDE.md 与备忘，无代码）
-└── Financial-API/         # 实际工作区
-    ├── python/            # marketdb + fuyao 源码（pip install -e 安装点）
-    ├── data/
-    │   ├── market.duckdb  # 本地 DuckDB（10 年 A 股 K 线）
-    │   ├── .cache/        # marketdb auto-sync 下载缓存
-    │   └── exports/       # 落盘导出（Parquet 等）
-    ├── backtest_demo.py   # hithink DuckDB → Backtrader 最小 demo
-    ├── backtest_demo_equity.png
-    └── (其他 monorepo 原始文件)
+├── hiagent/                          # 本仓库（策略代码 + 文档）
+│   ├── dna_strat/                    # 策略核心包
+│   │   ├── __init__.py
+│   │   ├── universe.py               # 沪深主板筛选 + 黑名单
+│   │   ├── signals.py                # 指标计算 + A∧B∧C 入场信号
+│   │   ├── trades.py                 # 持仓循环（全局单 key 锁，满仓单只）
+│   │   ├── feed.py                   # 合成 backtrader feed
+│   │   ├── broker.py                 # AShareBroker（万 2.5 / 万 1 / 100 股整手）
+│   │   └── strategy.py               # TradeReplayStrategy（融券 8.6% 按日扣）
+│   ├── backtest_downtrend_short.py   # 主入口（Phase 1 + Phase 2 端到端）
+│   ├── tests/
+│   │   └── test_downtrend_short.py   # 20 单元测试（用合成数据，无外部依赖）
+│   ├── data/
+│   │   └── exclude_thscodes.txt      # 黑名单（一行一 thscode，# 注释）
+│   ├── docs/                         # 内部 spec/plan — 不推远端
+│   ├── .gitignore                    # 屏蔽 docs/superpowers/ + .superpowers/ + .pytest_cache
+│   └── CLAUDE.md
+│
+└── Financial-API/                    # 运行时依赖（不入本仓库）
+    ├── python/                       # marketdb 0.1.0（pip install -e 安装点）
+    └── data/
+        └── market.duckdb             # 本地 DuckDB（10 年 A 股 K 线）
 ```
 
-## 技术栈
+## 运行条件
 
-### 远端数据
-- **`@hithink-tech/hithink-finance-cli` v0.1.8**（npm 全局，Node 22.23.1）
-  - 子命令：`version / auth / config / symbol / market / special / financials / index / fund / valuation / capabilities / schema / skills / update / uninstall / doctor / data / db`
-  - 入口文档：`https://fuyao.aicubes.cn/admin`
-- **Node 默认 22**（`nvm alias default 22`，`~/.zshrc` 末尾加 `nvm use default`）
+| 依赖 | 来源 | 必需 |
+| --- | --- | --- |
+| `marketdb` 0.1.0 | `pip install -e ~/code/Financial-API/python` | 跑真实回测时 |
+| DuckDB `market.duckdb` | `~/code/Financial-API/data/market.duckdb` | 跑真实回测时 |
+| `backtrader` 1.9.78.123 | pip | 跑真实回测 + 部分单测 |
+| `matplotlib` 3.10.x | conda base | 出图 |
 
-### 本地数据 / Python SDK
-- **Python 3.14.3**（conda base `/Users/zhl/ENTER/bin/python3`）
-- **`marketdb` 0.1.0**（`pip install -e ~/code/Financial-API/python`，CLI + Python SDK）
-- **Fuyao Python toolkit**（同 monorepo 内）
-- 依赖：`duckdb 1.5.5`、`pandas 3.0.5`、`pyarrow 24.0.0`、`numpy 2.4.3`、`rich 13.9.4`、`typer`、`click`
+DB 路径可通过环境变量 `DNA_STRAT_DB` 覆盖（`backtest_downtrend_short.py` 顶部 `DB_PATH`）。
 
-### 回测
-- **`backtrader` 1.9.78.123**（pip 装的纯 Python 包，无原生依赖，Python 3.14 兼容）
-- **`matplotlib` 3.10.9**（conda base 自带，3.11.1 也有 cp314 wheel 可升级）
-- 可选：`quantstats`（风险指标增强）
+## 测试 / 运行
 
-## 凭据
+```bash
+# 单测（无外部依赖，20/20）
+python3 -m pytest tests/test_downtrend_short.py -v
+
+# 真实端到端回测
+python3 backtest_downtrend_short.py
+# 默认区间：end = DuckDB 最大日期，start = end - 365 天
+# 产物：data/exports/trades_*.parquet、logs/backtest_*.log、figures/downtrend_short_*.png
+```
+
+## 凭据（仅运行 `hithink-finance-cli` 数据同步时需要）
 
 API Key `HITHINK_FINANCE_API_KEY` 写在三处：
 
@@ -44,5 +61,6 @@ API Key `HITHINK_FINANCE_API_KEY` 写在三处：
 2. **系统 keyring**（通过 `hithink-finance auth login --api-key-stdin --replace` 写入）
 3. **`~/Library/Application Support/hithink-finance/credentials.env`**（兼容 fallback）
 
-读取优先级（按 CLI 文档）：操作临时输入 > 环境变量 > 用户级凭据文件 > 旧名 `FUYAO_TOKEN` / `API_KEY`。
+读取优先级：操作临时输入 > 环境变量 > 用户级凭据文件 > 旧名 `FUYAO_TOKEN` / `API_KEY`。
 
+CLI：`@hithink-tech/hithink-finance-cli` v0.1.8（Node 22，文档 `https://fuyao.aicubes.cn/admin`）。

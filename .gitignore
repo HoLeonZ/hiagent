@@ -1,5 +1,6 @@
 # Internal docs — not pushed to remote
 docs/superpowers/
+.superpowers/
 
 # Maven
 target/
@@ -21,3 +22,8 @@ logs/
 
 # OS
 Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
