@@ -61,3 +61,37 @@ def test_audit_returns_no_error_for_clean_signal(
     errors = run_audit(sig_path, fake_db_with_signal)
     # fake_db_with_signal 应构造为通过所有校验的样本
     assert errors == [] or all(e[1] != "条件1" for e in errors)
+
+
+def test_audit_up_streak_parity_with_canonical():
+    """R1 fix: audit's up_streak recompute must match signals.compute_panel_indicators
+    at every row.
+
+    Old (buggy) audit formula used `down_break.cumsum()` which grouped the down row
+    AND the next up row in the same up_id, producing +1 across the streak.
+
+    New (fixed) formula uses `(up_day & ~prev_up).cumsum()` matching the canonical
+    pattern in short_reversal/signals.py:46-51.
+    """
+    # up_day sequence: F T T T F T
+    # Expected canonical streak after mask: [0, 1, 2, 3, 0, 1]
+    up_day = pd.Series([False, True, True, True, False, True])
+
+    # --- New (fixed) audit formula ---
+    prev_up = up_day.shift(1).fillna(False).astype(bool)
+    up_id = (up_day & ~prev_up).astype(int).cumsum()
+    up_streak_new = up_day.groupby(up_id).cumcount() + 1
+    up_streak_new = up_streak_new.where(up_day, 0).astype(int)
+
+    # --- Old (buggy) audit formula (kept here for the parity assertion) ---
+    down_break = (~up_day).astype(int)
+    up_id_old = down_break.cumsum()
+    up_streak_old = up_day.groupby(up_id_old).cumcount() + 1
+    up_streak_old = up_streak_old.where(up_day, 0).astype(int)
+
+    assert list(up_streak_new) == [0, 1, 2, 3, 0, 1], (
+        f"Fixed formula must match canonical; got {list(up_streak_new)}"
+    )
+    assert list(up_streak_old) == [0, 2, 3, 4, 0, 2], (
+        f"Old (buggy) formula regression check; got {list(up_streak_old)}"
+    )

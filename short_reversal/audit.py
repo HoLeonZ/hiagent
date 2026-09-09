@@ -61,8 +61,8 @@ def run_audit(signal_json: Path, db_path: Path) -> list[tuple[str, str, str]]:
             df["pct_chg"] = (df["close"] - df["prev_close"]) / df["prev_close"]
             df["am60"] = df["amount"].rolling(60, min_periods=60).mean()
             df["up_day"] = (df["pct_chg"] > 0).fillna(False)
-            df["down_break"] = (~df["up_day"]).astype(int)
-            df["up_id"] = df["down_break"].cumsum()
+            prev_up = df["up_day"].shift(1).fillna(False).astype(bool)
+            df["up_id"] = (df["up_day"] & ~prev_up).astype(int).cumsum()
             df["up_streak"] = df.groupby(["up_id"]).cumcount() + 1
             df.loc[~df["up_day"], "up_streak"] = 0
 
