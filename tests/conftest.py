@@ -49,3 +49,24 @@ def exclude_txt(tmp_path: Path) -> Path:
     p = tmp_path / "exclude.txt"
     p.write_text("# comment\n600000.SH\n002415.SZ\n", encoding="utf-8")
     return p
+
+
+@pytest.fixture
+def synthetic_panel() -> "pd.DataFrame":
+    """100 个交易日 × 2 只股票，价格单调 + 严格按时间排序。"""
+    import pandas as pd
+    dates = pd.date_range("2025-01-01", periods=100, freq="B")
+    rows = []
+    for code in ("600000.SH", "000001.SZ"):
+        # 第一只单调上涨，第二只单调下跌，构造可验证的指标
+        base = 10.0 if code == "600000.SH" else 20.0
+        slope = 0.05 if code == "600000.SH" else -0.05
+        for i, d in enumerate(dates):
+            price = base + slope * i
+            rows.append({
+                "thscode": code, "date": d,
+                "open": price, "high": price + 0.1,
+                "low": price - 0.1, "close": price,
+                "amount": 1e7,
+            })
+    return pd.DataFrame(rows)
