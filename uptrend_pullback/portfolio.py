@@ -1,7 +1,6 @@
 """多头组合模拟 — 最多 N 只并行持仓，逐日事件驱动。
 
-与 short_reversal/trades.py 的全局单只锁不同，本模块支持组合持仓，
-并显式建模 A 股交易成本与涨停不可买。
+支持组合持仓（最多 max_positions 只并行），并显式建模 A 股交易成本与涨停不可买。
 
 时序约定（无未来函数）：
   T 日收盘产生信号 → T+1 开盘买入 → T+1 起每日判定 TP/SL/时间止盈
@@ -24,6 +23,9 @@ TRADE_COLS = [
     "entry_date", "exit_date", "thscode", "exit_reason",
     "entry_price", "exit_price", "size", "hold_days",
     "gross_pnl", "fees", "net_pnl", "net_return",
+    # 信号日（entry_date - 1 个交易日）的 ATR%（已按 [floor, cap] 夹紧）；
+    # 由 signals.py 在 T 日收盘时计算，Phase 1 / Phase 2 共用，避免穿越。
+    "atr_pct",
 ]
 
 # A 股主板涨跌停 10%；开盘涨幅超过该阈值视为无法买入
@@ -81,6 +83,8 @@ def simulate_portfolio(
     atr_sl_mult: float | None = None,
     atr_pct_floor: float = 0.01,
     atr_pct_cap: float = 0.08,
+    position_sizing: str = "equal",
+    kelly_fraction: float | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """逐日模拟组合，返回 (trades_df, equity_df)。
 
@@ -91,6 +95,11 @@ def simulate_portfolio(
         （atr_pct 先夹到 [atr_pct_floor, atr_pct_cap]）
 
     equity_df: columns=[date, cash, holdings, equity]
+
+    position_sizing:
+      "equal"   — 每只分配 equity / max_positions（默认，等额多仓）
+      "all_in"  — 单只满仓 equity（应配 max_positions=1）
+      "kelly"   — 单只按 kelly_fraction × equity（应配 max_positions=1）
     """
     if tp_pct <= 0:
         raise ValueError(f"tp_pct must be > 0, got {tp_pct}")
@@ -100,6 +109,16 @@ def simulate_portfolio(
         raise ValueError(f"max_hold must be > 0, got {max_hold}")
     if max_positions <= 0:
         raise ValueError(f"max_positions must be > 0, got {max_positions}")
+
+    if position_sizing not in ("equal", "all_in", "kelly"):
+        raise ValueError(
+            f"position_sizing must be 'equal'|'all_in'|'kelly', got {position_sizing!r}"
+        )
+    if position_sizing == "kelly":
+        if kelly_fraction is None or not (0 < kelly_fraction <= 1):
+            raise ValueError(
+                f"position_sizing='kelly' 需要 kelly_fraction ∈ (0, 1]，got {kelly_fraction}"
+            )
 
     panel = panel.sort_values(["thscode", "date"]).reset_index(drop=True)
     pidx = _build_index(panel)
@@ -162,6 +181,7 @@ def simulate_portfolio(
             "fees": total_fees,
             "net_pnl": net,
             "net_return": net / invested if invested > 0 else 0.0,
+            "atr_pct": pos.get("atr_pct", np.nan),
         })
 
     last_t = len(cal) - 1
@@ -210,7 +230,12 @@ def simulate_portfolio(
                     px = pidx[code]["close"][j] if j is not None else pos["entry_price"]
                     holdings_val += pos["size"] * px
                 equity_now = cash + holdings_val
-                slot_value = equity_now / max_positions
+                if position_sizing == "equal":
+                    slot_value = equity_now / max_positions
+                elif position_sizing == "all_in":
+                    slot_value = equity_now
+                else:  # kelly
+                    slot_value = equity_now * kelly_fraction
 
                 for code in candidates:
                     if len(positions) >= max_positions:
@@ -251,10 +276,12 @@ def simulate_portfolio(
 
                     cash -= notional + fee_in
                     tp_eff, sl_eff = tp_pct, sl_pct
+                    atr_used = np.nan
                     if use_atr:
                         a = atr_lookup.get((cal[t - 1], code))
                         if a is not None and not np.isnan(a):
                             a = min(max(a, atr_pct_floor), atr_pct_cap)
+                            atr_used = float(a)
                             tp_eff = a * atr_tp_mult
                             sl_eff = a * atr_sl_mult
                     positions[code] = {
@@ -266,6 +293,7 @@ def simulate_portfolio(
                         "tp": entry_px * (1 + tp_eff),
                         "sl": entry_px * (1 - sl_eff),
                         "bars": 0,
+                        "atr_pct": atr_used,
                     }
 
         # ---------- 3) 末日强制平仓 ----------

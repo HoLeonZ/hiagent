@@ -14,6 +14,7 @@ EXPECTED_KEYS = {
     "v33_mainboard_tp25_sl02_relaxed",
     "v33_mainboard_tp6_sl005_mh5_realistic",
     "v33_mainboard_v5_cascade_tp6_sl005_mh5",
+    "v33_mainboard_tp10_sl02",
 }
 
 

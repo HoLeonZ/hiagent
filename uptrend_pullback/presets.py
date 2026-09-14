@@ -1,6 +1,6 @@
 """策略 preset 配置。
 
-max_hold 一律 ≤ 20（需求硬约束：每只个股持有不超过 20 个交易日）。
+当前唯一 preset: v6 — close_ma60_buffer=0.03 趋势质量增强版。
 
 字段说明：
   tp_pct / sl_pct     固定止盈止损；给了 atr_*_mult 时被 ATR 自适应覆盖
@@ -16,35 +16,9 @@ import copy
 MAX_HOLD_LIMIT = 20
 
 PRESETS: dict[str, dict] = {
-    # 基线：回调途中直接买 + 固定止损 + 无择时（用于对照，已知亏损）
-    "baseline": {
-        "universe": "mainboard_only",
-        "tp_pct": 0.08,
-        "sl_pct": 0.05,
-        "max_hold": 20,
-        "max_positions": 5,
-        "atr_tp_mult": None,
-        "atr_sl_mult": None,
-        "regime": None,
-        "signal": {
-            "entry_mode": "dip",
-            "min_down_streak": 2,
-            "max_down_streak": 5,
-            "min_pullback": 0.03,
-            "max_pullback": 0.14,
-            "ma20_tol": 0.04,
-            "min_amount": 3e7,
-            "max_amount": 3e8,
-            "min_above_ma60_ratio": 0.6,
-            "min_mom120": 0.0,
-            "max_vol_ratio": 1.5,
-            "max_atr_pct": 0.10,
-        },
-    },
-    # v2：基于 v1 + stage-1 调参锁定的最强 regime（样本内 8 年中位 +3.10%）
     # v6：v5 + 趋势质量增强 (close ≥ ma60×1.03 强制价格远离均线)
-# 目标年 +86.66% (vs v5 +85.47%)，样本内 8 年中位 +5.31% (vs v5 +3.66%)
-"v6": {
+    # 目标年 +86.66% (vs v5 +85.47%)，样本内 8 年中位 +5.31% (vs v5 +3.66%)
+    "v6": {
         "universe": "mainboard_only",
         "tp_pct": 0.08,
         "sl_pct": 0.05,
@@ -69,136 +43,6 @@ PRESETS: dict[str, dict] = {
             "max_atr_pct": 0.10,
             "close_ma60_buffer": 0.03,
             "ma60_rising_lookback": 0,
-        },
-    },
-    # v5：收紧持仓时间 + 高动量筛选 + 提高成交额门槛
-# 目标年（2025-09..2026-09）+85.47%，avg_hold 7.5 天
-# 样本内 8 年中位 +3.66% / 5/8 盈利年
-# 主要变化：max_hold 20→8，atr_tp 3→8，max_pullback 0.18→0.10，
-#          min_mom120 0→0.50，min_amount 3e7→5e7
-"v5": {
-        "universe": "mainboard_only",
-        "tp_pct": 0.08,
-        "sl_pct": 0.05,
-        "max_hold": 8,
-        "max_positions": 5,
-        "atr_tp_mult": 8.0,
-        "atr_sl_mult": 2.5,
-        "regime": {"ma_window": 60, "breadth_window": 20, "min_breadth": 0.40,
-                   "require_rising": True, "rising_lookback": 5},
-        "signal": {
-            "entry_mode": "reversal",
-            "min_down_streak": 2,
-            "max_down_streak": 5,
-            "min_pullback": 0.03,
-            "max_pullback": 0.10,
-            "ma20_tol": 0.04,
-            "min_amount": 5e7,
-            "max_amount": 3e8,
-            "min_above_ma60_ratio": 0.6,
-            "min_mom120": 0.50,
-            "max_vol_ratio": 2.0,
-            "max_atr_pct": 0.10,
-        },
-    },
-    "v4": {
-        "universe": "mainboard_only",
-        "tp_pct": 0.08,
-        "sl_pct": 0.05,
-        "max_hold": 20,
-        "max_positions": 5,
-        "atr_tp_mult": 3.0,
-        "atr_sl_mult": 2.5,
-        "regime": {"ma_window": 60, "breadth_window": 20, "min_breadth": 0.40,
-                   "require_rising": True, "rising_lookback": 5},
-        "signal": {
-            "entry_mode": "reversal",
-            "min_down_streak": 2,
-            "max_down_streak": 5,
-            "min_pullback": 0.03,
-            "max_pullback": 0.18,
-            "ma20_tol": 0.04,
-            "min_amount": 3e7,
-            "max_amount": 3e8,
-            "min_above_ma60_ratio": 0.6,
-            "min_mom120": 0.0,
-            "max_vol_ratio": 2.0,
-            "max_atr_pct": 0.10,
-        },
-    },
-    "v3": {
-        "universe": "mainboard_only",
-        "tp_pct": 0.08,
-        "sl_pct": 0.05,
-        "max_hold": 20,
-        "max_positions": 5,
-        "atr_tp_mult": 3.0,
-        "atr_sl_mult": 2.5,
-        "regime": {"ma_window": 60, "breadth_window": 20, "min_breadth": 0.40,
-                   "require_rising": True, "rising_lookback": 5},
-        "signal": {
-            "entry_mode": "reversal",
-            "min_down_streak": 2,
-            "max_down_streak": 5,
-            "min_pullback": 0.03,
-            "max_pullback": 0.14,
-            "ma20_tol": 0.04,
-            "min_amount": 3e7,
-            "max_amount": 3e8,
-            "min_above_ma60_ratio": 0.6,
-            "min_mom120": 0.0,
-            "max_vol_ratio": 2.0,
-            "max_atr_pct": 0.10,
-        },
-    },
-    "v2": {
-        "universe": "mainboard_only",
-        "tp_pct": 0.08,
-        "sl_pct": 0.05,
-        "max_hold": 20,
-        "max_positions": 5,
-        "atr_tp_mult": 3.0,
-        "atr_sl_mult": 2.0,
-        "regime": {"ma_window": 60, "breadth_window": 20, "min_breadth": 0.40,
-                   "require_rising": True, "rising_lookback": 5},
-        "signal": {
-            "entry_mode": "reversal",
-            "min_down_streak": 2,
-            "max_down_streak": 5,
-            "min_pullback": 0.03,
-            "max_pullback": 0.14,
-            "ma20_tol": 0.04,
-            "min_amount": 3e7,
-            "max_amount": 3e8,
-            "min_above_ma60_ratio": 0.6,
-            "min_mom120": 0.0,
-            "max_vol_ratio": 2.0,
-            "max_atr_pct": 0.10,
-        },
-    },
-    # v1：等反转确认 + ATR 自适应止损 + 大盘择时（基线对比用）
-    "v1": {
-        "universe": "mainboard_only",
-        "tp_pct": 0.08,
-        "sl_pct": 0.05,
-        "max_hold": 20,
-        "max_positions": 5,
-        "atr_tp_mult": 3.0,
-        "atr_sl_mult": 2.0,
-        "regime": {"ma_window": 20, "breadth_window": 20, "min_breadth": 0.45},
-        "signal": {
-            "entry_mode": "reversal",
-            "min_down_streak": 2,
-            "max_down_streak": 5,
-            "min_pullback": 0.03,
-            "max_pullback": 0.14,
-            "ma20_tol": 0.04,
-            "min_amount": 3e7,
-            "max_amount": 3e8,
-            "min_above_ma60_ratio": 0.6,
-            "min_mom120": 0.0,
-            "max_vol_ratio": 2.0,
-            "max_atr_pct": 0.10,
         },
     },
 }

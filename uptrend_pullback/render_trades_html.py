@@ -1,7 +1,13 @@
-"""v5 策略回测交易 → HTML 可视化（每笔 K 线 + 全部指标 + 信号条件清单）。
+"""v6 策略回测交易 → HTML 可视化。
+
+每张卡片：K 线 + 5 条 MA + ATR + 成交量 + mom120 + above_ma60_ratio + 信号条件清单。
+顶部 portfolio-level 汇总时间序列：
+  1. 大盘等权指数 + MA60 + regime_ok 背景 + 入场信号散点
+  2. 累计权益曲线 + 持仓数
+  3. 月度 P&L 柱状图
 
 数据源：uptrend_pullback/results/trades.csv（由 main.py --save-trades 生成）
-窗口：信号日 -30 天 → 出场日 +5 天
+窗口：信号日 -60 天 → 出场日 +5 天（卡片）
 指标：与回测严格同源（compute_indicators + compute_regime + select_entries）
 
 输出：uptrend_pullback/results/trades_visualization.html
@@ -11,6 +17,7 @@ from __future__ import annotations
 import argparse
 import csv
 import logging
+from collections import defaultdict
 from pathlib import Path
 
 import duckdb
@@ -29,10 +36,11 @@ TRADES_CSV = RESULTS_DIR / "trades.csv"
 OUTPUT_HTML = RESULTS_DIR / "trades_visualization.html"
 
 # 窗口参数
-PRE_SIG_DAYS = 30  # 信号日前看多少天（含 MA120 预热）
+PRE_SIG_DAYS = 60  # 信号日前看多少天（覆盖 MA120 预热 + mom120 演化）
 POST_EXIT_DAYS = 5  # 出场日后看多少天
+INITIAL_CAPITAL = 1_000_000.0
 
-# 配色（与 short_reversal/render_trades_html.py 一致）
+# 配色
 BG = "#0f1419"
 PANEL_BG = "#1a2026"
 BORDER = "#2a3540"
@@ -95,7 +103,7 @@ def load_panel_for_trade(con: duckdb.DuckDBPyConnection, thscode: str,
     fetch_end = exit_dt + pd.Timedelta(days=POST_EXIT_DAYS)
 
     df = con.execute(
-        "SELECT thscode, date, open, high, low, close, volume, turnover AS amount "
+        "SELECT thscode, date, open, high, low, close, volume, amount "
         "FROM v_daily_qfq WHERE thscode = ? AND date BETWEEN ? AND ? ORDER BY date",
         [thscode, fetch_start.strftime("%Y-%m-%d"), fetch_end.strftime("%Y-%m-%d")],
     ).fetchdf()
@@ -140,15 +148,20 @@ def build_chart_svg(
     exit_reason: str,
     tp_line: float,
     sl_line: float,
+    preset: dict | None = None,
 ) -> str:
-    """K线 + MA5/10/20/60/120 + ATR 子图 + 成交量 子图组合 SVG。"""
+    """K线 + MA5/10/20/60/120 + ATR 子图 + 成交量 子图 + mom120/above_ma60_ratio 子图组合 SVG。"""
     W = 820
     H_KLINE = 230
-    H_ATR = 90
-    H_VOL = 90
+    H_ATR = 70
+    H_VOL = 70
+    H_MOM = 70
+    H_RATIO = 70
     PAD_L, PAD_R, PAD_T, PAD_B = 60, 70, 14, 22
-    G1 = 16  # k线 与 atr 之间
-    G2 = 16  # atr 与 vol 之间
+    G1 = 12  # k线 与 atr 之间
+    G2 = 12  # atr 与 vol 之间
+    G3 = 12  # vol 与 mom 之间
+    G4 = 12  # mom 与 ratio 之间
 
     n = len(candles)
     candle_w_total = W - PAD_L - PAD_R
@@ -180,6 +193,21 @@ def build_chart_svg(
     vols = [c["volume"] for c in candles]
     v_max = max(vols) * 1.1 if vols else 1
 
+    # mom120 范围（对称，含正负）
+    mom_vals = [c.get("mom120") for c in candles if c.get("mom120") is not None]
+    mom_abs_max = max(abs(min(mom_vals)) if mom_vals else 0, abs(max(mom_vals)) if mom_vals else 0, 0.5)
+    mom_abs_max *= 1.1
+
+    # above_ma60_ratio 范围（0~1）
+    amr_vals = [c.get("above_ma60_ratio") for c in candles if c.get("above_ma60_ratio") is not None]
+    amr_max = max(amr_vals) if amr_vals else 1.0
+    amr_min = min(amr_vals) if amr_vals else 0.0
+    if amr_max - amr_min < 0.1:
+        amr_max = min(amr_max + 0.1, 1.0)
+        amr_min = max(amr_min - 0.1, 0.0)
+
+    H_TOTAL = PAD_T + H_KLINE + G1 + H_ATR + G2 + H_VOL + G3 + H_MOM + G4 + H_RATIO + PAD_B
+
     def x_of(i: int) -> float:
         return PAD_L + candle_w_total * (i + 0.5) / n
 
@@ -194,8 +222,17 @@ def build_chart_svg(
         m_top = PAD_T + H_KLINE + G1 + H_ATR + G2
         return m_top + (v_max - v) / v_max * H_VOL
 
-    parts = [f'<svg viewBox="0 0 {W} {PAD_T + H_KLINE + G1 + H_ATR + G2 + H_VOL + PAD_B}" class="chart-svg">']
-    parts.append(f'<rect x="0" y="0" width="{W}" height="{PAD_T + H_KLINE + G1 + H_ATR + G2 + H_VOL + PAD_B}" fill="{BG}"/>')
+    def y_of_mom(v: float) -> float:
+        m_top = PAD_T + H_KLINE + G1 + H_ATR + G2 + H_VOL + G3
+        y_zero = m_top + H_MOM / 2
+        return y_zero - (v / mom_abs_max) * (H_MOM / 2 * 0.9)
+
+    def y_of_amr(v: float) -> float:
+        m_top = PAD_T + H_KLINE + G1 + H_ATR + G2 + H_VOL + G3 + H_MOM + G4
+        return m_top + (amr_max - v) / (amr_max - amr_min) * H_RATIO
+
+    parts = [f'<svg viewBox="0 0 {W} {H_TOTAL}" class="chart-svg">']
+    parts.append(f'<rect x="0" y="0" width="{W}" height="{H_TOTAL}" fill="{BG}"/>')
 
     # === K线区背景网格 ===
     for i in range(5):
@@ -288,6 +325,7 @@ def build_chart_svg(
     parts.append(line_path("vol_ma20", y_of_v, "#fbbf24", 1.0))
 
     # === 信号/入场/出场 竖线 ===
+    marker_bottom = PAD_T + H_KLINE + G1 + H_ATR + G2 + H_VOL + G3 + H_MOM + G4 + H_RATIO
     for idx_marker, color, label in [
         (sig_idx, "#ffeb3b", "S"),
         (entry_idx, "#fb923c", "E"),
@@ -296,19 +334,47 @@ def build_chart_svg(
         if not (0 <= idx_marker < n):
             continue
         mx = x_of(idx_marker)
-        parts.append(f'<line x1="{mx:.1f}" y1="{PAD_T}" x2="{mx:.1f}" y2="{v_top+H_VOL}" '
+        parts.append(f'<line x1="{mx:.1f}" y1="{PAD_T}" x2="{mx:.1f}" y2="{marker_bottom}" '
                      f'stroke="{color}" stroke-width="1" stroke-dasharray="3,2" opacity="0.55"/>')
         parts.append(f'<circle cx="{mx:.1f}" cy="{y_of_p(candles[idx_marker]["close"]):.1f}" r="5" '
                      f'fill="{color}" stroke="#000" stroke-width="1"/>')
         parts.append(f'<text x="{mx+7:.1f}" y="{y_of_p(candles[idx_marker]["close"])-7:.1f}" '
                      f'fill="{color}" font-size="10" font-weight="700">{label}</text>')
 
+    # === mom120 子图 ===
+    mom_top = PAD_T + H_KLINE + G1 + H_ATR + G2 + H_VOL + G3
+    parts.append(f'<line x1="{PAD_L}" y1="{mom_top}" x2="{W-PAD_R}" y2="{mom_top}" stroke="{BORDER}" stroke-width="0.5"/>')
+    parts.append(f'<text x="{PAD_L-50}" y="{mom_top+10:.1f}" fill="{TEXT_DIM}" font-size="9">mom120</text>')
+    # 0 线
+    y_mom_zero = mom_top + H_MOM / 2
+    parts.append(f'<line x1="{PAD_L}" y1="{y_mom_zero:.1f}" x2="{W-PAD_R}" y2="{y_mom_zero:.1f}" '
+                 f'stroke="#888" stroke-width="0.5" stroke-dasharray="2,3" opacity="0.5"/>')
+    parts.append(line_path("mom120", y_of_mom, "#42a5f5", 1.2))
+    parts.append(f'<text x="{W-PAD_R+4}" y="{mom_top+9:.1f}" fill="{TEXT_DIM}" font-size="9" font-family="{MONO}">+{mom_abs_max:.2f}</text>')
+    parts.append(f'<text x="{W-PAD_R+4}" y="{mom_top+H_MOM-4:.1f}" fill="{TEXT_DIM}" font-size="9" font-family="{MONO}">-{mom_abs_max:.2f}</text>')
+
+    # === above_ma60_ratio 子图 ===
+    amr_top = PAD_T + H_KLINE + G1 + H_ATR + G2 + H_VOL + G3 + H_MOM + G4
+    parts.append(f'<line x1="{PAD_L}" y1="{amr_top}" x2="{W-PAD_R}" y2="{amr_top}" stroke="{BORDER}" stroke-width="0.5"/>')
+    parts.append(f'<text x="{PAD_L-50}" y="{amr_top+10:.1f}" fill="{TEXT_DIM}" font-size="9">amr60</text>')
+    # 阈值线（min_above_ma60_ratio = 0.6）
+    sig_cfg = preset.get("signal", {})
+    thr_amr = sig_cfg.get("min_above_ma60_ratio", 0.6)
+    if amr_min <= thr_amr <= amr_max:
+        y_thr = y_of_amr(thr_amr)
+        parts.append(f'<line x1="{PAD_L}" y1="{y_thr:.1f}" x2="{W-PAD_R}" y2="{y_thr:.1f}" '
+                     f'stroke="#ffd54f" stroke-width="0.8" stroke-dasharray="3,2" opacity="0.8"/>')
+        parts.append(f'<text x="{PAD_L+3}" y="{y_thr-2:.1f}" fill="#ffd54f" font-size="9" font-family="{MONO}">≥{thr_amr:.0%}</text>')
+    parts.append(line_path("above_ma60_ratio", y_of_amr, "#a78bfa", 1.2))
+    parts.append(f'<text x="{W-PAD_R+4}" y="{amr_top+9:.1f}" fill="{TEXT_DIM}" font-size="9" font-family="{MONO}">{amr_max:.2f}</text>')
+    parts.append(f'<text x="{W-PAD_R+4}" y="{amr_top+H_RATIO-4:.1f}" fill="{TEXT_DIM}" font-size="9" font-family="{MONO}">{amr_min:.2f}</text>')
+
     # === X 轴日期 ===
     step = max(n // 8, 1)
     for i, c in enumerate(candles):
         if i % step == 0 or i in (sig_idx, entry_idx, exit_idx):
             x = x_of(i)
-            parts.append(f'<text x="{x:.1f}" y="{v_top+H_VOL+12}" fill="{TEXT_DIM}" font-size="8" '
+            parts.append(f'<text x="{x:.1f}" y="{marker_bottom+12}" fill="{TEXT_DIM}" font-size="8" '
                          f'text-anchor="middle" font-family="{MONO}">{c["date"][5:]}</text>')
 
     parts.append('</svg>')
@@ -438,6 +504,377 @@ def evaluate_signal_conditions(panel_ind: pd.DataFrame, sig_date: str, preset: d
 
 
 # ============================================================================
+# Portfolio 级时间序列汇总图
+# ============================================================================
+
+def _build_equity_curve(trades: list[dict], start_date: str, end_date: str) -> pd.DataFrame:
+    """从 trades.csv 重构日度权益曲线（mark-to-market）。
+
+    算法：
+      按 exit_date 升序遍历，把每笔 net_pnl 累加到 realized。
+      对每个交易日 t：
+        realized_t = sum(net_pnl of trades exited on or before t)
+        unrealized_t = sum((close_t - entry_price) * size for open positions)
+        equity_t = INITIAL + realized_t + unrealized_t
+      close_t = 当日 panel 的 close（若该股停牌则用 entry_price）。
+    """
+    if not trades:
+        return pd.DataFrame(columns=["date", "equity", "realized", "unrealized", "n_open"])
+
+    sorted_exits = sorted(trades, key=lambda t: t["exit_date"])
+    realized = 0.0
+    # 收集每日 close 用于 mark-to-market
+    con = duckdb.connect(str(DB_PATH), read_only=True)
+    try:
+        codes = sorted({t["thscode"] for t in trades})
+        placeholders = ",".join(["?"] * len(codes))
+        panel = con.execute(
+            f"SELECT thscode, date, close FROM v_daily_qfq "
+            f"WHERE thscode IN ({placeholders}) AND date BETWEEN ? AND ? ORDER BY date",
+            codes + [start_date, end_date],
+        ).fetchdf()
+    finally:
+        con.close()
+    panel["date"] = pd.to_datetime(panel["date"])
+    px = {(r["thscode"], r["date"]): float(r["close"]) for _, r in panel.iterrows()}
+
+    # 把 trade 按 entry/exit 排序，构造每天的 open set
+    trades_sorted = sorted(trades, key=lambda t: t["entry_date"])
+    cal_dates = sorted({d for d in panel["date"].unique()})
+    open_pos: dict[str, dict] = {}  # thscode -> {entry_price, size}
+    cum_realized = 0.0
+    exit_idx = 0
+    rows: list[dict] = []
+    for d in cal_dates:
+        # 处理今日之前的 close（按 exit_date 排序逐笔累加 realized）
+        while exit_idx < len(sorted_exits) and pd.Timestamp(sorted_exits[exit_idx]["exit_date"]) <= d:
+            cum_realized += sorted_exits[exit_idx]["net_pnl"]
+            exit_idx += 1
+        # 处理今日之前仍未 exit 的 entry（加入 open_pos）
+        while trades_sorted and pd.Timestamp(trades_sorted[0]["entry_date"]) <= d:
+            t = trades_sorted.pop(0)
+            open_pos[t["thscode"]] = {"entry_price": t["entry_price"], "size": t["size"]}
+        # 移除今日之前已经 exit 但还在 open_pos 里的（已被 _close_position 移走）
+        for t in trades:
+            if t["thscode"] in open_pos and pd.Timestamp(t["exit_date"]) <= d:
+                open_pos.pop(t["thscode"], None)
+        # 计算 unrealized
+        unrealized = 0.0
+        for code, pos in open_pos.items():
+            cur_px = px.get((code, d), pos["entry_price"])
+            unrealized += (cur_px - pos["entry_price"]) * pos["size"]
+        rows.append({
+            "date": d,
+            "realized": cum_realized,
+            "unrealized": unrealized,
+            "n_open": len(open_pos),
+            "equity": INITIAL_CAPITAL + cum_realized + unrealized,
+        })
+    return pd.DataFrame(rows)
+
+
+def build_portfolio_summary_svg(
+    con: duckdb.DuckDBPyConnection,
+    trades: list[dict],
+    preset: dict,
+    start_date: str,
+    end_date: str,
+) -> tuple[str, pd.DataFrame, pd.DataFrame]:
+    """portfolio 级时间序列汇总图（3 子图上下排列）。
+
+    1. 大盘等权指数 + MA60 + regime_ok 背景 + 入场信号散点
+    2. 累计权益曲线 + 持仓数
+    3. 月度 P&L 柱状图
+
+    Returns: (svg_str, equity_df, monthly_pnl_df)
+    """
+    # --- 加载市场面板（仅用于 regime）---
+    warmup_start = (pd.Timestamp(start_date) - pd.Timedelta(days=400)).strftime("%Y-%m-%d")
+    panel = con.execute(
+        "SELECT thscode, date, open, high, low, close, volume, amount "
+        "FROM v_daily_qfq WHERE date BETWEEN ? AND ? ORDER BY thscode, date",
+        [warmup_start, end_date],
+    ).fetchdf()
+    panel["date"] = pd.to_datetime(panel["date"])
+    panel_ind = compute_indicators(panel)
+    reg_df = compute_regime(panel_ind, **(preset["regime"] or {}))
+
+    # --- 重建权益曲线 ---
+    equity_df = _build_equity_curve(trades, start_date, end_date)
+
+    # --- 月度 P&L ---
+    monthly = defaultdict(float)
+    monthly_n = defaultdict(int)
+    for t in trades:
+        m = pd.Timestamp(t["exit_date"]).strftime("%Y-%m")
+        monthly[m] += t["net_pnl"]
+        monthly_n[m] += 1
+    months_sorted = sorted(monthly.keys())
+    monthly_df = pd.DataFrame({
+        "month": months_sorted,
+        "net_pnl": [monthly[m] for m in months_sorted],
+        "n": [monthly_n[m] for m in months_sorted],
+    })
+
+    # --- 准备入场信号散点（按 score 着色需先查 panel_ind）---
+    # 为节省 IO，只用 select_entries 拉一次候选，并按 entry_date 取 score
+    entries = select_entries(
+        panel_ind, start_date=start_date, end_date=end_date, **preset["signal"]
+    )
+    # entry_date = signal_date + 1 trading day
+    sig_by_entry: dict[pd.Timestamp, list[float]] = defaultdict(list)
+    for _, e in entries.iterrows():
+        sig_date = pd.Timestamp(e["date"])
+        sig_dt_pos = panel_ind["date"][panel_ind["date"] == sig_date].index
+        if len(sig_dt_pos) == 0:
+            continue
+        # 找 entry_date（sig_date 下一根 K 线）
+        future = panel_ind.iloc[sig_dt_pos[0] + 1:]
+        if future.empty:
+            continue
+        entry_date = future.iloc[0]["date"]
+        sig_by_entry[entry_date].append(float(e["score"]))
+
+    # === SVG 布局 ===
+    W = 820
+    H_REGIME = 200
+    H_EQUITY = 180
+    H_MONTHLY = 140
+    PAD_L, PAD_R, PAD_T, PAD_B = 56, 60, 14, 24
+    G = 18
+    H_TOTAL = PAD_T + H_REGIME + G + H_EQUITY + G + H_MONTHLY + PAD_B
+
+    parts = [f'<svg viewBox="0 0 {W} {H_TOTAL}" class="summary-svg">']
+    parts.append(f'<rect x="0" y="0" width="{W}" height="{H_TOTAL}" fill="{PANEL_BG}" rx="4"/>')
+
+    # 时间轴统一用 [start_date, end_date]
+    t_min = pd.Timestamp(start_date)
+    t_max = pd.Timestamp(end_date)
+    t_range_days = (t_max - t_min).days
+    if t_range_days <= 0:
+        t_range_days = 1
+
+    def x_of(d: pd.Timestamp) -> float:
+        return PAD_L + (d - t_min).days / t_range_days * (W - PAD_L - PAD_R)
+
+    # ========== 子图 1: 大盘 regime + 信号散点 ==========
+    sub1_top = PAD_T
+    parts.append(f'<text x="{PAD_L}" y="{sub1_top+10}" fill="{TEXT_BRIGHT}" font-size="11" font-weight="700">大盘 regime + 入场信号</text>')
+
+    # regime_ok 背景
+    reg_in_range = reg_df[(reg_df["date"] >= t_min) & (reg_df["date"] <= t_max)].reset_index(drop=True)
+    if not reg_in_range.empty:
+        # 把相邻同 regime_ok 的日子合并为一个 band
+        cur_ok = None
+        cur_start = None
+        for _, r in reg_in_range.iterrows():
+            ok = bool(r["regime_ok"])
+            if ok != cur_ok:
+                if cur_ok is True and cur_start is not None:
+                    x0 = x_of(cur_start)
+                    x1 = x_of(r["date"])
+                    parts.append(f'<rect x="{x0:.1f}" y="{sub1_top+14}" width="{x1-x0:.1f}" height="{H_REGIME-14}" '
+                                 f'fill="#26a69a" opacity="0.10"/>')
+                cur_ok = ok
+                cur_start = r["date"]
+        if cur_ok is True and cur_start is not None:
+            x0 = x_of(cur_start)
+            x1 = x_of(reg_in_range.iloc[-1]["date"])
+            parts.append(f'<rect x="{x0:.1f}" y="{sub1_top+14}" width="{x1-x0:.1f}" height="{H_REGIME-14}" '
+                         f'fill="#26a69a" opacity="0.10"/>')
+
+    # 等权指数 + MA60
+    if not reg_in_range.empty:
+        ew = reg_in_range["ew_index"].to_numpy()
+        ma = reg_in_range["ew_ma"].to_numpy()
+        ew_min, ew_max = float(np.nanmin(ew)), float(np.nanmax(ew))
+        ew_range = max(ew_max - ew_min, 1e-6)
+        ew_min -= ew_range * 0.05
+        ew_max += ew_range * 0.05
+
+        def y1_of(v: float) -> float:
+            return sub1_top + 14 + (ew_max - v) / (ew_max - ew_min) * (H_REGIME - 14 - 8)
+
+        # ew_index 折线
+        path = []
+        for i, (_, r) in enumerate(reg_in_range.iterrows()):
+            x = x_of(r["date"])
+            y = y1_of(r["ew_index"])
+            path.append(("M" if i == 0 else "L") + f"{x:.1f},{y:.1f}")
+        parts.append(f'<path d="{" ".join(path)}" stroke="#42a5f5" stroke-width="1.4" fill="none" opacity="0.95"/>')
+        # ew_ma 折线
+        path = []
+        for i, (_, r) in enumerate(reg_in_range.iterrows()):
+            v = r["ew_ma"]
+            if pd.isna(v):
+                continue
+            x = x_of(r["date"])
+            y = y1_of(v)
+            path.append(("M" if i == 0 or not path else "L") + f"{x:.1f},{y:.1f}")
+        if path:
+            parts.append(f'<path d="{" ".join(path)}" stroke="#ffa726" stroke-width="1.2" fill="none" opacity="0.85"/>')
+
+        # Y 轴刻度
+        for i in range(4):
+            v = ew_max - (ew_max - ew_min) * i / 3
+            y = sub1_top + 14 + (H_REGIME - 14 - 8) * i / 3
+            parts.append(f'<text x="{W-PAD_R+4}" y="{y+3:.1f}" fill="{TEXT_DIM}" font-size="9" font-family="{MONO}">{v:.3f}</text>')
+            parts.append(f'<line x1="{PAD_L}" y1="{y:.1f}" x2="{W-PAD_R}" y2="{y:.1f}" stroke="{GRID}" stroke-width="0.4"/>')
+
+        # 入场信号散点（按 score 着色：高分=金，低分=暗灰）
+        sc_min, sc_max = (0.5, 2.0)
+        for entry_date, scores in sig_by_entry.items():
+            if not (t_min <= entry_date <= t_max):
+                continue
+            avg_score = float(np.mean(scores))
+            color = _score_color(avg_score)
+            x = x_of(entry_date)
+            parts.append(f'<line x1="{x:.1f}" y1="{sub1_top+14}" x2="{x:.1f}" y2="{sub1_top+H_REGIME-4}" '
+                         f'stroke="{color}" stroke-width="0.8" stroke-dasharray="2,2" opacity="0.6"/>')
+
+    # 实际成交信号（在 trade 列表里有的）：用更亮的标记
+    for t in trades:
+        entry_date = pd.Timestamp(t["entry_date"])
+        if not (t_min <= entry_date <= t_max):
+            continue
+        x = x_of(entry_date)
+        outcome_color = "#26a69a" if t["net_pnl"] > 0 else "#ef5350"
+        parts.append(f'<circle cx="{x:.1f}" cy="{sub1_top+18}" r="3.5" fill="{outcome_color}" stroke="#000" stroke-width="0.8"/>')
+
+    # 子图标题 / legend
+    parts.append(f'<text x="{PAD_L}" y="{sub1_top+H_REGIME-2}" fill="{TEXT_DIM}" font-size="9" font-family="{MONO}">'
+                 f'<tspan fill="#42a5f5">━</tspan> 等权指数  '
+                 f'<tspan fill="#ffa726">━</tspan> MA60  '
+                 f'<tspan fill="#26a69a">■</tspan> regime_ok  '
+                 f'<tspan fill="#888">ⓘ</tspan> 候选信号 (按 score 着色)  '
+                 f'<tspan fill="#26a69a">●</tspan>/<tspan fill="#ef5350">●</tspan> 实际成交 (盈/亏)'
+                 f'</text>')
+
+    # ========== 子图 2: 累计权益 ==========
+    sub2_top = PAD_T + H_REGIME + G
+    parts.append(f'<text x="{PAD_L}" y="{sub2_top+10}" fill="{TEXT_BRIGHT}" font-size="11" font-weight="700">累计权益曲线（mark-to-market）</text>')
+
+    if not equity_df.empty:
+        eq = equity_df["equity"].to_numpy()
+        eq_min = float(eq.min())
+        eq_max = float(eq.max())
+        eq_range = max(eq_max - eq_min, 1e-6)
+        eq_min -= eq_range * 0.05
+        eq_max += eq_range * 0.05
+
+        def y2_of(v: float) -> float:
+            return sub2_top + 14 + (eq_max - v) / (eq_max - eq_min) * (H_EQUITY - 14 - 22)
+
+        # 网格
+        for i in range(4):
+            v = eq_max - (eq_max - eq_min) * i / 3
+            y = sub2_top + 14 + (H_EQUITY - 14 - 22) * i / 3
+            parts.append(f'<text x="{W-PAD_R+4}" y="{y+3:.1f}" fill="{TEXT_DIM}" font-size="9" font-family="{MONO}">{v:,.0f}</text>')
+            parts.append(f'<line x1="{PAD_L}" y1="{y:.1f}" x2="{W-PAD_R}" y2="{y:.1f}" stroke="{GRID}" stroke-width="0.4"/>')
+
+        # 初始本金基线
+        y0 = y2_of(INITIAL_CAPITAL)
+        parts.append(f'<line x1="{PAD_L}" y1="{y0:.1f}" x2="{W-PAD_R}" y2="{y0:.1f}" '
+                     f'stroke="#888" stroke-width="0.8" stroke-dasharray="3,2" opacity="0.6"/>')
+        parts.append(f'<text x="{PAD_L+4}" y="{y0-3:.1f}" fill="#888" font-size="9" font-family="{MONO}">初始 {INITIAL_CAPITAL:,.0f}</text>')
+
+        # 权益折线 + 面积
+        path = []
+        for i, (_, r) in enumerate(equity_df.iterrows()):
+            x = x_of(r["date"])
+            y = y2_of(r["equity"])
+            path.append(("M" if i == 0 else "L") + f"{x:.1f},{y:.1f}")
+        # 填充到 baseline
+        fill_path = " ".join(path) + f" L{x_of(equity_df.iloc[-1]['date']):.1f},{y0:.1f} L{x_of(equity_df.iloc[0]['date']):.1f},{y0:.1f} Z"
+        parts.append(f'<path d="{fill_path}" fill="#26a69a" opacity="0.15"/>')
+        parts.append(f'<path d="{" ".join(path)}" stroke="#26a69a" stroke-width="1.6" fill="none"/>')
+
+        # 持仓数（次坐标，右轴）— 用柱状
+        n_max = max(equity_df["n_open"].max(), 1)
+        n_bar_w = (W - PAD_L - PAD_R) / len(equity_df)
+        for _, r in equity_df.iterrows():
+            if r["n_open"] == 0:
+                continue
+            x = x_of(r["date"])
+            bar_h = (r["n_open"] / n_max) * 24
+            parts.append(f'<rect x="{x-n_bar_w*0.4:.1f}" y="{sub2_top+H_EQUITY-22:.1f}" '
+                         f'width="{n_bar_w*0.8:.1f}" height="{bar_h:.1f}" '
+                         f'fill="#fbbf24" opacity="0.5"/>')
+
+        parts.append(f'<text x="{PAD_L}" y="{sub2_top+H_EQUITY-2}" fill="{TEXT_DIM}" font-size="9" font-family="{MONO}">'
+                     f'<tspan fill="#26a69a">━</tspan> 权益（含未实现 PnL）  '
+                     f'<tspan fill="#fbbf24">■</tspan> 持仓数（最高 {n_max}）  '
+                     f'期末 <tspan fill="{TEXT_BRIGHT}">{eq[-1]:,.0f}</tspan>'
+                     f'</text>')
+
+    # ========== 子图 3: 月度 P&L ==========
+    sub3_top = PAD_T + H_REGIME + G + H_EQUITY + G
+    parts.append(f'<text x="{PAD_L}" y="{sub3_top+10}" fill="{TEXT_BRIGHT}" font-size="11" font-weight="700">月度 P&L（已实现）</text>')
+
+    if not monthly_df.empty:
+        m_pnl = monthly_df["net_pnl"].to_numpy()
+        m_max = max(abs(m_pnl.max()), abs(m_pnl.min()), 1)
+        # 对称 Y 轴
+        y_pmax = sub3_top + 14 + 10
+        y_pmin = sub3_top + 14 + (H_MONTHLY - 14 - 22)
+        y_zero = (y_pmax + y_pmin) / 2
+
+        def y3_of(v: float) -> float:
+            return y_zero - (v / m_max) * ((y_pmin - y_zero) * 0.9)
+
+        # 0 线
+        parts.append(f'<line x1="{PAD_L}" y1="{y_zero:.1f}" x2="{W-PAD_R}" y2="{y_zero:.1f}" '
+                     f'stroke="{BORDER}" stroke-width="0.8"/>')
+
+        # 柱
+        n = len(monthly_df)
+        bar_w = (W - PAD_L - PAD_R) / n * 0.7
+        gap = (W - PAD_L - PAD_R) / n * 0.3
+        for i, (_, r) in enumerate(monthly_df.iterrows()):
+            x_center = PAD_L + (W - PAD_L - PAD_R) * (i + 0.5) / n
+            y_bar = y3_of(r["net_pnl"])
+            color = "#26a69a" if r["net_pnl"] >= 0 else "#ef5350"
+            parts.append(f'<rect x="{x_center-bar_w/2:.1f}" y="{min(y_bar, y_zero):.1f}" '
+                         f'width="{bar_w:.1f}" height="{abs(y_bar-y_zero):.1f}" '
+                         f'fill="{color}" opacity="0.8"/>')
+            # X 轴标签
+            parts.append(f'<text x="{x_center:.1f}" y="{sub3_top+H_MONTHLY-2}" '
+                         f'fill="{TEXT_DIM}" font-size="9" font-family="{MONO}" text-anchor="middle">{r["month"][5:]}</text>')
+            # 标签值（柱顶/柱底）
+            label_y = y_bar - 3 if r["net_pnl"] >= 0 else y_bar + 10
+            parts.append(f'<text x="{x_center:.1f}" y="{label_y:.1f}" '
+                         f'fill="{color}" font-size="9" font-family="{MONO}" text-anchor="middle" font-weight="700">'
+                         f'{r["net_pnl"]/1e4:+.1f}万</text>')
+
+        parts.append(f'<text x="{W-PAD_R+4}" y="{y_zero+3:.1f}" fill="{TEXT_DIM}" font-size="9" font-family="{MONO}">0</text>')
+
+    # ========== 共享 X 轴日期 ==========
+    months_xticks = pd.date_range(t_min, t_max, freq="MS")
+    for m in months_xticks:
+        if m < t_min or m > t_max:
+            continue
+        x = x_of(m)
+        parts.append(f'<line x1="{x:.1f}" y1="{sub1_top+H_REGIME-4}" x2="{x:.1f}" y2="{sub3_top+H_MONTHLY-12}" '
+                     f'stroke="{GRID}" stroke-width="0.4" opacity="0.5"/>')
+        parts.append(f'<text x="{x:.1f}" y="{sub3_top+H_MONTHLY+10}" fill="{TEXT_DIM}" font-size="9" '
+                     f'font-family="{MONO}" text-anchor="middle">{m.strftime("%Y-%m")}</text>')
+
+    parts.append('</svg>')
+    return "".join(parts), equity_df, monthly_df
+
+
+def _score_color(score: float) -> str:
+    """候选信号 score → 颜色（金=高分，暗紫=低分）。"""
+    if score >= 1.5:
+        return "#ffd54f"
+    if score >= 1.0:
+        return "#fbbf24"
+    if score >= 0.6:
+        return "#a78bfa"
+    return "#6b7280"
+
+
+# ============================================================================
 # HTML 装配
 # ============================================================================
 
@@ -507,6 +944,8 @@ def render_html(trades: list[dict], con: duckdb.DuckDBPyConnection,
                 "ma5": num("ma5"), "ma10": num("ma10"), "ma20": num("ma20"),
                 "ma60": num("ma60"), "ma120": num("ma120"),
                 "atr14": num("atr14"),
+                "mom120": num("mom120"),
+                "above_ma60_ratio": num("above_ma60_ratio"),
                 "vol_ma20": num("vol_ma20"),
                 "volume": float(row["volume"]),
             })
@@ -537,7 +976,7 @@ def render_html(trades: list[dict], con: duckdb.DuckDBPyConnection,
                     year_start = f"{year}-01-01"
                     year_end = f"{year + 1}-01-01"
                     full_panel = con.execute(
-                        "SELECT thscode, date, open, high, low, close, volume, turnover AS amount "
+                        "SELECT thscode, date, open, high, low, close, volume, amount "
                         "FROM v_daily_qfq WHERE thscode = ? AND date BETWEEN ? AND ? ORDER BY date",
                         [code, year_start, year_end],
                     ).fetchdf()
@@ -563,7 +1002,7 @@ def render_html(trades: list[dict], con: duckdb.DuckDBPyConnection,
 
         # 渲染
         svg = build_chart_svg(candles, local_sig, local_entry, local_exit,
-                              t["exit_reason"], tp_line, sl_line)
+                              t["exit_reason"], tp_line, sl_line, preset)
 
         # 信号条件清单 HTML
         cond_rows = []
@@ -634,12 +1073,31 @@ def render_html(trades: list[dict], con: duckdb.DuckDBPyConnection,
     avg_pnl = total_pnl / n if n else 0
 
     cards_html = "\n".join(cards)
-    return _wrap_html(cards_html, win_rate, avg_pnl, n, tp_count, sl_count, time_count, eod_count, preset)
+    # portfolio 级时间序列汇总图（基于 trades + 市场 panel 重算）
+    if trades:
+        start_date = min(t["entry_date"] for t in trades)
+        end_date = max(t["exit_date"] for t in trades)
+        # 往前推 60 天显示 regime 背景
+        summary_start = (pd.Timestamp(start_date) - pd.Timedelta(days=60)).strftime("%Y-%m-%d")
+        summary_svg, equity_df, monthly_df = build_portfolio_summary_svg(
+            con, trades, preset, summary_start, end_date
+        )
+    else:
+        summary_svg, equity_df, monthly_df = "", pd.DataFrame(), pd.DataFrame()
+    return _wrap_html(cards_html, win_rate, avg_pnl, n, tp_count, sl_count, time_count, eod_count,
+                      preset, summary_svg)
 
 
 def _wrap_html(cards_html: str, win_rate: float, avg_pnl: float, n: int,
                tp_count: int, sl_count: int, time_count: int, eod_count: int,
-               preset: dict) -> str:
+               preset: dict, summary_svg: str = "") -> str:
+    summary_section = ""
+    if summary_svg:
+        summary_section = f"""
+  <h2 style="color:{TEXT_BRIGHT}; font-size:14px; margin: 16px 0 8px;">Portfolio 级时间序列</h2>
+  <div class="summary-section">
+    {summary_svg}
+  </div>"""
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -662,6 +1120,9 @@ def _wrap_html(cards_html: str, win_rate: float, avg_pnl: float, n: int,
   .sum-card .val.gold {{ color: #ffd54f; }}
   .sum-card .val.green {{ color: #26a69a; }}
   .sum-card .val.red {{ color: #ef5350; }}
+
+  .summary-section {{ margin-bottom: 20px; }}
+  .summary-svg {{ width: 100%; height: auto; display: block; border-radius: 4px; }}
 
   details.trade {{ background: {PANEL_BG}; border: 1px solid {BORDER}; border-radius: 6px; margin-bottom: 8px; }}
   details.trade > summary {{
@@ -725,6 +1186,8 @@ def _wrap_html(cards_html: str, win_rate: float, avg_pnl: float, n: int,
     <div class="sum-card"><div class="lbl">总收益</div><div class="val gold">+85.47%</div></div>
   </div>
 
+  {summary_section}
+
   {cards_html}
 
   <div class="footer">
@@ -737,7 +1200,7 @@ def _wrap_html(cards_html: str, win_rate: float, avg_pnl: float, n: int,
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="回测交易 HTML 可视化")
-    ap.add_argument("--preset", default="v5")
+    ap.add_argument("--preset", default="v6")
     ap.add_argument("--trades-csv", default=str(TRADES_CSV))
     ap.add_argument("--out", default=str(OUTPUT_HTML))
     args = ap.parse_args()

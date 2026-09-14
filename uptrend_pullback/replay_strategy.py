@@ -37,7 +37,9 @@ class UpullbackTradeReplay(bt.Strategy):
         entry_bar_idx      entry 当天的 bar 索引（0-based）
         skipped            涨停跳空导致无法买入
         exit_reason        "TP" / "SL" / "time" / "limit_up"
-        target_exit_price  策略决定的退出价（不一定等于实际成交价）
+        target_exit_price  策略决定的退出价（bar N 的触发价，不一定是实际成交价）
+        actual_exit_price  backtrader 实际成交价（bar N+1 OPEN），通过 notify_order 抓取；
+                          若订单尚未成交则为 None。orchestrator 必须用此字段作为 exit_price。
     """
 
     params = dict(
@@ -53,9 +55,13 @@ class UpullbackTradeReplay(bt.Strategy):
         self.skipped: bool = False
         self.exit_reason: str | None = None
         self.target_exit_price: float | None = None
+        # 实际成交价（下一根 bar OPEN）；由 notify_order 在成交时回填
+        self.actual_exit_price: float | None = None
         self.entry_done: bool = False
         self.exit_done: bool = False
         self._entry_price_actual: float | None = None
+        # 跟踪当前挂起的卖出单（用于在 notify_order 中识别"目标 sell 单"）
+        self._pending_exit_order = None
 
     def next(self):
         if self.skipped or self.exit_done:
@@ -114,5 +120,28 @@ class UpullbackTradeReplay(bt.Strategy):
         if exit_price is not None:
             self.target_exit_price = exit_price
             self.exit_reason = reason
-            self.close()  # 市价单，下一根 bar 开盘成交（orchestrator 按 target_exit_price 重算 PnL）
+            order = self.close()  # 市价单，下一根 bar 开盘成交
+            self._pending_exit_order = order
+            # 注意：不在这里 set exit_done，要等 notify_order 确认成交后再 set
+
+    def notify_order(self, order):
+        """卖出单实际成交时回填 actual_exit_price。
+
+        backtrader 的市价单在 next() 调用后还需再等一根 bar 才成交；成交价
+        是 bar N+1 OPEN，不等于决策时看到的 bar N 触发价（target_exit_price）。
+        必须在 notify_order 里捕获真实成交价，否则 exit_price 与 net_pnl
+        会出现 1 根 bar 的口径不一致。
+        """
+        if order is None:
+            return
+        # 只关心我们挂的目标 sell 单
+        if self._pending_exit_order is None or order.ref != self._pending_exit_order.ref:
+            return
+        if order.status == order.Completed:
+            self.actual_exit_price = float(order.executed.price)
             self.exit_done = True
+            self._pending_exit_order = None
+        elif order.status in (order.Canceled, order.Rejected, order.Margin):
+            # 撤单/拒单：标记 done 防止 next() 反复尝试；actual_exit_price 留 None
+            self.exit_done = True
+            self._pending_exit_order = None

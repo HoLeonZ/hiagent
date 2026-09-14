@@ -1,9 +1,9 @@
 """行情读取 — 前复权价 v_daily_qfq。
 
 关键点：
-  - 本库 v_daily* 的成交额列名是 `turnover`（不是 `amount`）。
-    short_reversal/main.py 与 grid.py 里写的是 `amount`，对本库会直接报
-    Binder Error，属于既有 bug，本模块不复制该错误。
+  - v_daily_qfq 实际 schema 直接叫 `amount`（成交额，DOUBLE），没有 turnover 列。
+    早期注释误以为库内叫 turnover，写成 `turnover AS amount` 会触发
+    "Referenced column 'turnover' not found" Binder Error，现已改为直接 SELECT amount。
   - 做多策略必须用前复权价：除权除息日 v_daily 的裸价会凭空跳空下跌，
     在多头回测里会被误判为止损。
 """
@@ -34,7 +34,7 @@ def load_panel(
     """读取 [start - warmup, end] 区间的前复权日线。
 
     返回 columns=[thscode, date, open, high, low, close, volume, amount]，
-    按 (thscode, date) 排序。`amount` 由库内 `turnover` 重命名而来。
+    按 (thscode, date) 排序。`amount` 直接取自 v_daily_qfq.amount（成交额）。
     """
     load_start = (pd.Timestamp(start) - pd.Timedelta(days=warmup_days)).strftime("%Y-%m-%d")
 
@@ -42,8 +42,7 @@ def load_panel(
     try:
         panel = con.execute(
             """
-            SELECT thscode, date, open, high, low, close, volume,
-                   turnover AS amount
+            SELECT thscode, date, open, high, low, close, volume, amount
             FROM v_daily_qfq
             WHERE date BETWEEN ? AND ?
             ORDER BY thscode, date

@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
 
 import backtrader as bt
@@ -39,6 +40,38 @@ from uptrend_pullback.replay_strategy import UpullbackTradeReplay
 logger = logging.getLogger(__name__)
 
 
+def compute_trade_tp_sl(
+    entry_price: float,
+    *,
+    fixed_tp_pct: float,
+    fixed_sl_pct: float,
+    atr_pct: float | None = None,
+    atr_tp_mult: float | None = None,
+    atr_sl_mult: float | None = None,
+    atr_pct_floor: float = 0.01,
+    atr_pct_cap: float = 0.08,
+) -> tuple[float, float]:
+    """由信号日 atr_pct 计算 TP/SL 宽度。
+
+    与 portfolio.py:simulate_portfolio 完全一致：
+      - 默认用 fixed_tp_pct / fixed_sl_pct
+      - 若给了 atr_*_mult，则按信号日 ATR% 自适应：
+        tp = entry_price × (1 + a × atr_tp_mult)
+        sl = entry_price × (1 - a × atr_sl_mult)
+      - atr_pct 先夹到 [floor, cap]
+
+    为什么是「信号日 ATR」：
+      signals.py 在 T 日收盘时算 atr_pct（T 的 high/low/close 此时已知）。
+      T+1 开盘时 atr_pct 已可用，但 T+1 的 high/low 还没发生。
+      用 entry_date(T+1) 当根的 atr_pct 会引入 1 根 bar 的 look-ahead。
+    """
+    if atr_tp_mult is not None and atr_sl_mult is not None and atr_pct is not None \
+            and not (isinstance(atr_pct, float) and math.isnan(atr_pct)):
+        a = min(max(float(atr_pct), atr_pct_floor), atr_pct_cap)
+        return entry_price * (1 + a * atr_tp_mult), entry_price * (1 - a * atr_sl_mult)
+    return entry_price * (1 + fixed_tp_pct), entry_price * (1 - fixed_sl_pct)
+
+
 def _verify_trade_with_backtrader(
     panel: pd.DataFrame,
     thscode: str,
@@ -52,6 +85,11 @@ def _verify_trade_with_backtrader(
     """对单笔交易跑 backtrader，返回 (net_pnl, exit_price_actual)。
 
     若 backtrader 因数据不足或被策略 skip 而未真正下单，返回 (0.0, entry_price)。
+
+    exit_price_actual 取自 strategy.actual_exit_price（notify_order 在卖出单
+    成交时回填的真实成交价，即 bar N+1 OPEN），与 net_pnl 的口径完全一致。
+    若订单已提交但 feed 跑完仍未成交（极少见，给的 max_hold+5 buffer 不够），
+    则退回到 target_exit_price 并记 warning。
     """
     code_data = panel[panel["thscode"] == thscode].sort_values("date")
     if code_data.empty:
@@ -88,7 +126,20 @@ def _verify_trade_with_backtrader(
 
     final_cash = cerebro.broker.getcash()
     net_pnl = final_cash - initial_cash
-    actual_exit = strat.target_exit_price or entry_price
+
+    # 优先用实际成交价（bar N+1 OPEN），保证 exit_price 与 net_pnl 口径一致
+    if strat.actual_exit_price is not None:
+        actual_exit = float(strat.actual_exit_price)
+    else:
+        # 订单已提交但 feed 耗尽未成交（max_hold+5 buffer 不够）；
+        # 这种情况下 net_pnl 也是 0（broker 还没收钱），所以这里记 entry_price
+        # 让 gross/fees 也归零，保持自洽。
+        logger.warning(
+            "_verify_trade_with_backtrader: thscode=%s exit_reason=%s 但订单未成交 "
+            "（feed 长度不足），actual_exit 退回 entry_price",
+            thscode, strat.exit_reason,
+        )
+        actual_exit = entry_price
     return float(net_pnl), float(actual_exit)
 
 
@@ -102,6 +153,9 @@ def run_backtrader_backtest(
     regime_df: pd.DataFrame | None = None,
     initial_capital: float = INITIAL_CAPITAL,
     verify: bool = True,
+    position_sizing: str = "equal",
+    kelly_fraction: float | None = None,
+    max_positions: int | None = None,
 ) -> dict:
     """端到端回测（backtrader 验证版）。
 
@@ -140,12 +194,14 @@ def run_backtrader_backtest(
         tp_pct=p["tp_pct"],
         sl_pct=p["sl_pct"],
         max_hold=p["max_hold"],
-        max_positions=p["max_positions"],
+        max_positions=max_positions if max_positions is not None else p["max_positions"],
         start_date=start,
         end_date=end,
         initial_capital=initial_capital,
         atr_tp_mult=p.get("atr_tp_mult"),
         atr_sl_mult=p.get("atr_sl_mult"),
+        position_sizing=position_sizing,
+        kelly_fraction=kelly_fraction,
     )
 
     if not verify or trades_p1.empty:
@@ -179,20 +235,16 @@ def run_backtrader_backtest(
         if size <= 0:
             new_rows.append(t.to_dict())
             continue
-        tp_p = entry_price * (1 + p["tp_pct"])
-        sl_p = entry_price * (1 - p["sl_pct"])
-        if use_atr:
-            # 从 panel_ind 取该股该日的 atr_pct
-            sub = panel_ind[
-                (panel_ind["thscode"] == t["thscode"])
-                & (panel_ind["date"] == t["entry_date"])
-            ]
-            if not sub.empty:
-                a = float(sub.iloc[0].get("atr_pct", np.nan))
-                if not np.isnan(a):
-                    a = min(max(a, 0.01), 0.08)
-                    tp_p = entry_price * (1 + a * atr_tp)
-                    sl_p = entry_price * (1 - a * atr_sl)
+        # 用 compute_trade_tp_sl 取 tp/sl 宽度 —— 单点修复，去掉"读 entry_date atr_pct"的穿越路径
+        atr_pct_trade = float(t.get("atr_pct", np.nan)) if "atr_pct" in trades_p1.columns else np.nan
+        tp_p, sl_p = compute_trade_tp_sl(
+            entry_price,
+            fixed_tp_pct=p["tp_pct"],
+            fixed_sl_pct=p["sl_pct"],
+            atr_pct=atr_pct_trade,
+            atr_tp_mult=atr_tp if use_atr else None,
+            atr_sl_mult=atr_sl if use_atr else None,
+        )
 
         net_pnl_bt, exit_px_bt = _verify_trade_with_backtrader(
             panel, t["thscode"], pd.Timestamp(t["entry_date"]),
@@ -217,6 +269,7 @@ def run_backtrader_backtest(
             "fees": fees,
             "net_pnl": net_pnl_bt,
             "net_return": net_return,
+            "atr_pct": float(t.get("atr_pct", np.nan)) if "atr_pct" in trades_p1.columns else np.nan,
         })
         equity_delta += net_pnl_bt - float(t["net_pnl"])
 

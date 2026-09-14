@@ -75,7 +75,7 @@ def summarize(df: pd.DataFrame) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="逐年滚动验证")
-    ap.add_argument("--preset", default="v1")
+    ap.add_argument("--preset", default="v6")
     ap.add_argument("--first-year", type=int, default=2017)
     ap.add_argument("--last-year", type=int, default=2026)
     ap.add_argument("--db-path", default=str(Path.home() / "code/Financial-API/data/market.duckdb"))
