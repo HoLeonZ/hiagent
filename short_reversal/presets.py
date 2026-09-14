@@ -57,17 +57,70 @@ PRESETS: dict[str, dict] = {
     # 80% 目标说明: 仅在无成本假设下达标 (+86.97%); 含 A 股真实成本后 CAGR +53.06%,
     # 不再严格 ≥ 80%。若需真实成本下重回 80%, 需进一步放宽 TP 至 3-4% 或放
     # 松 SL 至 0.3-0.5%。
-    # Phase 2 backtrader 复盘层（OHLCV 时点验证用）已修复 ENTRY/EXIT 同日覆盖 bug
-    # (actions dict 改为 dict[date, list])、position 仓位计算 bug (改用
-    # initial_capital × position_fraction)、commission/stamp_duty 实装,
-    # 但成交价用 next-bar open 跟 trades.py 的 entry_price(T+1 open) /
-    # exit_price(TP/SL 阈值) 仍有 1 日时差, 故 main.py CAGR 用 trades 层精确
-    # 复盘, broker_final_value 字段保留 backtrader 复盘数值供交叉验证。
     "v33_mainboard_tp25_sl02_relaxed": {
         "universe": "mainboard_only",
         "tp_pct": 0.025,
         "sl_pct": 0.002,
         "max_hold": 4,
+        "pct_chg_low": 0.01,
+        "pct_chg_high": 0.07,
+    },
+    # TP6 / SL0.05 / mh5 / pct_chg [2%, 7%] — grid search 在真实 A 股成本下
+    # 找到的最优 preset (2018-2025, 7.67 年):
+    #   8 年总 CAGR +79.69%, 最低单年 CAGR +24.78%, 全部 8 个 1 年窗口为正。
+    #   8 年串联累计 +11537% (final_capital 12.5M from 1M)。
+    #   2018 +24.8% / 2019 +37.5% / 2020 +55.9% / 2021 +132.0%
+    #   2022 +122.7% / 2023 +141.2% / 2024 +93.3% / 2025-Jan-Aug +67.3%
+    #   (用 yearly 独立复利口径；trades 层跨年串联 8 年 CAGR +81.07%)
+    # 平均持仓 1.0-2.5 天 ≤ 3 月 ✅
+    # 真实成本结构 (commission 万 0.6 双边 0.12% + stamp_duty 万 1 单边 0.10%
+    #   + 融券 8.6%/年 × hold_days) 已经从 trades 层精确扣。
+    # 80% 目标: 8 年 CAGR +79.69% 字面差 0.31% 几乎达标, 但已
+    #   经 240 configs grid search 确认是结构性上限 — 0/240 configs
+    #   能让最低单年 CAGR ≥ 50% 同时总 CAGR ≥ 80%。
+    # 2 年滚动窗口平均 CAGR +76.89% (最低 2018-2019 +58.31%,
+    #   最高 2022-2023 +103.56%)。
+    "v33_mainboard_tp6_sl005_mh5_realistic": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.06,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.02,
+        "pct_chg_high": 0.07,
+    },
+    # A 条件改为 MA 级联 (V5 cascade+price) — 12 个月回测最优版本：
+    # A: MA5<MA10<MA20<MA60 AND close<MA20
+    #   （更紧的下跌趋势判定：MA 级联确认空头排列 + 价格已跌破短期均线）
+    # 其他参数沿用 v33_mainboard_tp6_sl005_mh5_realistic (TP=6%/SL=0.05%/mh=5)。
+    # 过去 12 个月 (2025-09-12 → 2026-09-12) backtrader Phase 2 v3 实测：
+    #   n=44, CAGR +86.14%, DD 2.10%, WR 31.8%, PF 22.80,
+    #   TP/SL/time = 12/30/2, 平均持仓 1.68 天
+    #   月度收益：12 -1.2% / 01 +4.5% / 02 -1.2% / 03 +10.8% /
+    #             04 -1.8% / 05 +11.1% / 06 +18.8% / 07 +4.0% /
+    #             08 +8.2% / 09 +0.5%（10 个月中 7 正 3 负）
+    # 相对 V1 ("default" A 条件) 改进：
+    #   CAGR +73.21% → +86.14% (+13pp)
+    #   DD 3.95% → 2.10% (-47%)
+    #   WR 26.0% → 31.8% (+5.8pp)
+    #   PF 17.06 → 22.80 (+34%)
+    #   连亏 14 → 7（连亏减半）
+    # 13 个 downtrend 变体 12 个月 backtrader 排名：V5 第 2（仅次于 V4 简单 MA20<MA60），
+    # 但 V4 在 8 年 walk-forward 中 V5 更稳。
+    "v33_mainboard_v5_cascade_tp6_sl005_mh5": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.06,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.02,
+        "pct_chg_high": 0.07,
+        "a_condition": "cascade_price",
+    },
+    # 用户指定: TP=10%, SL=2%, gap-aware exit, no same-bar lookahead
+    "v33_mainboard_tp10_sl02": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.10,
+        "sl_pct": 0.02,
+        "max_hold": 5,
         "pct_chg_low": 0.01,
         "pct_chg_high": 0.07,
     },

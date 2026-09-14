@@ -1,7 +1,12 @@
-"""short_reversal — A 股下降趋势反弹做空策略（v33 重写版）。
+"""short_reversal — A 股下降趋势反弹做空策略（v3 事件驱动无 look-ahead 版）。
 
-独立分层架构：
-  universe → signals → trades (Phase 1) → backtrader (Phase 2) → 指标
+架构：
+  presets    ─┐
+  universe   ─┼→ engine.run_backtest_v3 → metrics
+  indicators_bt ─┤  (bt.indicators.* + 自定义 bt.Indicator 子类)
+  strategy   ─┘  (Phase3V3Strategy: next() bar-by-bar 评估 5 条件)
+
+backtrader 源码（pip 装的 1.9.78.123）保持原封不动，只走子类化扩展。
 """
 from __future__ import annotations
 
