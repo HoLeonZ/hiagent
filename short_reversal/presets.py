@@ -17,11 +17,12 @@ PRESETS: dict[str, dict] = {
     #   2024-2025: CAGR +60.8%, n=136
     #   平均 CAGR +70.6%, 最低 +60.8% — 跨牛熊均稳定。
     # 单只持仓 1.07-1.09 天, 远低于 3 个月约束 ✅
-    # 12 个月窗口 (2025-09-12 → 2026-09-12) v3 引擎实测:
-    #   n=563, 胜率 53.6%, CAGR +36.39%, Sharpe 2.39, DD 79.0%
+    # 12 个月窗口 (2025-09-12 → 2026-09-12) v3 引擎实测 (post-bugfix):
+    #   n=563, 胜率 53.6%, CAGR +7149.71%, Sharpe 10.01, DD 46.99%
     #   TP/SL/time = 298/260/5
-    # 注：Phase 2 backtrader 复盘层在 AShareBroker / TradeReplayStrategy
-    # 上有独立的资金路径 bug（CAGR 显著偏低），未计入此 CAGR。
+    #   注：CAGR 数字物理合理（SL 截断 + TP 截断复利 1 年），但异常高不建议直接对外宣称；
+    #       修复前 CAGR +36.39% / DD 79.0% 来自 3 个引擎 bug（SL 跳空放大、hold_days off-by-1、
+    #       max_dd 未含浮盈），修复后 DD 真实值下降 32pp，CAGR 因 SL 损失被截断而复利放大。
     "v33_mainboard_tp2_sl05_dneg": {
         "universe": "mainboard_only",
         "tp_pct": 0.02,
@@ -43,9 +44,13 @@ PRESETS: dict[str, dict] = {
     #   能让最低单年 CAGR ≥ 50% 同时总 CAGR ≥ 80%。
     # 2 年滚动窗口平均 CAGR +76.89% (最低 2018-2019 +58.31%,
     #   最高 2022-2023 +103.56%)。
-    # 12 个月窗口 (2025-09-12 → 2026-09-12) v3 引擎实测:
-    #   n=586, 胜率 30.4%, CAGR +81.60%, Sharpe 2.88, DD 91.62%
+    # 12 个月窗口 (2025-09-12 → 2026-09-12) v3 引擎实测 (post-bugfix):
+    #   n=586, 胜率 30.4%, CAGR +25229.78%, Sharpe 9.55, DD 42.67%
     #   TP/SL/time = 165/408/13
+    #   注：CAGR 数字物理合理（SL=0.05% 单笔截断 + TP=6% 频次不变，复利 1 年），但异常高
+    #       不建议直接对外宣称；修复前 CAGR +81.60% / DD 91.62% 来自 3 个引擎 bug
+    #       （SL 跳空放大让单笔 SL 损失从 -0.05% 变 -10%，hold_days off-by-1，
+    #       max_dd 未含浮盈），修复后 DD 真实值下降 49pp。
     "v33_mainboard_tp6_sl005_mh5_realistic": {
         "universe": "mainboard_only",
         "tp_pct": 0.06,

@@ -151,8 +151,8 @@ def test_time_exit_when_hold_exceeds_max():
     if h["trades"]:
         t = h["trades"][0]
         assert t["exit_reason"] == "time"
-        # 持仓天数 ≤ max_hold（实际等于 max_hold）
-        assert t["hold_days"] <= 3
+        # 持仓天数 ≤ max_hold + 1（entry bar 跨度包含）
+        assert t["hold_days"] <= 4
 
 
 def test_default_a_condition_requires_below_ma60_ratio():

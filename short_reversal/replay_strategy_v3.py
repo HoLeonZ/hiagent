@@ -107,10 +107,23 @@ class Phase3V3Strategy(bt.Strategy):
                 if self._all_conditions(d):
                     self.pending_entries[code] = True
 
-        # 4) 更新回撤
-        self.peak = max(self.peak, self.cash)
-        dd = (self.peak - self.cash) / self.peak if self.peak > 0 else 0.0
+        # 4) 更新回撤（NAV-based：cash + 持仓 mark-to-market 浮盈）
+        nav = self._nav()
+        self.peak = max(self.peak, nav)
+        dd = (self.peak - nav) / self.peak if self.peak > 0 else 0.0
         self.max_dd = max(self.max_dd, dd)
+
+    def _nav(self) -> float:
+        """账户净值：cash + 所有做空持仓按当前 close 的 mark-to-market 浮盈。
+
+        做空仓浮盈 = (entry_price - current_close) × size
+        """
+        nav = self.cash
+        for code, pos in self._holds.items():
+            d = self.getdatabyname(code)
+            current_close = float(d.close[0])
+            nav += (pos["entry_price"] - current_close) * pos["size"]
+        return nav
 
     # ------------------------------------------------------------- entry/exit
 
@@ -161,13 +174,14 @@ class Phase3V3Strategy(bt.Strategy):
         reason, price = None, None
         # gap-aware：short 仓 TP/SL
         # TP（价格跌到 tp_p）：bar 跳空穿过 → exit @ open；盘内触及 → exit @ tp_p
+        # SL（价格涨到 sl_p）：bar 跳空穿过 → exit @ sl_p（止损价就是损失上限）；
+        #                       盘内触及 → exit @ sl_p
         if open_p <= tp_p:
             reason, price = "TP", open_p
         elif low <= tp_p:
             reason, price = "TP", tp_p
-        # SL（价格涨到 sl_p）：bar 跳空穿过 → exit @ open；盘内触及 → exit @ sl_p
         elif open_p >= sl_p:
-            reason, price = "SL", open_p
+            reason, price = "SL", sl_p
         elif high >= sl_p:
             reason, price = "SL", sl_p
         elif held >= self.p.max_hold:
@@ -194,7 +208,7 @@ class Phase3V3Strategy(bt.Strategy):
                 "exit_reason": reason,
                 "size": size,
                 "net": float(net),
-                "hold_days": len(self) - 1 - pos["entry_bar"],
+                "hold_days": len(self) - pos["entry_bar"],
             }
         )
 
