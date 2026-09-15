@@ -24,7 +24,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="short_reversal v3 事件驱动 backtest（无 look-ahead）"
     )
-    parser.add_argument("--preset", default="v33_mainboard")
+    parser.add_argument("--preset", default="v33_mainboard_tp6_sl005_mh5_realistic")
     parser.add_argument("--start", default="2025-09-12")
     parser.add_argument("--end", default="2026-09-12")
     parser.add_argument("--db-path", default=str(DEFAULT_DB))

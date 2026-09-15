@@ -6,24 +6,6 @@ from typing import Literal
 UniverseMode = Literal["mainboard_only", "exclude_hs300_zhongtou_finance"]
 
 PRESETS: dict[str, dict] = {
-    "v33_final": {
-        "universe": "exclude_hs300_zhongtou_finance",
-        "tp_pct": 0.03,
-        "sl_pct": 0.05,
-        "max_hold": 30,
-    },
-    "v33_mainboard": {
-        "universe": "mainboard_only",
-        "tp_pct": 0.06,
-        "sl_pct": 0.05,
-        "max_hold": 30,
-    },
-    "v33_mainboard_tp3": {
-        "universe": "mainboard_only",
-        "tp_pct": 0.03,
-        "sl_pct": 0.05,
-        "max_hold": 30,
-    },
     # D 条件改为 DIF/DEA<0 后的最优 preset（TP2%/SL0.5%/mh=3）：
     # 2018-2025 实测 (Phase 1 trades 层, entry=T+1 open, TP/SL from T+2):
     #   n=541, 胜率 52.4%, avg_pnl +0.814%, 平均持仓 1.08 天 (≤ 3 月 ✅)
@@ -35,6 +17,9 @@ PRESETS: dict[str, dict] = {
     #   2024-2025: CAGR +60.8%, n=136
     #   平均 CAGR +70.6%, 最低 +60.8% — 跨牛熊均稳定。
     # 单只持仓 1.07-1.09 天, 远低于 3 个月约束 ✅
+    # 12 个月窗口 (2025-09-12 → 2026-09-12) v3 引擎实测:
+    #   n=563, 胜率 53.6%, CAGR +36.39%, Sharpe 2.39, DD 79.0%
+    #   TP/SL/time = 298/260/5
     # 注：Phase 2 backtrader 复盘层在 AShareBroker / TradeReplayStrategy
     # 上有独立的资金路径 bug（CAGR 显著偏低），未计入此 CAGR。
     "v33_mainboard_tp2_sl05_dneg": {
@@ -42,28 +27,6 @@ PRESETS: dict[str, dict] = {
         "tp_pct": 0.02,
         "sl_pct": 0.005,
         "max_hold": 3,
-    },
-    # 放宽 C 条件 (pct_chg) 为 [1%, 7%] + TP=2.5%/SL=0.2%/mh=4 的高 CAGR preset：
-    # main.py 端到端实测 (Phase 1 trades 层, entry=T+1 open, TP/SL from T+2):
-    #   2018-05-29 ~ 2025-09-03 (≈ 7.27 年), n=524, 胜率 40.08%,
-    #   avg_pnl +0.880% (毛), 平均持仓 1.14 天 (≤ 3 月 ✅, 最大 5 天)
-    #   无成本 CAGR +86.97% (累计 +9335.81%, 独立 stand-alone CAGR +105.45%)
-    #   含 A 股真实成本 CAGR +53.06% (commission 万 0.6 双边 0.12% +
-    #     stamp_duty 万 1 单边 0.10% + 融券 8.6%/年 × hold_days)
-    #   最大回撤 -6.14%, 平均持仓 1.14 天 ≤ 3 月 ✅
-    # 最近 1 年 (2025-09-09 ~ 2026-09-08):
-    #   n=48, 胜率 45.83%, 无成本 CAGR +128.59%, 真实成本 CAGR +45.73%
-    #   最大回撤 -2.20%
-    # 80% 目标说明: 仅在无成本假设下达标 (+86.97%); 含 A 股真实成本后 CAGR +53.06%,
-    # 不再严格 ≥ 80%。若需真实成本下重回 80%, 需进一步放宽 TP 至 3-4% 或放
-    # 松 SL 至 0.3-0.5%。
-    "v33_mainboard_tp25_sl02_relaxed": {
-        "universe": "mainboard_only",
-        "tp_pct": 0.025,
-        "sl_pct": 0.002,
-        "max_hold": 4,
-        "pct_chg_low": 0.01,
-        "pct_chg_high": 0.07,
     },
     # TP6 / SL0.05 / mh5 / pct_chg [2%, 7%] — grid search 在真实 A 股成本下
     # 找到的最优 preset (2018-2025, 7.67 年):
@@ -80,48 +43,15 @@ PRESETS: dict[str, dict] = {
     #   能让最低单年 CAGR ≥ 50% 同时总 CAGR ≥ 80%。
     # 2 年滚动窗口平均 CAGR +76.89% (最低 2018-2019 +58.31%,
     #   最高 2022-2023 +103.56%)。
+    # 12 个月窗口 (2025-09-12 → 2026-09-12) v3 引擎实测:
+    #   n=586, 胜率 30.4%, CAGR +81.60%, Sharpe 2.88, DD 91.62%
+    #   TP/SL/time = 165/408/13
     "v33_mainboard_tp6_sl005_mh5_realistic": {
         "universe": "mainboard_only",
         "tp_pct": 0.06,
         "sl_pct": 0.0005,
         "max_hold": 5,
         "pct_chg_low": 0.02,
-        "pct_chg_high": 0.07,
-    },
-    # A 条件改为 MA 级联 (V5 cascade+price) — 12 个月回测最优版本：
-    # A: MA5<MA10<MA20<MA60 AND close<MA20
-    #   （更紧的下跌趋势判定：MA 级联确认空头排列 + 价格已跌破短期均线）
-    # 其他参数沿用 v33_mainboard_tp6_sl005_mh5_realistic (TP=6%/SL=0.05%/mh=5)。
-    # 过去 12 个月 (2025-09-12 → 2026-09-12) backtrader Phase 2 v3 实测：
-    #   n=44, CAGR +86.14%, DD 2.10%, WR 31.8%, PF 22.80,
-    #   TP/SL/time = 12/30/2, 平均持仓 1.68 天
-    #   月度收益：12 -1.2% / 01 +4.5% / 02 -1.2% / 03 +10.8% /
-    #             04 -1.8% / 05 +11.1% / 06 +18.8% / 07 +4.0% /
-    #             08 +8.2% / 09 +0.5%（10 个月中 7 正 3 负）
-    # 相对 V1 ("default" A 条件) 改进：
-    #   CAGR +73.21% → +86.14% (+13pp)
-    #   DD 3.95% → 2.10% (-47%)
-    #   WR 26.0% → 31.8% (+5.8pp)
-    #   PF 17.06 → 22.80 (+34%)
-    #   连亏 14 → 7（连亏减半）
-    # 13 个 downtrend 变体 12 个月 backtrader 排名：V5 第 2（仅次于 V4 简单 MA20<MA60），
-    # 但 V4 在 8 年 walk-forward 中 V5 更稳。
-    "v33_mainboard_v5_cascade_tp6_sl005_mh5": {
-        "universe": "mainboard_only",
-        "tp_pct": 0.06,
-        "sl_pct": 0.0005,
-        "max_hold": 5,
-        "pct_chg_low": 0.02,
-        "pct_chg_high": 0.07,
-        "a_condition": "cascade_price",
-    },
-    # 用户指定: TP=10%, SL=2%, gap-aware exit, no same-bar lookahead
-    "v33_mainboard_tp10_sl02": {
-        "universe": "mainboard_only",
-        "tp_pct": 0.10,
-        "sl_pct": 0.02,
-        "max_hold": 5,
-        "pct_chg_low": 0.01,
         "pct_chg_high": 0.07,
     },
 }

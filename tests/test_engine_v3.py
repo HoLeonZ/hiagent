@@ -30,7 +30,9 @@ pytestmark = pytest.mark.skipif(_real_db() is None, reason=SKIP_REASON)
 def test_end_to_end_one_preset():
     db = _real_db()
     assert db is not None
-    m = run_backtest_v3("v33_mainboard", "2025-09-12", "2026-09-12", db)
+    m = run_backtest_v3(
+        "v33_mainboard_tp6_sl005_mh5_realistic", "2025-09-12", "2026-09-12", db
+    )
     # 字段齐全
     expected_keys = {
         "preset", "start", "end", "trades", "trades_count",
@@ -49,28 +51,31 @@ def test_end_to_end_one_preset():
         assert {"thscode", "entry_price", "exit_price", "exit_reason",
                 "size", "net", "hold_days"}.issubset(t.keys())
         assert t["exit_reason"] in ("TP", "SL", "time")
-    # 数值合理（v33_mainboard 严格档在去除 lookahead 后可能亏光，只校验量级不爆仓）
-    assert m["final_capital"] >= -1_000_000.0  # 不会亏光超过初始本金（亏光时 cagr=-1.0）
-    assert -1.0 <= m["cagr"] < 100.0
+    # 数值合理（保留的 preset 在 12 个月窗口下 CAGR 为正）
+    assert m["final_capital"] > 0
+    assert 0.0 <= m["cagr"] < 100.0
     assert 0.0 <= m["max_dd"] <= 1.0
     assert 0.0 <= m["win_rate"] <= 1.0
 
 
-def test_cascade_preset_more_strict_than_default():
-    """V5 cascade preset 应触发交易（TP_pct=6% 较激进，12 个月窗口）。"""
+def test_high_cagr_preset_profitable():
+    """tp6_sl005_mh5_realistic preset 应触发交易且 CAGR 为正。"""
     db = _real_db()
     assert db is not None
-    m = run_backtest_v3("v33_mainboard_v5_cascade_tp6_sl005_mh5",
-                         "2025-09-12", "2026-09-12", db)
-    # V5 cascade 应至少有少量交易（v2 历史是 64 笔）
+    m = run_backtest_v3(
+        "v33_mainboard_tp6_sl005_mh5_realistic", "2025-09-12", "2026-09-12", db
+    )
+    # 高 CAGR preset 在 12 个月窗口下应有交易且总收益为正
     assert m["trades_count"] > 0
-    # 流动性窗口内 am60 = 3e7~3e8 → 应能匹配
+    assert m["final_capital"] > 1_000_000.0
 
 
 def test_short_window_returns_empty():
     """窗口太短（5 天）→ 不会有交易（MA60 warmup 都不够）。"""
     db = _real_db()
     assert db is not None
-    m = run_backtest_v3("v33_mainboard", "2025-09-12", "2025-09-19", db)
+    m = run_backtest_v3(
+        "v33_mainboard_tp6_sl005_mh5_realistic", "2025-09-12", "2025-09-19", db
+    )
     assert m["trades_count"] == 0
     assert m["final_capital"] == pytest.approx(1_000_000.0, abs=1.0)

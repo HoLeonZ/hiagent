@@ -30,5 +30,6 @@ __pycache__/
 
 # Strategy run artifacts
 uptrend_pullback/results/
+short_reversal/results/
 data/exports/
 figures/

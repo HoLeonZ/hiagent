@@ -7,14 +7,8 @@ from short_reversal.presets import PRESETS, get_preset
 
 
 EXPECTED_KEYS = {
-    "v33_final",
-    "v33_mainboard",
-    "v33_mainboard_tp3",
     "v33_mainboard_tp2_sl05_dneg",
-    "v33_mainboard_tp25_sl02_relaxed",
     "v33_mainboard_tp6_sl005_mh5_realistic",
-    "v33_mainboard_v5_cascade_tp6_sl005_mh5",
-    "v33_mainboard_tp10_sl02",
 }
 
 
@@ -35,7 +29,7 @@ def test_preset_required_fields(name):
 
 
 def test_get_preset_returns_dict():
-    p = get_preset("v33_mainboard")
+    p = get_preset("v33_mainboard_tp6_sl005_mh5_realistic")
     assert p["universe"] == "mainboard_only"
     assert p["tp_pct"] == 0.06
 

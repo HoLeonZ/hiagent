@@ -20,19 +20,19 @@ import pandas as pd
 
 DB_PATH = Path("/Users/zhl/code/Financial-API/data/market.duckdb")
 DEFAULT_TRADES_FILE = Path(
-    "short_reversal/results/v3_v33_mainboard_tp25_sl02_relaxed.json"
+    "short_reversal/results/v33_mainboard_tp6_sl005_mh5_realistic.json"
 )
 DEFAULT_OUTPUT = Path("short_reversal/results/trades_detail.html")
 
 BACKTEST_START = "2025-09-12"
 BACKTEST_END = "2026-09-12"
 
-# 5 条件参数（v33_mainboard preset 默认）
+# 5 条件参数（v33_mainboard_tp6_sl005_mh5_realistic preset 默认）
 LIQ_LOW = 3e7
 LIQ_HIGH = 3e8
 UP_STREAK_LOW = 3
 UP_STREAK_HIGH = 10
-PCT_CHG_LOW = 0.01  # relaxed preset
+PCT_CHG_LOW = 0.02
 PCT_CHG_HIGH = 0.07
 
 
