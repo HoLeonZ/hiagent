@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>D 条件 · MACD 动能衰减 · short_reversal 视觉化</title>
+<style>
+  :root {
+    --surface-1:      #fcfcfb;
+    --surface-2:      #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+
+    /* categorical (validated) */
+    --series-1:       #2a78d6;   /* DIF    — blue      */
+    --series-2:       #eb6834;   /* DEA    — orange    */
+    --series-3:       #1baf7a;   /* trigger fill — aqua */
+    --emph-mute:      #c3c2b7;   /* de-emphasis (price + bar) */
+    --status-good:    #0ca30c;
+    --status-critical:#d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      --surface-1:    #1a1a19;
+      --surface-2:    #0d0d0d;
+      --text-primary: #ffffff;
+      --text-secondary:#c3c2b7;
+      --text-muted:   #898781;
+      --gridline:     #2c2c2a;
+      --baseline:     #383835;
+      --border:       rgba(255,255,255,0.10);
+      --series-1:     #3987e5;
+      --series-2:     #d95926;
+      --series-3:     #199e70;
+      --emph-mute:    #52514e;
+    }
+  }
+  :root[data-theme="dark"] {
+    --surface-1:    #1a1a19;
+    --surface-2:    #0d0d0d;
+    --text-primary: #ffffff;
+    --text-secondary:#c3c2b7;
+    --text-muted:   #898781;
+    --gridline:     #2c2c2a;
+    --baseline:     #383835;
+    --border:       rgba(255,255,255,0.10);
+    --series-1:     #3987e5;
+    --series-2:     #d95926;
+    --series-3:     #199e70;
+    --emph-mute:    #52514e;
+  }
+
+  html, body { background: var(--surface-2); color: var(--text-primary);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; }
+  .viz-root {
+    color-scheme: light;
+    background: var(--surface-1);
+    max-width: 1080px;
+    margin: 24px auto;
+    padding: 24px 28px 32px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  header.viz-head { margin-bottom: 16px; }
+  h1 {
+    font-size: 20px; margin: 0 0 4px; font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .subtitle { color: var(--text-secondary); font-size: 13px; margin: 0; }
+
+  /* rule + summary */
+  .rule-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+    margin: 14px 0 18px;
+    font-size: 13px;
+  }
+  .rule-card code {
+    font: 12px/1.4 ui-monospace, "SF Mono", Menlo, monospace;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--text-primary);
+  }
+  .rule-card .pill {
+    display: inline-block;
+    font: 11px/1 ui-monospace, "SF Mono", Menlo, monospace;
+    padding: 3px 8px;
+    border-radius: 999px;
+    margin-right: 6px;
+    color: var(--text-primary);
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+  }
+  .pill.a { color: #fff; background: var(--series-1); border-color: transparent; }
+  .pill.b { color: #fff; background: var(--series-2); border-color: transparent; }
+  .pill.d { color: #fff; background: var(--series-3); border-color: transparent; }
+
+  /* chart */
+  .chart-wrap { position: relative; }
+  svg.chart { width: 100%; height: auto; display: block; }
+  .axis text { fill: var(--text-muted); font: 11px ui-monospace, monospace; }
+  .axis line, .axis path { stroke: var(--baseline); }
+  .grid line { stroke: var(--gridline); stroke-width: 1; }
+  .price-line { fill: none; stroke: var(--emph-mute); stroke-width: 1.5; }
+  .dif-line  { fill: none; stroke: var(--series-1); stroke-width: 2; }
+  .dea-line  { fill: none; stroke: var(--series-2); stroke-width: 2; stroke-dasharray: none; }
+  .macd-bar  { fill: var(--emph-mute); opacity: 0.55; }
+  .macd-bar.neg { fill: var(--status-critical); opacity: 0.18; }
+  .zero-line { stroke: var(--baseline); stroke-width: 1; }
+  .trigger-band { fill: var(--series-3); opacity: 0.16; }
+
+  /* entry marker */
+  .entry-marker { stroke: var(--status-critical); stroke-width: 1.5; }
+  .entry-label  { fill: var(--status-critical); font: 600 12px system-ui, sans-serif; }
+
+  /* annotations on chart */
+  .anno-text {
+    fill: var(--text-primary);
+    font: 600 12px system-ui, sans-serif;
+  }
+  .anno-text small { fill: var(--text-secondary); font-weight: 400; }
+  .anno-line { stroke: var(--text-secondary); stroke-width: 1; fill: none; }
+
+  /* legend */
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 14px;
+    margin: 6px 0 18px;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+  .legend .item { display: inline-flex; align-items: center; gap: 6px; }
+  .legend .swatch { width: 14px; height: 14px; border-radius: 2px; }
+  .legend .swatch.line-dif { background: var(--series-1); height: 2px; }
+  .legend .swatch.line-dea { background: var(--series-2); height: 2px; }
+  .legend .swatch.line-price { background: var(--emph-mute); height: 2px; }
+  .legend .swatch.bar { background: var(--emph-mute); height: 12px; width: 8px; border-radius: 1px; }
+  .legend .swatch.band { background: var(--series-3); opacity: 0.4; height: 12px; }
+  .legend .swatch.entry { background: var(--status-critical); height: 12px; width: 2px; border-radius: 0; }
+
+  /* tooltip */
+  .tip {
+    position: absolute;
+    pointer-events: none;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font: 12px ui-monospace, monospace;
+    color: var(--text-primary);
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    min-width: 160px;
+    opacity: 0; transition: opacity 80ms ease;
+    z-index: 10;
+  }
+  .tip .tip-title { font-weight: 600; font-size: 12px; margin-bottom: 4px; }
+  .tip .tip-row { display: flex; justify-content: space-between; gap: 8px; padding: 1px 0; }
+  .tip .tip-row .k { color: var(--text-secondary); }
+  .tip .tip-row .v { font-variant-numeric: tabular-nums; }
+  .tip .tip-row .key-line {
+    display: inline-block; width: 10px; height: 2px; vertical-align: middle; margin-right: 4px;
+  }
+
+  /* explanation panel below chart */
+  .explainer {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    margin-top: 20px;
+  }
+  .explainer .card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+  .explainer .card h3 {
+    margin: 0 0 6px; font-size: 13px; font-weight: 600;
+    color: var(--text-primary);
+  }
+  .explainer .card .num {
+    display: inline-block; width: 18px; height: 18px; line-height: 18px;
+    border-radius: 4px; background: var(--text-primary); color: var(--surface-1);
+    text-align: center; font-size: 11px; font-weight: 600; margin-right: 6px;
+  }
+  .explainer .card p { margin: 4px 0; color: var(--text-secondary); font-size: 12px; }
+  .explainer .card code {
+    font: 11px ui-monospace, "SF Mono", Menlo, monospace;
+    color: var(--text-primary);
+  }
+
+  footer.meta {
+    margin-top: 18px;
+    font-size: 11px;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+  }
+  @media (max-width: 720px) {
+    .explainer { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<main class="viz-root" data-palette="#2a78d6,#eb6834,#1baf7a">
+  <h1>D 条件 · MACD 动能衰减</h1>
+  <p class="subtitle">short_reversal 5 入场条件之一 · 仅做空策略 · 事件驱动 v3 引擎</p>
+
+  <div class="rule-card">
+    <span class="pill d">D</span>
+    <code>DIF &lt; 0 &nbsp;∧&nbsp; DEA &lt; 0 &nbsp;∧&nbsp; |DIF − DEA| &lt; |prev_DIF − prev_DEA|</code>
+    &nbsp;·&nbsp; <strong>空头反弹到顶、动能衰减</strong>
+    <br />
+    <small style="color: var(--text-secondary);">
+      与 条件 A (close &lt; MA60 ∧ below_ma60_ratio_60 ≥ 0.6) +
+      B (up_streak ∈ [3,10]) +
+      C (pct_chg ∈ [0.02, 0.07]) +
+      E (am60 ∈ [3e7, 3e8]) 同时成立，触发做空。
+    </small>
+  </div>
+
+  <div class="legend">
+    <span class="item"><span class="swatch line-price"></span>close（背景）</span>
+    <span class="item"><span class="swatch line-dif"></span>DIF</span>
+    <span class="item"><span class="swatch line-dea"></span>DEA</span>
+    <span class="item"><span class="swatch bar"></span>MACD bar (DIF−DEA)</span>
+    <span class="item"><span class="swatch band"></span>D 条件触发区</span>
+    <span class="item"><span class="swatch entry"></span>做空入场点</span>
+  </div>
+
+  <div class="chart-wrap">
+    <svg class="chart" id="chart" viewBox="0 0 1024 460" preserveAspectRatio="xMidYMid meet"
+         aria-label="MACD 动能衰减图示"></svg>
+    <div class="tip" id="tip"></div>
+  </div>
+
+  <div class="explainer">
+    <div class="card">
+      <h3><span class="num">1</span>DIF &lt; 0</h3>
+      <p>差离值在零线下方 — 价格处于 EMA12 之下，短期趋势仍偏弱。</p>
+      <p><code>MACD.macd[0] &lt; 0</code></p>
+    </div>
+    <div class="card">
+      <h3><span class="num">2</span>DEA &lt; 0</h3>
+      <p>信号线也在零线下方 — 慢线也确认弱势区。</p>
+      <p><code>MACD.signal[0] &lt; 0</code></p>
+    </div>
+    <div class="card">
+      <h3><span class="num">3</span>|bar| 缩小</h3>
+      <p>bar = DIF − DEA。abs(bar[0]) &lt; abs(bar[-1]) ⇒ 红柱高度递减 / 绿柱高度递减。</p>
+      <p><code>abs(DIF−DEA) &lt; abs(prev_DIF−prev_DEA)</code></p>
+      <p style="color:var(--text-muted);">↑ 这是反弹末端的"动能衰减" — 多头力量耗尽，下一阶段均值回归。</p>
+    </div>
+  </div>
+
+  <footer class="meta">
+    数据：合成的 60 根日 K 线（下跌 → 反弹 → 见顶）。在真实 backtrader 回测中，引擎在每根 bar 的
+    <code>next()</code> 调用 <code>_all_conditions()</code>，仅当全部 5 条件在 T 日 close 同时成立才
+    入场；T+1 日 open 实际成交，避免任何穿越。
+    源码：<code>short_reversal/replay_strategy_v3.py:266-276</code>。
+  </footer>
+</main>
+
+<script>
+"use strict";
+/* ---------- synthetic 60-bar demo series ----------
+ * Phase 1 (bars 0-22):  downtrend    → DIF/DEA go negative
+ * Phase 2 (bars 23-44): rebound slow → bar shrinks but DIF/DEA still < 0
+ *   ↑ D-condition fires here (空头反弹到顶、动能衰减)
+ * Phase 3 (bars 45-59): cross & fade → DIF/DEA cross zero
+ */
+const N_BARS = 60;
+const close = [], dif = [], dea = [], macdBar = [], trigger = [];
+
+// Hand-tuned to produce: DIF bottoms at ~-2.0 in downtrend, recovers to ~-0.2
+// during the slow rebound while DEA stays at ~-1.3; |bar| shrinks from ~0.7 to
+// ~0.2 around bars 36-40 (the rebound top where D fires).
+let p = 100.0;
+for (let i = 0; i < N_BARS; i++) {
+  let dP;
+  if (i < 22)       dP = -0.55 + 0.06 * Math.sin(i * 0.35);   // steady drop 100→87
+  else if (i < 38)  dP =  0.32 + 0.04 * Math.sin(i * 0.30);   // slow rebound 87→91
+  else if (i < 50)  dP =  0.10 + 0.03 * Math.sin(i * 0.25);   // decelerating 91→92
+  else              dP = -0.05 + 0.04 * Math.sin(i * 0.40);   // fade 92→91
+  p += dP;
+  close.push(p);
+}
+
+// EMA12 / EMA26 → DIF = EMA12 - EMA26, DEA = EMA9 of DIF, bar = DIF-DEA
+const emaSeries = (arr, period) => {
+  const k = 2 / (period + 1);
+  const out = [arr[0]];
+  for (let i = 1; i < arr.length; i++) out.push(arr[i] * k + out[i-1] * (1 - k));
+  return out;
+};
+const ema12 = emaSeries(close, 12);
+const ema26 = emaSeries(close, 26);
+for (let i = 0; i < N_BARS; i++) {
+  dif.push(ema12[i] - ema26[i]);
+}
+const deaRaw = emaSeries(dif, 9);
+for (let i = 0; i < N_BARS; i++) {
+  dea.push(deaRaw[i]);
+  macdBar.push(dif[i] - dea[i]);
+}
+
+// D-condition: DIF<0 & DEA<0 & |bar[t]| < |bar[t-1]|
+let prevBar = NaN;
+for (let i = 0; i < N_BARS; i++) {
+  const ok = dif[i] < 0 && dea[i] < 0 &&
+             Math.abs(macdBar[i]) < Math.abs(prevBar);
+  trigger.push(ok && !Number.isNaN(prevBar));
+  prevBar = macdBar[i];
+}
+
+// Find a sustained trigger run in the rebound zone (bars 30-44). The decline
+// bottom (T17-T25) also fires |bar|-shrinkage but conditions B (up_streak) and
+// C (pct_chg) require an active rebound, so the strategy only uses D in this
+// zone. Restrict the search accordingly.
+let bestRunStart = -1, bestRunEnd = -1, bestRunLen = 0;
+for (let i = 30; i < 45; i++) {
+  if (trigger[i]) {
+    let j = i;
+    while (j < 45 && trigger[j]) j++;
+    if (j - i > bestRunLen) { bestRunLen = j - i; bestRunStart = i; bestRunEnd = j - 1; }
+    i = j;
+  }
+}
+const runStart = bestRunStart;
+const runEnd = bestRunEnd;
+const entryIdx = runEnd >= 0 ? runEnd : 40;
+
+/* ---------- layout ---------- */
+const W = 1024, H = 460;
+const M = { l: 56, r: 16, t: 14, b: 26 };
+const panelGap = 50;
+const pH = (H - M.t - M.b - panelGap) / 2;     // each panel height
+const priceTop = M.t;
+const macdTop = M.t + pH + panelGap;
+
+const innerW = W - M.l - M.r;
+const xAt = i => M.l + (i / (N_BARS - 1)) * innerW;
+
+/* scales */
+const pMin = Math.min(...close), pMax = Math.max(...close);
+const pPad = (pMax - pMin) * 0.08;
+const pLo = pMin - pPad, pHi = pMax + pPad;
+
+const macdAbs = Math.max(
+  ...macdBar.map(Math.abs),
+  ...dif.map(Math.abs),
+  ...dea.map(Math.abs),
+);
+const barAbs = Math.max(...macdBar.map(Math.abs));
+const mLo = -macdAbs * 1.05, mHi = macdAbs * 1.05;
+
+const yPrice = v => priceTop + pH - ((v - pLo) / (pHi - pLo)) * pH;
+const yMacd  = v => macdTop + pH/2 - (v / (mHi - mLo)) * (pH - 8);
+
+/* ---------- svg factory ---------- */
+const SVGNS = "http://www.w3.org/2000/svg";
+const svg = document.getElementById("chart");
+
+function el(name, attrs = {}, parent = svg) {
+  const e = document.createElementNS(SVGNS, name);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  parent.appendChild(e);
+  return e;
+}
+
+// gridlines (price panel)
+for (let g = 0; g <= 4; g++) {
+  const y = priceTop + (g / 4) * pH;
+  el("line", { class: "grid", x1: M.l, y1: y, x2: W - M.r, y2: y });
+}
+// gridlines (macd panel)
+for (let g = 0; g <= 4; g++) {
+  const y = macdTop + (g / 4) * pH;
+  el("line", { class: "grid", x1: M.l, y1: y, x2: W - M.r, y2: y });
+}
+
+// zero line
+el("line", {
+  class: "zero-line",
+  x1: M.l, y1: yMacd(0), x2: W - M.r, y2: yMacd(0),
+});
+
+// y-axis ticks (price) — round to clean 5-step values
+const pRange = Math.ceil(pMax) - Math.floor(pMin);
+const pStep = Math.max(1, Math.ceil(pRange / 4 / 5) * 5);
+const pLoR = Math.floor(pMin / pStep) * pStep;
+const pHiR = Math.ceil(pMax / pStep) * pStep;
+for (let g = 0; g <= 4; g++) {
+  const y = priceTop + (g / 4) * pH;
+  const v = pHiR - (g / 4) * (pHiR - pLoR);
+  el("text", {
+    x: M.l - 8, y: y + 3,
+    "text-anchor": "end",
+    fill: "var(--text-muted)",
+    style: "font:11px ui-monospace,monospace",
+  }).textContent = v.toFixed(0);
+}
+
+// y-axis ticks (macd) — round to clean step values that fit max(|DIF|, |DEA|, |bar|)
+const macdTickStep = macdAbs > 2 ? 1.0 : macdAbs > 1 ? 0.5 : 0.25;
+const macdTickTop = Math.ceil(macdAbs / macdTickStep) * macdTickStep;
+for (let g = 0; g <= 4; g++) {
+  const y = macdTop + (g / 4) * pH;
+  const v = macdTickTop - (g / 4) * 2 * macdTickTop;
+  el("text", {
+    x: M.l - 8, y: y + 3,
+    "text-anchor": "end",
+    fill: "var(--text-muted)",
+    style: "font:11px ui-monospace,monospace",
+  }).textContent = (v >= 0 ? " " : "") + v.toFixed(macdTickStep < 1 ? 2 : 1);
+}
+
+// panel labels
+el("text", {
+  x: M.l, y: priceTop - 4,
+  style: "font:11px system-ui,sans-serif;font-weight:600;fill:var(--text-secondary)",
+}).textContent = "close（背景）";
+el("text", {
+  x: M.l, y: macdTop - 4,
+  style: "font:11px system-ui,sans-serif;font-weight:600;fill:var(--text-secondary)",
+}).textContent = "MACD";
+
+// x-axis ticks
+const xTicks = [0, 10, 20, 30, 40, 50, 59];
+xTicks.forEach(i => {
+  el("text", {
+    x: xAt(i), y: H - M.b + 14,
+    "text-anchor": "middle",
+    fill: "var(--text-muted)",
+    style: "font:11px ui-monospace,monospace",
+  }).textContent = "T" + (i < 10 ? "0" + i : i);
+});
+
+/* ---------- trigger bands ---------- */
+// Only show the rebound-zone band — this is where D fires in practice. The
+// mathematically equivalent |bar|-shrinkage at the decline bottom (T17-T25)
+// is not the regime the strategy uses; conditions B (up_streak) and C (pct_chg)
+// require an active rebound.
+const triggerG = el("g", {});
+if (runStart >= 0) {
+  el("rect", {
+    class: "trigger-band",
+    x: xAt(runStart), y: macdTop,
+    width: xAt(runEnd) - xAt(runStart) + (xAt(1) - xAt(0)),
+    height: pH,
+  }, triggerG);
+}
+
+/* ---------- macd bars ---------- */
+const barW = Math.max(2, (xAt(1) - xAt(0)) * 0.7);
+const barsG = el("g", {});
+for (let i = 1; i < N_BARS; i++) {
+  const v = macdBar[i];
+  const x = xAt(i) - barW / 2;
+  const y0 = yMacd(0);
+  const yV = yMacd(v);
+  el("rect", {
+    class: "macd-bar" + (v < 0 ? " neg" : ""),
+    x: x, y: Math.min(y0, yV),
+    width: barW, height: Math.abs(yV - y0),
+  }, barsG);
+}
+
+/* ---------- lines ---------- */
+// price
+const pPath = close.map((v, i) =>
+  (i ? "L" : "M") + xAt(i) + "," + yPrice(v)).join(" ");
+el("path", { class: "price-line", d: pPath });
+
+// DIF (solid blue)
+const difPath = dif.map((v, i) =>
+  (i ? "L" : "M") + xAt(i) + "," + yMacd(v)).join(" ");
+el("path", { class: "dif-line", d: difPath });
+
+// DEA (solid orange)
+const deaPath = dea.map((v, i) =>
+  (i ? "L" : "M") + xAt(i) + "," + yMacd(v)).join(" ");
+el("path", { class: "dea-line", d: deaPath });
+
+/* ---------- entry marker ---------- */
+el("line", {
+  class: "entry-marker",
+  x1: xAt(entryIdx), y1: priceTop,
+  x2: xAt(entryIdx), y2: macdTop + pH,
+});
+el("text", {
+  class: "entry-label",
+  x: xAt(entryIdx) + 6, y: priceTop + 14,
+}).textContent = "做空 @ T+1 open";
+
+/* ---------- annotations ---------- */
+// annotation: "DIF·DEA 仍 < 0" pinned at the bottom of MACD panel under the band
+el("text", {
+  class: "anno-text",
+  x: xAt(runStart >= 0 ? runStart : 35), y: macdTop + pH - 6,
+}).innerHTML =
+  "<tspan font-size='10' fill='var(--text-muted)'>DIF·DEA 仍 &lt; 0 ⇒</tspan>";
+
+// annotation: "|bar| 缩小" pointing at the trigger zone (above the band)
+const anno2x = xAt(runStart >= 0 ? runStart : 35) + 4;
+el("text", {
+  class: "anno-text",
+  x: anno2x, y: macdTop + 14,
+}).innerHTML =
+  "|bar| 缩小<tspan dx='4' baseline-shift='-3' font-size='10' fill='var(--text-muted)'>↓</tspan>";
+
+// annotation: "反弹段" at the top of price panel above the rise
+el("text", {
+  class: "anno-text",
+  x: xAt(32), y: priceTop + 14,
+}).innerHTML =
+  "反弹段<tspan dx='4' baseline-shift='-3' font-size='10' fill='var(--text-muted)'>↑</tspan>";
+
+/* ---------- hover / tooltip ---------- */
+const tip = document.getElementById("tip");
+
+const hover = el("g", {});
+const crosshair = el("line", {
+  x1: 0, y1: M.t, x2: 0, y2: macdTop + pH,
+  stroke: "var(--text-muted)", "stroke-width": 1, "stroke-dasharray": "2,3",
+  opacity: 0,
+});
+const hoverDot = el("circle", { r: 4, fill: "var(--surface-1)", stroke: "var(--series-1)", "stroke-width": 2, opacity: 0 });
+hover.appendChild(crosshair);
+hover.appendChild(hoverDot);
+
+// transparent hit area on top
+const hit = el("rect", {
+  x: M.l, y: M.t, width: innerW, height: macdTop + pH - M.t,
+  fill: "transparent",
+});
+hit.addEventListener("mousemove", (e) => {
+  const r = svg.getBoundingClientRect();
+  const px = (e.clientX - r.left) * (W / r.width);
+  // nearest bar
+  const step = innerW / (N_BARS - 1);
+  const idx = Math.max(0, Math.min(N_BARS - 1, Math.round((px - M.l) / step)));
+  const cx = xAt(idx);
+  crosshair.setAttribute("x1", cx);
+  crosshair.setAttribute("x2", cx);
+  crosshair.setAttribute("opacity", "1");
+  hoverDot.setAttribute("cx", cx);
+  hoverDot.setAttribute("cy", yMacd(dif[idx]));
+  hoverDot.setAttribute("opacity", "1");
+  // tip
+  tip.style.opacity = "1";
+  const tx = r.left + (cx / W) * r.width + 14;
+  const ty = r.top + (priceTop / H) * r.height - 4;
+  tip.style.left = Math.min(tx, window.innerWidth - 220) + "px";
+  tip.style.top  = Math.min(ty, window.innerHeight - 180) + "px";
+  const d_ok = trigger[idx];
+  tip.innerHTML = "";
+  const t = document.createElement("div");
+  t.className = "tip-title";
+  t.textContent = "T" + (idx < 10 ? "0" + idx : idx);
+  tip.appendChild(t);
+  const rows = [
+    ["close", close[idx].toFixed(2)],
+    ["DIF",   dif[idx].toFixed(3)],
+    ["DEA",   dea[idx].toFixed(3)],
+    ["bar",   macdBar[idx].toFixed(3)],
+    ["|bar|", Math.abs(macdBar[idx]).toFixed(3)],
+  ];
+  rows.forEach(([k, v]) => {
+    const r1 = document.createElement("div");
+    r1.className = "tip-row";
+    const k1 = document.createElement("span"); k1.className = "k"; k1.textContent = k;
+    const v1 = document.createElement("span"); v1.className = "v"; v1.textContent = v;
+    r1.appendChild(k1); r1.appendChild(v1);
+    tip.appendChild(r1);
+  });
+  // condition row
+  const cond = document.createElement("div");
+  cond.className = "tip-row";
+  const ck = document.createElement("span"); ck.className = "k"; ck.textContent = "D 条件";
+  const cv = document.createElement("span");
+  cv.className = "v";
+  cv.textContent = d_ok ? "✓ 触发" : "—";
+  cv.style.color = d_ok ? "var(--status-good)" : "var(--text-muted)";
+  cond.appendChild(ck); cond.appendChild(cv);
+  tip.appendChild(cond);
+});
+hit.addEventListener("mouseleave", () => {
+  crosshair.setAttribute("opacity", "0");
+  hoverDot.setAttribute("opacity", "0");
+  tip.style.opacity = "0";
+});
+
+</script>
+</body>
+</html>
