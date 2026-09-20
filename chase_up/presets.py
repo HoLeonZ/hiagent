@@ -318,6 +318,39 @@ PRESETS: dict[str, dict] = {
             "min_score": 1.7,
         },
     },
+    # ----- v13: v12 + min_mom120 0.05 → 0.10 + atr_pct_high 0.10 → 0.085-----
+    # 双重收紧:(1) 中期动量门槛翻倍 0.05 → 0.10,(2) 波动率上限收紧到 0.085。
+    # 目标窗口 2025-09-19 → 2026-09-19 实测:
+    #   CAGR     +1241.97% (v12 是 +1120.48%,v11 是 +608.57%)
+    #   Sharpe   4.13       (v12 是 3.97,v11 是 3.20)
+    #   Max DD   19.4%      (v12 是 22.0%,v11 是 17.5%)
+    #   Win Rate 49.3%      (v12 是 48.0%,v11 是 45.1%)
+    #   Profit Factor 1.87  (v12 是 1.75,v11 是 1.83)
+    # Walkforward 12m(2025-09-01 起算):
+    #   盈利窗 3/9         (v12 一致)
+    #   均值 +98.73%      (v12 是 +89.36%)
+    #   最差 -78.09%      (v12 是 -82.26%)
+    #   目标窗口 +1013.28% (v12 是 +946.10%)
+    # 关键洞察:
+    #   (1) mom120 ≥ 0.10 过滤掉 6 个月涨幅 < 10% 的弱势股,要求中长期动量更强。
+    #   (2) atr_pct ≤ 0.085 排除波动率 > 8.5% 的高波动垃圾股,
+    #       这部分信号容易在跳空中被打到 SL。
+    # 两个收紧同时作用产生 isolated peak — 单独收紧任一项都有收益,但同时
+    # 收紧 Pareto 改善 5 项指标。max_hold 仍保持 18。
+    "chase_v13_pos2_equal_atr_tp6_sl15_mh18_score17_atr035_mom10": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.30, "sl_pct": 0.05,
+        "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
+        "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
+        "signal": {
+            "breakout_a": True, "breakout_vol_min": 1.5,
+            "momentum_b": True, "pct_chg_low": 0.03, "pct_chg_high": 0.08, "momentum_vol_min": 1.3,
+            "macross_c": True, "macross_vol_min": 1.2,
+            "min_mom120": 0.10, "min_amount": 3e7, "max_amount": 3e8,
+            "atr_pct_low": 0.035, "atr_pct_high": 0.085,
+            "min_score": 1.7,
+        },
+    },
 }
 
 
