@@ -7,17 +7,13 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 from pathlib import Path
 
 from short_reversal.engine import run_backtest_v3
 
-logger = logging.getLogger(__name__)
+from hiagent_config import DB_PATH as DEFAULT_DB
 
-DEFAULT_DB = Path(
-    os.environ.get("DNA_STRAT_DB")
-    or str(Path.home() / "Library/Application Support/hithink-finance/data/market.duckdb")
-)
+logger = logging.getLogger(__name__)
 
 
 def main() -> int:

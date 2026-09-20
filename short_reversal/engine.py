@@ -31,8 +31,19 @@ PANEL_FORWARD_BUFFER_DAYS = 180
 
 
 def _load_panel(db_path: Path, start: str, end: str, universe: list[str]) -> pd.DataFrame:
-    """从 DuckDB 拉面板（含前向 buffer）。"""
+    """从 DuckDB 拉面板（含前向 buffer）。
+
+    Buffer 约定（2026-09-20 audit-locked）：
+      - 前 180 天：MA60 等指标 warmup + 30 天保险
+      - 后 60 天：in-flight close 缓冲 —— 仅允许 window 内入场的 trade
+        在此处 close，不允许 entry_date > end。这是 LAHEAD-001 的
+        structural guarantee。
+      任何修改此 buffer 大小的 PR 必须同时更新 tests/golden/ 下的 baseline
+      + tests/test_short_reversal_no_lookahead.py 的 LAHEAD-001 锁。
+    """
     panel_start = (pd.Timestamp(start) - pd.Timedelta(days=PANEL_FORWARD_BUFFER_DAYS)).strftime("%Y-%m-%d")
+    # 60-day post-buffer 是 in-flight close 缓冲（exits may extend here,
+    # entries must NOT）。违反此约定会触发 LAHEAD-001 regression test。
     panel_end = (pd.Timestamp(end) + pd.Timedelta(days=60)).strftime("%Y-%m-%d")
     con = duckdb.connect(str(db_path), read_only=True)
     try:

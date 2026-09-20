@@ -13,7 +13,6 @@ Kelly 系数从 v6 79 笔实测计算：
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
 import pandas as pd
 
@@ -25,9 +24,10 @@ from uptrend_pullback.regime import compute_regime
 from uptrend_pullback.signals import compute_indicators, select_entries
 from uptrend_pullback.universe import load_universe
 
+from hiagent_config import DB_PATH
+
 START = "2025-09-12"
 END = "2026-09-12"
-DB_PATH = Path.home() / "code/Financial-API/data/market.duckdb"
 
 # Kelly 实测（v6 79 笔）：
 # p=54.43%, avg_win=14.10%, avg_loss=9.28%, b=W/L=1.52

@@ -81,28 +81,31 @@ def _verify_trade_with_backtrader(
     tp_price: float,
     sl_price: float,
     max_hold: int,
-) -> tuple[float, float]:
-    """对单笔交易跑 backtrader，返回 (net_pnl, exit_price_actual)。
+) -> tuple[float, float, pd.Timestamp | None]:
+    """对单笔交易跑 backtrader，返回 (net_pnl, exit_price_actual, exit_date_actual)。
 
-    若 backtrader 因数据不足或被策略 skip 而未真正下单，返回 (0.0, entry_price)。
+    若 backtrader 因数据不足或被策略 skip 而未真正下单，
+    返回 (0.0, entry_price, None)。
 
     exit_price_actual 取自 strategy.actual_exit_price（notify_order 在卖出单
     成交时回填的真实成交价，即 bar N+1 OPEN），与 net_pnl 的口径完全一致。
+    exit_date_actual 取自 strategy.actual_exit_date（bar N+1 的 date），
+    用于把 trades.exit_date 从"决策日"回填为"实际成交日"，消除 1 天口径差。
     若订单已提交但 feed 跑完仍未成交（极少见，给的 max_hold+5 buffer 不够），
     则退回到 target_exit_price 并记 warning。
     """
     code_data = panel[panel["thscode"] == thscode].sort_values("date")
     if code_data.empty:
-        return 0.0, entry_price
+        return 0.0, entry_price, None
 
     # feed 起始 = entry_date 前一根 K 线（保证 bar 1 = entry_date）
     future = code_data[code_data["date"] < entry_date].tail(1)
     if future.empty:
-        return 0.0, entry_price
+        return 0.0, entry_price, None
     feed_start = pd.Timestamp(future.iloc[0]["date"])
     span = code_data[code_data["date"] >= feed_start].head(max_hold + 5)
     if span.empty:
-        return 0.0, entry_price
+        return 0.0, entry_price, None
     feed_df = span[["date", "open", "high", "low", "close", "volume"]].copy()
     feed_df["date"] = pd.to_datetime(feed_df["date"])
     feed_df = feed_df.set_index("date").sort_index().astype(float)
@@ -122,7 +125,7 @@ def _verify_trade_with_backtrader(
     results = cerebro.run()
     strat = results[0]
     if strat.skipped or strat.exit_reason is None:
-        return 0.0, entry_price
+        return 0.0, entry_price, None
 
     final_cash = cerebro.broker.getcash()
     net_pnl = final_cash - initial_cash
@@ -130,17 +133,19 @@ def _verify_trade_with_backtrader(
     # 优先用实际成交价（bar N+1 OPEN），保证 exit_price 与 net_pnl 口径一致
     if strat.actual_exit_price is not None:
         actual_exit = float(strat.actual_exit_price)
+        actual_exit_date = strat.actual_exit_date
     else:
         # 订单已提交但 feed 耗尽未成交（max_hold+5 buffer 不够）；
         # 这种情况下 net_pnl 也是 0（broker 还没收钱），所以这里记 entry_price
-        # 让 gross/fees 也归零，保持自洽。
+        # 让 gross/fees 也归零，保持自洽。exit_date 保留 Phase 1 的决策日。
         logger.warning(
             "_verify_trade_with_backtrader: thscode=%s exit_reason=%s 但订单未成交 "
             "（feed 长度不足），actual_exit 退回 entry_price",
             thscode, strat.exit_reason,
         )
         actual_exit = entry_price
-    return float(net_pnl), float(actual_exit)
+        actual_exit_date = None
+    return float(net_pnl), float(actual_exit), actual_exit_date
 
 
 def run_backtrader_backtest(
@@ -184,9 +189,17 @@ def run_backtrader_backtest(
     if p.get("regime"):
         reg = regime_df if regime_df is not None else compute_regime(panel_ind, **p["regime"])
 
-    entries = select_entries(
-        panel_ind, start_date=start, end_date=end, regime_df=reg, **p["signal"]
-    )
+    # 路由: entry_mode == "v33_long_mirror" → 走镜像信号选择器
+    if p["signal"].get("entry_mode") == "v33_long_mirror":
+        from uptrend_pullback.signals import select_entries_v33_long_mirror
+        sig_kwargs = {k: v for k, v in p["signal"].items() if k != "entry_mode"}
+        entries = select_entries_v33_long_mirror(
+            panel_ind, start_date=start, end_date=end, regime_df=reg, **sig_kwargs
+        )
+    else:
+        entries = select_entries(
+            panel_ind, start_date=start, end_date=end, regime_df=reg, **p["signal"]
+        )
 
     trades_p1, equity_p1 = simulate_portfolio(
         entries,
@@ -246,7 +259,7 @@ def run_backtrader_backtest(
             atr_sl_mult=atr_sl if use_atr else None,
         )
 
-        net_pnl_bt, exit_px_bt = _verify_trade_with_backtrader(
+        net_pnl_bt, exit_px_bt, exit_date_bt = _verify_trade_with_backtrader(
             panel, t["thscode"], pd.Timestamp(t["entry_date"]),
             entry_price, size, tp_p, sl_p, max_hold,
         )
@@ -254,17 +267,26 @@ def run_backtrader_backtest(
         fees = gross_pnl - net_pnl_bt
         invested = entry_price * size
         net_return = net_pnl_bt / invested if invested > 0 else 0.0
-        hold_days = int(t["hold_days"])
+        # 用 backtrader 实际成交日回填 exit_date (消除 "决策日 vs 成交日" 1 天口径差),
+        # 若 verify 退回 entry_price (即 actual_exit_price is None) 则保留 Phase 1 的 exit_date。
+        if exit_date_bt is not None:
+            actual_exit_date = exit_date_bt
+            # 按 exit_date 与 entry_date 之间日历天数重算 hold_days
+            entry_ts = pd.Timestamp(t["entry_date"])
+            actual_hold_days = max(int((actual_exit_date - entry_ts).days), 1)
+        else:
+            actual_exit_date = t["exit_date"]
+            actual_hold_days = int(t["hold_days"])
 
         new_rows.append({
             "entry_date": t["entry_date"],
-            "exit_date": t["exit_date"],
+            "exit_date": actual_exit_date,
             "thscode": t["thscode"],
             "exit_reason": t["exit_reason"],
             "entry_price": entry_price,
             "exit_price": float(exit_px_bt),
             "size": size,
-            "hold_days": hold_days,
+            "hold_days": actual_hold_days,
             "gross_pnl": gross_pnl,
             "fees": fees,
             "net_pnl": net_pnl_bt,

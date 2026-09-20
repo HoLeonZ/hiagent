@@ -10,33 +10,23 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import duckdb
 import pandas as pd
 
+from hiagent_config import get_db_path
+
 # 12 个月窗口的起始日期（用于反推 trade 日期）
 DEFAULT_WINDOW_START = "2025-09-16"
 DEFAULT_WINDOW_END = "2026-09-16"
 
-# DuckDB 路径（多候选）
-DB_CANDIDATES = [
-    "/Users/holeon/Library/Application Support/hithink-finance/data/market.duckdb",
-    "/Users/zhl/code/Financial-API/data/market.duckdb",
-]
-
 
 def find_db() -> str | None:
-    """返回第一个存在的 DuckDB 路径。"""
-    env = os.environ.get("DNA_STRAT_DB")
-    if env and Path(env).exists():
-        return env
-    for p in DB_CANDIDATES:
-        if Path(p).exists():
-            return p
-    return None
+    """返回当前生效的 DuckDB 路径;不存在则返回 None。"""
+    p = get_db_path()
+    return str(p) if p.exists() else None
 
 
 # K 线缓存：code -> DataFrame
@@ -144,15 +134,16 @@ def build_trade_dates(trades: list[dict], klines: dict,
                       window_start: str, window_end: str) -> list[dict]:
     """给每笔交易推算 entry_date / exit_date（用 K-line 反推真实日期）。
 
-    策略：每笔 trade 的 thscode + entry_price 在 v_daily 中匹配
-    → open == entry_price 的 bar 即 entry bar（一定是 signal_date + 1 个 BDay）
-    → 推回 signal_date = entry_bar - 1 BDay
-    → exit_date = entry_bar + (hold_days) BDay（基于 P3 防穿越协议）
+    策略：每笔 trade 的 thscode + entry_price 在 v_daily 中匹配候选 entry bar
+    → 对每个候选 entry bar, 校验其后第 hold_days 个 BDay 的 K-line:
+        - reason='TP':  要求 exit_price ∈ [low, high]（tp_p intraday 或 open gap-down）
+        - reason='SL':  要求 exit_price ∈ [low, high] 或 sl_p < low（gap-up 合法 backtrader 约定）
+        - reason='time': 要求 exit_price ∈ [low, high]（xp = close）
+    → 优先选 in_window 候选; 同窗口内选最早满足的（与 engine 串行撮合一致）
 
-    优先级：
-      1. entry bar 的 open 严格 = entry_price（v_daily 精度 2 位小数，与 engine 一致）
-      2. 同时校验 exit bar 的 high/low 包含 exit_price
-      3. 校验失败 → fallback 按 index 推
+    不变量：entry_price 来自 engine 的 float(d.open[0]), K-line 也来自 v_daily,
+    所以 entry bar 的 open 应严格 = entry_price（容差 ±0.001 防浮点 round）。
+    校验失败 → fallback 按 index 推（与旧版兼容）, 但会打印 WARN。
     """
     start = pd.Timestamp(window_start)
     end = pd.Timestamp(window_end)
@@ -160,32 +151,68 @@ def build_trade_dates(trades: list[dict], klines: dict,
     unmatched = 0
     for i, t in enumerate(trades):
         code = t["thscode"]
-        ep = t["entry_price"]
-        xp = t["exit_price"]
+        ep = float(t["entry_price"])
+        xp = float(t["exit_price"])
+        hd = int(t["hold_days"])
         reason = t.get("exit_reason", "TP")
+        # 从 trade 自身反推 sl_p（preset 的 sl_pct 不可知, 但 xp == sl_p 一定成立）
+        # 仅当 reason='SL' 时有意义: xp = ep * (1 + sl_pct) → sl_pct = (xp - ep) / ep
+        sl_p = xp if reason == "SL" else None
         df = klines.get(code)
         signal_date, entry_date, exit_date = None, None, None
         if df is not None and not df.empty:
-            # 主匹配：open ≈ entry_price（容差 0.05 元，对应 2 位小数 round）
-            mask = (df["open"] >= ep - 0.05) & (df["open"] <= ep + 0.05)
+            # 主匹配：open ≈ entry_price（容差 0.001 防 float round）
+            mask = (df["open"] >= ep - 0.001) & (df["open"] <= ep + 0.001)
             candidates = df[mask]
             if not candidates.empty:
-                # 在窗口内过滤
                 in_window = candidates[
                     (candidates["date"] >= start - pd.Timedelta(days=60)) &
                     (candidates["date"] <= end + pd.Timedelta(days=60))
                 ]
-                pick = in_window.iloc[0] if not in_window.empty else candidates.iloc[0]
-                entry_date = pick["date"]
-                signal_date = entry_date - pd.tseries.offsets.BDay(1)
-                # exit_date = entry + hold_days BDay（P3 防穿越：exit ≥ entry + 1 BDay）
-                exit_date = entry_date + pd.tseries.offsets.BDay(int(t["hold_days"]))
-        if signal_date is None:
+                pool = in_window if not in_window.empty else candidates
+                # 按日期排序, 依次校验每个候选, 第一个通过的胜出
+                picked = None
+                for _, cand in pool.sort_values("date").iterrows():
+                    cand_entry = cand["date"]
+                    # 推第 hd 个 BDay
+                    future_dates = df[df["date"] > cand_entry]["date"].tolist()
+                    if len(future_dates) < hd:
+                        continue
+                    cand_exit = future_dates[hd - 1]
+                    exit_bar = df[df["date"] == cand_exit]
+                    if exit_bar.empty:
+                        continue
+                    low = float(exit_bar["low"].iloc[0])
+                    high = float(exit_bar["high"].iloc[0])
+                    # 校验
+                    if reason == "SL":
+                        # SL: exit_price = sl_p; 允许 sl_p < low (gap-up)
+                        valid = (low <= xp <= high) or (abs(xp - sl_p) < 1e-6 and xp < low)
+                    else:
+                        # TP / time: exit_price ∈ [low, high]
+                        valid = (low <= xp <= high)
+                    if valid:
+                        picked = (cand_entry, cand_exit)
+                        break
+                if picked is not None:
+                    entry_date, exit_date = picked
+                else:
+                    # 所有候选都不通过校验 → 退化选最早的 in_window 候选 (兜底)
+                    fallback = pool.sort_values("date").iloc[0]
+                    entry_date = fallback["date"]
+                    exit_date = entry_date + pd.tseries.offsets.BDay(hd)
+            if entry_date is None:
+                # 没有任何 open ≈ ep 的候选 → fallback 按 index 推
+                unmatched += 1
+                entry_date = start + pd.tseries.offsets.BDay(i)
+            signal_date = entry_date - pd.tseries.offsets.BDay(1)
+            if exit_date is None:
+                exit_date = entry_date + pd.tseries.offsets.BDay(hd)
+        else:
             unmatched += 1
-            # fallback：按 index 推
             entry_date = start + pd.tseries.offsets.BDay(i)
             signal_date = entry_date - pd.tseries.offsets.BDay(1)
-            exit_date = entry_date + pd.tseries.offsets.BDay(int(t["hold_days"]))
+            exit_date = entry_date + pd.tseries.offsets.BDay(hd)
         out.append({**t, "_signal_date": signal_date.strftime("%Y-%m-%d") if signal_date is not None else "N/A",
                     "_entry_date": entry_date.strftime("%Y-%m-%d") if entry_date is not None else "N/A",
                     "_exit_date": exit_date.strftime("%Y-%m-%d") if exit_date is not None else "N/A",
@@ -310,16 +337,16 @@ def render_trades_html(preset_name: str, summary: dict, trades: list[dict],
 
         rows.append(f"""
 <tr class="trade-row" data-code="{code}" data-reason="{reason}" data-net="{'pos' if net>0 else ('neg' if net<0 else 'zero')}">
-  <td style="text-align:right">{t["_idx"] + 1}</td>
+  <td style="text-align:center">{t["_idx"] + 1}</td>
   <td><code>{code}</code></td>
-  <td style="text-align:right">{t["_signal_date"]}</td>
+  <td style="text-align:center">{t["_signal_date"]}</td>
   <td style="text-align:right">{sig_str}</td>
   <td style="text-align:right">{ent_str}</td>
-  <td style="text-align:right">{t["_exit_date"]}</td>
+  <td style="text-align:center">{t["_exit_date"]}</td>
   <td style="text-align:right">{exit_str}</td>
   <td style="text-align:center"><span style="color:{reason_color};font-weight:bold">{reason}</span></td>
   <td style="text-align:right">{t["size"]:,}</td>
-  <td style="text-align:right">{t["hold_days"]}</td>
+  <td style="text-align:center">{t["hold_days"]}</td>
   <td style="text-align:right;color:{net_color};font-weight:bold">{net_pct:+.4f}%</td>
 </tr>
 <tr class="trade-kline-row">
@@ -352,16 +379,31 @@ h2 {{ color: #1e40af; border-bottom: 2px solid #93c5fd; padding-bottom: 4px; mar
 .legend .time {{ background: #6b7280; color: white; }}
 table {{ width: 100%; border-collapse: collapse; background: white;
         box-shadow: 0 1px 3px rgba(0,0,0,0.08); font-size: 13px; }}
-th {{ background: #1e40af; color: white; padding: 8px; text-align: right; font-weight: 600; }}
-td {{ padding: 6px 8px; border-bottom: 1px solid #e5e7eb; }}
+th {{ background: #1e40af; color: white; padding: 8px;
+      font-weight: 600; vertical-align: middle; }}
+td {{ padding: 6px 8px; border-bottom: 1px solid #e5e7eb;
+      vertical-align: middle; font-variant-numeric: tabular-nums; }}
+/* Use > tbody > tr > td:nth-child() to avoid leaking into nested kline tables
+   (a nested table's first td is also :nth-child(1) of its row). */
+table#trade-table > tbody > tr > td:nth-child(1) {{ text-align: center; }}
+table#trade-table > tbody > tr > td:nth-child(2) {{ text-align: left; font-variant-numeric: normal; }}
+table#trade-table > tbody > tr > td:nth-child(3),
+table#trade-table > tbody > tr > td:nth-child(6),
+table#trade-table > tbody > tr > td:nth-child(8) {{ text-align: center; }}
+/* columns 4,5,7,9,10,11 keep right-align (default from inline style) */
 tr.trade-row:hover td {{ background: #f3f4f6; }}
 caption {{ text-align: left; font-weight: bold; padding: 8px; color: #374151; }}
 .filter-row {{ margin: 12px 0; }}
 .filter-row input, .filter-row select {{ padding: 6px; border: 1px solid #d1d5db;
                                          border-radius: 4px; font-size: 13px; }}
 table.kline {{ font-size: 11px; box-shadow: none; }}
-table.kline th {{ background: #4b5563; padding: 4px 8px; }}
-table.kline td {{ padding: 2px 6px; border-bottom: 1px solid #e5e7eb; }}
+table.kline th {{ background: #4b5563; padding: 4px 8px; text-align: right;
+                  vertical-align: middle; }}
+table.kline th:first-child {{ text-align: left; }}
+table.kline td {{ padding: 2px 6px; border-bottom: 1px solid #e5e7eb;
+                  vertical-align: middle; text-align: right;
+                  font-variant-numeric: tabular-nums; }}
+table.kline td:first-child {{ text-align: left; font-variant-numeric: normal; }}
 details {{ font-size: 12px; }}
 </style>
 </head>
@@ -419,9 +461,17 @@ details {{ font-size: 12px; }}
 <table id="trade-table">
 <thead>
 <tr>
-  <th>#</th><th>代码</th><th>信号日(T)</th><th>信号价</th>
-  <th>入场价(T+1 open)</th><th>离场日</th><th>离场价</th>
-  <th>出场原因</th><th>张数</th><th>持仓天数</th><th>净收益率</th>
+  <th style="text-align:center;width:48px">#</th>
+  <th style="text-align:left;width:96px">代码</th>
+  <th style="text-align:center">信号日(T)</th>
+  <th style="text-align:right">信号价</th>
+  <th style="text-align:right">入场价(T+1 open)</th>
+  <th style="text-align:center">离场日</th>
+  <th style="text-align:right">离场价</th>
+  <th style="text-align:center;width:80px">出场原因</th>
+  <th style="text-align:right">张数</th>
+  <th style="text-align:center">持仓天数</th>
+  <th style="text-align:right">净收益率</th>
 </tr>
 </thead>
 <tbody>

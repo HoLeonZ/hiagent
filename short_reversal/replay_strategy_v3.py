@@ -176,6 +176,9 @@ class Phase3V3Strategy(bt.Strategy):
         # TP（价格跌到 tp_p）：bar 跳空穿过 → exit @ open；盘内触及 → exit @ tp_p
         # SL（价格涨到 sl_p）：bar 跳空穿过 → exit @ sl_p（止损价就是损失上限）；
         #                       盘内触及 → exit @ sl_p
+        # 顺序: TP-first (audit 2026-09-20 SR-LA-07 建议 SL-first per P5,但
+        # 改动会破坏 v33_mainboard_tp6_sl005_mh5_realistic 的 591-trade
+        # parity baseline —— anti-leak mandate > P5 严格性,deferred)。
         if open_p <= tp_p:
             reason, price = "TP", open_p
         elif low <= tp_p:

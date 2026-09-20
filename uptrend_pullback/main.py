@@ -1,8 +1,8 @@
 """CLI 入口 — 上升趋势回调做多回测。
 
 用法:
-  python3 -m uptrend_pullback.main --preset v6 --start 2025-09-08 --end 2026-09-08
-  python3 -m uptrend_pullback.main --engine simulate --preset v6 ...   # 自定义事件循环（对照）
+  python3 -m uptrend_pullback.main --preset v33_long_reverse_v3 --start 2025-09-08 --end 2026-09-08
+  python3 -m uptrend_pullback.main --engine simulate --preset v33_long_reverse_v3 ...   # 自定义事件循环（对照）
   python3 -m uptrend_pullback.main --engine backtrader --no-verify ... # 仅 Phase 1，不跑 backtrader
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ import pandas as pd
 from uptrend_pullback.backtest import INITIAL_CAPITAL, run_backtest
 from uptrend_pullback.backtrader_engine import run_backtrader_backtest
 
-DEFAULT_DB = Path.home() / "code/Financial-API/data/market.duckdb"
+from hiagent_config import DB_PATH as DEFAULT_DB
 
 
 def _fmt(metrics: dict) -> str:
@@ -42,7 +42,7 @@ def _fmt(metrics: dict) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="uptrend_pullback 回测入口")
-    parser.add_argument("--preset", default="v6")
+    parser.add_argument("--preset", default="v33_long_reverse_v3")
     parser.add_argument("--start", default="2025-09-08")
     parser.add_argument("--end", default="2026-09-08")
     parser.add_argument("--db-path", default=str(DEFAULT_DB))

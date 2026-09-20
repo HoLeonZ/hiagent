@@ -131,9 +131,16 @@ def run_backtest(
     if p.get("regime"):
         reg = regime_df if regime_df is not None else compute_regime(panel_ind, **p["regime"])
 
-    entries = select_entries(
-        panel_ind, start_date=start, end_date=end, regime_df=reg, **p["signal"]
-    )
+    if p["signal"].get("entry_mode") == "v33_long_mirror":
+        from uptrend_pullback.signals import select_entries_v33_long_mirror
+        sig_kwargs = {k: v for k, v in p["signal"].items() if k != "entry_mode"}
+        entries = select_entries_v33_long_mirror(
+            panel_ind, start_date=start, end_date=end, regime_df=reg, **sig_kwargs
+        )
+    else:
+        entries = select_entries(
+            panel_ind, start_date=start, end_date=end, regime_df=reg, **p["signal"]
+        )
 
     trades_df, equity_df = simulate_portfolio(
         entries,
@@ -147,6 +154,8 @@ def run_backtest(
         initial_capital=initial_capital,
         atr_tp_mult=p.get("atr_tp_mult"),
         atr_sl_mult=p.get("atr_sl_mult"),
+        position_sizing=p.get("position_sizing", "equal"),
+        kelly_fraction=p.get("kelly_fraction"),
     )
 
     metrics = compute_metrics(

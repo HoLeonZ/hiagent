@@ -28,9 +28,9 @@ from uptrend_pullback.presets import get_preset
 from uptrend_pullback.regime import compute_regime
 from uptrend_pullback.signals import compute_indicators, select_entries
 
-logger = logging.getLogger(__name__)
+from hiagent_config import DB_PATH
 
-DB_PATH = Path.home() / "code/Financial-API/data/market.duckdb"
+logger = logging.getLogger(__name__)
 RESULTS_DIR = Path(__file__).parent / "results"
 TRADES_CSV = RESULTS_DIR / "trades.csv"
 OUTPUT_HTML = RESULTS_DIR / "trades_visualization.html"

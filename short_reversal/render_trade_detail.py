@@ -18,7 +18,7 @@ import duckdb
 import numpy as np
 import pandas as pd
 
-DB_PATH = Path("/Users/zhl/code/Financial-API/data/market.duckdb")
+from hiagent_config import DB_PATH
 DEFAULT_TRADES_FILE = Path(
     "short_reversal/results/v33_mainboard_tp6_sl005_mh5_realistic.json"
 )

@@ -43,6 +43,10 @@ def build_per_stock_feeds(
         )
         if len(sub) < 200:
             continue
+        # 不设 fromdate/todate: 窗口边界由 strategy 内部的 indicator NaN gate
+        # + entry 时点检查保证 (LAHEAD-001 实证 pre_window_entry_count == 0)。
+        # 在 backtrader 1.9.78.123 + pandas 3.0.5 栈下,feed.fromdate = pd.Timestamp(...)
+        # 会抛 TypeError;若需 windowed run,需用 bt.date2num(float) 替代。
         feed = AShareData(dataname=sub, plot=False)
         feeds.append((code, feed))
     return feeds

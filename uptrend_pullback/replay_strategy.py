@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import backtrader as bt
+import pandas as pd
 
 
 class UpullbackTradeReplay(bt.Strategy):
@@ -40,6 +41,9 @@ class UpullbackTradeReplay(bt.Strategy):
         target_exit_price  策略决定的退出价（bar N 的触发价，不一定是实际成交价）
         actual_exit_price  backtrader 实际成交价（bar N+1 OPEN），通过 notify_order 抓取；
                           若订单尚未成交则为 None。orchestrator 必须用此字段作为 exit_price。
+        actual_exit_date   backtrader 实际成交日（bar N+1 的 date），通过 notify_order 抓取；
+                          orchestrator 应将其写回 trades.exit_date 以消除"决策日 vs 成交日"
+                          的 1 天口径差。
     """
 
     params = dict(
@@ -57,6 +61,8 @@ class UpullbackTradeReplay(bt.Strategy):
         self.target_exit_price: float | None = None
         # 实际成交价（下一根 bar OPEN）；由 notify_order 在成交时回填
         self.actual_exit_price: float | None = None
+        # 实际成交日（bar N+1 的 date）；由 notify_order 在成交时回填
+        self.actual_exit_date: pd.Timestamp | None = None
         self.entry_done: bool = False
         self.exit_done: bool = False
         self._entry_price_actual: float | None = None
@@ -139,6 +145,8 @@ class UpullbackTradeReplay(bt.Strategy):
             return
         if order.status == order.Completed:
             self.actual_exit_price = float(order.executed.price)
+            # 实际成交日 = 订单成交当根 bar 的 date (= bar N+1 的 date)
+            self.actual_exit_date = pd.Timestamp(bt.num2date(order.executed.dt).date())
             self.exit_done = True
             self._pending_exit_order = None
         elif order.status in (order.Canceled, order.Rejected, order.Margin):

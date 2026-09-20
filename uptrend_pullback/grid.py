@@ -20,6 +20,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from hiagent_config import DB_PATH
+
 from uptrend_pullback.backtest import compute_metrics
 from uptrend_pullback.data import load_panel
 from uptrend_pullback.portfolio import simulate_portfolio
@@ -164,11 +166,11 @@ def run_grid(
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="样本内参数网格搜索")
-    ap.add_argument("--preset", default="v6")
+    ap.add_argument("--preset", default="v33_long_reverse_v3")
     ap.add_argument("--grid", default="regime", choices=sorted(GRIDS))
     ap.add_argument("--first-year", type=int, default=2017)
     ap.add_argument("--last-year", type=int, default=2025, help="不含目标年")
-    ap.add_argument("--db-path", default=str(Path.home() / "code/Financial-API/data/market.duckdb"))
+    ap.add_argument("--db-path", default=str(DB_PATH))
     ap.add_argument("--out", default="")
     ap.add_argument("--top", type=int, default=15)
     args = ap.parse_args()
