@@ -1,0 +1,54 @@
+{
+  "preset": "chase_v14_pos2_equal_atr_tp6_sl15_mh18_score17_atr035_mom11",
+  "window": ["2025-09-19", "2026-09-19"],
+  "engine": "simulate",
+  "metrics": {
+    "trades": 73,
+    "win_rate": 0.493,
+    "total_return": 12.7011,
+    "cagr": 12.8501,
+    "sharpe": 4.18,
+    "max_dd": 0.1807,
+    "tp_count": 31,
+    "sl_count": 35,
+    "time_count": 5,
+    "eod_count": 2,
+    "profit_factor": 1.93,
+    "avg_net_return": 0.0844,
+    "exposure": 0.847,
+    "final_equity": 13701108.0,
+    "initial_capital": 1000000.0,
+    "avg_hold_days": 5.8,
+    "max_hold_days": 18
+  },
+  "trades_csv_sha256": "f733347dacd72c6682ebfc58897c2bb9cd2094c1891291c91b005920aac1df6a",
+  "trades_csv_rows": 73,
+  "trades_csv_cols": [
+    "entry_date", "exit_date", "thscode", "exit_reason",
+    "entry_price", "exit_price", "size", "hold_days",
+    "gross_pnl", "fees", "net_pnl", "net_return", "atr_pct", "sub_signal_type"
+  ],
+  "vs_v13": {
+    "v13_cagr": 12.4197,
+    "v13_sharpe": 4.13,
+    "v13_max_dd": 0.1941,
+    "v13_win_rate": 0.493,
+    "v13_pf": 1.87,
+    "v13_walkforward_profitable": "3/9",
+    "v13_walkforward_mean": "+92.48%",
+    "v13_walkforward_worst": "-76.74%"
+  },
+  "vs_v11": {
+    "v11_cagr": 6.0857,
+    "v11_max_dd": 0.1751
+  },
+  "vs_v9": {
+    "v9_cagr": 3.7766,
+    "v9_walkforward_mean": "+42.78%"
+  },
+  "vs_v5": {
+    "v5_cagr": 2.4160,
+    "v5_walkforward_mean": "-19.36%"
+  },
+  "note": "v14 = v13 + min_mom120 0.10 → 0.11(mom120 进一步收紧)。Pareto 改善 CAGR / Sharpe / DD / PF 四项,WR 持平。mom120 ≥ 0.11 过滤掉 6 个月涨幅 < 11% 的弱势股(isolated peak,0.12 略弱)。"
+}

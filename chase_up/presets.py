@@ -351,6 +351,34 @@ PRESETS: dict[str, dict] = {
             "min_score": 1.7,
         },
     },
+    # ----- v14: v13 + min_mom120 0.10 → 0.11(mom120 进一步收紧)-----
+    # 目标窗口 2025-09-19 → 2026-09-19 实测:
+    #   CAGR     +1285.01% (v13 是 +1241.97%)
+    #   Sharpe   4.18       (v13 是 4.13)
+    #   Max DD   18.1%      (v13 是 19.4%)
+    #   Win Rate 49.3%      (v13 是 49.3%,持平)
+    #   Profit Factor 1.93  (v13 是 1.87)
+    # Walkforward 12m:
+    #   盈利窗 3/9         (v13 一致)
+    #   均值 +101.13%     (v13 是 +92.48%)
+    #   最差 -79.23%      (v13 是 -76.74%,略增)
+    #   目标窗口 +1013.28% (v13 一致)
+    # 关键洞察:mom120 0.10 → 0.11 是 isolated peak(0.12 略弱) —
+    # mom120 ≥ 0.11 过滤掉 6 个月涨幅 < 11% 的弱势股,要求更强的中长期动量。
+    "chase_v14_pos2_equal_atr_tp6_sl15_mh18_score17_atr035_mom11": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.30, "sl_pct": 0.05,
+        "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
+        "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
+        "signal": {
+            "breakout_a": True, "breakout_vol_min": 1.5,
+            "momentum_b": True, "pct_chg_low": 0.03, "pct_chg_high": 0.08, "momentum_vol_min": 1.3,
+            "macross_c": True, "macross_vol_min": 1.2,
+            "min_mom120": 0.11, "min_amount": 3e7, "max_amount": 3e8,
+            "atr_pct_low": 0.035, "atr_pct_high": 0.085,
+            "min_score": 1.7,
+        },
+    },
 }
 
 
