@@ -139,6 +139,10 @@ def _safe_signal_score(
     # 信号强度阈值(默认 0.0 关闭,>0 过滤掉弱信号)
     # score 公式见下:子信号强度的 max,>= 此阈值的信号才入选
     min_score: float = 0.0,
+    # close 持续在 MA20 上方 N 日(默认 0 = 关闭)。
+    # 用法:过滤掉"刚站上 MA20 一天"的假突破,要求 trend 已经持续 N 日。
+    # no-lookahead 安全:T 日用的 streak 数到 T-1 收盘为止。
+    close_above_ma20_streak: int = 0,
 ) -> pd.DataFrame:
     """3 子信号 OR 融合 + 信号级硬过滤,返回 hits DataFrame。"""
     # 信号级硬过滤(P0/P7/P8 不变量)
@@ -176,6 +180,17 @@ def _safe_signal_score(
         g = df.groupby("thscode", group_keys=False)
         ma60_prev = g["ma60"].shift(ma60_slope_window)
         base = base & (df["ma60"] > ma60_prev) & ma60_prev.notna()
+    # close 持续在 MA20 上方 N 日(no-lookahead 安全:T 日用的 streak 截至 T-1)
+    if close_above_ma20_streak > 0 and "ma20" in df.columns:
+        above = (df["close"] > df["ma20"]).astype(int)
+        # block id = 连续 above 的会话(只在 group 内部连续)
+        prev_above = above.groupby(df["thscode"]).shift(1).fillna(0).astype(int)
+        block = (above != prev_above).groupby(df["thscode"]).cumsum()
+        # streak within each (thscode, block): cumcount + 1
+        streak = above.groupby([df["thscode"], block]).cumcount() + 1
+        # 取 T-1 时的 streak(shift(1))
+        prev_streak = streak.groupby(df["thscode"]).shift(1)
+        base = base & (prev_streak >= close_above_ma20_streak) & prev_streak.notna()
 
     # 子信号 A:平台突破
     sig_a = base & breakout_a & (
@@ -294,6 +309,7 @@ def select_entries(
     require_ma60_rising: bool = False,
     ma60_slope_window: int = 20,
     min_score: float = 0.0,
+    close_above_ma20_streak: int = 0,
 ) -> pd.DataFrame:
     """追涨 OR 融合信号 (3 子信号 + 信号级硬过滤)。
 
@@ -322,4 +338,5 @@ def select_entries(
         require_ma60_rising=require_ma60_rising,
         ma60_slope_window=ma60_slope_window,
         min_score=min_score,
+        close_above_ma20_streak=close_above_ma20_streak,
     )
