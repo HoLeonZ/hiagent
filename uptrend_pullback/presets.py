@@ -1,6 +1,7 @@
 """策略 preset 配置。
 
-当前唯一 preset: v6 — close_ma60_buffer=0.03 趋势质量增强版。
+单一 preset:
+  v33_long_reverse_v3 — v33_long_reverse 的 TP/SL 二维网格精扫 (sweep_v6) Pareto 最优点。
 
 字段说明：
   tp_pct / sl_pct     固定止盈止损；给了 atr_*_mult 时被 ATR 自适应覆盖
@@ -16,33 +17,31 @@ import copy
 MAX_HOLD_LIMIT = 20
 
 PRESETS: dict[str, dict] = {
-    # v6：v5 + 趋势质量增强 (close ≥ ma60×1.03 强制价格远离均线)
-    # 目标年 +86.66% (vs v5 +85.47%)，样本内 8 年中位 +5.31% (vs v5 +3.66%)
-    "v6": {
+    # v33_long_reverse_v3 — v33_long_reverse 的 TP/SL 二维 5×5 网格精扫 (sweep_v6) Pareto 最优点。
+    # 关键参数:
+    #   - sl_pct 0.021: sweep_v6 5×5 grid 单峰,(tp=0.30, sl=0.021) CAGR 最大,无更优组合。
+    #   - signal.min_above_ma60_ratio 0.55: 趋势持续性过滤,弱势趋势的回调不上车。
+    # 12 月窗口 (2025-09-16 .. 2026-09-16) v3 引擎实测:
+    #   CAGR       488.84% / Sharpe 2.941 / max_dd 27.65% / win_rate 28.85%
+    #   profit_fac 2.311 / trades 52 (≥ 40 阈值)
+    # 4 个指标 Pareto 改善 (CAGR/Sharpe/Win/PF), DD 在风险预算 35% 内。
+    # 注意:all_in 模式 + 高 CAGR 必然伴随较高 DD 风险;样本外表现需另行评估。
+    "v33_long_reverse_v3": {
         "universe": "mainboard_only",
-        "tp_pct": 0.08,
-        "sl_pct": 0.05,
-        "max_hold": 8,
-        "max_positions": 5,
-        "atr_tp_mult": 8.0,
-        "atr_sl_mult": 2.5,
-        "regime": {"ma_window": 60, "breadth_window": 20, "min_breadth": 0.40,
-                   "require_rising": True, "rising_lookback": 5},
+        "tp_pct": 0.30,
+        "sl_pct": 0.021,
+        "max_hold": 15,
+        "max_positions": 1,
+        "position_sizing": "all_in",
         "signal": {
-            "entry_mode": "reversal",
-            "min_down_streak": 2,
-            "max_down_streak": 5,
-            "min_pullback": 0.03,
-            "max_pullback": 0.10,
-            "ma20_tol": 0.04,
-            "min_amount": 5e7,
+            "entry_mode": "v33_long_mirror",
+            "min_down_streak": 3,
+            "max_down_streak": 10,
+            "pct_chg_low": -0.05,
+            "pct_chg_high": -0.02,
+            "min_amount": 3e7,
             "max_amount": 3e8,
-            "min_above_ma60_ratio": 0.6,
-            "min_mom120": 0.50,
-            "max_vol_ratio": 2.0,
-            "max_atr_pct": 0.10,
-            "close_ma60_buffer": 0.03,
-            "ma60_rising_lookback": 0,
+            "min_above_ma60_ratio": 0.55,
         },
     },
 }

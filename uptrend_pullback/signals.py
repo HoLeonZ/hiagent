@@ -94,6 +94,15 @@ def compute_indicators(panel: pd.DataFrame) -> pd.DataFrame:
     df["atr14"] = g["tr"].transform(lambda s: s.rolling(14, min_periods=14).mean())
     df["atr_pct"] = df["atr14"] / df["close"]
 
+    # --- MACD（12/26/9 EMA, mirror of short_reversal v33 D 条件）---
+    # 严格按 thscode 分组,避免跨股票泄漏
+    df["ema12"] = g["close"].transform(lambda s: s.ewm(span=12, adjust=False).mean())
+    df["ema26"] = g["close"].transform(lambda s: s.ewm(span=26, adjust=False).mean())
+    df["macd_dif"] = df["ema12"] - df["ema26"]
+    df["macd_dea"] = g["macd_dif"].transform(lambda s: s.ewm(span=9, adjust=False).mean())
+    df["macd_bar"] = df["macd_dif"] - df["macd_dea"]
+    df["macd_bar_prev"] = g["macd_bar"].shift(1)
+
     return df
 
 
@@ -216,4 +225,92 @@ def select_entries(
         ["date", "score"], ascending=[True, False]
     ).reset_index(drop=True)
     logger.info("select_entries: %d 个候选信号", len(out))
+    return out
+
+
+def select_entries_v33_long_mirror(
+    panel_ind: pd.DataFrame,
+    *,
+    start_date: str,
+    end_date: str,
+    min_down_streak: int = 3,
+    max_down_streak: int = 10,
+    pct_chg_low: float = -0.07,
+    pct_chg_high: float = -0.02,
+    min_amount: float = 3e7,
+    max_amount: float = 3e8,
+    min_above_ma60_ratio: float = 0.6,
+    regime_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """做多镜像信号 — 与 short_reversal v33 mainboard tp6 的5条件严格对应。
+
+    short_reversal v33 (做空):
+      A: close < MA60  ∧ below_ma60_ratio_60 ≥ 60%
+      B: up_streak ∈ [3, 10]
+      C: ret1 ∈ [+2%, +7%]
+      D: MACD dif<0 ∧ dea<0 ∧ |bar| < |prev_bar|
+      E: am60 ∈ [3e7, 3e8]
+
+    mirror (本函数):
+      A: close > MA60  ∧ above_ma60_ratio   ≥ 60%
+      B: down_streak ∈ [3, 10]
+      C: ret1 ∈ [-7%, -2%]
+      D: MACD dif>0 ∧ dea>0 ∧ |bar| > |prev_bar|
+      E: amount60 ∈ [3e7, 3e8]
+    """
+    df = panel_ind
+    mask = (
+        # A —— 上升趋势
+        (df["close"] > df["ma60"])
+        & (df["above_ma60_ratio"] >= min_above_ma60_ratio)
+        # B —— 连阴 (pullback within uptrend)
+        & (df["down_streak"] >= min_down_streak)
+        & (df["down_streak"] <= max_down_streak)
+        # C —— 今日跌幅 (rip-down after run-up)
+        & (df["ret1"] >= pct_chg_low)
+        & (df["ret1"] <= pct_chg_high)
+        # D —— MACD 动能上升 (在上升趋势中意味着加速)
+        & (df["macd_dif"] > 0)
+        & (df["macd_dea"] > 0)
+        & (df["macd_bar"].abs() > df["macd_bar_prev"].abs())
+        # E —— 流动性
+        & (df["amount60"] >= min_amount)
+        & (df["amount60"] <= max_amount)
+        # 指标就绪
+        & df["ma60"].notna()
+        & df["above_ma60_ratio"].notna()
+        & df["amount60"].notna()
+        & df["macd_bar"].notna()
+        & df["macd_bar_prev"].notna()
+        # 信号窗口
+        & (df["date"] >= pd.Timestamp(start_date))
+        & (df["date"] <= pd.Timestamp(end_date))
+    )
+
+    hits = df[mask].copy()
+
+    # 大盘择时 (与 select_entries 同口径, regime_df 非空时过滤)
+    if regime_df is not None and not hits.empty:
+        ok_days = set(
+            pd.to_datetime(regime_df.loc[regime_df["regime_ok"], "date"]).tolist()
+        )
+        hits = hits[hits["date"].isin(ok_days)]
+
+    if hits.empty:
+        return pd.DataFrame(columns=ENTRY_COLS)
+
+    # score = mom120 (与 v6 一致,portfolio 按分数降序抢占仓位)
+    hits["score"] = hits["mom120"]
+    hits["sig_close"] = hits["close"]
+    hits["sig_ma20"] = hits["ma20"]
+    hits["sig_ma60"] = hits["ma60"]
+    hits["sig_down_streak"] = hits["down_streak"]
+    hits["sig_pullback"] = hits["pullback"]
+    hits["sig_mom120"] = hits["mom120"]
+    hits["sig_amount60"] = hits["amount60"]
+
+    out = hits[ENTRY_COLS].sort_values(
+        ["date", "score"], ascending=[True, False]
+    ).reset_index(drop=True)
+    logger.info("select_entries_v33_long_mirror: %d 个候选信号", len(out))
     return out

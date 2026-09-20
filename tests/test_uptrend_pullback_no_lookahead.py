@@ -180,7 +180,7 @@ def test_exit_price_is_actual_fill_price_not_target():
     tp_price = 10.5   # bar 1 (entry_date) high=11 >= 10.5 → 触发 TP
     sl_price = 8.5    # 不会被触发
 
-    net_pnl, exit_px = _verify_trade_with_backtrader(
+    net_pnl, exit_px, _exit_date = _verify_trade_with_backtrader(
         panel, "600000.SH", entry_date,
         entry_price, 1000,
         tp_price=tp_price,
@@ -482,34 +482,6 @@ def test_phase2_replay_bars_in_pos_min_1():
     )
 
 
-def test_real_v6_trades_no_same_day_entry_exit():
-    """对真实 v6 回测结果（v6_trades.csv）做端到端校验。
-
-    必须满足：
-      1. exit_date > entry_date（至少 +1 个日历日）
-      2. hold_days >= 1
-    """
-    csv_path = "uptrend_pullback/results/all_presets/v6_trades.csv"
-    if not Path(csv_path).exists():
-        pytest.skip(f"{csv_path} 不存在，跳过真实数据校验")
-    df = pd.read_csv(csv_path)
-    df["entry_date"] = pd.to_datetime(df["entry_date"])
-    df["exit_date"] = pd.to_datetime(df["exit_date"])
-
-    # 不变量 1：日历日间隔 ≥ 1
-    gap_days = (df["exit_date"] - df["entry_date"]).dt.days
-    assert (gap_days >= 1).all(), (
-        f"存在 {sum(gap_days < 1)} 笔同日买卖：\n"
-        f"{df[gap_days < 1][['entry_date','exit_date','thscode']]}"
-    )
-
-    # 不变量 2：hold_days ≥ 1
-    assert (df["hold_days"] >= 1).all(), (
-        f"存在 {sum(df['hold_days'] < 1)} 笔 hold_days < 1：\n"
-        f"{df[df['hold_days'] < 1]}"
-    )
-
-
 def test_phase1_max_hold_exit_uses_close_not_intrabar():
     """max_hold 到期时用当天 close exit，盘中 TP 触发在 max_hold 之前用 TP。
 
@@ -558,3 +530,136 @@ def test_phase1_max_hold_exit_uses_close_not_intrabar():
     assert t["exit_price"] == pytest.approx(10.05, abs=1e-9), (
         f"max_hold time exit 应等于到期日 close 10.05，得到 {t['exit_price']}。"
     )
+
+
+# --------------------------------------------------------------------------- #
+# P4: 端到端 audit (针对真实 v33_long_reverse_v3 trades)
+# --------------------------------------------------------------------------- #
+
+
+def test_v3_e2e_signal_date_conditions_hold():
+    """对真实 v33_long_reverse_v3 trades,在每个 entry_date 前一交易日 panel_ind 上,
+    5 个信号条件 (A/B/C/D/E) 必须全部成立 (事后复核)。
+
+    这等价于证明: 每个信号在决策时刻只用 past+current bar 数据,绝无穿越。
+    """
+    from pathlib import Path as _P
+    from hiagent_config import DB_PATH as _DB
+    from uptrend_pullback.backtrader_engine import run_backtrader_backtest
+    from uptrend_pullback.data import load_panel as _lp
+    from uptrend_pullback.signals import compute_indicators as _ci
+    from uptrend_pullback.universe import load_universe as _lu
+
+    universe = set(_lu("mainboard_only", _P(_DB)))
+    panel = _lp(_P(_DB), "2025-07-01", "2026-07-01", universe=universe)
+    panel_ind = _ci(panel)
+    out = run_backtrader_backtest(
+        "v33_long_reverse_v3", "2025-07-01", "2026-07-01", _P(_DB),
+        panel_ind=panel_ind, verify=True,
+    )
+    trades = out["trades"]
+    assert not trades.empty
+
+    panel_idx = panel.set_index(["thscode", "date"]).sort_index()
+    pidx = panel_ind.set_index(["thscode", "date"]).sort_index()
+
+    fails = []
+    for _, t in trades.iterrows():
+        code, entry_date = t["thscode"], pd.Timestamp(t["entry_date"])
+        sig_dates = pidx.loc[code].index[pidx.loc[code].index < entry_date]
+        if len(sig_dates) == 0:
+            fails.append((code, entry_date.date(), "no signal_date"))
+            continue
+        row = pidx.loc[code].loc[sig_dates[-1]]
+        bad = []
+        if not (row["close"] > row["ma60"]):
+            bad.append("A1")
+        if not (row["above_ma60_ratio"] >= 0.55):
+            bad.append("A2")
+        if not (3 <= row["down_streak"] <= 10):
+            bad.append("B")
+        if not (-0.05 <= row["ret1"] <= -0.02):
+            bad.append("C")
+        if not (row["macd_dif"] > 0 and row["macd_dea"] > 0):
+            bad.append("D1/D2")
+        if not (abs(row["macd_bar"]) > abs(row["macd_bar_prev"])):
+            bad.append("D3")
+        if not (3e7 <= row["amount60"] <= 3e8):
+            bad.append("E")
+        if bad:
+            fails.append((code, sig_dates[-1].date(), bad))
+
+    assert not fails, (
+        f"{len(fails)} trades 在 signal_date 复核失败:\n{fails[:5]}"
+    )
+
+
+def test_v3_e2e_exit_price_is_fill_bar_open():
+    """对真实 v33_long_reverse_v3 trades,非 eod 退出的 exit_price 必须等于
+    exit_date (fill bar) 的实际 open,不是决策 bar 的触发价。
+
+    这证明 exit_price 用的是真实成交价 (bar N+1 OPEN),不是回看触发价 (bar N OHLC)。
+    """
+    from pathlib import Path as _P
+    from hiagent_config import DB_PATH as _DB
+    from uptrend_pullback.backtrader_engine import run_backtrader_backtest
+    from uptrend_pullback.data import load_panel as _lp
+    from uptrend_pullback.signals import compute_indicators as _ci
+    from uptrend_pullback.universe import load_universe as _lu
+
+    universe = set(_lu("mainboard_only", _P(_DB)))
+    panel = _lp(_P(_DB), "2025-07-01", "2026-07-01", universe=universe)
+    panel_ind = _ci(panel)
+    out = run_backtrader_backtest(
+        "v33_long_reverse_v3", "2025-07-01", "2026-07-01", _P(_DB),
+        panel_ind=panel_ind, verify=True,
+    )
+    trades = out["trades"]
+    panel_idx = panel.set_index(["thscode", "date"]).sort_index()
+
+    fails = []
+    for _, t in trades.iterrows():
+        if t["exit_reason"] == "eod":
+            continue
+        code, fill_date = t["thscode"], pd.Timestamp(t["exit_date"])
+        if (code, fill_date) not in panel_idx.index:
+            continue
+        actual_open = float(panel_idx.loc[(code, fill_date), "open"])
+        if abs(float(t["exit_price"]) - actual_open) > 0.01:
+            fails.append((code, fill_date.date(), t["exit_price"], actual_open))
+
+    assert not fails, f"{len(fails)} trades exit_price != fill bar open:\n{fails[:5]}"
+
+
+def test_v3_e2e_entry_price_is_entry_bar_open():
+    """对真实 v33_long_reverse_v3 trades,entry_price 必须等于 entry_date bar 的 open。
+
+    这证明 entry fill 是 T+1 OPEN,不是回看 close。
+    """
+    from pathlib import Path as _P
+    from hiagent_config import DB_PATH as _DB
+    from uptrend_pullback.backtrader_engine import run_backtrader_backtest
+    from uptrend_pullback.data import load_panel as _lp
+    from uptrend_pullback.signals import compute_indicators as _ci
+    from uptrend_pullback.universe import load_universe as _lu
+
+    universe = set(_lu("mainboard_only", _P(_DB)))
+    panel = _lp(_P(_DB), "2025-07-01", "2026-07-01", universe=universe)
+    panel_ind = _ci(panel)
+    out = run_backtrader_backtest(
+        "v33_long_reverse_v3", "2025-07-01", "2026-07-01", _P(_DB),
+        panel_ind=panel_ind, verify=True,
+    )
+    trades = out["trades"]
+    panel_idx = panel.set_index(["thscode", "date"]).sort_index()
+
+    fails = []
+    for _, t in trades.iterrows():
+        code, entry_date = t["thscode"], pd.Timestamp(t["entry_date"])
+        if (code, entry_date) not in panel_idx.index:
+            continue
+        actual_open = float(panel_idx.loc[(code, entry_date), "open"])
+        if abs(float(t["entry_price"]) - actual_open) > 0.01:
+            fails.append((code, entry_date.date(), t["entry_price"], actual_open))
+
+    assert not fails, f"{len(fails)} trades entry_price != entry bar open:\n{fails[:5]}"
