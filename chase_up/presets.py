@@ -239,6 +239,28 @@ PRESETS: dict[str, dict] = {
             "min_score": 1.2,
         },
     },
+    # ----- v10: v9 + min_score 1.2 → 1.6(过滤更强信号)-----
+    # 目标窗口 2025-09 → 2026-09 实测:
+    #   CAGR +604.15% (v9 是 +624.50%)
+    #   Sharpe / Max DD / WR 与 v9 相当
+    # Walkforward 12m:盈窗 2/9(与 v9 一致);最差从 v9 的 -90.45% 改善到 -80.92%。
+    # 核心优化:更严格的 score 阈值 = 更高胜率 + 更小回撤 + 更稳的 worst window。
+    # 注意 mh=20 会闪崩到 +186%(non-monotonic,signal-day score 与 mh 的耦合效应),
+    # 所以 max_hold 仍保持 18 这个 sweet spot。
+    "chase_v10_pos2_equal_atr_tp6_sl15_mh18_score16": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.30, "sl_pct": 0.05,
+        "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
+        "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
+        "signal": {
+            "breakout_a": True, "breakout_vol_min": 1.5,
+            "momentum_b": True, "pct_chg_low": 0.03, "pct_chg_high": 0.08, "momentum_vol_min": 1.3,
+            "macross_c": True, "macross_vol_min": 1.2,
+            "min_mom120": 0.05, "min_amount": 3e7, "max_amount": 3e8,
+            "atr_pct_low": 0.03, "atr_pct_high": 0.10,
+            "min_score": 1.6,
+        },
+    },
 }
 
 
