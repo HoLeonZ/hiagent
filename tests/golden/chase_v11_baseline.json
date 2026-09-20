@@ -1,0 +1,51 @@
+{
+  "preset": "chase_v11_pos2_equal_atr_tp6_sl15_mh18_score17",
+  "window": ["2025-09-19", "2026-09-19"],
+  "engine": "simulate",
+  "metrics": {
+    "trades": 71,
+    "win_rate": 0.451,
+    "total_return": 6.0289,
+    "cagr": 6.0857,
+    "sharpe": 3.20,
+    "max_dd": 0.1751,
+    "tp_count": 28,
+    "sl_count": 38,
+    "time_count": 4,
+    "eod_count": 1,
+    "profit_factor": 1.83,
+    "avg_net_return": 0.0678,
+    "exposure": 0.860,
+    "final_equity": 7028865.0,
+    "initial_capital": 1000000.0,
+    "avg_hold_days": 6.0,
+    "max_hold_days": 18
+  },
+  "trades_csv_sha256": "a787f7489e31d1ab72ee40ebabf06eb49d83898b055d2cebcb1670aebe06fc84",
+  "trades_csv_rows": 71,
+  "trades_csv_cols": [
+    "entry_date", "exit_date", "thscode", "exit_reason",
+    "entry_price", "exit_price", "size", "hold_days",
+    "gross_pnl", "fees", "net_pnl", "net_return", "atr_pct", "sub_signal_type"
+  ],
+  "vs_v10": {
+    "v10_cagr": 3.6718,
+    "v10_max_dd": 0.3213,
+    "v10_walkforward_mean": "+42.90%",
+    "v10_walkforward_worst": "-80.92%"
+  },
+  "vs_v9": {
+    "v9_cagr": 3.7766,
+    "v9_max_dd": 0.2365,
+    "v9_walkforward_profitable": "3/9",
+    "v9_walkforward_mean": "+42.78%",
+    "v9_walkforward_worst": "-90.45%"
+  },
+  "vs_v5": {
+    "v5_cagr": 2.4160,
+    "v5_max_dd": 0.3131,
+    "v5_walkforward_profitable": "2/9",
+    "v5_walkforward_mean": "-19.36%"
+  },
+  "note": "v11 = v10 + min_score 1.6 → 1.7(进一步收紧信号强度门槛)。在锁定窗口 2025-09-19 → 2026-09-19 上 Pareto 改善 CAGR / Sharpe / DD / WR / PF 五项指标同时上升,12m walkforward 均值从 +42.9% 跳到 +80.5%,worst 从 -80.9% 改善到 -73.9%。1.7 是 score 1.6-1.8 区间的 isolated peak(1.65/1.75/1.8 都不如它)。"
+}

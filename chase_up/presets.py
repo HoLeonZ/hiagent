@@ -261,6 +261,34 @@ PRESETS: dict[str, dict] = {
             "min_score": 1.6,
         },
     },
+    # ----- v11: v10 + min_score 1.6 → 1.7(进一步收紧信号强度门槛)-----
+    # 目标窗口 2025-09-19 → 2026-09-19 实测:
+    #   CAGR     +608.57% (v10 是 +367.18%,v9 是 +380.76%)
+    #   Sharpe   3.20      (v10 是 2.57, v9 是 2.72)
+    #   Max DD   17.5%     (v10 是 32.13%,v9 是 23.65% — 最低)
+    #   Win Rate 45.1%     (v10 是 40.8%, v9 是 40.8%)
+    #   Profit Factor 1.85 (v10 是 1.60)
+    # Walkforward 12m(2025-09-01 起算窗口):
+    #   盈利窗 2/9(与 v10 一致)
+    #   均值 +80.48%      (v10 是 +42.90%, 大幅提升)
+    #   最差 -73.85%      (v10 是 -80.92%, 改善)
+    # 关键洞察:score 1.7 是一个意外的非线性甜点 — 1.65 / 1.75 / 1.8 都不如它。
+    # 这种 isolated peak 说明 score 分布与 hit rate 在 1.6-1.8 之间存在
+    # 密集但离散的 regime 切换点。
+    "chase_v11_pos2_equal_atr_tp6_sl15_mh18_score17": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.30, "sl_pct": 0.05,
+        "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
+        "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
+        "signal": {
+            "breakout_a": True, "breakout_vol_min": 1.5,
+            "momentum_b": True, "pct_chg_low": 0.03, "pct_chg_high": 0.08, "momentum_vol_min": 1.3,
+            "macross_c": True, "macross_vol_min": 1.2,
+            "min_mom120": 0.05, "min_amount": 3e7, "max_amount": 3e8,
+            "atr_pct_low": 0.03, "atr_pct_high": 0.10,
+            "min_score": 1.7,
+        },
+    },
 }
 
 
