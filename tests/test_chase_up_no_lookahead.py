@@ -697,3 +697,43 @@ def test_v8_trades_csv_matches_golden_baseline():
         f"  若策略逻辑有变更,请同步更新 {baseline_path}"
     )
     assert len(df) == expected_rows
+
+
+def test_v9_trades_csv_matches_golden_baseline():
+    """chase_v9 trades.csv hash 必须等于 tests/golden/chase_v9_baseline.json 中锁定的值。
+
+    v9 = v8 + min_score=1.2(过滤弱信号)。hash 漂移说明信号实现或子信号权重有未预期改动。
+    """
+    import hashlib
+    from pathlib import Path
+
+    baseline_path = Path(__file__).parent / "golden" / "chase_v9_baseline.json"
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    expected_hash = baseline["trades_csv_sha256"]
+    expected_rows = baseline["trades_csv_rows"]
+
+    trades_csv = Path(__file__).parent.parent / "chase_up" / "results" / "v9_trades.csv"
+    if not trades_csv.exists():
+        from chase_up.backtest import run_backtest
+        from chase_up.data import load_panel
+        from chase_up.universe import load_universe
+        universe = set(load_universe("mainboard_only", DB_PATH))
+        panel = load_panel(DB_PATH, baseline["window"][0], baseline["window"][1], universe=universe)
+        panel_ind = compute_indicators(panel)
+        res = run_backtest(
+            baseline["preset"], baseline["window"][0], baseline["window"][1],
+            DB_PATH, panel_ind=panel_ind,
+        )
+        res["trades"].to_csv(trades_csv, index=False)
+
+    df = pd.read_csv(trades_csv)
+    actual_hash = hashlib.sha256(df.to_csv(index=False).encode()).hexdigest()
+
+    assert actual_hash == expected_hash, (
+        f"v9 trades.csv hash 漂移:\n"
+        f"  expected: {expected_hash}\n"
+        f"  actual:   {actual_hash}\n"
+        f"  rows: {len(df)} (expected {expected_rows})\n"
+        f"  若策略逻辑有变更,请同步更新 {baseline_path}"
+    )
+    assert len(df) == expected_rows

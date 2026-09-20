@@ -207,6 +207,38 @@ PRESETS: dict[str, dict] = {
             "atr_pct_low": 0.03, "atr_pct_high": 0.10,
         },
     },
+    # ----- v9: v8 + 信号强度阈值(score >= 1.2)-----
+    # score = max(子信号强度),定义为:
+    #   breakout:  mom120 × 1.0 + vol_ratio × 0.3
+    #   momentum:  ret1 × 2.0 + mom120 × 0.5
+    #   macross:   mom120 × 1.5 + (ma20-ma60)/ma60 × 5.0
+    # min_score=1.2 过滤掉弱信号(中长趋势不足 + 量能不够的假突破)。
+    # 目标窗口 2025-09 → 2026-09 实测:
+    #   CAGR +624.50% (v8 是 +522.21%, v5 是 +268.44%)
+    #   Sharpe 2.50    (v8 是 2.32, v5 是 2.16)
+    #   Max DD 21.0%   (v8 是 27.5%, v5 是 31.31%)
+    #   WR 40.5%       (v8 是 39.0%, v5 是 40.2%)
+    #   Trades 74      (v8 是 82, v5 是 107)
+    # Walkforward 12m:
+    #   盈利窗 3/9         (与 v8 一致)
+    #   均值 +42.78%       (v8 是 +30.68%, +12pp)
+    #   最差 -90.45%       (v8 是 -91.26%)
+    #   2019-09 → 2020-09 翻正:+17.21% (v8: +17.21%, 一致)
+    #   2021-09 → 2022-09 +85.93% (v8 一致)
+    "chase_v9_pos2_equal_atr_tp6_sl15_mh18_score12": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.30, "sl_pct": 0.05,
+        "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
+        "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
+        "signal": {
+            "breakout_a": True, "breakout_vol_min": 1.5,
+            "momentum_b": True, "pct_chg_low": 0.03, "pct_chg_high": 0.08, "momentum_vol_min": 1.3,
+            "macross_c": True, "macross_vol_min": 1.2,
+            "min_mom120": 0.05, "min_amount": 3e7, "max_amount": 3e8,
+            "atr_pct_low": 0.03, "atr_pct_high": 0.10,
+            "min_score": 1.2,
+        },
+    },
 }
 
 

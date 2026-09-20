@@ -1,0 +1,44 @@
+{
+  "preset": "chase_v9_pos2_equal_atr_tp6_sl15_mh18_score12",
+  "window": ["2025-09-19", "2026-09-19"],
+  "engine": "simulate",
+  "metrics": {
+    "trades": 76,
+    "win_rate": 0.408,
+    "total_return": 3.7766,
+    "cagr": 3.8076,
+    "sharpe": 2.72,
+    "max_dd": 0.2365,
+    "tp_count": 25,
+    "sl_count": 44,
+    "time_count": 5,
+    "eod_count": 2,
+    "profit_factor": 1.54,
+    "avg_net_return": 0.0527,
+    "exposure": 0.932,
+    "final_equity": 4776649.0,
+    "initial_capital": 1000000.0,
+    "avg_hold_days": 6.1,
+    "max_hold_days": 18
+  },
+  "trades_csv_sha256": "b9738c149af3bf2e41ff7560246a6c2a853b1dcb122dd89f598a9b20b1d709be",
+  "trades_csv_rows": 76,
+  "trades_csv_cols": [
+    "entry_date", "exit_date", "thscode", "exit_reason",
+    "entry_price", "exit_price", "size", "hold_days",
+    "gross_pnl", "fees", "net_pnl", "net_return", "atr_pct", "sub_signal_type"
+  ],
+  "vs_v5": {
+    "v5_cagr": 2.4160,
+    "v5_max_dd": 0.3131,
+    "v5_walkforward_profitable": "2/9",
+    "v5_walkforward_mean": "-19.36%"
+  },
+  "vs_v8": {
+    "v8_cagr": 2.6112,
+    "v8_max_dd": 0.4258,
+    "v8_walkforward_profitable": "3/9",
+    "v8_walkforward_mean": "+30.68%"
+  },
+  "note": "v9 = v8 + min_score=1.2(过滤弱信号)。Pareto 改善:CAGR + Sharpe + DD 同时提升。"
+}

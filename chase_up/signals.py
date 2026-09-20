@@ -136,6 +136,9 @@ def _safe_signal_score(
     require_ma60_gt_ma120: bool = False,
     require_ma60_rising: bool = False,
     ma60_slope_window: int = 20,
+    # 信号强度阈值(默认 0.0 关闭,>0 过滤掉弱信号)
+    # score 公式见下:子信号强度的 max,>= 此阈值的信号才入选
+    min_score: float = 0.0,
 ) -> pd.DataFrame:
     """3 子信号 OR 融合 + 信号级硬过滤,返回 hits DataFrame。"""
     # 信号级硬过滤(P0/P7/P8 不变量)
@@ -228,11 +231,22 @@ def _safe_signal_score(
     hits["score"] = np.nanmax(score_mat, axis=1)
 
     # sub_signal_type = 命中的子信号集合("A"/"B"/"C" 拼接)
+    # 必须先于 min_score 过滤,否则长度不匹配
     sub_a = sig_a[mask].to_numpy()
     sub_b = sig_b[mask].to_numpy()
     sub_c = sig_c[mask].to_numpy()
     parts = np.where(sub_a, "A", "") + np.where(sub_b, "B", "") + np.where(sub_c, "C", "")
     hits["sub_signal_type"] = parts
+
+    # 信号强度阈值(默认 0.0 不过滤)
+    if min_score > 0:
+        before = len(hits)
+        hits = hits[hits["score"] >= min_score].copy()
+        if len(hits) < before:
+            logger.info(
+                "select_entries: min_score=%.2f 过滤掉 %d 个弱信号,剩 %d",
+                min_score, before - len(hits), len(hits),
+            )
 
     # 信号日快照字段
     hits["sig_close"] = hits["close"]
@@ -279,6 +293,7 @@ def select_entries(
     require_ma60_gt_ma120: bool = False,
     require_ma60_rising: bool = False,
     ma60_slope_window: int = 20,
+    min_score: float = 0.0,
 ) -> pd.DataFrame:
     """追涨 OR 融合信号 (3 子信号 + 信号级硬过滤)。
 
@@ -306,4 +321,5 @@ def select_entries(
         require_ma60_gt_ma120=require_ma60_gt_ma120,
         require_ma60_rising=require_ma60_rising,
         ma60_slope_window=ma60_slope_window,
+        min_score=min_score,
     )
