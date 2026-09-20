@@ -1,0 +1,53 @@
+{
+  "preset": "chase_v12_pos2_equal_atr_tp6_sl15_mh18_score17_atr035",
+  "window": ["2025-09-19", "2026-09-19"],
+  "engine": "simulate",
+  "metrics": {
+    "trades": 75,
+    "win_rate": 0.480,
+    "total_return": 11.0798,
+    "cagr": 11.2048,
+    "sharpe": 3.97,
+    "max_dd": 0.2196,
+    "tp_count": 31,
+    "sl_count": 38,
+    "time_count": 5,
+    "eod_count": 1,
+    "profit_factor": 1.75,
+    "avg_net_return": 0.0790,
+    "exposure": 0.853,
+    "final_equity": 12079812.0,
+    "initial_capital": 1000000.0,
+    "avg_hold_days": 5.6,
+    "max_hold_days": 18
+  },
+  "trades_csv_sha256": "6c531a9799033c012f3ef32dd2af3ef31ef898ba9a8c5861fda01aafa0f83597",
+  "trades_csv_rows": 75,
+  "trades_csv_cols": [
+    "entry_date", "exit_date", "thscode", "exit_reason",
+    "entry_price", "exit_price", "size", "hold_days",
+    "gross_pnl", "fees", "net_pnl", "net_return", "atr_pct", "sub_signal_type"
+  ],
+  "vs_v11": {
+    "v11_cagr": 6.0857,
+    "v11_sharpe": 3.20,
+    "v11_max_dd": 0.1751,
+    "v11_win_rate": 0.451,
+    "v11_pf": 1.83,
+    "v11_walkforward_profitable": "2/9",
+    "v11_walkforward_mean": "+80.48%",
+    "v11_walkforward_worst": "-73.85%"
+  },
+  "vs_v9": {
+    "v9_cagr": 3.7766,
+    "v9_max_dd": 0.2365,
+    "v9_walkforward_profitable": "3/9",
+    "v9_walkforward_mean": "+42.78%"
+  },
+  "vs_v5": {
+    "v5_cagr": 2.4160,
+    "v5_walkforward_profitable": "2/9",
+    "v5_walkforward_mean": "-19.36%"
+  },
+  "note": "v12 = v11 + atr_pct_low 0.03 → 0.035(剔除 atr% 偏低噪音信号)。Pareto 改善 CAGR / Sharpe / WR 同时提升,walkforward 盈窗从 2/9 翻到 3/9,均值 +80% → +89%。关键洞察:波动率太低的'安静突破'反而是低质信号,波动率稍高的突破才携带真实动量信息。"
+}

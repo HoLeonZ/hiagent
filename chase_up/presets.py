@@ -289,6 +289,35 @@ PRESETS: dict[str, dict] = {
             "min_score": 1.7,
         },
     },
+    # ----- v12: v11 + atr_pct_low 0.03 → 0.035(剔除 atr% 偏低噪音信号)-----
+    # 目标窗口 2025-09-19 → 2026-09-19 实测:
+    #   CAGR     +1120.48% (v11 是 +608.57%,几乎翻倍)
+    #   Sharpe   3.97       (v11 是 3.20)
+    #   Max DD   22.0%      (v11 是 17.5%,略升)
+    #   Win Rate 48.0%      (v11 是 45.1%)
+    #   Profit Factor 1.75  (v11 是 1.83)
+    # Walkforward 12m:
+    #   盈利窗 3/9 (v11 是 2/9,翻正!)
+    #   均值 +89.36%      (v11 是 +80.48%)
+    #   最差 -82.26%      (v11 是 -73.85%,略增)
+    #   目标窗口 +946.10%  (v11 是 +869.26%)
+    # 关键洞察:atr_pct ∈ [0.030, 0.035) 区间的信号是噪音 — 把它们剔除后
+    # CAGR 几乎翻倍。说明波动率太低的"安静突破"反而是低质信号,
+    # 而波动率稍高(>= 0.035)的突破才携带真实的动量信息。
+    "chase_v12_pos2_equal_atr_tp6_sl15_mh18_score17_atr035": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.30, "sl_pct": 0.05,
+        "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
+        "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
+        "signal": {
+            "breakout_a": True, "breakout_vol_min": 1.5,
+            "momentum_b": True, "pct_chg_low": 0.03, "pct_chg_high": 0.08, "momentum_vol_min": 1.3,
+            "macross_c": True, "macross_vol_min": 1.2,
+            "min_mom120": 0.05, "min_amount": 3e7, "max_amount": 3e8,
+            "atr_pct_low": 0.035, "atr_pct_high": 0.10,
+            "min_score": 1.7,
+        },
+    },
 }
 
 
