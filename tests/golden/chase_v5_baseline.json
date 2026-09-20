@@ -1,0 +1,32 @@
+{
+  "preset": "chase_v5_pos2_equal_atr_tp6_sl15_mh10",
+  "window": ["2025-09-19", "2026-09-19"],
+  "engine": "simulate",
+  "metrics": {
+    "trades": 107,
+    "win_rate": 0.402,
+    "total_return": 2.3987,
+    "cagr": 2.4160,
+    "sharpe": 2.16,
+    "max_dd": 0.3131,
+    "tp_count": 24,
+    "sl_count": 60,
+    "time_count": 21,
+    "eod_count": 2,
+    "profit_factor": 1.39,
+    "avg_net_return": 0.0311,
+    "exposure": 0.970,
+    "final_equity": 3398746.0,
+    "initial_capital": 1000000.0,
+    "avg_hold_days": 4.5,
+    "max_hold_days": 10
+  },
+  "trades_csv_sha256": "4773e6a0b35a9b0f50ab6f28ce606a0efee9ac9b411db94ce8c600c8bbe183ee",
+  "trades_csv_rows": 107,
+  "trades_csv_cols": [
+    "entry_date", "exit_date", "thscode", "exit_reason",
+    "entry_price", "exit_price", "size", "hold_days",
+    "gross_pnl", "fees", "net_pnl", "net_return", "atr_pct", "sub_signal_type"
+  ],
+  "note": "若策略逻辑或信号实现变更导致 trades.csv hash 变动,需同步更新此文件 + 在 PR 描述里说明"
+}
