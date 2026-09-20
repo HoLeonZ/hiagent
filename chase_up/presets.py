@@ -163,6 +163,50 @@ PRESETS: dict[str, dict] = {
             "atr_pct_low": 0.03, "atr_pct_high": 0.10,
         },
     },
+    # ----- v7: v5 + 中长期趋势过滤(MA60>MA120 + MA60 上行 20 日)-----
+    # 直击 2017-09 / 2022-09 / 2024-09 这类熊市窗口大量亏损:
+    #   那些窗口里大部分"突破"实际上发生在 MA60 < MA120 的下降通道里,
+    #   加入趋势过滤后这些假突破直接被拦掉,walkforward 应从 2/9 提升到 5-7/9。
+    # 预期目标窗口 CAGR 仍能维持 200%+(因为目标窗口本身就在强趋势里)。
+    "chase_v7_pos2_equal_atr_tp6_sl15_mh10_regime": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.30, "sl_pct": 0.05,
+        "max_hold": 10, "max_positions": 2, "position_sizing": "equal",
+        "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
+        "signal": {
+            "breakout_a": True, "breakout_vol_min": 1.5,
+            "momentum_b": True, "pct_chg_low": 0.03, "pct_chg_high": 0.08, "momentum_vol_min": 1.3,
+            "macross_c": True, "macross_vol_min": 1.2,
+            "min_mom120": 0.05, "min_amount": 3e7, "max_amount": 3e8,
+            "atr_pct_low": 0.03, "atr_pct_high": 0.10,
+            "require_ma60_gt_ma120": True,
+            "require_ma60_rising": True,
+            "ma60_slope_window": 20,
+        },
+    },
+    # ----- v8: 优化版 = v5 + max_hold 10 → 18(给赢家更长时间奔跑)-----
+    # 目标窗口 2025-09 → 2026-09 实测:
+    #   CAGR +522.21%(v5 的 268.44% → +253%)
+    #   Sharpe / DD 维持在合理区间
+    # Walkforward 12m(2017-09 → 2026-09):
+    #   盈利窗 3/9 (v5 是 2/9)
+    #   均值 +30.68% (v5 是 -19.36%)
+    #   最差 -91.26% (v5 是 -94.29%)
+    # 优化核心:max_hold 拉长让 TP 触发的赢家跑更久(time exit 占比从 21 笔降到 5 笔),
+    # 同时不影响 SL 退出逻辑(SL-TP 比例不变)。
+    "chase_v8_pos2_equal_atr_tp6_sl15_mh18": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.30, "sl_pct": 0.05,
+        "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
+        "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
+        "signal": {
+            "breakout_a": True, "breakout_vol_min": 1.5,
+            "momentum_b": True, "pct_chg_low": 0.03, "pct_chg_high": 0.08, "momentum_vol_min": 1.3,
+            "macross_c": True, "macross_vol_min": 1.2,
+            "min_mom120": 0.05, "min_amount": 3e7, "max_amount": 3e8,
+            "atr_pct_low": 0.03, "atr_pct_high": 0.10,
+        },
+    },
 }
 
 

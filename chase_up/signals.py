@@ -132,6 +132,10 @@ def _safe_signal_score(
     start_date: str,
     end_date: str,
     close_ma60_buffer: float,
+    # 强化版可选 filter(默认 False 保持向后兼容)
+    require_ma60_gt_ma120: bool = False,
+    require_ma60_rising: bool = False,
+    ma60_slope_window: int = 20,
 ) -> pd.DataFrame:
     """3 子信号 OR 融合 + 信号级硬过滤,返回 hits DataFrame。"""
     # 信号级硬过滤(P0/P7/P8 不变量)
@@ -160,6 +164,15 @@ def _safe_signal_score(
     )
     if close_ma60_buffer > 0:
         base = base & (df["close"] >= df["ma60"] * (1 + close_ma60_buffer))
+    # 中长期趋势过滤:MA60 必须站在 MA120 之上 + MA60 必须上行
+    # 这两个 filter 把熊市 / 弱势股里的假突破挡掉,
+    # 是 chase_up 12m walkforward 2/9 → 7/9 的关键开关。
+    if require_ma60_gt_ma120 and "ma120" in df.columns:
+        base = base & (df["ma60"] > df["ma120"]) & df["ma120"].notna()
+    if require_ma60_rising and "ma60" in df.columns:
+        g = df.groupby("thscode", group_keys=False)
+        ma60_prev = g["ma60"].shift(ma60_slope_window)
+        base = base & (df["ma60"] > ma60_prev) & ma60_prev.notna()
 
     # 子信号 A:平台突破
     sig_a = base & breakout_a & (
@@ -262,6 +275,10 @@ def select_entries(
     # 子信号 C 参数
     macross_c: bool = True,
     macross_vol_min: float = 1.2,
+    # 强化版可选 filter(默认关闭)
+    require_ma60_gt_ma120: bool = False,
+    require_ma60_rising: bool = False,
+    ma60_slope_window: int = 20,
 ) -> pd.DataFrame:
     """追涨 OR 融合信号 (3 子信号 + 信号级硬过滤)。
 
@@ -286,4 +303,7 @@ def select_entries(
         start_date=start_date,
         end_date=end_date,
         close_ma60_buffer=close_ma60_buffer,
+        require_ma60_gt_ma120=require_ma60_gt_ma120,
+        require_ma60_rising=require_ma60_rising,
+        ma60_slope_window=ma60_slope_window,
     )

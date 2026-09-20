@@ -632,7 +632,6 @@ def test_v5_trades_csv_matches_golden_baseline():
 
     trades_csv = Path(__file__).parent.parent / "chase_up" / "results" / "v5_trades.csv"
     if not trades_csv.exists():
-        # regenerate and compare
         from chase_up.backtest import run_backtest
         from chase_up.data import load_panel
         from chase_up.universe import load_universe
@@ -658,3 +657,43 @@ def test_v5_trades_csv_matches_golden_baseline():
     assert len(df) == expected_rows, (
         f"trades 行数变化: {len(df)} (expected {expected_rows})"
     )
+
+
+def test_v8_trades_csv_matches_golden_baseline():
+    """chase_v8 trades.csv hash 必须等于 tests/golden/chase_v8_baseline.json 中锁定的值。
+
+    v8 = v5 + max_hold 10→18(优化版)。hash 漂移说明 mh 或信号逻辑有未预期改动。
+    """
+    import hashlib
+    from pathlib import Path
+
+    baseline_path = Path(__file__).parent / "golden" / "chase_v8_baseline.json"
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    expected_hash = baseline["trades_csv_sha256"]
+    expected_rows = baseline["trades_csv_rows"]
+
+    trades_csv = Path(__file__).parent.parent / "chase_up" / "results" / "v8_trades.csv"
+    if not trades_csv.exists():
+        from chase_up.backtest import run_backtest
+        from chase_up.data import load_panel
+        from chase_up.universe import load_universe
+        universe = set(load_universe("mainboard_only", DB_PATH))
+        panel = load_panel(DB_PATH, baseline["window"][0], baseline["window"][1], universe=universe)
+        panel_ind = compute_indicators(panel)
+        res = run_backtest(
+            baseline["preset"], baseline["window"][0], baseline["window"][1],
+            DB_PATH, panel_ind=panel_ind,
+        )
+        res["trades"].to_csv(trades_csv, index=False)
+
+    df = pd.read_csv(trades_csv)
+    actual_hash = hashlib.sha256(df.to_csv(index=False).encode()).hexdigest()
+
+    assert actual_hash == expected_hash, (
+        f"v8 trades.csv hash 漂移:\n"
+        f"  expected: {expected_hash}\n"
+        f"  actual:   {actual_hash}\n"
+        f"  rows: {len(df)} (expected {expected_rows})\n"
+        f"  若策略逻辑有变更,请同步更新 {baseline_path}"
+    )
+    assert len(df) == expected_rows
