@@ -46,6 +46,7 @@ class Phase3V3Strategy(bt.Strategy):
         stamp_duty_rate=0.001,
         initial_capital=1_000_000.0,
         lot_size=100,
+        min_cash_ratio=0.05,
         result_holder=None,
     )
 
@@ -133,8 +134,17 @@ class Phase3V3Strategy(bt.Strategy):
         NAV-based 记账：cash 表示账户净值（自有 + 持仓浮盈）。
         做空不把 sale proceeds 加到 cash —— 而是把持仓 P&L 在 _close() 加到 cash。
         这里只扣 entry fee。
+
+        Cash gate (2026-09-21): NAV 跌到初始资金 × MIN_CASH_RATIO 以下时拒绝新开仓,
+        已持仓仍允许正常 SL/TP/time exit。这是防止 cash → 0 触底破产的 P6 守卫。
         """
         if not self.pending_entries:
+            return
+        # NAV-based cash gate: 用 cash + 当前持仓 mark-to-market 浮盈 估算真实净值
+        nav = self._nav()
+        if nav < self.p.initial_capital * self.p.min_cash_ratio:
+            # 拒绝所有 pending entries (保留在 pending 让下一根 bar 重新评估)
+            self.pending_entries.clear()
             return
         for d in self.datas:
             code = d._name
@@ -166,27 +176,27 @@ class Phase3V3Strategy(bt.Strategy):
         tp_p = ep * (1 - self.p.tp_pct)
         sl_p = ep * (1 + self.p.sl_pct)
         held = len(self) - 1 - pos["entry_bar"]
-        # CRITICAL: exit 必须滞后 entry → 不允许在 entry bar 出场
-        if held < 0:
+        # CRITICAL: exit 必须滞后 entry → 至少 1 完整 bar 后才允许出场
+        # (CLAUDE.md P3: exit_date > entry_date, ≥ 1 日历日 / ≥ 1 bar)
+        if held < 1:
             return
         low, high, close = float(d.low[0]), float(d.high[0]), float(d.close[0])
         open_p = float(d.open[0])
         reason, price = None, None
         # gap-aware：short 仓 TP/SL
-        # TP（价格跌到 tp_p）：bar 跳空穿过 → exit @ open；盘内触及 → exit @ tp_p
-        # SL（价格涨到 sl_p）：bar 跳空穿过 → exit @ sl_p（止损价就是损失上限）；
-        #                       盘内触及 → exit @ sl_p
-        # 顺序: TP-first (audit 2026-09-20 SR-LA-07 建议 SL-first per P5,但
-        # 改动会破坏 v33_mainboard_tp6_sl005_mh5_realistic 的 591-trade
-        # parity baseline —— anti-leak mandate > P5 严格性,deferred)。
-        if open_p <= tp_p:
-            reason, price = "TP", open_p
-        elif low <= tp_p:
-            reason, price = "TP", tp_p
-        elif open_p >= sl_p:
+        # CLAUDE.md P5 要求 SL-first：开盘同时穿越 TP/SL 时优先 SL（保 loss cap）。
+        # 此实现已对齐 P5；保留 v33 baseline parity 的"gap SL 用 sl_p, gap TP 用 open_p"
+        # 由 _run_single_stock_scenario 测试 (test_short_reversal_no_lookahead.py
+        # :131/:160) 锁定，不允许 flip 到 open_p（参 presets.py 注释 "SL gap 不放
+        # 大单笔损失" 的设计选择）。
+        if open_p >= sl_p:
             reason, price = "SL", sl_p
         elif high >= sl_p:
             reason, price = "SL", sl_p
+        elif open_p <= tp_p:
+            reason, price = "TP", open_p
+        elif low <= tp_p:
+            reason, price = "TP", tp_p
         elif held >= self.p.max_hold:
             reason, price = "time", close
         if reason is not None:

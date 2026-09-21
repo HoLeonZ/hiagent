@@ -119,20 +119,28 @@ def _approx_sharpe(trades: list[dict]) -> float:
     return float(mean / std * math.sqrt(min(len(arr), 250)))
 
 
-def run_backtest_v3(preset: str, start: str, end: str, db_path: Path) -> dict:
+def run_backtest_v3(
+    preset: str,
+    start: str,
+    end: str,
+    db_path: Path,
+    min_bars: int = 200,
+) -> dict:
     """跑 v3 引擎返回 metrics dict。
 
     参数:
       preset: PRESETS 里的 preset name
       start / end: 回测区间 (YYYY-MM-DD)
       db_path: DuckDB 文件路径
+      min_bars: 每只票最少需要的 bar 数;2-month 滚动窗口期间 panel 跨春节可能
+                只有 ~197 trading days,这时可下调到 150,NaN gate 会兜底。
     """
     cfg = dict(get_preset(preset))
     cfg["_name"] = preset
 
     universe = load_universe_asof(cfg["universe"], start, db_path)
     panel = _load_panel(db_path, start, end, universe)
-    feeds = build_per_stock_feeds(panel, universe)
+    feeds = build_per_stock_feeds(panel, universe, min_bars=min_bars)
 
     cerebro = bt.Cerebro(stdstats=False)
     cerebro.broker.setcash(INITIAL_CAPITAL)

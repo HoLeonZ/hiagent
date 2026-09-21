@@ -72,19 +72,33 @@ def _load_panel_for_codes(
     return df
 
 
-def _scan_preset(preset: dict, signal_date: str, db_path: Path) -> list[dict]:
-    """跑回测引擎到 signal_date,读出 pending_entries。"""
+def _scan_preset(
+    preset: dict,
+    signal_date: str,
+    db_path: Path,
+    min_bars: int = 150,
+    exclude_st: bool = True,
+) -> tuple[list[dict], list[dict]]:
+    """跑回测引擎到 signal_date,读出 pending_entries。
+
+    返回 (signals, st_excluded) — 第二个元素是被 ST 过滤掉的票,供报告用。
+    min_bars: 至少需要的 bar 数,默认 150(策略指标 NaN gate 兜底)。
+    """
     universe = load_universe_asof(preset["universe"], signal_date, db_path)
     panel = _load_panel_for_codes(db_path, universe, signal_date)
     if panel.empty:
-        return []
+        return [], []
+
+    # ST 启发式过滤放在 5 条件命中之后做 (与 fast 版一致),
+    # 避免对全 universe 拉名称 (5k+ 次 search 慢到不可接受)。
+    st_excluded: list[dict] = []
 
     results: list[dict] = []
     # 按代码切片,每只票跑一次迷你 cerebro。批量策略在 ~5000 只票上内存吃紧
     # 且 indicator 互相独立,所以单只跑最稳。
     for code in universe:
         sub = panel[panel["thscode"] == code].sort_values("date").reset_index(drop=True)
-        if len(sub) < 200:
+        if len(sub) < min_bars:
             continue
 
         cerebro = bt.Cerebro(stdstats=False)
@@ -109,66 +123,131 @@ def _scan_preset(preset: dict, signal_date: str, db_path: Path) -> list[dict]:
             result_holder=holder,
         )
         try:
-            cerebro.run()
+            strategies = cerebro.run()
         except Exception as e:
             # 单只票失败不影响其他 — 跳过,日志稍后聚合
             print(f"WARN {code}: cerebro.run failed: {e}")
             continue
-        strategy = cerebro.strats[0]
+        strategy = strategies[0]
         if code in strategy.pending_entries:
             results.append({
                 "thscode": code,
                 "last_close": float(sub["close"].iloc[-1]),
                 "last_date": sub["date"].iloc[-1].strftime("%Y-%m-%d"),
             })
-    return results
+
+    # ST 启发式过滤 (只对命中票做, 不扫全 universe)
+    if exclude_st and results:
+        from short_reversal.st_filter import filter_signal_codes_for_st
+        results_df = pd.DataFrame(results)
+        keep_df, st_excluded = filter_signal_codes_for_st(
+            results_df, signal_date
+        )
+        results = keep_df.to_dict("records")
+
+    return results, st_excluded
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="短反转实时信号扫描")
-    ap.add_argument("--preset", default="v33_mainboard_tp6_sl005_mh5_realistic")
+    ap.add_argument(
+        "--preset", action="append", default=None,
+        help="preset 名,可重复传(--preset a --preset b);默认 = 两个内置 preset 都跑",
+    )
     ap.add_argument("--signal-date", default=None,
                     help="信号日 (T 日 close). 默认 DuckDB 最新交易日")
     ap.add_argument("--entry-date", default=None,
                     help="T+1 开盘成交日 (仅展示用)")
     ap.add_argument("--db-path", default=str(DEFAULT_DB))
+    ap.add_argument("--min-bars", type=int, default=150)
+    ap.add_argument("--include-st", action="store_true",
+                    help="保留 ST/*ST 票 (默认剔除)")
     args = ap.parse_args()
 
     db_path = Path(args.db_path)
     signal_date = args.signal_date or _latest_trade_date(db_path)
     entry_date = args.entry_date or "T+1"
 
-    cfg = dict(get_preset(args.preset))
-    cfg["_name"] = args.preset
+    presets = args.preset or [
+        "v33_mainboard_tp6_sl005_mh5_realistic",
+        "v33_mainboard_tp2_sl05_dneg",
+    ]
 
     print(f"=== short_reversal 信号扫描 ===")
-    print(f"preset       : {args.preset} (tp={cfg['tp_pct']*100:.2f}% sl={cfg['sl_pct']*100:.4f}% mh={cfg['max_hold']} "
-          f"pc=[{cfg.get('pct_chg_low', 0.02)*100:.1f}%, {cfg.get('pct_chg_high', 0.06)*100:.1f}%])")
-    print(f"信号日 (T)   : {signal_date}  (close 时满足 A/B/C/D/E 5 条件)")
+    print(f"信号日 (T)    : {signal_date}  (close 时满足 A/B/C/D/E 5 条件)")
     print(f"预计成交 (T+1): {entry_date}  (open 时按信号买入做空)")
-    print(f"universe     : {cfg['universe']}")
+    print(f"presets       : {presets}")
+    print(f"min_bars      : {args.min_bars}")
     print()
 
-    signals = _scan_preset(cfg, signal_date, db_path)
+    # 跑每个 preset,记录结果
+    by_preset: dict[str, list[dict]] = {}
+    st_excluded_global: list[dict] = []
+    for preset_name in presets:
+        cfg = dict(get_preset(preset_name))
+        cfg["_name"] = preset_name
+        print(f"[scan] preset={preset_name} "
+              f"(tp={cfg['tp_pct']*100:.2f}% sl={cfg['sl_pct']*100:.4f}% "
+              f"mh={cfg['max_hold']} pc=[{cfg.get('pct_chg_low', 0.02)*100:.1f}%, "
+              f"{cfg.get('pct_chg_high', 0.06)*100:.1f}%]) universe={cfg['universe']}")
+        signals, st_excl = _scan_preset(
+            cfg, signal_date, db_path,
+            min_bars=args.min_bars, exclude_st=not args.include_st,
+        )
+        signals.sort(key=lambda r: r["last_close"])
+        by_preset[preset_name] = signals
+        for r in st_excl:
+            st_excluded_global.append(r)
+        print(f"  → {len(signals)} 个信号"
+              + (f" (剔除 {len(st_excl)} 只 ST)" if st_excl else ""))
+        print()
 
-    if not signals:
-        print("❌ 今日无标的触发信号")
+    # 输出每个 preset 单独的列表
+    for preset_name, signals in by_preset.items():
+        cfg = get_preset(preset_name)
+        print(f"=== {preset_name} ({len(signals)} 个信号) ===")
+        if not signals:
+            print("  (空)")
+            print()
+            continue
+        print(f"  {'thscode':<12}{'signal_date':<14}{'last_close':>12}  notes")
+        print("  " + "-" * 60)
+        for s in signals:
+            print(f"  {s['thscode']:<12}{s['last_date']:<14}{s['last_close']:>12.2f}  "
+                  f"T+1 open 成交 (需券商券源)")
+        print()
+
+    # 跨 preset 的并集与交集
+    all_codes = set()
+    for signals in by_preset.values():
+        all_codes.update(s["thscode"] for s in signals)
+    intersect = set.intersection(*[set(s["thscode"] for s in sigs) for sigs in by_preset.values()]) \
+        if all(len(sigs) > 0 for sigs in by_preset.values()) else set()
+
+    print(f"=== 跨 preset 对比 ===")
+    print(f"  至少一个 preset 触发: {len(all_codes)} 只")
+    if len(by_preset) > 1:
+        print(f"  全部 preset 同时触发: {len(intersect)} 只")
+        if intersect:
+            print(f"  重叠标的: {sorted(intersect)}")
+    print()
+
+    if st_excluded_global:
+        print(f"=== ST/*ST 剔除报告 (启发式: 命名前缀) ===")
+        seen = set()
+        for r in sorted(st_excluded_global, key=lambda r: r["thscode"]):
+            if r["thscode"] in seen:
+                continue
+            seen.add(r["thscode"])
+            print(f"  {r['thscode']:<12} {r['name']}")
+        print(f"  提示: 启发式只在命名前缀做兜底, 改名窗口期 / 摘帽初期可能滞后。")
+        print(f"        下单前请到券商 app 二次确认两融资格与风险警示状态。")
+        print()
+
+    if not all_codes:
+        print("❌ 今日所有 preset 均无信号")
         return 0
 
-    # 排序: 按 last_close 升序展示,直观
-    signals.sort(key=lambda r: r["last_close"])
-
-    print(f"✅ 触发 {len(signals)} 个做空信号:")
-    print()
-    print(f"{'thscode':<12}{'signal_date':<14}{'last_close':>12}  {'T+1 成交价预期':<14}{'notes'}")
-    print("-" * 80)
-    for s in signals:
-        # T+1 成交价 = T+1 open; 此时 DuckDB 无 T+1 数据,只能给 last_close 上下界的预估值
-        # 实际下单时需要等 09-21 开盘价,这里仅展示 last_close 作为参考
-        print(f"{s['thscode']:<12}{s['last_date']:<14}{s['last_close']:>12.2f}  "
-              f"{'(等 T+1 open)':<14}  两融标的,需券商券源核实")
-
-    print()
     print("⚠️  重要提示:")
     print("  1. 信号在 T 日 close 产生, T+1 open 才会成交; 实际成交价以 T+1 09:30 open 为准")
     print("  2. 策略代码无法判断借券可行性 (券源属于券商风控层), 下单前必须在券商 app 查")

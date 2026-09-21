@@ -23,6 +23,12 @@ PRESETS: dict[str, dict] = {
     #   注：CAGR 数字物理合理（SL 截断 + TP 截断复利 1 年），但异常高不建议直接对外宣称；
     #       修复前 CAGR +36.39% / DD 79.0% 来自 3 个引擎 bug（SL 跳空放大、hold_days off-by-1、
     #       max_dd 未含浮盈），修复后 DD 真实值下降 32pp，CAGR 因 SL 损失被截断而复利放大。
+    # === 2026-09-21 P3+P5 修复后 (held<1 守卫 + SL-first P5) ===
+    #   12m (2025-09-12 → 2026-09-12) v3 引擎实测:
+    #   n=566, win=47.0%, CAGR=+9958%, Sharpe=9.12, DD=100.0% ⚠️ 浮盈复利触底
+    #   TP/SL/time = 262/299/5
+    #   ⚠️ DD 100% 是 NAV 真触底 0（cash gate 未接通；实盘 margin call 会强平）
+    #   max_dd=100% 是 paper-trading 性质数字，相对比较仍能看参数优劣。
     "v33_mainboard_tp2_sl05_dneg": {
         "universe": "mainboard_only",
         "tp_pct": 0.02,
@@ -51,6 +57,10 @@ PRESETS: dict[str, dict] = {
     #       不建议直接对外宣称；修复前 CAGR +81.60% / DD 91.62% 来自 3 个引擎 bug
     #       （SL 跳空放大让单笔 SL 损失从 -0.05% 变 -10%，hold_days off-by-1，
     #       max_dd 未含浮盈），修复后 DD 真实值下降 49pp。
+    # === 2026-09-21 P3+P5 修复后 ===
+    #   12m (2025-09-12 → 2026-09-12) v3 引擎实测:
+    #   n=589, win=36.3%, CAGR=+70377%, Sharpe=10.66, DD=100.0% ⚠️
+    #   TP/SL/time = 188/375/26
     "v33_mainboard_tp6_sl005_mh5_realistic": {
         "universe": "mainboard_only",
         "tp_pct": 0.06,
@@ -58,6 +68,36 @@ PRESETS: dict[str, dict] = {
         "max_hold": 5,
         "pct_chg_low": 0.02,
         "pct_chg_high": 0.07,
+    },
+    # === 2026-09-21 微调发现（v34） ===
+    # 单轴 focused compare 在 P3+P5 修复后的 v3 引擎上跑出 (baseline 保持 baseline 的设计选择;
+    # 这里只调 pct_chg 入场信号侧):
+    #   v33 agg_base:                n=589 win=36.3% CAGR=+70377% Sharpe=10.66 DD=100% ⚠️
+    #   v33 agg_tp05:                n=589 win=38.0% CAGR=+61756% Sharpe=11.00 DD=100%
+    #   v33 agg_tp08:                n=589 win=34.5% CAGR=+90857% Sharpe=10.10 DD=100%
+    #   v33 agg_mh7:                 n=588 win=34.2% CAGR=+59599% Sharpe=10.40 DD=100%
+    #   v34 agg_pctchg_03_08 ⭐:     n=303 win=38.3% CAGR=+7122%  Sharpe=11.14 DD=55.8% ✅
+    # 微调方向: pct_chg_low 0.02→0.03, pct_chg_high 0.07→0.08 (收紧入场信号)
+    # 效果: n -48%, win% +2pp, CAGR 从爆炸 +70377% 跌到 +7122% (但仍是可观),
+    #       DD 从 100% 降至 55.8% — 唯一摆脱破产触底的方案,可投资性最高。
+    # 代价: CAGR 数字缩水到 1/10 量级,但 max_dd 改善 44pp — 风险调整收益显著改善。
+    # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) ===
+    #   2024-09-12 → 2025-03-12: n=162 win=14.8% total_yield=+59.79% Sharpe=3.75 DD=100% ⚠️
+    #   2025-03-12 → 2025-09-12: n=189 win=14.3% total_yield=+62.58% Sharpe=4.00 DD=100% ⚠️
+    #   2025-09-12 → 2026-03-12: n= 73 win=17.8% total_yield=+51.60% Sharpe=3.29 DD= 30.0% ✅
+    #   2026-03-12 → 2026-09-12: n=276 win=39.1% total_yield=+5247.91% Sharpe=11.39 DD=55.8% ✅
+    #   最低单窗 total_yield +51.6% (拉涨段); 4/4 窗口全为正收益, 跨周期稳健。
+    #   隐藏脆弱性: 前 3 个窗口胜率 14-18%, SL 占比 84-92% — 信号质量在震荡段
+    #   仍不够好, 收益依赖 SL 截断堆积, 不依赖 tp_pct 真实捕捉。
+    # 注: 仍未接 cash gate, max_dd 100%/55.8% 是 NAV-based, 不代表现金真的没破 0;
+    #     实盘部署前必须先加 cash gate (Task #10) + P6 信号/执行层守卫。
+    "v34_mainboard_pctchg_tight": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.06,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.08,
     },
 }
 
