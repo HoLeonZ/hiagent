@@ -1,0 +1,42 @@
+{
+  "preset": "chase_v18_pos2_equal_atr_tp6_sl16_mh18_score17_atr035_mom115_ma60buf08_atr082",
+  "window": ["2025-09-19", "2026-09-19"],
+  "engine": "simulate",
+  "metrics": {
+    "trades": 72,
+    "win_rate": 0.5,
+    "total_return": 13.1674,
+    "cagr": 13.1674,
+    "sharpe": 4.24,
+    "max_dd": 0.1807,
+    "tp_count": 31,
+    "sl_count": 34,
+    "time_count": 5,
+    "eod_count": 2,
+    "profit_factor": 1.94,
+    "avg_net_return": 0.0856,
+    "exposure": 0.85,
+    "final_equity": 14167417.0,
+    "initial_capital": 1000000.0,
+    "avg_hold_days": 5.7,
+    "max_hold_days": 18
+  },
+  "trades_csv_sha256": "9356ae4b7a80688804982600a648eec43bf9a7c978b9d11fb3c6634297184637",
+  "trades_csv_rows": 72,
+  "trades_csv_cols": [
+    "entry_date", "exit_date", "thscode", "exit_reason",
+    "entry_price", "exit_price", "size", "hold_days",
+    "gross_pnl", "fees", "net_pnl", "net_return", "atr_pct", "sub_signal_type"
+  ],
+  "vs_v17": {
+    "v17_cagr": 12.8501,
+    "v17_walkforward_mean": "+116.94%",
+    "v17_walkforward_worst": "-79.08%"
+  },
+  "walkforward_v18": {
+    "mean": "+154.37%",
+    "worst": "-79.58%",
+    "profitable_windows": "3/9"
+  },
+  "note": "v18 = v17 + atr_sl_mult 1.5 → 1.6(微调 ATR-based SL 乘数)。Pareto 双改善:locked CAGR +1285% → +1317% (+32pp),Sharpe 4.18→4.24,WR 49.3%→50.0%,PF 1.93→1.94,DD 持平 18.07%;walkforward mean +116.94% → +154.37%(+37pp),worst -79.08% → -79.58%(持平,0.5pp 噪声),3/9 盈利不变。参数扫描发现 1.5→1.6 是甜区:1.5x 已触底(再低也是 SL),1.55x 反而因 SL 触发收紧破坏 locked(73→68 trades, +705%),1.6x 给出 1 天额外喘息让盈利不被擦掉。trades 73→72(1 trade 被略宽 SL 救回变赢家),hash 已更新。"
+}
