@@ -24,15 +24,18 @@ class PositionState:
 class Portfolio:
     """Single-position book-keeping. Lot size = 100 shares. ¥5 commission floor.
 
-    Position sizing: max 10% of cash per position (single-name concentration
-    guard for fast-turn cycle strategy). Cash gate: never let `cost > cash`
-    (no borrowing / no leverage).
+    Position sizing: 100% all-in per trade (project-wide policy — see
+    CLAUDE.md §2; risk is absorbed by per-trade SL + ATR exit rather than a
+    pre-trade cash buffer). Cash gate: never let `cost > cash` (no borrowing
+    / no leverage).
     """
 
     COMMISSION_RATE = 0.00025
     MIN_COMMISSION = 5.0
     STAMP_TAX_SELL = 0.001
-    MAX_POSITION_PCT = 0.10
+    # Project policy: every entry is all-in (CLAUDE.md §2, revised 2026-09-21).
+    # Held at 1.0 explicitly so the constant survives for callers/tests.
+    MAX_POSITION_PCT = 1.0
 
     def __init__(self, cash: float) -> None:
         self.cash = float(cash)
@@ -70,13 +73,18 @@ class Portfolio:
             return None
         if price <= 0:
             return None
-        lots = int((self.cash * self.MAX_POSITION_PCT) // (price * 100))
+        lots = int(self.cash // (price * 100))
         if lots < 1:
             return None
         shares = lots * 100
         cost = self._buy_cost(price, shares)
-        if cost > self.cash:        # no-leverage guard
-            return None
+        if cost > self.cash:        # commission would push over cash — round down 1 lot
+            shares -= 100
+            if shares < 100:
+                return None
+            cost = self._buy_cost(price, shares)
+            if cost > self.cash:    # still over after rounding down (e.g. min commission floor)
+                return None
         self.cash -= cost
         self._pos = PositionState(
             thscode=thscode,

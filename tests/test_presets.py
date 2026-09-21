@@ -1,4 +1,9 @@
-"""PRESETS dict + get_preset() 完整覆盖。"""
+"""PRESETS dict + get_preset() 完整覆盖。
+
+NOTE: `short_reversal/presets.py` 增长为 19 个 preset (含 v33-v49 系列);
+本测试从 "key 数量硬等于" 放宽为 "至少包含 v33 双 baseline 且 get_preset()
+可正常返回"。
+"""
 from __future__ import annotations
 
 import pytest
@@ -6,17 +11,19 @@ import pytest
 from short_reversal.presets import PRESETS, get_preset
 
 
-EXPECTED_KEYS = {
+# v33 baselines — 必须保留 (用于回测对比参照)
+REQUIRED_KEYS = {
     "v33_mainboard_tp2_sl05_dneg",
     "v33_mainboard_tp6_sl005_mh5_realistic",
 }
 
 
-def test_presets_has_all_v33_variants():
-    assert set(PRESETS.keys()) == EXPECTED_KEYS
+def test_presets_contains_required_v33_baselines():
+    """Required v33 baselines must remain in PRESETS (注释中明确为破产/对比参照)。"""
+    assert REQUIRED_KEYS.issubset(set(PRESETS.keys()))
 
 
-@pytest.mark.parametrize("name", list(EXPECTED_KEYS))
+@pytest.mark.parametrize("name", sorted(REQUIRED_KEYS))
 def test_preset_required_fields(name):
     p = PRESETS[name]
     assert "universe" in p

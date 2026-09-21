@@ -16,11 +16,11 @@ Time is a strictly monotonic, first-class citizen.
 
 ---
 
-## 2. Capital & State Determinism (Margin Blowout Prevention)
+## 2. Capital & State Determinism
 Capital is physical and finite. We mandate Double-Entry Bookkeeping.
 - **Atomic Cash Locks:** Order sizing must lock cash sequentially. If concurrent signals are generated, sort by conviction, lock estimated cost for Order 1, and size Order 2 based ONLY on the strictly remaining `Free_Cash`.
 - **Settlement Isolation:** Differentiate `Free_Cash`, `Locked_Margin`, and `Settling_Funds`. Do not assume funds from a sell order at $T$ are available for a buy order at $T$ unless explicitly modeling margin borrowing with interest.
-- **Pessimistic Buffers:** Never size positions using 100% of `Free_Cash`. Always deduct a mandatory `RISK_BUFFER` (e.g., 5%) to absorb unexpected slippage, fees, and overnight margin expansions.
+- **All-In Sizing Policy (2026-09-21):** Every entry is sized at 100% of available cash for that trade slot (`position_sizing = "all_in"`, `MAX_POSITION_PCT = 1.0`, `position_fraction = 1.0`). Tail risk is absorbed at the *exit* layer (per-trade ATR-based SL + TP), not at the *entry* layer via a pre-trade cash buffer. Margin blowout protection still applies: `cost > cash` must reject the trade (no leverage) and NAV-floor cash gates remain valid for new entries.
 
 ---
 

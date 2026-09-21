@@ -17,6 +17,9 @@ def test_portfolio_starts_empty():
 def test_try_enter_respects_lot_constraint():
     pf = Portfolio(cash=100_000.0)
     # 600000.SH at 9.87 → 100 shares = 987 + fee — fits.
+    # All-in sizing (CLAUDE.md §2, revised 2026-09-21): uses 100% of cash,
+    # rounded down to integer lots, with a 1-lot round-down fallback when
+    # commission would push cost over cash.
     state = pf.try_enter(
         thscode="600000.SH",
         price=9.87,
@@ -24,7 +27,7 @@ def test_try_enter_respects_lot_constraint():
         decision_meta={"phase_score": 0.3, "k_line_score": 1.5, "calendar_score": 0.4},
     )
     assert state is not None
-    assert state.shares == 10_000 // 9.87 // 100 * 100   # round down to 100s
+    assert state.shares == 100_000 // 9.87 // 100 * 100   # all-in, round down to 100s
 
 
 def test_try_enter_rejected_when_already_in_position():
