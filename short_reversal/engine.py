@@ -47,11 +47,26 @@ def _load_panel(db_path: Path, start: str, end: str, universe: list[str]) -> pd.
     panel_end = (pd.Timestamp(end) + pd.Timedelta(days=60)).strftime("%Y-%m-%d")
     con = duckdb.connect(str(db_path), read_only=True)
     try:
+        # V3a (2026-09-22, CLAUDE.md §3): LEFT JOIN v_daily_hfq (back-adjusted)
+        # 增加 adj_open/adj_high/adj_low/adj_close 列, 让 strategy 可选用 adj
+        # 用于指标计算, 仍用 v_daily 的 raw 列作为 execution trigger。
+        # 当前 baseline parity: short_reversal 默认 price_source_for_execution
+        # 走 raw 域 (v_daily IS raw), signal 也走 raw (为防止 baseline 漂移)。
+        # 完整 V3a 落地 (signal 用 adj) 需要 golden baseline 重生成。
         df = con.execute(
-            "SELECT thscode, date, open, high, low, close, amount, volume "
-            "FROM v_daily "
-            "WHERE date BETWEEN ? AND ? AND thscode = ANY(?) "
-            "ORDER BY thscode, date",
+            """
+            SELECT v.thscode, v.date,
+                   v.open, v.high, v.low, v.close, v.amount, v.volume,
+                   h.open  AS adj_open,
+                   h.high  AS adj_high,
+                   h.low   AS adj_low,
+                   h.close AS adj_close
+            FROM v_daily v
+            LEFT JOIN v_daily_hfq h
+              ON v.thscode = h.thscode AND v.date = h.date
+            WHERE v.date BETWEEN ? AND ? AND v.thscode = ANY(?)
+            ORDER BY v.thscode, v.date
+            """,
             [panel_start, panel_end, universe],
         ).fetchdf()
     finally:
