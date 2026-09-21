@@ -433,6 +433,25 @@ PRESETS: dict[str, dict] = {
         "below_ratio_60": 0.3,
         "close_ma60_buffer": 0.05,
     },
+    # === 2026-09-21 微调发现（v44）— v43_ratio03 进一步极端放宽 ===
+    # 在 v43_ratio03 (ratio 0.3) 基础上进一步放宽, 4 组对比 (12m):
+    #   v44_ratio02 (ratio 0.3→0.2):           n=416 win=33.2% CAGR=+33193% Sharpe=9.91 DD=64.0%
+    #   v44_ratio01 (ratio 0.3→0.1):           n=437 win=32.3% CAGR=+36417% Sharpe=9.72 DD=67.5%
+    #   v44_buf07 (buffer 0.05→0.07):           n=385 win=34.0% CAGR=+29598% Sharpe=10.11 DD=66.5%
+    #   v44_ratio02_buf07 (双极端) ⭐:          n=425 win=33.4% CAGR=+41166% Sharpe=9.99 DD=64.0%
+    # ⚠️ 警惕: 全部 v44 配置 win% < 34%, SL 占比 65%+, 类似 v37 陷阱信号.
+    # === 2026-09-21 walk-forward 待验证 (Task #33) ===
+    "v44_ratio02_buf07": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
 }
 
 

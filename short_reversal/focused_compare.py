@@ -30,21 +30,21 @@ def _run(name: str, cfg: dict) -> dict:
 
 
 def main():
-    base_v42 = {
+    base_v43 = {
         "universe": "mainboard_only",
         "tp_pct": 0.08, "sl_pct": 0.0005, "max_hold": 5,
         "pct_chg_low": 0.03, "pct_chg_high": 0.10,
         "d_mode": "converge_strict",
-        "below_ratio_60": 0.5,
+        "below_ratio_60": 0.3,
         "close_ma60_buffer": 0.05,
     }
 
     candidates = [
-        # v43 系列: v42_buf05 + ratio 进一步放宽
-        ("v43_ratio04",       {**base_v42, "below_ratio_60": 0.4}),                # 60日 40% 时间在 MA60 下
-        ("v43_ratio03",       {**base_v42, "below_ratio_60": 0.3}),                # 极端放宽
-        ("v43_a_extra_relax", {**base_v42, "below_ratio_60": 0.4}),                # 双放宽 alias
-        ("v43_ratio04_buf07", {**base_v42, "below_ratio_60": 0.4, "close_ma60_buffer": 0.07}),  # ratio+buffer 双放宽
+        # v44 系列: v43_ratio03 进一步极端放宽
+        ("v44_ratio02",       {**base_v43, "below_ratio_60": 0.2}),                # 极端放宽 ratio
+        ("v44_ratio01",       {**base_v43, "below_ratio_60": 0.1}),                # 更极端
+        ("v44_buf07",         {**base_v43, "close_ma60_buffer": 0.07}),           # 同时放宽 buffer
+        ("v44_ratio02_buf07", {**base_v43, "below_ratio_60": 0.2, "close_ma60_buffer": 0.07}),  # 双向极端
     ]
 
     for name, cfg in candidates:
