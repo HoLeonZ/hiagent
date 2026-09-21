@@ -166,7 +166,7 @@ def run_grid(
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="样本内参数网格搜索")
-    ap.add_argument("--preset", default="v33_long_reverse_v16")
+    ap.add_argument("--preset", default="v33_long_reverse_v17")
     ap.add_argument("--grid", default="regime", choices=sorted(GRIDS))
     ap.add_argument("--first-year", type=int, default=2017)
     ap.add_argument("--last-year", type=int, default=2025, help="不含目标年")

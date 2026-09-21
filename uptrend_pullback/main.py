@@ -42,7 +42,7 @@ def _fmt(metrics: dict) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="uptrend_pullback 回测入口")
-    parser.add_argument("--preset", default="v33_long_reverse_v16")
+    parser.add_argument("--preset", default="v33_long_reverse_v17")
     parser.add_argument("--start", default="2025-09-08")
     parser.add_argument("--end", default="2026-09-08")
     parser.add_argument("--db-path", default=str(DEFAULT_DB))
