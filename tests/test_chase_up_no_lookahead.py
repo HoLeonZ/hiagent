@@ -1155,3 +1155,42 @@ def test_simulate_portfolio_volume_participation_cap_enforced():
         f"size={size} 应被 volume cap 限制到 {expected_max} "
         f"(bar_volume=1000 × MAX_VOL_PARTICIPATION={MAX_VOL_PARTICIPATION})"
     )
+
+
+def test_simulate_portfolio_atr_aware_slippage_when_scale_positive():
+    """R5 (2026-09-21): atr_slip_scale > 0 时, slippage 必须随 atr_pct × participation × scale 上升。
+
+    复刻"高波动率小票"场景: atr_pct=0.05 (5% 日波), bar_vol=1000, size=100 (10% vol),
+    scale=0.5 → 期望 slippage = 0.05 × 0.10 × 0.5 = 0.0025 (25 bps)。
+    """
+    panel = pd.DataFrame([
+        {"date": pd.Timestamp("2025-09-01"), "thscode": "VOL.SZ", "open": 10.0, "high": 10.5, "low": 9.5, "close": 10.0, "volume": 1000.0, "amount": 1e4, "atr_pct": 0.05},
+        {"date": pd.Timestamp("2025-09-02"), "thscode": "VOL.SZ", "open": 10.0, "high": 10.5, "low": 9.5, "close": 10.0, "volume": 1000.0, "amount": 1e4, "atr_pct": 0.05},
+        {"date": pd.Timestamp("2025-09-03"), "thscode": "VOL.SZ", "open": 10.0, "high": 10.5, "low": 9.5, "close": 10.0, "volume": 1000.0, "amount": 1e4, "atr_pct": 0.05},
+    ])
+    entries = pd.DataFrame([
+        {"date": pd.Timestamp("2025-09-01"), "thscode": "VOL.SZ", "score": 1.0, "sub_signal_type": "A", "atr_pct": 0.05,
+         "sig_close": 10.0, "sig_ma20": 9.5, "sig_ma60": 9.0, "sig_ret1": 0.05,
+         "sig_breakout_score": 0.5, "sig_momentum_score": 0.3, "sig_macross_score": np.nan,
+         "sig_mom120": 0.05, "sig_amount60": 5e7},
+    ])
+    # initial=10k, all_in @ 10 → 1000 shares (10 lots), 但 vol cap = 100 (10%) → 100 shares (1 lot)
+    # participation = 100/1000 = 0.10, atr_pct=0.05, scale=0.5 → slippage = 0.0025 (25 bps)
+    trades, equity = simulate_portfolio(
+        entries, panel,
+        tp_pct=0.10, sl_pct=0.05, max_hold=8, max_positions=1,
+        start_date="2025-09-01", end_date="2025-09-03",
+        initial_capital=10_000.0,
+        position_sizing="all_in",
+        commission_rate=0.0, stamp_duty_rate=0.0, min_commission=0.0,
+        atr_slip_scale=0.5,
+    )
+    assert len(trades) == 1, f"应有 1 笔 trade, 实际 {len(trades)} 笔"
+    # 注: slippage 在 vol cap 之前计算, 用 pre-cap size = 1000
+    # participation = 1000/1000 = 1.0, slippage = 0.05 × 1.0 × 0.5 = 0.025
+    # entry_price = 10 * (1 + 0.025) = 10.25
+    expected_entry = 10.0 * (1 + 0.05 * 1.0 * 0.5)
+    actual_entry = float(trades.iloc[0]["entry_price"])
+    assert abs(actual_entry - expected_entry) < 1e-6, (
+        f"entry_price={actual_entry}, 应 = {expected_entry} (ATR-aware slip)"
+    )

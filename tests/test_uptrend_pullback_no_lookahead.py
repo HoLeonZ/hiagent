@@ -723,3 +723,35 @@ def test_simulate_portfolio_nav_gate_rejects_entries_when_nav_below_threshold():
     assert len(b_trades) == 0, (
         f"NAV gate 应拒绝票 B 入场 (cash={final_cash:.0f} < 5% × initial=450), 但成交了 {len(b_trades)} 笔"
     )
+
+
+def test_simulate_portfolio_atr_aware_slippage_when_scale_positive():
+    """R5 (2026-09-21): uptrend_pullback 同 chase_up R5 — ATR-aware slippage。
+
+    验证 uptrend_pullback 也支持 atr_slip_scale 参数化 (CLAUDE.md §4)。
+    """
+    panel = pd.DataFrame([
+        {"date": pd.Timestamp("2025-09-01"), "thscode": "VOL.SZ", "open": 10.0, "high": 10.5, "low": 9.5, "close": 10.0, "volume": 1000.0, "amount": 1e4, "atr_pct": 0.05},
+        {"date": pd.Timestamp("2025-09-02"), "thscode": "VOL.SZ", "open": 10.0, "high": 10.5, "low": 9.5, "close": 10.0, "volume": 1000.0, "amount": 1e4, "atr_pct": 0.05},
+        {"date": pd.Timestamp("2025-09-03"), "thscode": "VOL.SZ", "open": 10.0, "high": 10.5, "low": 9.5, "close": 10.0, "volume": 1000.0, "amount": 1e4, "atr_pct": 0.05},
+    ])
+    entries = pd.DataFrame([
+        {"date": pd.Timestamp("2025-09-01"), "thscode": "VOL.SZ", "score": 1.0, "atr_pct": 0.05},
+    ])
+    trades, equity = simulate_portfolio(
+        entries, panel,
+        tp_pct=0.10, sl_pct=0.05, max_hold=8, max_positions=1,
+        start_date="2025-09-01", end_date="2025-09-03",
+        initial_capital=10_000.0,
+        position_sizing="all_in",
+        commission_rate=0.0, stamp_duty_rate=0.0, min_commission=0.0,
+        atr_slip_scale=0.5,
+    )
+    assert len(trades) == 1
+    # pre-cap size = 1000, vol_cap = 100, participation = 1000/1000 = 1.0
+    # slip = 0.05 × 1.0 × 0.5 = 0.025, entry = 10 × 1.025 = 10.25
+    actual_entry = float(trades.iloc[0]["entry_price"])
+    expected_entry = 10.0 * (1 + 0.05 * 1.0 * 0.5)
+    assert abs(actual_entry - expected_entry) < 1e-6, (
+        f"uptrend_pullback ATR-aware slip: entry={actual_entry}, 应 = {expected_entry}"
+    )

@@ -103,6 +103,10 @@ def simulate_portfolio(
     stamp_duty_rate: float = 0.0005,
     min_commission: float = 5.0,
     slippage: float = 0.0,
+    # R5 (2026-09-21): ATR-aware slippage (CLAUDE.md §4)。
+    # 若 atr_slip_scale > 0, slippage 改为 signal-day atr_pct × participation × scale。
+    # 若 atr_slip_scale = 0, 沿用旧的静态 slippage 参数 (默认)。
+    atr_slip_scale: float = 0.0,
     atr_tp_mult: float | None = None,
     atr_sl_mult: float | None = None,
     atr_pct_floor: float = 0.01,
@@ -293,6 +297,8 @@ def simulate_portfolio(
                     if not np.isnan(pc) and pc > 0 and (o / pc - 1) >= LIMIT_UP_THRESHOLD:
                         continue
 
+                    # 先用静态 slippage 算 entry_px, 然后用预算算 size_pre_cap (R5
+                    # slippage 在 vol cap 之前用 pre-cap size 计算更悲观)
                     entry_px = float(o) * (1 + slippage)
                     if entry_px <= 0:
                         continue
@@ -306,10 +312,33 @@ def simulate_portfolio(
                     # 这是 CLAUDE.md §4 "Max_Fill_Qty = MIN(Order_Qty, Bar_Volume * 0.10)"
                     # 防止大单砸穿市场、产生 slippage / market impact。
                     bar_vol = pi["volume"][j]
+                    size_pre_cap = size
                     if not np.isnan(bar_vol) and bar_vol > 0:
                         max_fill = int(bar_vol * MAX_VOL_PARTICIPATION // 100) * 100
                         if max_fill > 0 and size > max_fill:
                             size = max_fill
+                    # R5 (2026-09-21): ATR-aware slippage (CLAUDE.md §4)。
+                    # 静态 slippage 不区分低/高波动率; 改用 signal-day atr_pct ×
+                    # participation × scale 动态建模。
+                    # 公式: slip_eff = max(static_slippage, atr_pct × participation × scale)
+                    # participation = size_pre_cap / bar_vol (clamp 到 [0, 1])
+                    # atr_pct 来源: atr_lookup (use_atr=True) 或 entries.atr_pct 列
+                    if atr_slip_scale > 0:
+                        atr_slip_lookup = atr_lookup.get((cal[t - 1], code))
+                        if (atr_slip_lookup is None or np.isnan(atr_slip_lookup)) and "atr_pct" in ent.columns:
+                            ent_match = ent[(ent["date"] == cal[t - 1]) & (ent["thscode"] == code)]
+                            if not ent_match.empty:
+                                atr_slip_lookup = float(ent_match.iloc[0]["atr_pct"])
+                        if atr_slip_lookup is not None and not np.isnan(atr_slip_lookup):
+                            if not np.isnan(bar_vol) and bar_vol > 0:
+                                participation = min(1.0, size_pre_cap / bar_vol)
+                            else:
+                                participation = 0.0
+                            atr_slip = atr_slip_lookup * participation * atr_slip_scale
+                            if atr_slip > slippage:
+                                entry_px = float(o) * (1 + atr_slip)
+                                if entry_px <= 0:
+                                    continue
                     if size < 100:
                         continue
                     notional = size * entry_px
