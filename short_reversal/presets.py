@@ -111,6 +111,35 @@ PRESETS: dict[str, dict] = {
         "pct_chg_low": 0.03,
         "pct_chg_high": 0.08,
     },
+    # === 2026-09-21 微调发现（v35）— v34 系列进一步收紧入场信号 ===
+    # 4 组对比 (P3+P5+cash gate 修后, 12m):
+    #   v35_cons_pctchg_03_08:    n=303 win=46.5% CAGR=+2340% Sharpe=9.28 DD=58.0%
+    #   v35_cons_pctchg_025_06:   n=391 win=47.8% CAGR=+3531% Sharpe=9.47 DD=80.6% ⚠️
+    #   v35_agg_pctchg_04_09 ⭐:  n=171 win=35.1% CAGR=+1365% Sharpe=8.58 DD=35.3% ✅
+    #   v35_agg_pctchg_035_075:   n=232 win=34.5% CAGR=+2423% Sharpe=9.90 DD=55.4%
+    # v35_agg_pctchg_04_09 在 12m 样本里 DD 最低 (35.3%), 真稳健冠军:
+    #   砍掉更多伪信号 (n=171 vs v34 的 303), 胜率 35.1% 但 DD 仅 35.3%,
+    #   CAGR 缩水到 v34 的 1/5 但风险调整收益显著改善。
+    # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) ===
+    #   2024-09-12 → 2025-03-12: n= 77 win=15.6% total_yield=+37.53%  Sharpe=2.67 DD=89.2% ⚠️
+    #   2025-03-12 → 2025-09-12: n= 93 win=14.0% total_yield=+28.87%  Sharpe=2.69 DD=89.2% ⚠️
+    #   2025-09-12 → 2026-03-12: n= 38 win=10.5% total_yield= +9.75%  Sharpe=1.64 DD=24.2% ✅
+    #   2026-03-12 → 2026-09-12: n=162 win=35.8% total_yield=+1240.05% Sharpe=8.48 DD=35.3% ✅
+    #   4/4 窗口全为正收益, 但震荡段 (前 2 窗) DD 高达 89.2% — 信号过少导致
+    #   cash gate 频繁拒单, 浮亏击穿。Sharpe 跨窗均值 3.87, 最低 1.64。
+    #   最低单窗 +9.75% vs v34 的 +51.6% — 跨周期稳健性显著劣于 v34。
+    # === 综合结论: v35 非首选, 仅供对比参照 ===
+    # v34_mainboard_pctchg_tight 在所有维度 (DD/跨周期/CAGR/Sharpe) 都优于 v35。
+    # v35 暴露的本质问题: 信号收紧不能解决震荡段胜率, 必须从 B 连阳 / E 流动性
+    # 窗口入手改进。下次落 -20ms 触发时, Task #15+ 应聚焦 B/E 信号轴。
+    "v35_agg_pctchg_04_09": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.06,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.04,
+        "pct_chg_high": 0.09,
+    },
 }
 
 
