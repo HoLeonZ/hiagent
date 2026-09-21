@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import sys
 from datetime import date, datetime
@@ -14,14 +15,19 @@ from cycle_price_action.walkforward import walkforward_windows
 
 
 def _resolve_window(start: str | None, end: str | None) -> tuple[date, date]:
+    """Resolve CLI date window to concrete (start, end) dates.
+
+    Defaults: end = today, start = end - 365 days. Either may be overridden.
+    """
     e = date.fromisoformat(end) if end else date.today()
-    s = date.fromisoformat(start) if start else (e.toordinal() - 365)
-    s = date.fromordinal(s)
+    if start:
+        s = date.fromisoformat(start)
+    else:
+        s = date.fromordinal(e.toordinal() - 365)
     return s, e
 
 
 def _write_trades_csv(path: Path, trades: list[TradeRecord]) -> None:
-    import csv
     cols = ["thscode", "entry_date", "exit_date", "entry_price",
             "exit_price", "shares", "pnl", "hold_days",
             "k_line_score", "phase_score", "calendar_score"]
@@ -34,7 +40,7 @@ def _write_trades_csv(path: Path, trades: list[TradeRecord]) -> None:
 
 def _run_backtest(args) -> int:
     start, end = _resolve_window(args.start, args.end)
-    out_dir = Path(args.out_dir) / f"run_{datetime.now():%Y%m%d_%H%M%S}"
+    out_dir = Path(args.out_dir) / f"run_{datetime.now():%Y%m%d_%H%M%S_%f}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     db_path = args.db if args.db else str(get_db_path())
@@ -85,12 +91,11 @@ def main(argv: list[str] | None = None) -> int:
 
     def add_run_parser(parent):
         rp = parent.add_parser("run")
-        rp.add_argument("--start")
-        rp.add_argument("--end")
+        # --start / --end / --db / --preset are inherited from the parent
+        # parser. Re-defining them here would shadow the parent's namespace
+        # entries with None (argparse subparser behavior).
         rp.add_argument("--cash", type=float, default=1_000_000)
-        rp.add_argument("--preset", default="v1", choices=["v1"])
         rp.add_argument("--out-dir", default="results")
-        rp.add_argument("--db", default=None)
         rp.set_defaults(func=_run_backtest)
         return rp
 

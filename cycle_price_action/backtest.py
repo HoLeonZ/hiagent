@@ -44,9 +44,9 @@ def _extract_trades(
             shares=rec["shares"],
             pnl=rec["pnl"],
             hold_days=rec["hold_days"],
-            k_line_score=float(meta.get("k_line_score", 0.0)),
-            phase_score=float(meta.get("phase_score", 0.0)),
-            calendar_score=float(meta.get("calendar_score", 0.0)),
+            k_line_score=float(meta["k_line_score"]),
+            phase_score=float(meta["phase_score"]),
+            calendar_score=float(meta["calendar_score"]),
         ))
     return out
 
