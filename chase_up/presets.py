@@ -469,6 +469,30 @@ PRESETS: dict[str, dict] = {
             "close_ma60_buffer": 0.08,
         },
     },
+    # ----- v19: v18 + atr_sl_mult 1.6 → 1.75 (激进型,locked 增益最大但 WF worst 退化) -----
+    # 单参数扫描发现 sl=1.75 是 locked 的全局最优:73 trades, CAGR +1750%
+    # (vs v18 +1317%, +433pp!),Sharpe 4.72,WR 54.9%,PF 2.20。代价:
+    #   - locked DD 18.07% → 20.75% (+2.68pp,微退化)
+    #   - walkforward worst -79.58% → -85.82% (-6.24pp,2018-09 受 wider SL 击打)
+    # walkforward mean +154.37% → +165.29% (+10.92pp,小幅改善)。
+    # 非严格 Pareto,但 locked CAGR/Sharpe/WR/PF 全维度大幅改善,适合长期持有、
+    # 风险承受高的策略;保守场景仍推荐 v18 (sl=1.6)。
+    # 注意 sl=1.65/1.72/1.74/1.76/1.78 都因特定 intraday wicks 触发 SL 异常回归。
+    "chase_v19_pos2_equal_atr_tp6_sl175_mh18_score17_atr035_mom115_ma60buf08_atr082": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.30, "sl_pct": 0.05,
+        "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
+        "atr_tp_mult": 6.0, "atr_sl_mult": 1.75,
+        "signal": {
+            "breakout_a": True, "breakout_vol_min": 1.5,
+            "momentum_b": True, "pct_chg_low": 0.03, "pct_chg_high": 0.08, "momentum_vol_min": 1.3,
+            "macross_c": True, "macross_vol_min": 1.2,
+            "min_mom120": 0.115, "min_amount": 3e7, "max_amount": 3e8,
+            "atr_pct_low": 0.035, "atr_pct_high": 0.082,
+            "min_score": 1.7,
+            "close_ma60_buffer": 0.08,
+        },
+    },
 }
 
 
