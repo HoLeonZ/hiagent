@@ -10,7 +10,7 @@ def detect_k_patterns(df: pd.DataFrame) -> pd.Series:
 
     All computations reference only `df` columns up to the bar being labeled.
     """
-    op, hi, lo, cl, vol = df["open"], df["high"], df["low"], df["close"], df["volume"]
+    op, hi, lo, cl = df["open"], df["high"], df["low"], df["close"]
     body = (cl - op).abs()
     rng = (hi - lo).replace(0, np.nan)
     body_ratio = body / rng
@@ -18,7 +18,6 @@ def detect_k_patterns(df: pd.DataFrame) -> pd.Series:
     out = pd.Series([None] * len(df), index=df.index, dtype=object)
 
     prev_op, prev_cl = op.shift(1), cl.shift(1)
-    prev_body = (prev_cl - prev_op).abs()
 
     bullish_engulfing = (
         (prev_cl < prev_op)
@@ -44,14 +43,14 @@ def detect_k_patterns(df: pd.DataFrame) -> pd.Series:
 
     middle = (cl.shift(1) - op.shift(1)).abs()
     morning_star = (
-        (prev_cl < prev_op)
+        (cl.shift(2) < op.shift(2))
         & (middle / rng.shift(1).fillna(1) < 0.1)
         & (cl > op)
         & (cl > (op.shift(1) + cl.shift(1)) / 2)
     )
     out[morning_star] = "morning_star"
     evening_star = (
-        (prev_cl > prev_op)
+        (cl.shift(2) > op.shift(2))
         & (middle / rng.shift(1).fillna(1) < 0.1)
         & (cl < op)
         & (cl < (op.shift(1) + cl.shift(1)) / 2)
