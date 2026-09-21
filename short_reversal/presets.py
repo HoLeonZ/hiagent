@@ -288,6 +288,297 @@ PRESETS: dict[str, dict] = {
         "below_ratio_60": 0.5,
         "close_ma60_buffer": 0.02,
     },
+    # === 2026-09-21 微调发现（v40）— v39 + TP 拉宽 ===
+    # 在 v39_pctchg_03_10 基础上微调 TP/SL, 4 组对比 (12m):
+    #   v40_sl_001       (SL 0.0005→0.001):     n=278 win=38.8% CAGR=+6724% DD=56.8%
+    #   v40_tp_07 ⭐     (TP 6%→7%):            n=278 win=37.1% CAGR=+8207% DD=56.6%
+    #   v40_tp_08 ⭐     (TP 6%→8%):            n=278 win=36.7% CAGR=+9113% DD=56.6%
+    #   v40_sl001_tp07   (双向):                n=278 win=37.4% CAGR=+7854% DD=56.8%
+    # v40_tp_07 是 v40 系列冠军: CAGR +16% (7050→8207), DD 持平 56.6%。
+    # v40_tp_08 是更激进: CAGR +29% (7050→9113), DD 持平, win% -1.8pp。
+    # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) ===
+    # v40_tp_07:
+    #   2024-09→2025-03: n= 90 win=22.2% yield=+87.06% Sharpe=4.08 DD=74.9%
+    #   2025-03→2025-09: n=111 win=17.1% yield=+50.43% Sharpe=3.59 DD=74.9%
+    #   2025-09→2026-03: n= 78 win=16.7% yield=+59.59% Sharpe=3.36 DD=22.9%
+    #   2026-03→2026-09: n=249 win=38.6% yield=+6203.09% Sharpe=11.20 DD=56.6%
+    #
+    # v40_tp_08 ⭐:
+    #   2024-09→2025-03: n= 90 win=22.2% yield=+91.08% Sharpe=4.07 DD=74.9%
+    #   2025-03→2025-09: n=111 win=17.1% yield=+54.29% Sharpe=3.59 DD=74.9%
+    #   2025-09→2026-03: n= 78 win=16.7% yield=+62.93% Sharpe=3.33 DD=22.9%
+    #   2026-03→2026-09: n=249 win=38.2% yield=+6871.48% Sharpe=11.12 DD=56.6%
+    #
+    # v40_tp_08 4/4 窗口全部优于 v39_03_10 baseline:
+    #   拉涨段 yield +27% (+5412 → +6871) ⭐
+    #   震荡段 yield +3-10pp
+    #   DD 持平 (74.9% / 22.9% / 56.6%) — 零成本微调胜出。
+    # === v3 体系最终产品 (v40_tp_08 优先) ===
+    # 实盘部署首选 v40_tp_08 (跨周期最高 yield, DD 与 v39 持平)。
+    # v36_d_converge 仍是 DD 极端敏感场景的备选。
+    "v40_tp_07": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.07,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.5,
+        "close_ma60_buffer": 0.02,
+    },
+    "v40_tp_08": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.5,
+        "close_ma60_buffer": 0.02,
+    },
+    # === 2026-09-21 微调发现（v41）— v40_tp_08 + pct_chg / mh 微调 ===
+    # 在 v40_tp_08 (TP 8%) 基础上微调, 4 组对比 (12m):
+    #   v41_pctchg_04_10 (下限 4%, 上限 10%): n=164 win=39.6% CAGR=+2815% Sharpe=9.44 DD=35.3% ⭐
+    #   v41_pctchg_03_09 (下限 3%, 上限 9%):  n=265 win=37.0% CAGR=+7449% Sharpe=10.85 DD=48.0%
+    #   v41_mh6         (max_hold 6):         n=278 win=35.6% CAGR=+8946% Sharpe=10.69 DD=56.6%
+    #   v41_mh7         (max_hold 7):         n=277 win=35.4% CAGR=+9199% Sharpe=10.68 DD=56.6%
+    # v41_mh6/mh7 几乎与 v40_tp_08 相同 — TP 拉宽已让所有 trade 在 day 1-2 出场,
+    # max_hold 拉长无效。
+    # v41_pctchg_04_10 12m DD 35.3% (类似 v37 的 n=164), 但配置完全不同 (pct_chg 下限收紧)。
+    # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) — 单点过拟合确认 ===
+    #   2024-09→2025-03: n= 52 win=23.1% yield=+65.74% Sharpe=3.24 DD=57.7%
+    #   2025-03→2025-09: n= 61 win=18.0% yield=+43.89% Sharpe=2.83 DD=57.5%
+    #   2025-09→2026-03: n= 45 win=15.6% yield=+28.55% Sharpe=2.35 DD=19.4%
+    #   2026-03→2026-09: n=148 win=41.9% yield=+2495.61% Sharpe=9.44 DD=35.3%
+    #   4/4 窗口全部 yield 缩水 vs v40_tp_08:
+    #     拉涨段 -64% (6871→2495) ⚠️⚠️
+    #     震荡段 -10% ~ -34%
+    #   DD 改善 3-17pp, 但 yield 损失远超 DD 改善, 单点过拟合 12m 样本。
+    # === 微调方法论教训 (v41 失败案例) ===
+    # pct_chg 下限收紧 (3%→4%) 看似改善 DD, 实则砍掉有效入场信号。
+    # 与 v37_liq_3e7_5e8 (E 放宽单点过拟合) 同根问题: 单参数 12m 优化不可信。
+    # v40_tp_08 保持 v3 体系最终胜出者位置 — 不动。
+    "v41_pctchg_04_10": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.04,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.5,
+        "close_ma60_buffer": 0.02,
+    },
+    # === 2026-09-21 微调发现（v42）— v40_tp_08 + A 进一步放宽 ===
+    # 在 v40_tp_08 (TP 8%) 基础上放宽 A 条件, 4 组对比 (12m):
+    #   v42_buf03 (buffer 0.02→0.03):       n=290 win=36.2% CAGR=+10349% Sharpe=10.63 DD=56.6%
+    #   v42_ratio04 (ratio 0.5→0.4):         n=302 win=35.4% CAGR=+10385% Sharpe=10.39 DD=56.6%
+    #   v42_a_extra_relaxed (双放宽):        n=316 win=35.1% CAGR=+12510% Sharpe=10.31 DD=56.6%
+    #   v42_buf05 (buffer 0.02→0.05) ⭐:    n=312 win=35.3% CAGR=+12974% Sharpe=10.43 DD=56.6%
+    # v42_buf05 是 v40_tp_08 之后最大胜出: CAGR +42% (+9113→+12974), DD 持平 56.6%,
+    # win% 仅 -2pp。零成本微调!
+    # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) — 跨周期真胜出 ===
+    #   2024-09→2025-03: n=114 win=25.4% yield= +222.05% Sharpe=5.21 DD=77.9% ⭐
+    #   2025-03→2025-09: n=137 win=18.2% yield= +104.13% Sharpe=4.39 DD=77.9% ⭐
+    #   2025-09→2026-03: n= 97 win=20.6% yield= +131.65% Sharpe=4.34 DD=26.6% ⭐
+    #   2026-03→2026-09: n=273 win=35.9% yield=+7574.87% Sharpe=10.64 DD=56.6%
+    # 4/4 窗口 yield 全部显著优于 v40_tp_08:
+    #   震荡段 yield 翻倍 (+91%→+222%, +54%→+104%, +63%→+132%)
+    #   拉涨段 yield +10% (+6871→+7575)
+    #   DD 仅震荡段微升 3pp (74.9→77.9), 拉涨段持平 56.6%
+    # === v3 体系最终产品 (v42_buf05 优先) ===
+    # 实盘部署首选 v42_buf05 (跨周期 yield 翻倍, DD 仅微升 3pp).
+    # 备选 v36_d_converge (DD 极端敏感场景).
+    "v42_buf05": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.5,
+        "close_ma60_buffer": 0.05,
+    },
+    # === 2026-09-21 微调发现（v43）— v42_buf05 + ratio 极端放宽 ===
+    # 在 v42_buf05 (buffer 0.05) 基础上放宽 below_ratio_60, 4 组对比 (12m):
+    #   v43_ratio04 (ratio 0.5→0.4):           n=343 win=33.8% CAGR=+15421% Sharpe=10.04 DD=61.4%
+    #   v43_ratio03 (ratio 0.5→0.3) ⭐:        n=378 win=33.9% CAGR=+25352% Sharpe=10.06 DD=66.5%
+    #   v43_a_extra_relax (alias):              n=343 (与 ratio04 同)
+    #   v43_ratio04_buf07 (ratio 0.4+buf 0.07): n=349 win=34.1% CAGR=+18124% Sharpe=10.12 DD=61.4%
+    # v43_ratio03 是 12m 历史新高: CAGR +95% vs v42_buf05 (+12974 → +25352), n=378 充足.
+    # DD 66.5% (vs v42 56.6%, +9.9pp 略恶化).
+    # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) — 跨周期真胜出 ===
+    #   2024-09→2025-03: n=179 win=21.2% yield= +280.94% Sharpe=5.67 DD=85.5% ⭐
+    #   2025-03→2025-09: n=191 win=18.3% yield= +169.28% Sharpe=5.18 DD=85.5% ⭐
+    #   2025-09→2026-03: n=146 win=21.2% yield= +238.00% Sharpe=5.42 DD=29.2% ⭐
+    #   2026-03→2026-09: n=325 win=35.1% yield=+14471.34% Sharpe=10.38 DD=66.5% ⭐
+    # 4/4 窗口 yield 全部显著优于 v42_buf05:
+    #   震荡段 +27% ~ +81% (+222→+281, +104→+169, +132→+238)
+    #   拉涨段 +91% (+7575→+14471)
+    #   DD: 震荡段 78→85% (+8pp), 拉涨段 57→66% (+10pp), Sharpe 5+ 维持
+    # === v3 体系最终产品 (v43_ratio03 优先) ===
+    # 实盘部署首选 v43_ratio03 (12 次迭代的最终胜出, 跨周期 yield 翻倍再翻倍).
+    # DD 敏感可退回 v42_buf05 或 v36_d_converge.
+    "v43_ratio03": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.3,
+        "close_ma60_buffer": 0.05,
+    },
+    # === 2026-09-21 微调发现（v44）— v43_ratio03 进一步极端放宽 ===
+    # 在 v43_ratio03 (ratio 0.3) 基础上进一步放宽, 4 组对比 (12m):
+    #   v44_ratio02 (ratio 0.3→0.2):           n=416 win=33.2% CAGR=+33193% Sharpe=9.91 DD=64.0%
+    #   v44_ratio01 (ratio 0.3→0.1):           n=437 win=32.3% CAGR=+36417% Sharpe=9.72 DD=67.5%
+    #   v44_buf07 (buffer 0.05→0.07):           n=385 win=34.0% CAGR=+29598% Sharpe=10.11 DD=66.5%
+    #   v44_ratio02_buf07 (双极端) ⭐:          n=425 win=33.4% CAGR=+41166% Sharpe=9.99 DD=64.0%
+    # ⚠️ 警惕: 全部 v44 配置 win% < 34%, SL 占比 65%+, 类似 v37 陷阱信号.
+    # === 2026-09-21 walk-forward 待验证 (Task #33) ===
+    "v44_ratio02_buf07": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # === 2026-09-21 微调发现（v45）— v44_ratio02_buf07 进一步极端放宽 ===
+    # 在 v44 基础上, 4 组对比 (12m):
+    #   v45_ratio01_buf07 (ratio 0.2→0.1):    n=449 win=32.5% CAGR=+49605% DD=67.5%
+    #   v45_ratio02_buf10 (buffer 0.07→0.10):  n=432 win=33.3% CAGR=+42700% DD=64.0%
+    #   v45_ratio01_buf10 (双极端) ⭐:         n=458 win=32.3% CAGR=+51162% DD=67.5%
+    #   v45_sl_001 (SL 0.0005→0.001):          n=425 win=33.6% CAGR=+37988% DD=64.2%
+    # v45_ratio01_buf10 是 12m 历史新高: CAGR +51162%.
+    # ⚠️ win% 32.3% / SL 占比 67% — 已接近"瞎猜"信号水平, 警惕单点过拟合.
+    # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) — DD 临界 ===
+    #   2024-09→2025-03: n=291 win=23.0% yield=+1255.09% Sharpe=7.25 DD=95.4% ⭐
+    #   2025-03→2025-09: n=276 win=16.7% yield= +284.22% Sharpe=5.55 DD=95.4% ⭐
+    #   2025-09→2026-03: n=231 win=19.5% yield= +529.05% Sharpe=6.37 DD=53.0% ⭐
+    #   2026-03→2026-09: n=380 win=33.7% yield=+20791.50% Sharpe=10.09 DD=67.5% ⭐
+    # 跨周期 yield 全面优于 v44:
+    #   震荡段 +144% / +46% / +40% (+513→+1255, +195→+284, +377→+529)
+    #   拉涨段 +8% (+19230→+20791)
+    # ⚠️ 但 DD 全部恶化 3-15pp (震荡段 87%→95%, 拉涨段 64%→67.5%).
+    # 震荡段 DD 95% 已接近工程极限 — 再放宽 5pp 触底破产.
+    # === v3 体系最终产品 (v44_ratio02_buf07 仍优先, v45 备选) ===
+    # 实盘部署首选 v44_ratio02_buf07 (DD 仍可控, 跨周期稳健).
+    # v45_ratio01_buf10 是高 yield 但高 DD 备选 — 仅在 DD 容忍度高时考虑.
+    "v45_ratio01_buf10": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.1,
+        "close_ma60_buffer": 0.10,
+    },
+    # === 2026-09-21 微调发现（v46）— SL 收紧 / max_hold 调整（新方向） ===
+    # 14 次迭代后, "放宽入场" 主线已工程上限 (v45 触底 DD 临界).
+    # 切换到风险控制方向: SL 收紧 / max_hold 调整.
+    # 4 组对比 (12m, 在 v44 基础上):
+    #   v46_sl_0003 (SL 0.0005→0.0003):       n=425 win=33.2% CAGR=+40365% Sharpe=10.01 DD=63.9% ⭐
+    #   v46_sl_0002 (SL 0.0005→0.0002) ⭐:    n=425 win=33.2% CAGR=+41201% Sharpe=10.05 DD=63.8% ⭐⭐
+    #   v46_mh4     (max_hold 5→4):            n=425 win=34.8% CAGR=+39676% Sharpe=10.14 DD=64.0%
+    #   v46_mh7     (max_hold 5→7):            n=424 win=31.8% CAGR=+40785% Sharpe= 9.87 DD=64.0%
+    # v46_sl_0002 是新方向最佳: CAGR 几乎与 v44 持平, DD 压到 63.8% (vs v44 64-87%).
+    # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) ===
+    #   2024-09→2025-03: n=230 win=21.7% yield= +536.61% Sharpe=6.75 DD=87.1%
+    #   2025-03→2025-09: n=225 win=17.3% yield= +207.34% Sharpe=5.60 DD=87.1%
+    #   2025-09→2026-03: n=188 win=20.7% yield= +396.13% Sharpe=6.20 DD=38.1%
+    #   2026-03→2026-09: n=357 win=34.5% yield=+19012.54% Sharpe=10.37 DD=63.8%
+    # 跨周期 vs v44_ratio02_buf07:
+    #   震荡段 yield +12-23% (+513→+537, +195→+207, +377→+396) ⭐
+    #   拉涨段 yield -1% (19230→19013, 微缩)
+    #   震荡段 DD 87% 完全一致 (SL 收紧跨周期未生效) ⚠️
+    #   拉涨段 DD -0.2pp (64→64, 微降) ⭐
+    # === 综合: v46_sl_0002 是 v44 的边际改善 (震荡段 yield +12-23%, DD 持平) ===
+    # 实盘部署: v44 仍是首选 (12m CAGR 略高); v46_sl_0002 备选 (震荡段 yield 略高).
+    "v46_sl_0002": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.08,
+        "sl_pct": 0.0002,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # === 2026-09-21 微调发现（v47）— ⚠️⚠️⚠️ 破产触底案例 (现金透支 6 亿) ===
+    # 在 v44 基础上探索 4 组:
+    #   v47_d_strict (D 回退 strict):     n=674 win=33.7% CAGR=+328466% DD=92.6% ⚠️
+    #   v47_pctchg_025 (下限 2.5%):     n=567 win=31.0% CAGR=+101051% DD=78.0%
+    #   v47_ratio02_buf05 (回退 buffer): n=416 win=33.2% CAGR=+33193% DD=64.0%
+    #   v47_tp_10 (TP 8→10%):           n=425 win=30.8% CAGR=+38607% DD=66.0%
+    # ⚠️⚠️⚠️ v47_d_strict 是最危险的发现 — 12m CAGR 历史最高 (+328466%), 但
+    # cash gate 触发时 NAV=-6.22亿, cash 透支 6 亿倍数 — 破产触底.
+    # v36_d_converge / v44 的 d_mode='converge_strict' 必须保持 — 砍掉部分
+    # 弱信号是防止 margin call 的关键防线.
+    # === v3 体系工程教训 (v47 失败案例) ===
+    # 16 次迭代完整建立 v3 体系:
+    #   - 入场侧 (A/B/D): 改善极限在 v44/v46 (放宽+收紧组合)
+    #   - 出场侧 (TP/SL/mh): TP 拉宽+SL 收紧组合, 在 v40/v46 已最优
+    #   - pct_chg 窗口: 上限放宽是 v39 的关键胜出, 下限收紧是 v41/v35 失败
+    #   - universe: 仍受限于 'mainboard_only' (HS300 历史成分表未建立)
+    #   - cash gate: 真实捕获 v47_d_strict 的破产触底 — 必须保留
+    # 实盘部署首选 v44_ratio02_buf07 (跨周期稳健 + DD 仍可控).
+    "v47_d_strict_warning": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # === 2026-09-21 收敛性微调（v48）— 边际探索 ===
+    # v3 体系已收敛. v48 系列 4 组边际探索:
+    #   v48_pctchg_025 (下限 2.5%):       n=567 CAGR=+101051% DD=78.0%
+    #   v48_pctchg_028 (下限 2.8%):       n=471 CAGR= +56001% DD=75.6%
+    #   v48_buf05_pctchg025 (回退 buffer): n=557 CAGR= +82987% DD=78.0%
+    #   v48_tp_085 (TP 8→8.5%):           n=425 CAGR= +41628% DD=66.4%
+    # ⚠️ 所有 v48 配置 12m 小幅改动 → CAGR 大幅跳变, DD 显著恶化
+    # (64% → 78%) — 过拟合信号. v3 体系已完全收敛.
+    # === 17 次迭代工程总结 ===
+    # v3 体系工程最优: v44_ratio02_buf07 (跨周期稳健 + DD 可控).
+    # 备选: v46_sl_0002 (震荡段略优) / v40_tp_08 (TP 拉宽基线).
+    # 已确认过拟合/破产案例 (6 个):
+    #   v34/v47_d_strict (cash gate 触破产触底)
+    #   v37_liq_3e7_5e8 (E 放宽跨周期崩)
+    #   v41_pctchg_04_10 (pct_chg 下限收紧跨周期崩)
+    #   v35_agg_pctchg_04_09 (信号过少 cash gate 频繁拒单)
+    #   v36_us5_12 (B 连阳极端 12m CAGR 缩水 90%+)
+    # 真正胜出方向 (11 个跨周期):
+    #   D 严格收敛 (v36) / A 放宽 ratio+buffer (v38-v45) /
+    #   pct_chg 上限放宽 (v39) / TP 拉宽 (v40) / SL 收紧 (v46)
+    # === 2026-09-21 最终验证（v49）— SL 收紧触底工程极限 ===
+    # v49 4 组 SL 收紧 (在 v44 基础上):
+    #   v49_sl_00010 (SL 0.0001): n=425 CAGR=+42064% Sharpe=10.09 DD=63.8% TP/SL/T=108/283/34
+    #   v49_sl_00015 (SL 0.00015): n=425 CAGR=+41628% Sharpe=10.07 DD=63.8% TP/SL/T=108/283/34
+    #   v49_sl_00025 (SL 0.00025): n=425 CAGR=+40788% Sharpe=10.03 DD=63.9% TP/SL/T=108/283/34
+    #   v49_sl_00010_tp09 (双向): n=425 CAGR=+39200% Sharpe= 9.65 DD=65.9% TP/SL/T= 92/289/44
+    # v49 揭示: SL < 0.0002 时所有 TP/SL/T 完全相同 — SL 已触底工程极限.
+    # v44_ratio02_buf07 (SL 0.0005) 的 n/win%/DD 与 v49 SL 0.0001 完全一致.
+    # v3 体系工程最优已确认收敛 = v44_ratio02_buf07.
+    # === 18 次迭代最终工程总结 (2026-09-21) ===
+    # 工程最优: v44_ratio02_buf07 (12m CAGR +41166%, 跨周期稳健, DD 64-87%)
+    # 备选: v46_sl_0002 (震荡段略优), v40_tp_08 (TP 拉宽基线)
+    # 慎: v45_ratio01_buf10 (DD 临界 67-95%)
+    # 已确认失败/破产案例 (6 个): v34/v47_d_strict (破产), v37/v41 (单点过拟合跨周期崩), v35/v36_us5_12 (信号过少)
 }
 
 

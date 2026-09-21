@@ -30,21 +30,21 @@ def _run(name: str, cfg: dict) -> dict:
 
 
 def main():
-    base_v38 = {
+    base_v44 = {
         "universe": "mainboard_only",
-        "tp_pct": 0.06, "sl_pct": 0.0005, "max_hold": 5,
-        "pct_chg_low": 0.03, "pct_chg_high": 0.08,
+        "tp_pct": 0.08, "sl_pct": 0.0005, "max_hold": 5,
+        "pct_chg_low": 0.03, "pct_chg_high": 0.10,
         "d_mode": "converge_strict",
-        "below_ratio_60": 0.5,
-        "close_ma60_buffer": 0.02,
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
     }
 
     candidates = [
-        # v39 系列: v38 + pct_chg 进一步调整
-        ("v39_pctchg_04_09",  {**base_v38, "pct_chg_low": 0.04, "pct_chg_high": 0.09}),   # 收紧下限, 拓宽上限
-        ("v39_pctchg_035_08", {**base_v38, "pct_chg_low": 0.035, "pct_chg_high": 0.08}),  # 微调下限
-        ("v39_pctchg_03_10",  {**base_v38, "pct_chg_low": 0.03, "pct_chg_high": 0.10}),   # 拓宽上限
-        ("v39_pctchg_04_08",  {**base_v38, "pct_chg_low": 0.04, "pct_chg_high": 0.08}),   # 双收紧
+        # v49 系列: SL 收紧梯度 (最终验证)
+        ("v49_sl_00010",  {**base_v44, "sl_pct": 0.0001}),                          # SL 极端收紧
+        ("v49_sl_00015",  {**base_v44, "sl_pct": 0.00015}),                         # SL 较紧
+        ("v49_sl_00025",  {**base_v44, "sl_pct": 0.00025}),                         # SL 中间
+        ("v49_sl_00010_tp09", {**base_v44, "sl_pct": 0.0001, "tp_pct": 0.09}),       # SL+TP 双向
     ]
 
     for name, cfg in candidates:

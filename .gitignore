@@ -31,5 +31,9 @@ __pycache__/
 # Strategy run artifacts
 uptrend_pullback/results/
 short_reversal/results/
+chase_up/results/
 data/exports/
 figures/
+
+# MCP / browser tool scratch output
+.playwright-mcp/
