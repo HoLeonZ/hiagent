@@ -56,6 +56,12 @@ def apply_liquidity_filter(
 
 
 def is_excluded_status(thscode: str, excluded_set: set[str] | None) -> bool:
+    """True if thscode is in excluded_set (exact) or matches a wildcard tag prefix.
+
+    A wildcard tag ends with `*` and matches any thscode starting with the
+    preceding prefix (e.g. `ST/*` matches `ST华谊`). Empty/None excluded_set
+    is a no-op (returns False).
+    """
     if not excluded_set:
         return False
     if thscode in excluded_set:
