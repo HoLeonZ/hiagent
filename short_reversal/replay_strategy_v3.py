@@ -72,6 +72,10 @@ class Phase3V3Strategy(bt.Strategy):
         # 当 atr_slip_scale = 0, 沿用 R3 默认无 slippage (保持 v33 baseline parity)。
         atr_slip_scale=0.0,
         atr_period=14,
+        # V8 (2026-09-22, CLAUDE.md §4): max_volume_participation 与 intraday_tiebreak
+        # 显式声明在 strategy params, preset 可覆盖。
+        max_volume_participation=0.10,
+        intraday_tiebreak="sl_first",
         result_holder=None,
     )
 
@@ -221,11 +225,13 @@ class Phase3V3Strategy(bt.Strategy):
                 int(target_value / entry_price / self.p.lot_size) * self.p.lot_size
             )
             # 防穿仓 (R8, 2026-09-21): Volume Participation Limit
-            # 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION, 超出丢弃。
+            # 单笔最大成交量 = Bar_Volume × max_volume_participation, 超出丢弃。
             # CLAUDE.md §4 "Max_Fill_Qty = MIN(Order_Qty, Bar_Volume * 0.10)"。
             bar_vol = float(d.volume[0])
             if bar_vol > 0:
-                max_fill = int(bar_vol * MAX_VOL_PARTICIPATION / self.p.lot_size) * self.p.lot_size
+                max_fill = int(
+                    bar_vol * self.p.max_volume_participation / self.p.lot_size
+                ) * self.p.lot_size
                 if max_fill > 0 and size > max_fill:
                     size = max_fill
             if size < self.p.lot_size:
@@ -267,11 +273,15 @@ class Phase3V3Strategy(bt.Strategy):
         open_p = float(d.open[0])
         reason, price = None, None
         # gap-aware：short 仓 TP/SL
-        # CLAUDE.md P5 要求 SL-first：开盘同时穿越 TP/SL 时优先 SL（保 loss cap）。
+        # CLAUDE.md P5 要求 SL-first (self.p.intraday_tiebreak='sl_first'):
+        # 开盘同时穿越 TP/SL 时优先 SL（保 loss cap）。
         # 此实现已对齐 P5；保留 v33 baseline parity 的"gap SL 用 sl_p, gap TP 用 open_p"
         # 由 _run_single_stock_scenario 测试 (test_short_reversal_no_lookahead.py
         # :131/:160) 锁定，不允许 flip 到 open_p（参 presets.py 注释 "SL gap 不放
         # 大单笔损失" 的设计选择）。
+        assert self.p.intraday_tiebreak == "sl_first", (
+            f"short_reversal 必须 'sl_first', got {self.p.intraday_tiebreak}"
+        )
         if open_p >= sl_p:
             reason, price = "SL", sl_p
         elif high >= sl_p:

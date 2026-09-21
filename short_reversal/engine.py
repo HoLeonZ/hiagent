@@ -187,6 +187,14 @@ def run_backtest_v3(
         initial_capital=INITIAL_CAPITAL,
         lot_size=100,
         min_cash_ratio=cfg.get("min_cash_ratio", 0.05),
+        # V5' (2026-09-22, CLAUDE.md §4): ATR-aware slippage is opt-in via preset。
+        # 默认 0.0 = baseline parity (无 slippage), preset 可上调启用真实市场摩擦。
+        atr_slip_scale=cfg.get("atr_slip_scale", 0.0),
+        # V8 (2026-09-22, CLAUDE.md §4): max_volume_participation 与 intraday_tiebreak
+        # 从 preset 显式 plumb 到 strategy (而非依赖模块常量/默认值)。
+        # 当前 preset 默认 0.10 / 'sl_first', 完整覆盖 11/11 preset。
+        max_volume_participation=cfg.get("max_volume_participation", 0.10),
+        intraday_tiebreak=cfg.get("intraday_tiebreak", "sl_first"),
         result_holder=holder,
     )
     cerebro.run()
