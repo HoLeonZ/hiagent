@@ -1,24 +1,25 @@
 """策略 preset 配置。
 
 单一 preset:
-  v33_long_reverse_v18 — 当前 Pareto 最优 (composite 0.9117)。
+  v33_long_reverse_v19 — 当前 Pareto 最优 (composite 0.9550)。
 
   12 月窗口 (2024-09..2026-09) backtrader 引擎实测:
-    median     +21.61%
-    mean       +31.39%
-    Sharpe     2.90
-    avg_dd     21.2%
+    median     +21.72%
+    mean       +32.22%
+    Sharpe     2.96
+    avg_dd     21.0%
     worst_dd   48.1%
-    trades     8.40/窗口
-    composite  0.9117
+    trades     8.30/窗口
+    composite  0.9550
 
   优化路径: v3 (sweep_v6) → v7 (sweep_v7) → v12 → v13 (buf+mom)
           → v14 (mom=0.12) → v15 (SL=0.0293 单峰) → v16 (mom plateau)
           → v17 (TP 0.30→0.303,超精扫 TP grid 发现)
           → v18 (mom 0.13→0.16 + ma60_ratio 0.60→0.65,paradigm-axis 联合搜索)
-  v18 vs v17 strict Pareto improvement:
-    composite  +1.98% / sharpe +0.09 / avg_dd -1.3pp
-    median/worst_dd tied,mean -0.37pp (acceptable trade)
+          → v19 (TP 0.303→0.305 + mom 0.16→0.18,v18 邻域 联合搜索)
+  v19 vs v18 strict Pareto improvement:
+    composite  +4.75% / median +0.11pp / mean +0.83pp / sharpe +0.06 / avg_dd -0.2pp
+    worst_dd tied, ALL metrics 改善 (无 regression)
 
 字段说明:
   tp_pct / sl_pct     固定止盈止损；给了 atr_*_mult 时被 ATR 自适应覆盖
@@ -34,27 +35,28 @@ import copy
 MAX_HOLD_LIMIT = 20
 
 PRESETS: dict[str, dict] = {
-    # v33_long_reverse_v18 — v17 + min_mom120 0.13→0.16 + min_above_ma60_ratio 0.60→0.65
-    # (workflow paradigm-axis 联合搜索发现的 Pareto strict improvement)。
-    # 关键 insight: ma60_ratio 是 step-function gate (0.55→全部坏 / 0.60→baseline / 0.65→新峰)。
-    #   在 ma=0.65 基础上,mom=0.16 比 mom=0.13 进一步提升 Sharpe。
+    # v33_long_reverse_v19 — v18 + tp_pct 0.303→0.305 + min_mom120 0.16→0.18
+    # (workflow v18-neighborhood 联合搜索发现的 Pareto strict improvement)。
+    # 关键 insight: 之前所有 mom search 都在 0.125~0.16 范围(认为 plateau),但 ma60=0.65 的
+    #   新 sweet spot 出现后,mom 上限可推到 0.18 进一步改善 Sharpe。TP 也从 0.303→0.305
+    #   与新信号集协同。
     # 关键参数:
     #   - sl_pct 0.0293: v15 精扫得到的 SL 单峰,保留。
-    #   - tp_pct 0.303: v17 精扫得到的 TP 改善,保留。
-    #   - min_mom120 0.16: 0.13 时基础(sharpe 2.81);0.16 + ma=0.65 协同提升 Sharpe 2.90。
-    #   - min_above_ma60_ratio 0.65: 0.60→0.65 是 load-bearing 维度,单独提升就改善 Sharpe。
-    #   - close_ma60_buffer 0.02: 与 ma=0.65 协同,buf∈[0.01,0.02] 等价(simulate+backtrader 都证实)。
-    # 12 月窗口 (2024-09..2026-09) backtrader 引擎实测 (相对 v17):
-    #   median     +21.61%   (v17: +21.61%, tied) ✓
-    #   mean       +31.39%   (v17: +31.76%, -0.37pp) ~
-    #   Sharpe     2.90      (v17: 2.81, +0.09) ✓
-    #   avg_dd     21.2%     (v17: 22.5%, -1.3pp) ✓
-    #   worst_dd   48.1%     (v17: 48.1%, tied) ✓
-    #   trades     8.40      (v17: 8.50, -0.1) ~
-    #   composite  0.9117    (v17: 0.8940, +1.98%) ✓
-    "v33_long_reverse_v18": {
+    #   - tp_pct 0.305: v18 邻域 TP 精扫发现 (v18 0.303→0.305 +0.86% simulate, backtrader +0.65%)。
+    #   - min_mom120 0.18: 0.16 时 sharpe 2.90;0.18 + ma=0.65 协同提升 Sharpe 2.96。
+    #   - min_above_ma60_ratio 0.65: v18 关键维度,保留。
+    #   - close_ma60_buffer 0.02: 与 ma=0.65 协同,buf∈[0.01,0.02] 等价。
+    # 12 月窗口 (2024-09..2026-09) backtrader 引擎实测 (相对 v18):
+    #   median     +21.72%   (v18: +21.61%, +0.11pp) ✓
+    #   mean       +32.22%   (v18: +31.39%, +0.83pp) ✓
+    #   Sharpe     2.96      (v18: 2.90, +0.06) ✓
+    #   avg_dd     21.0%     (v18: 21.2%, -0.2pp) ✓
+    #   worst_dd   48.1%     (v18: 48.1%, tied) ✓
+    #   trades     8.30      (v18: 8.40, -0.1) ~
+    #   composite  0.9550    (v18: 0.9117, +4.75%) ✓
+    "v33_long_reverse_v19": {
         "universe": "mainboard_only",
-        "tp_pct": 0.303,
+        "tp_pct": 0.305,
         "sl_pct": 0.0293,
         "max_hold": 15,
         "max_positions": 1,
@@ -69,7 +71,7 @@ PRESETS: dict[str, dict] = {
             "max_amount": 3e8,
             "min_above_ma60_ratio": 0.65,
             "close_ma60_buffer": 0.02,
-            "min_mom120": 0.16,
+            "min_mom120": 0.18,
         },
     },
 }

@@ -125,7 +125,7 @@ def summarize(df: pd.DataFrame) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="滚动窗口验证")
-    ap.add_argument("--preset", default="v33_long_reverse_v18")
+    ap.add_argument("--preset", default="v33_long_reverse_v19")
     ap.add_argument("--engine", choices=("simulate", "backtrader"), default="simulate")
     # 年级窗口（向后兼容）
     ap.add_argument("--first-year", type=int, default=2017)

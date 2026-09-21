@@ -533,12 +533,12 @@ def test_phase1_max_hold_exit_uses_close_not_intrabar():
 
 
 # --------------------------------------------------------------------------- #
-# P4: 端到端 audit (针对真实 v33_long_reverse_v18 trades)
+# P4: 端到端 audit (针对真实 v33_long_reverse_v19 trades)
 # --------------------------------------------------------------------------- #
 
 
 def test_v3_e2e_signal_date_conditions_hold():
-    """对真实 v33_long_reverse_v18 trades,在每个 entry_date 前一交易日 panel_ind 上,
+    """对真实 v33_long_reverse_v19 trades,在每个 entry_date 前一交易日 panel_ind 上,
     5 个信号条件 (A/B/C/D/E) 必须全部成立 (事后复核)。
 
     这等价于证明: 每个信号在决策时刻只用 past+current bar 数据,绝无穿越。
@@ -554,7 +554,7 @@ def test_v3_e2e_signal_date_conditions_hold():
     panel = _lp(_P(_DB), "2025-07-01", "2026-07-01", universe=universe)
     panel_ind = _ci(panel)
     out = run_backtrader_backtest(
-        "v33_long_reverse_v18", "2025-07-01", "2026-07-01", _P(_DB),
+        "v33_long_reverse_v19", "2025-07-01", "2026-07-01", _P(_DB),
         panel_ind=panel_ind, verify=True,
     )
     trades = out["trades"]
@@ -563,9 +563,9 @@ def test_v3_e2e_signal_date_conditions_hold():
     panel_idx = panel.set_index(["thscode", "date"]).sort_index()
     pidx = panel_ind.set_index(["thscode", "date"]).sort_index()
 
-    # 从 v18 preset 读取真实阈值,避免硬编码陈旧参数
+    # 从 v19 preset 读取真实阈值,避免硬编码陈旧参数
     from uptrend_pullback.presets import get_preset as _gp
-    _sig = _gp("v33_long_reverse_v18")["signal"]
+    _sig = _gp("v33_long_reverse_v19")["signal"]
     _pct_lo = _sig["pct_chg_low"]
     _pct_hi = _sig["pct_chg_high"]
     _ma_th = _sig["min_above_ma60_ratio"]
@@ -622,7 +622,7 @@ def test_v3_e2e_exit_price_is_fill_bar_open():
     panel = _lp(_P(_DB), "2025-07-01", "2026-07-01", universe=universe)
     panel_ind = _ci(panel)
     out = run_backtrader_backtest(
-        "v33_long_reverse_v18", "2025-07-01", "2026-07-01", _P(_DB),
+        "v33_long_reverse_v19", "2025-07-01", "2026-07-01", _P(_DB),
         panel_ind=panel_ind, verify=True,
     )
     trades = out["trades"]
@@ -647,7 +647,7 @@ def test_v3_e2e_exit_price_is_fill_bar_open():
 
 
 def test_v3_e2e_entry_price_is_entry_bar_open():
-    """对真实 v33_long_reverse_v18 trades,entry_price 必须等于 entry_date bar 的 open。
+    """对真实 v33_long_reverse_v19 trades,entry_price 必须等于 entry_date bar 的 open。
 
     这证明 entry fill 是 T+1 OPEN,不是回看 close。
     """
@@ -662,7 +662,7 @@ def test_v3_e2e_entry_price_is_entry_bar_open():
     panel = _lp(_P(_DB), "2025-07-01", "2026-07-01", universe=universe)
     panel_ind = _ci(panel)
     out = run_backtrader_backtest(
-        "v33_long_reverse_v18", "2025-07-01", "2026-07-01", _P(_DB),
+        "v33_long_reverse_v19", "2025-07-01", "2026-07-01", _P(_DB),
         panel_ind=panel_ind, verify=True,
     )
     trades = out["trades"]
