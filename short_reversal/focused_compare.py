@@ -40,11 +40,11 @@ def main():
     }
 
     candidates = [
-        # v46 系列: 探索新方向 — SL 收紧 + max_hold 调整 (从放宽切换到风险控制)
-        ("v46_sl_0003", {**base_v44, "sl_pct": 0.0003}),                            # SL 收紧 0.0005→0.0003
-        ("v46_sl_0002", {**base_v44, "sl_pct": 0.0002}),                            # SL 更紧
-        ("v46_mh4",     {**base_v44, "max_hold": 4}),                                # max_hold 缩短
-        ("v46_mh7",     {**base_v44, "max_hold": 7}),                                # max_hold 拉长
+        # v47 系列: v44 + 进一步探索 (d_mode, pct_chg_low, ratio 进一步放宽)
+        ("v47_d_strict",      {**base_v44, "d_mode": "strict"}),                    # D 切回 strict (放弃 converge_strict)
+        ("v47_pctchg_025",    {**base_v44, "pct_chg_low": 0.025}),                  # pct_chg 下限放宽 3%→2.5%
+        ("v47_ratio02_buf05", {**base_v44, "below_ratio_60": 0.2, "close_ma60_buffer": 0.05}),  # 回退 buffer 7%→5%
+        ("v47_tp_10",         {**base_v44, "tp_pct": 0.10}),                        # TP 拉宽 8%→10%
     ]
 
     for name, cfg in candidates:

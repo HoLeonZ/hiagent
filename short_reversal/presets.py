@@ -516,6 +516,35 @@ PRESETS: dict[str, dict] = {
         "below_ratio_60": 0.2,
         "close_ma60_buffer": 0.07,
     },
+    # === 2026-09-21 微调发现（v47）— ⚠️⚠️⚠️ 破产触底案例 (现金透支 6 亿) ===
+    # 在 v44 基础上探索 4 组:
+    #   v47_d_strict (D 回退 strict):     n=674 win=33.7% CAGR=+328466% DD=92.6% ⚠️
+    #   v47_pctchg_025 (下限 2.5%):     n=567 win=31.0% CAGR=+101051% DD=78.0%
+    #   v47_ratio02_buf05 (回退 buffer): n=416 win=33.2% CAGR=+33193% DD=64.0%
+    #   v47_tp_10 (TP 8→10%):           n=425 win=30.8% CAGR=+38607% DD=66.0%
+    # ⚠️⚠️⚠️ v47_d_strict 是最危险的发现 — 12m CAGR 历史最高 (+328466%), 但
+    # cash gate 触发时 NAV=-6.22亿, cash 透支 6 亿倍数 — 破产触底.
+    # v36_d_converge / v44 的 d_mode='converge_strict' 必须保持 — 砍掉部分
+    # 弱信号是防止 margin call 的关键防线.
+    # === v3 体系工程教训 (v47 失败案例) ===
+    # 16 次迭代完整建立 v3 体系:
+    #   - 入场侧 (A/B/D): 改善极限在 v44/v46 (放宽+收紧组合)
+    #   - 出场侧 (TP/SL/mh): TP 拉宽+SL 收紧组合, 在 v40/v46 已最优
+    #   - pct_chg 窗口: 上限放宽是 v39 的关键胜出, 下限收紧是 v41/v35 失败
+    #   - universe: 仍受限于 'mainboard_only' (HS300 历史成分表未建立)
+    #   - cash gate: 真实捕获 v47_d_strict 的破产触底 — 必须保留
+    # 实盘部署首选 v44_ratio02_buf07 (跨周期稳健 + DD 仍可控).
+    "v47_d_strict_warning": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
 }
 
 
