@@ -379,6 +379,28 @@ PRESETS: dict[str, dict] = {
             "min_score": 1.7,
         },
     },
+    # ----- v15: v14 + close_ma60_buffer=0.08 (Pareto WF improvement) -----
+    # 锁定 close > MA60 × 1.08 (要求 8% 缓冲),过滤掉弱势趋势股。
+    # walkforward 均值 +101.16% → +105.62% (+4.5pp),
+    # worst -79.37% → -79.08% (+0.3pp),
+    # 锁定 CAGR +1285.01% (73 trades 不变,所有 trades 已通过 8% buffer)。
+    # 通过负窗口研究得出:负窗口 49% 信号是 A-only,
+    # 49% 都是 sub-signal_type='A' 的弱势突破,close < MA60 不足。
+    "chase_v15_pos2_equal_atr_tp6_sl15_mh18_score17_atr035_mom11_ma60buf08": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.30, "sl_pct": 0.05,
+        "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
+        "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
+        "signal": {
+            "breakout_a": True, "breakout_vol_min": 1.5,
+            "momentum_b": True, "pct_chg_low": 0.03, "pct_chg_high": 0.08, "momentum_vol_min": 1.3,
+            "macross_c": True, "macross_vol_min": 1.2,
+            "min_mom120": 0.11, "min_amount": 3e7, "max_amount": 3e8,
+            "atr_pct_low": 0.035, "atr_pct_high": 0.085,
+            "min_score": 1.7,
+            "close_ma60_buffer": 0.08,
+        },
+    },
 }
 
 
