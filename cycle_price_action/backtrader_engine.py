@@ -14,20 +14,21 @@ import pandas as pd
 
 import backtrader as bt
 
-from circle_price_action.signals import (
+from cycle_price_action.signals import (
     detect_k_patterns,
     entry_signal,
     fuse_scores,
     k_line_score,
 )
-from circle_price_action.cycle import phase_score
-from circle_price_action.time_windows import calendar_score
-from circle_price_action.portfolio import Portfolio
-from circle_price_action.replay_broker import ReplayBroker
-from circle_price_action.no_lookahead import bars_up_to
+from cycle_price_action.cycle import phase_score
+from cycle_price_action.time_windows import calendar_score
+from cycle_price_action.portfolio import Portfolio
+from cycle_price_action.replay_broker import ReplayBroker
+from cycle_price_action.no_lookahead import bars_up_to
+from hiagent_config import get_db_path
 
 
-class CirclePriceActionStrategy(bt.Strategy):
+class CyclePriceActionStrategy(bt.Strategy):
     params = dict(
         threshold=2.0,
         min_dim=1.0,
@@ -35,7 +36,7 @@ class CirclePriceActionStrategy(bt.Strategy):
         atr_period=14,
         atr_sl_mult=1.5,
         tp_pct=0.06,
-        db_path=None,
+        db_path=str(get_db_path()),
     )
 
     def __init__(self):

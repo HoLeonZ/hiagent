@@ -5,7 +5,7 @@ from datetime import date
 
 import pytest
 
-from circle_price_action.portfolio import Portfolio, PositionState
+from cycle_price_action.portfolio import Portfolio, PositionState
 
 
 def test_portfolio_starts_empty():

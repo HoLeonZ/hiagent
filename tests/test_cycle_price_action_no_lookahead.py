@@ -13,19 +13,19 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from circle_price_action.cycle import phase_score
-from circle_price_action.signals import (
+from cycle_price_action.cycle import phase_score
+from cycle_price_action.signals import (
     detect_k_patterns, k_line_score, fuse_scores, entry_signal,
 )
-from circle_price_action.universe import (
+from cycle_price_action.universe import (
     is_main_board, apply_liquidity_filter, is_excluded_status,
 )
-from circle_price_action.portfolio import Portfolio
-from circle_price_action.replay_broker import ReplayBroker
-from circle_price_action.no_lookahead import (
+from cycle_price_action.portfolio import Portfolio
+from cycle_price_action.replay_broker import ReplayBroker
+from cycle_price_action.no_lookahead import (
     bars_up_to, group_by_stock, delivery_date_check, assert_exit_priority,
 )
-from circle_price_action.time_windows import calendar_score
+from cycle_price_action.time_windows import calendar_score
 
 
 # ---------- P0 ----------

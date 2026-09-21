@@ -5,7 +5,7 @@ from datetime import date
 import pandas as pd
 import pytest
 
-from circle_price_action.walkforward import walkforward_windows
+from cycle_price_action.walkforward import walkforward_windows
 
 
 def test_walkforward_windows_basic():

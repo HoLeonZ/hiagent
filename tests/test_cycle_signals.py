@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from circle_price_action.signals import detect_k_patterns, k_line_score, fuse_scores, entry_signal
+from cycle_price_action.signals import detect_k_patterns, k_line_score, fuse_scores, entry_signal
 
 
 def _df(rows):

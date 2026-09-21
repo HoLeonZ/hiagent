@@ -6,7 +6,7 @@ from datetime import date
 import pandas as pd
 import pytest
 
-from circle_price_action.no_lookahead import (
+from cycle_price_action.no_lookahead import (
     bars_up_to,
     group_by_stock,
     delivery_date_check,

@@ -6,7 +6,7 @@ import duckdb
 import pandas as pd
 import pytest
 
-from circle_price_action.replay_broker import ReplayBroker
+from cycle_price_action.replay_broker import ReplayBroker
 
 
 @pytest.fixture

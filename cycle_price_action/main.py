@@ -6,7 +6,7 @@ import sys
 from datetime import date
 
 from hiagent_config import get_db_path
-from circle_price_action.walkforward import walkforward_windows
+from cycle_price_action.walkforward import walkforward_windows
 
 
 def _run_walkforward(args) -> int:
@@ -26,7 +26,7 @@ def _run_walkforward(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser("circle_price_action")
+    p = argparse.ArgumentParser("cycle_price_action")
     p.add_argument("--db", default=str(get_db_path()))
     p.add_argument("--start", required=True)
     p.add_argument("--end", required=True)
