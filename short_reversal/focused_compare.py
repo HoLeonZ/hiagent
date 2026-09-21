@@ -30,19 +30,20 @@ def _run(name: str, cfg: dict) -> dict:
 
 
 def main():
-    base_v34 = {
+    base_v36 = {
         "universe": "mainboard_only",
         "tp_pct": 0.06, "sl_pct": 0.0005, "max_hold": 5,
         "pct_chg_low": 0.03, "pct_chg_high": 0.08,
+        "d_mode": "converge_strict",
     }
 
     candidates = [
-        # v36 系列: B 连阳天数范围微调 (v34 [3,10] → 候选)
-        ("v36_us37_proper", {**base_v34, "up_streak_low": 3, "up_streak_high": 7}),    # 收紧
-        ("v36_us5_12",     {**base_v34, "up_streak_low": 5, "up_streak_high": 12}),    # 偏后段
-        ("v36_us3_12",     {**base_v34, "up_streak_low": 3, "up_streak_high": 12}),    # 放宽
-        # v36 系列: D MACD 阈值微调
-        ("v36_d_converge", {**base_v34, "d_mode": "converge_strict"}),                  # 更严格收敛
+        # v37 系列: E 流动性窗口微调 (v36 默认 [3e7, 3e8])
+        ("v37_liq_5e7_3e8", {**base_v36, "liq_low": 5e7}),                           # 收窄下限 (剔除冷门小票)
+        ("v37_liq_3e7_5e8", {**base_v36, "liq_high": 5e8}),                          # 拓宽上限 (纳入超大票)
+        # v37 系列: A 条件微调 (v36 默认 below_ratio_60=0.6, close_ma60_buffer=0)
+        ("v37_ratio_07",    {**base_v36, "below_ratio_60": 0.7}),                    # A 更严: 60日必须 70% 时间在 MA60 下
+        ("v37_buf_neg02",   {**base_v36, "close_ma60_buffer": -0.02}),               # A 更严: close 必须 < ma60*0.98 (留 2% buffer 下方)
     ]
 
     for name, cfg in candidates:

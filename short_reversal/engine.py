@@ -163,6 +163,8 @@ def run_backtest_v3(
         up_streak_high=cfg.get("up_streak_high", 10),
         liq_low=cfg.get("liq_low", 3e7),
         liq_high=cfg.get("liq_high", 3e8),
+        below_ratio_60=cfg.get("below_ratio_60", 0.6),
+        close_ma60_buffer=cfg.get("close_ma60_buffer", 0.0),
         d_mode=cfg.get("d_mode", "strict"),
         margin_rate=MARGIN_RATE,
         commission_rate=COMMISSION_RATE,

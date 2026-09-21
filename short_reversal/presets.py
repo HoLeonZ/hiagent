@@ -173,6 +173,39 @@ PRESETS: dict[str, dict] = {
         "pct_chg_high": 0.08,
         "d_mode": "converge_strict",
     },
+    # === 2026-09-21 微调发现（v37）— E 流动性窗口拓宽 ===
+    # A 条件参数化后 (Task #19: below_ratio_60 / close_ma60_buffer),
+    # E 流动性窗口 (Task #16: liq_low/liq_high) 微调, 4 组对比 (12m):
+    #   v37_liq_5e7_3e8 (下限 5e7):    n=167 win=41.3% CAGR=+1895% Sharpe=9.59 DD=34.5% ⭐
+    #   v37_liq_3e7_5e8 (上限 5e8) ⭐: n=228 win=41.7% CAGR=+5143% Sharpe=11.12 DD=34.4% ⭐⭐
+    #   v37_ratio_07    (A 严):        n=172 win=40.7% CAGR=+1737% Sharpe=9.70 DD=42.7%
+    #   v37_buf_neg02   (A buffer):    n=181 win=40.3% CAGR=+2025% Sharpe=9.82 DD=42.7%
+    # v37_liq_3e7_5e8 是综合最优 preset — 纳入超大流动性票 (5e8 vs 默认 3e8)
+    # 改善样本质量, DD 从 v36 42.7% 降至 34.4% (-8pp), CAGR +83%, Sharpe +8%,
+    # win% +1.7pp。
+    # A 条件微调 (ratio/buffer) 效果都偏弱 — DD 没改善。
+    # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) ===
+    #   2024-09-12 → 2025-03-12: n= 65 win=15.4% total_yield= +26.07% Sharpe=2.62 DD=72.8% ⚠️
+    #   2025-03-12 → 2025-09-12: n= 84 win=14.3% total_yield= +23.10% Sharpe=2.74 DD=71.6% ⚠️
+    #   2025-09-12 → 2026-03-12: n= 43 win=16.3% total_yield= +27.90% Sharpe=2.47 DD=25.8% ✅
+    #   2026-03-12 → 2026-09-12: n=212 win=42.9% total_yield=+4280.41% Sharpe=10.96 DD=34.4% ✅
+    #   4/4 窗口全为正收益, 但震荡段（前 2 窗）DD 72-73% — 比 v36 (55-57%) 显著恶化。
+    #   震荡段 yield +23-26% vs v36 +20%, 但 DD 恶化 16-17pp — 收益与风险同向放大。
+    #   E 流动性窗口拓宽 (5e8) 在大票反转下更脆弱, 12m 样本看像 34% DD 但跨周期 73%。
+    # === 综合结论: v37 单点优化但跨周期劣于 v36 ===
+    # v37 看似最优 (12m DD 34.4%) 但 walk-forward 揭示震荡段 DD 恶化 — 单点过拟合 12m 样本。
+    # **v36_d_converge 仍是所有 preset 跨周期最稳健** (4 个 6-月窗口最低 yield +19.9%,
+    # 震荡段 DD 55-57% 全程 < 60%)。v37 仅供对照, 实盘部署首选 v36_d_converge。
+    "v37_liq_3e7_5e8": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.06,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.08,
+        "d_mode": "converge_strict",
+        "liq_high": 5e8,
+    },
 }
 
 

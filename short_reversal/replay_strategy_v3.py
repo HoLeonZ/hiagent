@@ -50,6 +50,9 @@ class Phase3V3Strategy(bt.Strategy):
         # E 条件: am60 流动性窗口 (默认 [3e7, 3e8], 模块常量 LIQ_LOW/HIGH)
         liq_low=3e7,
         liq_high=3e8,
+        # A 条件: default 模式下 close<MA60 + below_ratio_60 阈值
+        below_ratio_60=0.6,           # v3 默认 0.6
+        close_ma60_buffer=0.0,        # 允许 close > ma60 的 buffer (默认 0, 即严格 close < ma60)
         # D 条件 MACD 阈值 (默认严格: DIF<0 & DEA<0 & |bar|<|prev_bar|)
         # 'strict' (V3 默认) | 'd_only' (D|dif|<0 only) | 'converge_strict' (|bar|<|prev_bar|*0.5)
         d_mode="strict",
@@ -279,7 +282,13 @@ class Phase3V3Strategy(bt.Strategy):
                 return False
         else:  # 'default' (V1)
             ratio = indi["below_ma60_ratio_60"][0]
-            if np.isnan(ratio) or close_v >= ma60_v or ratio < 0.6:
+            if np.isnan(ratio):
+                return False
+            # close < ma60 (允许 close_ma60_buffer 上浮)
+            if close_v >= ma60_v * (1.0 + self.p.close_ma60_buffer):
+                return False
+            # below_ratio_60: close 在 60 根 bar 中低于 MA60 的比例 (v3 默认 0.6)
+            if ratio < self.p.below_ratio_60:
                 return False
 
         # B 连阳
