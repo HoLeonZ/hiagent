@@ -121,6 +121,11 @@ def simulate_portfolio(
     # "adj_close" (或 legacy 默认) → 用 adj high/low/close, 保持旧行为。
     price_source_for_execution: str = "adj_close",
     kelly_fraction: float | None = None,
+    # V8 (2026-09-22, CLAUDE.md §4): preset→strategy explicit plumbing。
+    # intraday_tiebreak='sl_first': 同 bar SL+TP 双触发时, 假设 SL 命中 (Pessimistic)。
+    # max_volume_participation=0.10: Bar_Volume × 0.10 volume cap。
+    intraday_tiebreak: str = "sl_first",
+    max_volume_participation: float = 0.10,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """逐日模拟组合，返回 (trades_df, equity_df)。
 
@@ -250,6 +255,12 @@ def simulate_portfolio(
                 if not np.isnan(r_o) and not np.isnan(r_h) and not np.isnan(r_lo) and not np.isnan(r_c):
                     o, h, lo, c = r_o, r_h, r_lo, r_c
             tp_p, sl_p = pos["tp"], pos["sl"]
+            # V8 (2026-09-22, CLAUDE.md §4): 验证 intraday_tiebreak 声明。
+            if intraday_tiebreak != "sl_first":
+                raise ValueError(
+                    f"intraday_tiebreak must be 'sl_first' (CLAUDE.md §4), "
+                    f"got {intraday_tiebreak!r}"
+                )
 
             if o <= sl_p:
                 px, reason = o, "SL"
@@ -342,13 +353,14 @@ def simulate_portfolio(
                     if size < 100:
                         continue
                     # 防穿仓 (R8, 2026-09-21): Volume Participation Limit
-                    # 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION, 超出丢弃。
+                    # 单笔最大成交量 = Bar_Volume × max_volume_participation, 超出丢弃。
                     # 这是 CLAUDE.md §4 "Max_Fill_Qty = MIN(Order_Qty, Bar_Volume * 0.10)"
                     # 防止大单砸穿市场、产生 slippage / market impact。
+                    # V8 (2026-09-22): 改为参数化 (从 preset 显式传入, 默认 0.10)。
                     bar_vol = pi["volume"][j]
                     size_pre_cap = size
                     if not np.isnan(bar_vol) and bar_vol > 0:
-                        max_fill = int(bar_vol * MAX_VOL_PARTICIPATION // 100) * 100
+                        max_fill = int(bar_vol * max_volume_participation // 100) * 100
                         if max_fill > 0 and size > max_fill:
                             size = max_fill
                     # R5 (2026-09-21): ATR-aware slippage (CLAUDE.md §4)。

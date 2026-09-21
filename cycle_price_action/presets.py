@@ -26,6 +26,10 @@ PRESET_V1 = dict(
     sl_pct=0.05,
     # V5 (R8, 2026-09-21, CLAUDE.md §4): Volume Participation Limit declaration。
     max_volume_participation=0.10,
+    # V8 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday 声明。
+    # cycle_price_action/portfolio.py:209-216 已落地 (open<=sl_p 优先于 open>=tp_p,
+    # lo<=sl_p 优先于 h>=tp_p)。
+    intraday_tiebreak="sl_first",
     # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
     # 当前 cycle 仍读 v_daily (单 close) 作为信号+执行共用价。
     # 完整 V3a 落地需: data_feed.py 改读 v_daily_dual (含 adj_*/raw_*),
