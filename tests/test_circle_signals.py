@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from circle_price_action.signals import detect_k_patterns, k_line_score
+from circle_price_action.signals import detect_k_patterns, k_line_score, fuse_scores, entry_signal
 
 
 def _df(rows):
@@ -110,3 +110,33 @@ def test_k_line_score_uses_only_decision_time_volume():
     # P0-correct: scored[8] = 0.5 (no pattern + confluence only, no vol)
     # Leaky:      scored[8] = 1.0 (no pattern + confluence + vol) — caught by assertion
     assert scored.iloc[8] == 0.5
+
+
+def test_fuse_scores_weighted_sum():
+    a = pd.Series([1.0, 0.5, 0.0])
+    b = pd.Series([0.0, 0.5, 1.0])
+    c = pd.Series([0.0, 0.0, 1.0])
+    out = fuse_scores(a, b, c)
+    expected = a + 0.7 * b + 0.5 * c
+    pd.testing.assert_series_equal(out, expected, check_names=False)
+
+
+def test_entry_signal_requires_threshold():
+    kline = pd.Series([1.0, 1.0, 1.5])
+    cycle = pd.Series([0.0, 1.0, 1.0])
+    calendar = pd.Series([0.0, 0.0, 0.0])
+    sig = entry_signal(kline, cycle, calendar)
+    # Bar 0: total=1.0 < 2.0 → False
+    # Bar 1: total=1.7 (kline 1.0 + 0.7*1.0) → False
+    # Bar 2: total=2.2 + has kline ≥ 1.0 → True
+    assert sig.tolist() == [False, False, True]
+
+
+def test_entry_signal_requires_at_least_one_dimension_above_min():
+    kline = pd.Series([0.0, 0.0])
+    cycle = pd.Series([3.0, 1.0])    # bar 0: huge cycle, but kline=0 — still gated
+    calendar = pd.Series([0.0, 0.0])
+    sig = entry_signal(kline, cycle, calendar)
+    # total_score bar 0 = 2.1 but min_dim check fails → False
+    # total_score bar 1 = 0.7 < threshold → False
+    assert sig.tolist() == [False, False]

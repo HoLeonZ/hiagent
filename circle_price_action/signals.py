@@ -96,3 +96,28 @@ def k_line_score(df: pd.DataFrame, patterns: pd.Series) -> pd.Series:
     out[vol_conf.fillna(False)] += 0.5
 
     return out.clip(-0.2, 2.5)
+
+
+def fuse_scores(
+    kline: pd.Series,
+    cycle: pd.Series,
+    calendar: pd.Series,
+    weights: tuple[float, float, float] = (1.0, 0.7, 0.5),
+) -> pd.Series:
+    if len(kline) != len(cycle) or len(kline) != len(calendar):
+        raise ValueError("input series must share length and index")
+    wk, wc, wcal = weights
+    return wk * kline + wc * cycle + wcal * calendar
+
+
+def entry_signal(
+    kline: pd.Series,
+    cycle: pd.Series,
+    calendar: pd.Series,
+    threshold: float = 2.0,
+    min_dim: float = 1.0,
+    weights: tuple[float, float, float] = (1.0, 0.7, 0.5),
+) -> pd.Series:
+    fused = fuse_scores(kline, cycle, calendar, weights=weights)
+    dominant = kline >= min_dim
+    return (fused >= threshold) & dominant
