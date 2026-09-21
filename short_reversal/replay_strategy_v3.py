@@ -66,6 +66,12 @@ class Phase3V3Strategy(bt.Strategy):
         initial_capital=1_000_000.0,
         lot_size=100,
         min_cash_ratio=0.05,
+        # V5' (2026-09-22, CLAUDE.md §4): ATR-aware slippage (R5 mirror)。
+        # 当 atr_slip_scale > 0, 在 entry 时 slippage = atr_pct × participation × scale
+        # (做空方向: slippage 上调 entry_price, 即扣更少 sale proceeds = 悲观假设)。
+        # 当 atr_slip_scale = 0, 沿用 R3 默认无 slippage (保持 v33 baseline parity)。
+        atr_slip_scale=0.0,
+        atr_period=14,
         result_holder=None,
     )
 
@@ -95,6 +101,8 @@ class Phase3V3Strategy(bt.Strategy):
                 "am60": Am60(d, period=60),
                 "up_streak": UpStreak(d),
                 "below_ma60_ratio_60": below_ratio,
+                # V5' (R5): ATR(14) for slippage estimation
+                "atr": bt.indicators.ATR(d, period=self.p.atr_period),
             }
 
         # 持仓/账户状态
@@ -177,6 +185,30 @@ class Phase3V3Strategy(bt.Strategy):
             if code not in self.pending_entries:
                 continue
             entry_price = float(d.open[0])
+            # 防穿仓 (R5, 2026-09-22, CLAUDE.md §4): ATR-aware slippage。
+            # short 仓的 entry_price 是 sell price, slippage 上调 sell price
+            # (即收到的 sale proceeds 减少) —— pessimistic 假设"卖得更贵"。
+            #   slip_eff = max(0, atr_pct × participation × scale)
+            #   entry_price_sold = entry_price × (1 + slip_eff)
+            # 当 atr_slip_scale = 0, 沿用旧行为 (保持 baseline parity)。
+            if self.p.atr_slip_scale > 0:
+                indi = self.indi.get(code, {})
+                atr_indi = indi.get("atr")
+                bar_vol = float(d.volume[0]) if d.volume[0] is not None else 0.0
+                close_v = float(d.close[0])
+                if atr_indi is not None and not np.isnan(float(atr_indi[0])) and close_v > 0:
+                    atr_pct = float(atr_indi[0]) / close_v
+                    # participation 用于 sizing 时已知, 这里用 size_pre_cap 估算
+                    nav_for_budget = self._nav()
+                    target_value = nav_for_budget * self.p.position_fraction
+                    size_pre_cap = int(target_value / entry_price / self.p.lot_size) * self.p.lot_size
+                    if bar_vol > 0:
+                        participation = min(1.0, size_pre_cap / bar_vol)
+                    else:
+                        participation = 0.0
+                    atr_slip = atr_pct * participation * self.p.atr_slip_scale
+                    if atr_slip > 0:
+                        entry_price = entry_price * (1.0 + atr_slip)
             # 防穿仓 (R4, 2026-09-21): budget base 用 NAV (cash + 持仓浮盈) 而非
             # 仅 self.cash。前一笔大亏会让 cash 跌至初始资金一小部分, 若仍按
             # self.cash all-in, 后续每笔名义资金随 cash 缩水 — 这等同于"现金自适应"
