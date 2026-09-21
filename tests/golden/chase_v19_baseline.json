@@ -1,32 +1,46 @@
 {
   "preset": "chase_v19_pos2_equal_atr_tp6_sl175_mh18_score17_atr035_mom115_ma60buf08_atr082",
-  "window": ["2025-09-19", "2026-09-19"],
+  "window": [
+    "2025-09-19",
+    "2026-09-19"
+  ],
   "engine": "simulate",
   "metrics": {
     "trades": 71,
-    "win_rate": 0.549,
-    "total_return": 17.4993,
-    "cagr": 17.4993,
-    "sharpe": 4.72,
-    "max_dd": 0.2075,
-    "tp_count": 31,
-    "sl_count": 33,
+    "win_rate": 0.507,
+    "total_return": 6.7172,
+    "cagr": 6.7826,
+    "sharpe": 4.18,
+    "max_dd": 0.1771,
+    "tp_count": 30,
+    "sl_count": 35,
     "time_count": 5,
-    "eod_count": 2,
-    "profit_factor": 2.2,
-    "avg_net_return": 0.1081,
-    "exposure": 0.851,
-    "final_equity": 18499287.0,
+    "eod_count": 1,
+    "profit_factor": 2.24,
+    "avg_net_return": 0.0842,
+    "exposure": 0.628,
+    "final_equity": 7717159.688830828,
     "initial_capital": 1000000.0,
-    "avg_hold_days": 5.8,
+    "avg_hold_days": 6.0,
     "max_hold_days": 18
   },
-  "trades_csv_sha256": "23bc16491b1a69d88423dd6bcf068cd69f22ee64828f5a92450c7ebee7b408c1",
+  "trades_csv_sha256": "c25fb9a3c20a204d9d4e9c58127b05384c39b5f13f4bb1d5f2f1d92cd96c6fce",
   "trades_csv_rows": 71,
   "trades_csv_cols": [
-    "entry_date", "exit_date", "thscode", "exit_reason",
-    "entry_price", "exit_price", "size", "hold_days",
-    "gross_pnl", "fees", "net_pnl", "net_return", "atr_pct", "sub_signal_type"
+    "entry_date",
+    "exit_date",
+    "thscode",
+    "exit_reason",
+    "entry_price",
+    "exit_price",
+    "size",
+    "hold_days",
+    "gross_pnl",
+    "fees",
+    "net_pnl",
+    "net_return",
+    "atr_pct",
+    "sub_signal_type"
   ],
   "vs_v18": {
     "v18_cagr": 13.1674,
@@ -38,5 +52,6 @@
     "worst": "-85.82%",
     "profitable_windows": "3/9"
   },
-  "note": "v19 = v18 + atr_sl_mult 1.6 → 1.75(继续放宽 SL)。locked 全部指标飞跃:CAGR +1317% → +1750% (+433pp),Sharpe 4.24 → 4.72,WR 50% → 54.9%,PF 1.94 → 2.20,DD 18.07% → 20.75%(+2.68pp,小退化)。walkforward mean +154.37% → +165.29% (+10.92pp),但 worst -79.58% → -85.82% (-6.24pp,2018-09 受 wider SL 击打)。非严格 Pareto,但 locked 增益主导(trade-off)。注:sl=1.65/1.72/1.74/1.76/1.78 都因特定 intraday wicks 触发异常回归,1.75 是 locked 局部最优。trades 72→71,hash 已更新。"
+  "note": "v19 = v18 + atr_sl_mult 1.6 → 1.75(继续放宽 SL)。locked 全部指标飞跃:CAGR +1317% → +1750% (+433pp),Sharpe 4.24 → 4.72,WR 50% → 54.9%,PF 1.94 → 2.20,DD 18.07% → 20.75%(+2.68pp,小退化)。walkforward mean +154.37% → +165.29% (+10.92pp),但 worst -79.58% → -85.82% (-6.24pp,2018-09 受 wider SL 击打)。非严格 Pareto,但 locked 增益主导(trade-off)。注:sl=1.65/1.72/1.74/1.76/1.78 都因特定 intraday wicks 触发异常回归,1.75 是 locked 局部最优。trades 72→71,hash 已更新。",
+  "v6_change_note": "V6 (2026-09-22): chase_up/portfolio.py intraday tiebreak flipped TP-first → SL-first per CLAUDE.md §4 worst-case. Some TP exits where intraday low also crossed SL became SL exits. Compare tp_count/sl_count against pre-V6 baseline."
 }

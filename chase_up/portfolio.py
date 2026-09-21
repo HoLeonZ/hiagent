@@ -4,12 +4,16 @@
   T 日收盘产生信号 → T+1 开盘买入 → T+1 起每日判定 TP/SL/时间止盈
   入场当日不判退出 (bars_in_pos=0 跳过,P3)
 
-退出优先级(同一根 K 线内,P5):
-  1. open ≥ tp_p  → TP @ open (跳空突破)
-  2. open ≤ sl_p  → SL @ sl_p (跳空破止损)
-  3. high ≥ tp_p  → TP @ tp_p (盘内触止盈)
-  4. low  ≤ sl_p  → SL @ sl_p (盘内触止损)
+退出优先级(同一根 K 线内, P5):
+  1. open ≤ sl_p → SL @ open (跳空破止损)
+  2. open ≥ tp_p → TP @ open (跳空突破止盈)
+  3. low  ≤ sl_p → SL @ sl_p (盘内触止损)        — V6 (2026-09-22): SL-first
+  4. high ≥ tp_p → TP @ tp_p (盘内触止盈)
   5. bars ≥ max_hold → time @ close (到期,**必须 close**)
+
+V6 (2026-09-22, CLAUDE.md §4): 同 bar high ≥ tp_p 且 low ≤ sl_p 双触发时,
+  假设 SL 命中 (Pessimistic Default)。Gap case 互斥 (open 不能同时跨 sl_p 和 tp_p),
+  故仅 intraday 顺序生效。
 
 ATR 自适应 TP/SL:
   tp = entry_price × (1 + atr_pct_signal × atr_tp_mult)
@@ -223,14 +227,18 @@ def simulate_portfolio(
             c = pi["close"][j]
             tp_p, sl_p = pos["tp"], pos["sl"]
 
-            if o >= tp_p:
-                px, reason = o, "TP"
-            elif o <= sl_p:
+            # V6 (2026-09-22): CLAUDE.md §4 同 bar SL+TP 双触发时, 假设 SL 命中
+            # (worst-case Pessimistic Default)。Gap case 用 gap 价优先匹配,
+            # intraday case 在 high/low 双触发时取 SL (与 uptrend_pullback / short_reversal
+            # 口径一致)。Gap-up-over-TP 不受影响 — 仍先出 TP @ open。
+            if o <= sl_p:
                 px, reason = o, "SL"
-            elif h >= tp_p:
-                px, reason = tp_p, "TP"
+            elif o >= tp_p:
+                px, reason = o, "TP"
             elif lo <= sl_p:
                 px, reason = sl_p, "SL"
+            elif h >= tp_p:
+                px, reason = tp_p, "TP"
             elif pos["bars"] >= max_hold:
                 px, reason = c, "time"
             else:

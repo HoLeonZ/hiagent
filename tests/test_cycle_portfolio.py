@@ -70,3 +70,61 @@ def test_portfolio_records_closed_trade():
     assert rec["exit_date"] == date(2025, 1, 6)
     assert rec["pnl"] > 0
     assert rec["hold_days"] == 5
+
+
+def test_try_enter_volume_participation_cap_enforced_r8():
+    """R8 (2026-09-21, CLAUDE.md §4): Volume Participation Limit.
+    单笔最大成交量 = Bar_Volume × 0.10. 超出部分丢弃。
+    cash=100_000, price=10 → 10_000 shares pre-cap. bar_volume=50_000 shares →
+    cap = 50_000 × 0.10 = 5_000 shares. result.shares 必须 ≤ 5_000。
+    """
+    pf = Portfolio(cash=100_000.0)
+    state = pf.try_enter(
+        thscode="600000.SH",
+        price=10.0,
+        entry_date=date(2024, 6, 3),
+        decision_meta={"k_line_score": 1.5},
+        bar_volume=50_000,  # cap = 50_000 × 0.10 = 5_000 shares
+    )
+    assert state is not None
+    assert state.shares <= 5_000
+
+
+def test_try_enter_volume_cap_backcompat_no_bar_volume():
+    """R8 back-compat: 不传 bar_volume 时, 不应用 cap, 沿用 all-in 计算。
+    cash=100_000, price=10 → 10_000 shares pre-cost. cost = 100_000 + 25
+    commission > cash → round down 1 lot → 9_900 shares。
+    """
+    pf = Portfolio(cash=100_000.0)
+    state = pf.try_enter(
+        thscode="600000.SH",
+        price=10.0,
+        entry_date=date(2024, 6, 3),
+        decision_meta={"k_line_score": 1.5},
+    )
+    assert state is not None
+    # 100_000 // 10 // 100 * 100 = 10_000; cost round-down 1 lot → 9_900
+    assert state.shares == 9_900
+
+
+def test_try_enter_volume_cap_none_nan_skipped():
+    """R8 edge case: bar_volume=None 或 NaN 时, 跳过 cap。
+    cash=100_000, price=10 → 10_000 shares → 9_900 (commission round-down)。
+    """
+    pf_none = Portfolio(cash=100_000.0)
+    s1 = pf_none.try_enter(
+        thscode="600000.SH", price=10.0,
+        entry_date=date(2024, 6, 3),
+        decision_meta={"k_line_score": 1.5},
+        bar_volume=None,
+    )
+    assert s1 is not None and s1.shares == 9_900
+
+    pf_nan = Portfolio(cash=100_000.0)
+    s2 = pf_nan.try_enter(
+        thscode="600000.SH", price=10.0,
+        entry_date=date(2024, 6, 3),
+        decision_meta={"k_line_score": 1.5},
+        bar_volume=float("nan"),
+    )
+    assert s2 is not None and s2.shares == 9_900

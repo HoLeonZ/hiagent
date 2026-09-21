@@ -56,6 +56,10 @@ PRESETS: dict[str, dict] = {
     #   composite  0.9550    (v18: 0.9117, +4.75%) ✓
     "v33_long_reverse_v19": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
         "tp_pct": 0.305,
         "sl_pct": 0.0293,
         "max_hold": 15,

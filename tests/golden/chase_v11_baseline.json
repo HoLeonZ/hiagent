@@ -1,32 +1,46 @@
 {
   "preset": "chase_v11_pos2_equal_atr_tp6_sl15_mh18_score17",
-  "window": ["2025-09-19", "2026-09-19"],
+  "window": [
+    "2025-09-19",
+    "2026-09-19"
+  ],
   "engine": "simulate",
   "metrics": {
     "trades": 71,
-    "win_rate": 0.451,
-    "total_return": 6.0289,
-    "cagr": 6.0857,
-    "sharpe": 3.20,
-    "max_dd": 0.1751,
+    "win_rate": 0.4507,
+    "total_return": 3.8326,
+    "cagr": 3.8642,
+    "sharpe": 3.31,
+    "max_dd": 0.1329,
     "tp_count": 28,
     "sl_count": 38,
     "time_count": 4,
     "eod_count": 1,
-    "profit_factor": 1.83,
+    "profit_factor": 2.12,
     "avg_net_return": 0.0678,
-    "exposure": 0.860,
-    "final_equity": 7028865.0,
+    "exposure": 0.627,
+    "final_equity": 4832601.126181459,
     "initial_capital": 1000000.0,
     "avg_hold_days": 6.0,
     "max_hold_days": 18
   },
-  "trades_csv_sha256": "a787f7489e31d1ab72ee40ebabf06eb49d83898b055d2cebcb1670aebe06fc84",
+  "trades_csv_sha256": "8977a2f9be03a5f2aa3b828267b68f02a8db1fe391902c33ed5626893afdc7f2",
   "trades_csv_rows": 71,
   "trades_csv_cols": [
-    "entry_date", "exit_date", "thscode", "exit_reason",
-    "entry_price", "exit_price", "size", "hold_days",
-    "gross_pnl", "fees", "net_pnl", "net_return", "atr_pct", "sub_signal_type"
+    "entry_date",
+    "exit_date",
+    "thscode",
+    "exit_reason",
+    "entry_price",
+    "exit_price",
+    "size",
+    "hold_days",
+    "gross_pnl",
+    "fees",
+    "net_pnl",
+    "net_return",
+    "atr_pct",
+    "sub_signal_type"
   ],
   "vs_v10": {
     "v10_cagr": 3.6718,
@@ -42,10 +56,11 @@
     "v9_walkforward_worst": "-90.45%"
   },
   "vs_v5": {
-    "v5_cagr": 2.4160,
+    "v5_cagr": 2.416,
     "v5_max_dd": 0.3131,
     "v5_walkforward_profitable": "2/9",
     "v5_walkforward_mean": "-19.36%"
   },
-  "note": "v11 = v10 + min_score 1.6 → 1.7(进一步收紧信号强度门槛)。在锁定窗口 2025-09-19 → 2026-09-19 上 Pareto 改善 CAGR / Sharpe / DD / WR / PF 五项指标同时上升,12m walkforward 均值从 +42.9% 跳到 +80.5%,worst 从 -80.9% 改善到 -73.9%。1.7 是 score 1.6-1.8 区间的 isolated peak(1.65/1.75/1.8 都不如它)。"
+  "note": "v11 = v10 + min_score 1.6 → 1.7(进一步收紧信号强度门槛)。在锁定窗口 2025-09-19 → 2026-09-19 上 Pareto 改善 CAGR / Sharpe / DD / WR / PF 五项指标同时上升,12m walkforward 均值从 +42.9% 跳到 +80.5%,worst 从 -80.9% 改善到 -73.9%。1.7 是 score 1.6-1.8 区间的 isolated peak(1.65/1.75/1.8 都不如它)。",
+  "v6_change_note": "V6 (2026-09-22): chase_up/portfolio.py intraday tiebreak flipped TP-first → SL-first per CLAUDE.md §4 worst-case. Some TP exits where intraday low also crossed SL became SL exits. Compare tp_count/sl_count against pre-V6 baseline."
 }

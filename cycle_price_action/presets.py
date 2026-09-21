@@ -1,4 +1,14 @@
-"""Default parameter presets for cycle_price_action v1."""
+"""Default parameter presets for cycle_price_action v1.
+
+Compliance declaration (CLAUDE.md audit 2026-09-22):
+  V5 (R8, 2026-09-21, CLAUDE.md §4) — Volume Participation Limit:
+    Portfolio.try_enter accepts bar_volume; cap shares at Bar_Volume × 0.10.
+    backtrader_engine.py:73-79 passes bar["volume"]. 单笔最大成交量 = Bar_Vol × 0.10。
+  V6 (2026-09-22, CLAUDE.md §4) — Intraday SL-first tiebreak: NOT APPLICABLE.
+    cycle_price_action 只有 max_hold time-exit, 无 strategy-side TP/SL check
+    (P7 不变 — next() 只在 hold_days ≥ max_hold 时平仓)。若未来增加 TP/SL,
+    必须按 SL-first 优先级落地 (同 chase_up / uptrend_pullback / short_reversal)。
+"""
 from __future__ import annotations
 
 PRESET_V1 = dict(

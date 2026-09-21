@@ -3,13 +3,23 @@
 Hard P3 contract:
     try_exit raises if the exit date equals the entry date — same-day exit
     is forbidden under A-share T+1 settlement, no matter what the price is.
+
+R8 (2026-09-21): Volume Participation Limit (CLAUDE.md §4).
+    try_enter takes optional bar_volume; when provided, cap shares at
+    Bar_Volume × 0.10 (rounded down to lots). bar_volume=None preserves
+    pre-R8 behaviour for back-compat tests.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import date
 from types import MappingProxyType
 from typing import Any, Mapping
+
+
+def _is_nan(x: float) -> bool:
+    return isinstance(x, float) and math.isnan(x)
 
 
 @dataclass(frozen=True)
@@ -36,6 +46,12 @@ class Portfolio:
     # Project policy: every entry is all-in (CLAUDE.md §2, revised 2026-09-21).
     # Held at 1.0 explicitly so the constant survives for callers/tests.
     MAX_POSITION_PCT = 1.0
+    # R8 (2026-09-21): Volume Participation Limit (CLAUDE.md §4)。
+    # 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION。超出部分丢弃(不挂单)。
+    # 与 chase_up/portfolio.py:49 / short_reversal/replay_strategy_v3.py 口径一致,
+    # 防止小票大单砸穿市场。bar_volume is optional for backwards compatibility;
+    # when None or NaN the cap is skipped (test fixtures without volume column)。
+    MAX_VOL_PARTICIPATION = 0.10
 
     def __init__(self, cash: float) -> None:
         self.cash = float(cash)
@@ -68,6 +84,9 @@ class Portfolio:
         price: float,
         entry_date: date,
         decision_meta: dict[str, Any],
+        # R8 (2026-09-21): Volume Participation Limit input.
+        # None / NaN → skip cap (back-compat for tests without volume column)。
+        bar_volume: float | None = None,
     ) -> PositionState | None:
         if self._pos is not None:
             return None
@@ -85,6 +104,17 @@ class Portfolio:
             cost = self._buy_cost(price, shares)
             if cost > self.cash:    # still over after rounding down (e.g. min commission floor)
                 return None
+        # R8 (2026-09-21): Volume Participation Limit (CLAUDE.md §4)。
+        # 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION, 超出丢弃 (不挂单)。
+        # 这是 CLAUDE.md §4 "Max_Fill_Qty = MIN(Order_Qty, Bar_Volume * 0.10)"
+        # 防止小票大单砸穿市场、产生 slippage / market impact。
+        if bar_volume is not None and not _is_nan(bar_volume) and bar_volume > 0:
+            max_fill = int(bar_volume * self.MAX_VOL_PARTICIPATION // 100) * 100
+            if max_fill > 0 and shares > max_fill:
+                shares = max_fill
+                cost = self._buy_cost(price, shares)
+                if cost > self.cash or shares < 100:
+                    return None
         self.cash -= cost
         self._pos = PositionState(
             thscode=thscode,

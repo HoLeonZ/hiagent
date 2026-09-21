@@ -1,35 +1,49 @@
 {
   "preset": "chase_v9_pos2_equal_atr_tp6_sl15_mh18_score12",
-  "window": ["2025-09-19", "2026-09-19"],
+  "window": [
+    "2025-09-19",
+    "2026-09-19"
+  ],
   "engine": "simulate",
   "metrics": {
     "trades": 76,
-    "win_rate": 0.408,
-    "total_return": 3.7766,
-    "cagr": 3.8076,
+    "win_rate": 0.4079,
+    "total_return": 2.2894,
+    "cagr": 2.3056,
     "sharpe": 2.72,
-    "max_dd": 0.2365,
+    "max_dd": 0.2138,
     "tp_count": 25,
     "sl_count": 44,
     "time_count": 5,
     "eod_count": 2,
-    "profit_factor": 1.54,
+    "profit_factor": 1.64,
     "avg_net_return": 0.0527,
-    "exposure": 0.932,
-    "final_equity": 4776649.0,
+    "exposure": 0.693,
+    "final_equity": 3289355.557201608,
     "initial_capital": 1000000.0,
     "avg_hold_days": 6.1,
     "max_hold_days": 18
   },
-  "trades_csv_sha256": "b9738c149af3bf2e41ff7560246a6c2a853b1dcb122dd89f598a9b20b1d709be",
+  "trades_csv_sha256": "ad2c8bab75ff3250a52d041e8f964c66004f6f8650cfc35d05f69eb1afd7b3bc",
   "trades_csv_rows": 76,
   "trades_csv_cols": [
-    "entry_date", "exit_date", "thscode", "exit_reason",
-    "entry_price", "exit_price", "size", "hold_days",
-    "gross_pnl", "fees", "net_pnl", "net_return", "atr_pct", "sub_signal_type"
+    "entry_date",
+    "exit_date",
+    "thscode",
+    "exit_reason",
+    "entry_price",
+    "exit_price",
+    "size",
+    "hold_days",
+    "gross_pnl",
+    "fees",
+    "net_pnl",
+    "net_return",
+    "atr_pct",
+    "sub_signal_type"
   ],
   "vs_v5": {
-    "v5_cagr": 2.4160,
+    "v5_cagr": 2.416,
     "v5_max_dd": 0.3131,
     "v5_walkforward_profitable": "2/9",
     "v5_walkforward_mean": "-19.36%"
@@ -40,5 +54,6 @@
     "v8_walkforward_profitable": "3/9",
     "v8_walkforward_mean": "+30.68%"
   },
-  "note": "v9 = v8 + min_score=1.2(过滤弱信号)。Pareto 改善:CAGR + Sharpe + DD 同时提升。"
+  "note": "v9 = v8 + min_score=1.2(过滤弱信号)。Pareto 改善:CAGR + Sharpe + DD 同时提升。",
+  "v6_change_note": "V6 (2026-09-22): chase_up/portfolio.py intraday tiebreak flipped TP-first → SL-first per CLAUDE.md §4 worst-case. Some TP exits where intraday low also crossed SL became SL exits. Compare tp_count/sl_count against pre-V6 baseline."
 }

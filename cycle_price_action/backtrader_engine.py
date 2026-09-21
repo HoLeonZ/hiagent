@@ -76,6 +76,9 @@ class CyclePriceActionStrategy(bt.Strategy):
                 bar["close"],
                 bar["date"],
                 {"k_line_score": kscore, "phase_score": cyc, "calendar_score": cal},
+                # R8 (2026-09-21): Volume Participation Limit (CLAUDE.md §4)。
+                # 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION。
+                bar_volume=bar.get("volume"),
             )
             if state is None:
                 return

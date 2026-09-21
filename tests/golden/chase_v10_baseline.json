@@ -1,32 +1,46 @@
 {
   "preset": "chase_v10_pos2_equal_atr_tp6_sl15_mh18_score16",
-  "window": ["2025-09-19", "2026-09-19"],
+  "window": [
+    "2025-09-19",
+    "2026-09-19"
+  ],
   "engine": "simulate",
   "metrics": {
     "trades": 71,
-    "win_rate": 0.408,
-    "total_return": 3.6423,
-    "cagr": 3.6718,
-    "sharpe": 2.57,
-    "max_dd": 0.3213,
+    "win_rate": 0.4085,
+    "total_return": 2.4629,
+    "cagr": 2.4807,
+    "sharpe": 2.75,
+    "max_dd": 0.2134,
     "tp_count": 25,
     "sl_count": 42,
     "time_count": 3,
     "eod_count": 1,
-    "profit_factor": 1.60,
+    "profit_factor": 1.82,
     "avg_net_return": 0.0554,
-    "exposure": 0.887,
-    "final_equity": 4642295.0,
+    "exposure": 0.655,
+    "final_equity": 3462906.8908737935,
     "initial_capital": 1000000.0,
     "avg_hold_days": 6.2,
     "max_hold_days": 18
   },
-  "trades_csv_sha256": "91cfb3b94198409bd4f045fcc10ecb5dd33236874101f2dd1a8c9edcd4aa1e2b",
+  "trades_csv_sha256": "e8fed496f82040f7e34b502327a62aafd95442c6da6f47a04d3dc2ab9db7957f",
   "trades_csv_rows": 71,
   "trades_csv_cols": [
-    "entry_date", "exit_date", "thscode", "exit_reason",
-    "entry_price", "exit_price", "size", "hold_days",
-    "gross_pnl", "fees", "net_pnl", "net_return", "atr_pct", "sub_signal_type"
+    "entry_date",
+    "exit_date",
+    "thscode",
+    "exit_reason",
+    "entry_price",
+    "exit_price",
+    "size",
+    "hold_days",
+    "gross_pnl",
+    "fees",
+    "net_pnl",
+    "net_return",
+    "atr_pct",
+    "sub_signal_type"
   ],
   "vs_v9": {
     "v9_cagr": 3.7766,
@@ -36,10 +50,11 @@
     "v9_walkforward_worst": "-90.45%"
   },
   "vs_v5": {
-    "v5_cagr": 2.4160,
+    "v5_cagr": 2.416,
     "v5_max_dd": 0.3131,
     "v5_walkforward_profitable": "2/9",
     "v5_walkforward_mean": "-19.36%"
   },
-  "note": "v10 = v9 + min_score 1.2 → 1.6(过滤更强信号)。目标窗口 CAGR 与 v9 相当(不同起始日产生差异),但 walkforward 最坏窗从 -90.45% 改善到 -80.92%。mh=20 会闪崩到 +186%(non-monotonic),max_hold 保持 18。"
+  "note": "v10 = v9 + min_score 1.2 → 1.6(过滤更强信号)。目标窗口 CAGR 与 v9 相当(不同起始日产生差异),但 walkforward 最坏窗从 -90.45% 改善到 -80.92%。mh=20 会闪崩到 +186%(non-monotonic),max_hold 保持 18。",
+  "v6_change_note": "V6 (2026-09-22): chase_up/portfolio.py intraday tiebreak flipped TP-first → SL-first per CLAUDE.md §4 worst-case. Some TP exits where intraday low also crossed SL became SL exits. Compare tp_count/sl_count against pre-V6 baseline."
 }
