@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Mapping
 
 
 @dataclass(frozen=True)
@@ -17,7 +18,7 @@ class PositionState:
     shares: int
     entry_price: float
     entry_date: date
-    decision_meta: dict[str, Any]
+    decision_meta: Mapping[str, Any]
 
 
 class Portfolio:
@@ -81,7 +82,7 @@ class Portfolio:
             shares=shares,
             entry_price=price,
             entry_date=entry_date,
-            decision_meta=dict(decision_meta),
+            decision_meta=MappingProxyType(dict(decision_meta)),
         )
         return self._pos
 
