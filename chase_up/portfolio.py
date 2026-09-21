@@ -224,18 +224,25 @@ def simulate_portfolio(
         if t > 0 and t < last_t:
             candidates = sigs_by_day.get(cal[t - 1], [])
             if candidates:
+                # 保守限制:budget base 只用现金,绝不用未实现 PnL 当杠杆。
+                # 旧实现 equity_now = cash + holdings_val,当 holdings 上涨时
+                # slot_value > cash,但 min(slot_value, cash) 只约束单笔,
+                # 循环扣逐笔累加会让 cash < 0(隐式融资)。
+                # 现在用 cash_only = max(cash, 0),cash < 0 时不开仓。
+                if cash < 0:
+                    continue
                 holdings_val = 0.0
                 for code, pos in positions.items():
                     j = _row_at(pidx[code], day)
                     px = pidx[code]["close"][j] if j is not None else pos["entry_price"]
                     holdings_val += pos["size"] * px
-                equity_now = cash + holdings_val
+                cash_only = float(cash)
                 if position_sizing == "equal":
-                    slot_value = equity_now / max_positions
+                    slot_value = cash_only / max_positions
                 elif position_sizing == "all_in":
-                    slot_value = equity_now
+                    slot_value = cash_only
                 else:  # kelly
-                    slot_value = equity_now * kelly_fraction
+                    slot_value = cash_only * kelly_fraction
 
                 for code, sub_type in candidates:
                     if len(positions) >= max_positions:

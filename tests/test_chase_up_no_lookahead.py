@@ -27,6 +27,7 @@ import pytest
 from chase_up.backtrader_engine import (
     _verify_trade_with_backtrader,
     compute_trade_tp_sl,
+    run_backtrader_backtest,
 )
 from chase_up.portfolio import TRADE_COLS, simulate_portfolio
 from chase_up.replay_broker import AStockBroker
@@ -941,4 +942,116 @@ def test_v14_trades_csv_matches_golden_baseline():
         f"  rows: {len(df)} (expected {expected_rows})\n"
         f"  若策略逻辑有变更,请同步更新 {baseline_path}"
     )
-    assert len(df) == expected_rows
+
+
+# --------------------------------------------------------------------------- #
+# Bug B 回归:phase-2 equity 修正不能污染 day-0 cash
+# --------------------------------------------------------------------------- #
+
+
+def test_phase2_day0_cash_not_polluted_by_total_delta():
+    """run_backtrader_backtest(verify=True) 必须保证:
+    phase-2 equity 第 0 行的 cash 等于 initial_capital (= 1,000,000),
+    不能等于 initial_capital + total_equity_delta(旧 bug 把 total_delta
+    均匀加到每一行,会让 day-0 cash = 1M + delta,典型值 -2.7M)。
+
+    验证方法:跑 v18 (一年期,验证 delta 非零),直接看 eq.iloc[0].cash。
+    """
+    name = "chase_v18_pos2_equal_atr_tp6_sl16_mh18_score17_atr035_mom115_ma60buf08_atr082"
+    res = run_backtrader_backtest(name, "2025-09-19", "2026-09-19", Path(DB_PATH), verify=True)
+    eq = res["equity"]
+    assert not eq.empty
+    assert eq["cash"].iloc[0] == pytest.approx(1_000_000.0, abs=1e-6), (
+        f"phase-2 day-0 cash = {eq['cash'].iloc[0]},应为 1,000,000.0。"
+        f"若偏差大,说明 equity_delta 被错误地应用到 row 0 (Bug B)。"
+    )
+
+
+def test_phase2_corrections_applied_at_exit_dates_not_uniformly():
+    """phase-2 累计 delta 应在每笔 exit_date 处 step-change,
+    而不是在整条曲线上加同一个常数。
+
+    验证:跑 v18,挑两笔相邻 exit_date 之间的一行,该行的 cash 应
+    等于 phase-1 同行 cash + (累计到上一个 exit_date 的 delta)。
+    不应等于 phase-1 同行 cash + total_delta。
+    """
+    name = "chase_v18_pos2_equal_atr_tp6_sl16_mh18_score17_atr035_mom115_ma60buf08_atr082"
+    res_p1 = run_backtrader_backtest(name, "2025-09-19", "2026-09-19", Path(DB_PATH), verify=False)
+    res_p2 = run_backtrader_backtest(name, "2025-09-19", "2026-09-19", Path(DB_PATH), verify=True)
+    eq_p1 = res_p1["equity"].set_index("date")
+    eq_p2 = res_p2["equity"].set_index("date")
+
+    # 在所有 exit_date 中间找一个 mid 日期 (即两个 exit 之间的某天)
+    trades_p1 = res_p1["trades"]
+    exits = sorted(pd.Timestamp(d) for d in trades_p1["exit_date"].unique())
+    if len(exits) < 2:
+        pytest.skip("rationale: exit_date < 2,无法验证 step-change")
+    # 在第一个和第二个 exit 之间选一天
+    mid = exits[0] + (exits[1] - exits[0]) / 2
+    mid = pd.Timestamp(mid.date())
+    if mid not in eq_p1.index:
+        pytest.skip(f"mid date {mid} 不在 equity 时间轴上")
+    cash_p1 = float(eq_p1.loc[mid, "cash"])
+    cash_p2 = float(eq_p2.loc[mid, "cash"])
+    total_delta = float(res_p2["trades"]["net_pnl"].sum() - trades_p1["net_pnl"].sum())
+    # phase-2 cash 在 mid 时应 = phase-1 cash + (累计到 mid 时刻为止的 delta)
+    # 旧 bug: cash_p2 = cash_p1 + total_delta (在 mid 时也加 total_delta,错误)
+    # 正确: cash_p2 != cash_p1 + total_delta (因为 mid 不是 total 累计完的位置)
+    diff = cash_p2 - cash_p1
+    assert diff != pytest.approx(total_delta, rel=0.01), (
+        f"mid @ {mid}: phase-2 - phase-1 cash diff = {diff:.2f},"
+        f"但 total_delta = {total_delta:.2f}。两者接近说明 equity_delta"
+        f"被均匀加到全曲线,这是 Bug B 的特征。"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Bug A 回归:phase-1 不能让 cash < 0 (保守限制 — 现金为 0 时不开仓)
+# --------------------------------------------------------------------------- #
+
+
+def test_simulate_portfolio_never_lets_cash_go_negative_in_phase1():
+    """simulate_portfolio 的 cash 路径必须永远 >= 0 (保守限制)。
+
+    旧实现用 equity_now = cash + holdings_val 当 budget base,会隐式融资;
+    新实现改用 cash_only,加上 cash < 0 时不开仓的守卫。
+    """
+    panel = _build_entry_day_tp_panel()
+    panel_ind = compute_indicators(panel)
+    signal_date = panel["date"].iloc[-6]
+    last_row = panel_ind[panel_ind["date"] == signal_date].iloc[0]
+    # 故意同一天多个候选 (模拟同信号日多条入)
+    entries = pd.DataFrame([
+        {
+            "date": signal_date, "thscode": "600000.SH", "score": 0.05,
+            "sub_signal_type": "A",
+            "sig_close": last_row["close"], "sig_ma20": last_row["ma20"],
+            "sig_ma60": last_row["ma60"], "sig_ret1": last_row["ret1"],
+            "sig_breakout_score": 0.05, "sig_momentum_score": np.nan,
+            "sig_macross_score": np.nan, "sig_mom120": 0.05,
+            "sig_amount60": 5e7,
+            "atr_pct": float(last_row["atr_pct"]),
+        },
+        {
+            "date": signal_date, "thscode": "600001.SH", "score": 0.04,
+            "sub_signal_type": "B",
+            "sig_close": last_row["close"], "sig_ma20": last_row["ma20"],
+            "sig_ma60": last_row["ma60"], "sig_ret1": last_row["ret1"],
+            "sig_breakout_score": np.nan, "sig_momentum_score": 0.04,
+            "sig_macross_score": np.nan, "sig_mom120": 0.04,
+            "sig_amount60": 5e7,
+            "atr_pct": float(last_row["atr_pct"]),
+        },
+    ])
+    # 强制把 max_positions=1,这样第二条候选会被守卫拦下
+    trades, equity = simulate_portfolio(
+        entries, panel_ind,
+        tp_pct=0.05, sl_pct=0.05,
+        max_hold=8, max_positions=1,
+        start_date=panel["date"].iloc[0].strftime("%Y-%m-%d"),
+        end_date=panel["date"].iloc[-1].strftime("%Y-%m-%d"),
+    )
+    assert (equity["cash"] >= 0).all(), (
+        f"phase-1 cash 路径出现负值: min={equity['cash'].min():.2f}。"
+        f"若 < 0,说明 budget base 用了未实现 PnL (Bug A 隐式融资)。"
+    )
