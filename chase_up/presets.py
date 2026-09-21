@@ -26,6 +26,13 @@ PRESETS: dict[str, dict] = {
         "intraday_tiebreak": "sl_first",
         # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
         "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
         "tp_pct": 0.30,         # fallback
         "sl_pct": 0.05,         # fallback
         "max_hold": 15,
@@ -57,6 +64,13 @@ PRESETS: dict[str, dict] = {
         "intraday_tiebreak": "sl_first",
         # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
         "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
         "atr_tp_mult": 3.0, "atr_sl_mult": 1.0,
@@ -75,6 +89,13 @@ PRESETS: dict[str, dict] = {
         "intraday_tiebreak": "sl_first",
         # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
         "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
         "tp_pct": 0.30, "sl_pct": 0.08,
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
         "atr_tp_mult": 4.0, "atr_sl_mult": 1.5,
@@ -93,6 +114,13 @@ PRESETS: dict[str, dict] = {
         "intraday_tiebreak": "sl_first",
         # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
         "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
         "atr_tp_mult": 4.0, "atr_sl_mult": 1.0,
@@ -111,6 +139,13 @@ PRESETS: dict[str, dict] = {
         "intraday_tiebreak": "sl_first",
         # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
         "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 15, "max_positions": 3, "position_sizing": "equal",
         "atr_tp_mult": 4.0, "atr_sl_mult": 1.0,
@@ -129,6 +164,13 @@ PRESETS: dict[str, dict] = {
         "intraday_tiebreak": "sl_first",
         # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
         "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
         "atr_tp_mult": 4.0, "atr_sl_mult": 1.0,
@@ -152,6 +194,13 @@ PRESETS: dict[str, dict] = {
         "intraday_tiebreak": "sl_first",
         # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
         "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 10, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -170,6 +219,13 @@ PRESETS: dict[str, dict] = {
         "intraday_tiebreak": "sl_first",
         # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
         "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 15, "max_positions": 3, "position_sizing": "all_in",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -188,6 +244,13 @@ PRESETS: dict[str, dict] = {
         "intraday_tiebreak": "sl_first",
         # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
         "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
         "atr_tp_mult": 4.0, "atr_sl_mult": 1.0,
@@ -210,6 +273,13 @@ PRESETS: dict[str, dict] = {
         "intraday_tiebreak": "sl_first",
         # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
         "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 10, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -240,6 +310,13 @@ PRESETS: dict[str, dict] = {
         "intraday_tiebreak": "sl_first",
         # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
         "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
