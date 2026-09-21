@@ -30,21 +30,21 @@ def _run(name: str, cfg: dict) -> dict:
 
 
 def main():
-    base_v38 = {
+    base_v39 = {
         "universe": "mainboard_only",
         "tp_pct": 0.06, "sl_pct": 0.0005, "max_hold": 5,
-        "pct_chg_low": 0.03, "pct_chg_high": 0.08,
+        "pct_chg_low": 0.03, "pct_chg_high": 0.10,
         "d_mode": "converge_strict",
         "below_ratio_60": 0.5,
         "close_ma60_buffer": 0.02,
     }
 
     candidates = [
-        # v39 系列: v38 + pct_chg 进一步调整
-        ("v39_pctchg_04_09",  {**base_v38, "pct_chg_low": 0.04, "pct_chg_high": 0.09}),   # 收紧下限, 拓宽上限
-        ("v39_pctchg_035_08", {**base_v38, "pct_chg_low": 0.035, "pct_chg_high": 0.08}),  # 微调下限
-        ("v39_pctchg_03_10",  {**base_v38, "pct_chg_low": 0.03, "pct_chg_high": 0.10}),   # 拓宽上限
-        ("v39_pctchg_04_08",  {**base_v38, "pct_chg_low": 0.04, "pct_chg_high": 0.08}),   # 双收紧
+        # v40 系列: v39_03_10 + SL/TP 微调
+        ("v40_sl_001",      {**base_v39, "sl_pct": 0.001}),                # SL 放宽 (减 SL 命中)
+        ("v40_tp_07",       {**base_v39, "tp_pct": 0.07}),                 # TP 拉宽 (频次降, 单笔增)
+        ("v40_tp_08",       {**base_v39, "tp_pct": 0.08}),                 # TP 更宽
+        ("v40_sl001_tp07",  {**base_v39, "sl_pct": 0.001, "tp_pct": 0.07}),# 双向
     ]
 
     for name, cfg in candidates:

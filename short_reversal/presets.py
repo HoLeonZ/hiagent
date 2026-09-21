@@ -288,6 +288,56 @@ PRESETS: dict[str, dict] = {
         "below_ratio_60": 0.5,
         "close_ma60_buffer": 0.02,
     },
+    # === 2026-09-21 微调发现（v40）— v39 + TP 拉宽 ===
+    # 在 v39_pctchg_03_10 基础上微调 TP/SL, 4 组对比 (12m):
+    #   v40_sl_001       (SL 0.0005→0.001):     n=278 win=38.8% CAGR=+6724% DD=56.8%
+    #   v40_tp_07 ⭐     (TP 6%→7%):            n=278 win=37.1% CAGR=+8207% DD=56.6%
+    #   v40_tp_08 ⭐     (TP 6%→8%):            n=278 win=36.7% CAGR=+9113% DD=56.6%
+    #   v40_sl001_tp07   (双向):                n=278 win=37.4% CAGR=+7854% DD=56.8%
+    # v40_tp_07 是 v40 系列冠军: CAGR +16% (7050→8207), DD 持平 56.6%。
+    # v40_tp_08 是更激进: CAGR +29% (7050→9113), DD 持平, win% -1.8pp。
+    # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) ===
+    # v40_tp_07:
+    #   2024-09→2025-03: n= 90 win=22.2% yield=+87.06% Sharpe=4.08 DD=74.9%
+    #   2025-03→2025-09: n=111 win=17.1% yield=+50.43% Sharpe=3.59 DD=74.9%
+    #   2025-09→2026-03: n= 78 win=16.7% yield=+59.59% Sharpe=3.36 DD=22.9%
+    #   2026-03→2026-09: n=249 win=38.6% yield=+6203.09% Sharpe=11.20 DD=56.6%
+    #
+    # v40_tp_08 ⭐:
+    #   2024-09→2025-03: n= 90 win=22.2% yield=+91.08% Sharpe=4.07 DD=74.9%
+    #   2025-03→2025-09: n=111 win=17.1% yield=+54.29% Sharpe=3.59 DD=74.9%
+    #   2025-09→2026-03: n= 78 win=16.7% yield=+62.93% Sharpe=3.33 DD=22.9%
+    #   2026-03→2026-09: n=249 win=38.2% yield=+6871.48% Sharpe=11.12 DD=56.6%
+    #
+    # v40_tp_08 4/4 窗口全部优于 v39_03_10 baseline:
+    #   拉涨段 yield +27% (+5412 → +6871) ⭐
+    #   震荡段 yield +3-10pp
+    #   DD 持平 (74.9% / 22.9% / 56.6%) — 零成本微调胜出。
+    # === v3 体系最终产品 (v40_tp_08 优先) ===
+    # 实盘部署首选 v40_tp_08 (跨周期最高 yield, DD 与 v39 持平)。
+    # v36_d_converge 仍是 DD 极端敏感场景的备选。
+    "v40_tp_07": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.07,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.5,
+        "close_ma60_buffer": 0.02,
+    },
+    "v40_tp_08": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.5,
+        "close_ma60_buffer": 0.02,
+    },
 }
 
 
