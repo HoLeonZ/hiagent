@@ -1117,3 +1117,41 @@ def test_simulate_portfolio_nav_gate_rejects_entries_when_nav_below_threshold():
     assert len(b_trades) == 0, (
         f"NAV gate 应拒绝票 B 入场 (cash={final_cash:.0f} < 5% × initial=450), 但成交了 {len(b_trades)} 笔"
     )
+
+def test_simulate_portfolio_volume_participation_cap_enforced():
+    """R8 (2026-09-21): 单笔成交量必须 ≤ Bar_Volume × MAX_VOL_PARTICIPATION (CLAUDE.md §4)。
+
+    复刻"小票砸穿"场景: bar volume = 1000 (10 lots), all-in 资金 100k → 理论可买
+    10000 股 (100 lots), 但 MAX_VOL_PARTICIPATION = 0.10 → 上限 = 1000 股 (10 lots)。
+    """
+    from chase_up.portfolio import MAX_VOL_PARTICIPATION
+    panel = pd.DataFrame([
+        # bar volume = 1000 (微量流通), 价格 10
+        {"date": pd.Timestamp("2025-09-01"), "thscode": "ILLQ.SZ", "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "volume": 1000.0, "amount": 1e4, "atr_pct": 0.02},
+        {"date": pd.Timestamp("2025-09-02"), "thscode": "ILLQ.SZ", "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "volume": 1000.0, "amount": 1e4, "atr_pct": 0.02},
+        {"date": pd.Timestamp("2025-09-03"), "thscode": "ILLQ.SZ", "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "volume": 1000.0, "amount": 1e4, "atr_pct": 0.02},
+    ])
+    entries = pd.DataFrame([
+        {"date": pd.Timestamp("2025-09-01"), "thscode": "ILLQ.SZ", "score": 1.0, "sub_signal_type": "A", "atr_pct": 0.02,
+         "sig_close": 10.0, "sig_ma20": 9.5, "sig_ma60": 9.0, "sig_ret1": 0.05,
+         "sig_breakout_score": 0.5, "sig_momentum_score": 0.3, "sig_macross_score": np.nan,
+         "sig_mom120": 0.05, "sig_amount60": 5e7},
+    ])
+    # initial_capital=100k, all_in @ 10 → 1000 lots (10000 shares) theoretical,
+    # 但 vol=1000 × 0.10 = 100 shares (1 lot) 才是 max_fill
+    trades, equity = simulate_portfolio(
+        entries, panel,
+        tp_pct=0.10, sl_pct=0.05, max_hold=8, max_positions=1,
+        start_date="2025-09-01", end_date="2025-09-03",
+        initial_capital=100_000.0,
+        position_sizing="all_in",
+        commission_rate=0.0, stamp_duty_rate=0.0, min_commission=0.0,
+    )
+    assert len(trades) == 1, f"应有 1 笔 trade, 实际 {len(trades)} 笔"
+    size = int(trades.iloc[0]["size"])
+    # max_fill = 1000 * 0.10 = 100 股 (1 lot)
+    expected_max = int(1000 * MAX_VOL_PARTICIPATION // 100) * 100
+    assert size == expected_max, (
+        f"size={size} 应被 volume cap 限制到 {expected_max} "
+        f"(bar_volume=1000 × MAX_VOL_PARTICIPATION={MAX_VOL_PARTICIPATION})"
+    )

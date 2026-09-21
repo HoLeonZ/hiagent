@@ -40,6 +40,10 @@ TRADE_COLS = [
 # A 股主板涨跌停 10%;开盘涨幅超过该阈值视为无法买入
 LIMIT_UP_THRESHOLD = 0.098
 
+# 防穿仓 (R8, 2026-09-21): Volume Participation Limit (CLAUDE.md §4)。
+# 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION。超出部分丢弃(不挂单)。
+MAX_VOL_PARTICIPATION = 0.10
+
 # 防穿仓 (R1, 2026-09-21): NAV-floor cash gate 阈值。
 # 当 NAV (cash + 持仓 mark-to-market 浮盈) 跌至 initial_capital × NAV_GATE_RATIO
 # 以下时, 拒绝新开仓。已持仓仍按 SL/TP/time exit 正常执行 (不主动平仓)。
@@ -69,6 +73,8 @@ def _build_index(panel: pd.DataFrame) -> dict[str, dict]:
             "low": sub["low"].to_numpy(dtype=float),
             "close": closes,
             "prev_close": prev_closes,
+            # R8 (2026-09-21): Volume Participation Limit 需要每根 bar 的成交量
+            "volume": sub["volume"].to_numpy(dtype=float) if "volume" in sub.columns else np.full(len(sub), np.nan),
         }
     return idx
 
@@ -293,6 +299,17 @@ def simulate_portfolio(
 
                     budget = min(slot_value, cash)
                     size = int(budget / entry_px / 100) * 100
+                    if size < 100:
+                        continue
+                    # 防穿仓 (R8, 2026-09-21): Volume Participation Limit
+                    # 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION, 超出丢弃。
+                    # 这是 CLAUDE.md §4 "Max_Fill_Qty = MIN(Order_Qty, Bar_Volume * 0.10)"
+                    # 防止大单砸穿市场、产生 slippage / market impact。
+                    bar_vol = pi["volume"][j]
+                    if not np.isnan(bar_vol) and bar_vol > 0:
+                        max_fill = int(bar_vol * MAX_VOL_PARTICIPATION // 100) * 100
+                        if max_fill > 0 and size > max_fill:
+                            size = max_fill
                     if size < 100:
                         continue
                     notional = size * entry_px

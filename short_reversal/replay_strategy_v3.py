@@ -32,6 +32,10 @@ LIQ_HIGH = 3e8
 UP_STREAK_LOW = 3
 UP_STREAK_HIGH = 10
 
+# 防穿仓 (R8, 2026-09-21): Volume Participation Limit (CLAUDE.md §4)。
+# 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION。超出部分丢弃(不挂单)。
+MAX_VOL_PARTICIPATION = 0.10
+
 
 class Phase3V3Strategy(bt.Strategy):
     """事件驱动做空策略。"""
@@ -184,6 +188,14 @@ class Phase3V3Strategy(bt.Strategy):
             size = (
                 int(target_value / entry_price / self.p.lot_size) * self.p.lot_size
             )
+            # 防穿仓 (R8, 2026-09-21): Volume Participation Limit
+            # 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION, 超出丢弃。
+            # CLAUDE.md §4 "Max_Fill_Qty = MIN(Order_Qty, Bar_Volume * 0.10)"。
+            bar_vol = float(d.volume[0])
+            if bar_vol > 0:
+                max_fill = int(bar_vol * MAX_VOL_PARTICIPATION / self.p.lot_size) * self.p.lot_size
+                if max_fill > 0 and size > max_fill:
+                    size = max_fill
             if size < self.p.lot_size:
                 self.pending_entries.pop(code, None)
                 continue
