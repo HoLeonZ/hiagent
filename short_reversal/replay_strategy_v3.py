@@ -44,6 +44,15 @@ class Phase3V3Strategy(bt.Strategy):
         pct_chg_low=0.02,
         pct_chg_high=0.07,
         a_condition="default",  # 'default' (V1) | 'cascade_price' (V5)
+        # B 条件: 连阳天数范围 (默认 [3, 10], 模块常量 UP_STREAK_LOW/HIGH)
+        up_streak_low=3,
+        up_streak_high=10,
+        # E 条件: am60 流动性窗口 (默认 [3e7, 3e8], 模块常量 LIQ_LOW/HIGH)
+        liq_low=3e7,
+        liq_high=3e8,
+        # D 条件 MACD 阈值 (默认严格: DIF<0 & DEA<0 & |bar|<|prev_bar|)
+        # 'strict' (V3 默认) | 'd_only' (D|dif|<0 only) | 'converge_strict' (|bar|<|prev_bar|*0.5)
+        d_mode="strict",
         margin_rate=0.086,
         commission_rate=0.0006,
         stamp_duty_rate=0.001,
@@ -252,7 +261,7 @@ class Phase3V3Strategy(bt.Strategy):
 
         # E 流动性（最便宜的先过滤）
         am60 = indi["am60"][0]
-        if np.isnan(am60) or not (LIQ_LOW <= am60 <= LIQ_HIGH):
+        if np.isnan(am60) or not (self.p.liq_low <= am60 <= self.p.liq_high):
             return False
 
         # A 条件
@@ -275,7 +284,7 @@ class Phase3V3Strategy(bt.Strategy):
 
         # B 连阳
         us = indi["up_streak"][0]
-        if np.isnan(us) or not (UP_STREAK_LOW <= us <= UP_STREAK_HIGH):
+        if np.isnan(us) or not (self.p.up_streak_low <= us <= self.p.up_streak_high):
             return False
 
         # C pct_chg
@@ -295,8 +304,19 @@ class Phase3V3Strategy(bt.Strategy):
         prev_bar = prev_dif - prev_dea
         if np.isnan(dif) or np.isnan(dea) or np.isnan(prev_bar):
             return False
-        if not (dif < 0 and dea < 0 and abs(bar) < abs(prev_bar)):
-            return False
+        # D 模式 (2026-09-21 引入参数化):
+        #   'strict'          = DIF<0 & DEA<0 & |bar|<|prev_bar|        (v3 默认)
+        #   'd_only'          = DIF<0 only (放开 DEA 与 bar 收敛)        (v36 候选)
+        #   'converge_strict' = DIF<0 & DEA<0 & |bar|<|prev_bar|*0.5    (v36 候选)
+        if self.p.d_mode == "d_only":
+            if not (dif < 0):
+                return False
+        elif self.p.d_mode == "converge_strict":
+            if not (dif < 0 and dea < 0 and abs(bar) < abs(prev_bar) * 0.5):
+                return False
+        else:  # 'strict' (默认)
+            if not (dif < 0 and dea < 0 and abs(bar) < abs(prev_bar)):
+                return False
 
         return True
 

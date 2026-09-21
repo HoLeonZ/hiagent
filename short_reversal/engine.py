@@ -159,11 +159,17 @@ def run_backtest_v3(
         pct_chg_low=cfg.get("pct_chg_low", 0.02),
         pct_chg_high=cfg.get("pct_chg_high", 0.06),
         a_condition=cfg.get("a_condition", "default"),
+        up_streak_low=cfg.get("up_streak_low", 3),
+        up_streak_high=cfg.get("up_streak_high", 10),
+        liq_low=cfg.get("liq_low", 3e7),
+        liq_high=cfg.get("liq_high", 3e8),
+        d_mode=cfg.get("d_mode", "strict"),
         margin_rate=MARGIN_RATE,
         commission_rate=COMMISSION_RATE,
         stamp_duty_rate=STAMP_DUTY_RATE,
         initial_capital=INITIAL_CAPITAL,
         lot_size=100,
+        min_cash_ratio=cfg.get("min_cash_ratio", 0.05),
         result_holder=holder,
     )
     cerebro.run()

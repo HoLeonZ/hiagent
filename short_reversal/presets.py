@@ -140,6 +140,39 @@ PRESETS: dict[str, dict] = {
         "pct_chg_low": 0.04,
         "pct_chg_high": 0.09,
     },
+    # === 2026-09-21 微调发现（v36）— B/E/D 信号轴参数化 ===
+    # 模块常量 UP_STREAK/LIQ/MACD 提升为 strategy params (Task #15-17),
+    # 现在可以在不破坏 preset 的前提下做信号轴微调。
+    # 4 组对比 (P3+P5+cash gate 修后, 12m):
+    #   v36_us37_proper (B=[3,7]):       n=303 win=38.3% CAGR=+7122% Sharpe=11.14 DD=55.8%
+    #   v36_us5_12     (B=[5,12]):        n= 13 win=23.1% CAGR=  +16%  Sharpe= 1.76 DD=12.6% 不可投
+    #   v36_us3_12     (B=[3,12]):        n=303 win=38.3% CAGR=+7122% Sharpe=11.14 DD=55.8%
+    #   v36_d_converge (D=|bar|<|prev|*0.5): n=200 win=40.0% CAGR=+2814% Sharpe=10.30 DD=42.7% ⭐
+    # 结论:
+    #   - B 连阳调整无效: v34 样本里连阳 8-10 天为空集, [3,7] 和 [3,12] 等价于 [3,10]。
+    #   - D 严格收敛有效: |bar|<|prev_bar|*0.5 让 n-33% win% +1.7pp DD -13pp。
+    #   - v36_d_converge 是 v36 系列唯一可行 preset (n=200 充足, DD 改善明显)。
+    # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) ===
+    #   2024-09-12 → 2025-03-12: n= 56 win=16.1% total_yield= +20.36% Sharpe=2.47 DD= 56.9% ✅
+    #   2025-03-12 → 2025-09-12: n= 74 win=14.9% total_yield= +19.86% Sharpe=2.60 DD= 55.8% ✅
+    #   2025-09-12 → 2026-03-12: n= 40 win=15.0% total_yield= +21.94% Sharpe=2.24 DD= 18.7% ✅
+    #   2026-03-12 → 2026-09-12: n=185 win=41.6% total_yield=+2473.52% Sharpe=10.22 DD= 42.7% ✅
+    #   4/4 窗口全为正收益, 最低单窗 +19.86%, 跨周期稳健。
+    #   对比 v34 walk-forward: 震荡段 yield 缩水 32pp (v34 +60% / v36 +20%),
+    #   但 DD 从 100% 降至 55% — 真改善 (v34 触底破产)。
+    # === v34 vs v36 决策指南 ===
+    #   v34_mainboard_pctchg_tight: 高收益高 DD (震荡段 yield 高但 DD 100% 破产触底)
+    #   v36_d_converge:             中等收益低 DD (震荡段 yield 中等但 DD 55% 真稳)
+    #   实盘部署建议选 v36_d_converge (更安全)。研究/对照用 v34 看理论上限。
+    "v36_d_converge": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.06,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.08,
+        "d_mode": "converge_strict",
+    },
 }
 
 
