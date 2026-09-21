@@ -371,6 +371,37 @@ PRESETS: dict[str, dict] = {
         "below_ratio_60": 0.5,
         "close_ma60_buffer": 0.02,
     },
+    # === 2026-09-21 微调发现（v42）— v40_tp_08 + A 进一步放宽 ===
+    # 在 v40_tp_08 (TP 8%) 基础上放宽 A 条件, 4 组对比 (12m):
+    #   v42_buf03 (buffer 0.02→0.03):       n=290 win=36.2% CAGR=+10349% Sharpe=10.63 DD=56.6%
+    #   v42_ratio04 (ratio 0.5→0.4):         n=302 win=35.4% CAGR=+10385% Sharpe=10.39 DD=56.6%
+    #   v42_a_extra_relaxed (双放宽):        n=316 win=35.1% CAGR=+12510% Sharpe=10.31 DD=56.6%
+    #   v42_buf05 (buffer 0.02→0.05) ⭐:    n=312 win=35.3% CAGR=+12974% Sharpe=10.43 DD=56.6%
+    # v42_buf05 是 v40_tp_08 之后最大胜出: CAGR +42% (+9113→+12974), DD 持平 56.6%,
+    # win% 仅 -2pp。零成本微调!
+    # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) — 跨周期真胜出 ===
+    #   2024-09→2025-03: n=114 win=25.4% yield= +222.05% Sharpe=5.21 DD=77.9% ⭐
+    #   2025-03→2025-09: n=137 win=18.2% yield= +104.13% Sharpe=4.39 DD=77.9% ⭐
+    #   2025-09→2026-03: n= 97 win=20.6% yield= +131.65% Sharpe=4.34 DD=26.6% ⭐
+    #   2026-03→2026-09: n=273 win=35.9% yield=+7574.87% Sharpe=10.64 DD=56.6%
+    # 4/4 窗口 yield 全部显著优于 v40_tp_08:
+    #   震荡段 yield 翻倍 (+91%→+222%, +54%→+104%, +63%→+132%)
+    #   拉涨段 yield +10% (+6871→+7575)
+    #   DD 仅震荡段微升 3pp (74.9→77.9), 拉涨段持平 56.6%
+    # === v3 体系最终产品 (v42_buf05 优先) ===
+    # 实盘部署首选 v42_buf05 (跨周期 yield 翻倍, DD 仅微升 3pp).
+    # 备选 v36_d_converge (DD 极端敏感场景).
+    "v42_buf05": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.5,
+        "close_ma60_buffer": 0.05,
+    },
 }
 
 

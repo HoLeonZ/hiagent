@@ -40,11 +40,11 @@ def main():
     }
 
     candidates = [
-        # v41 系列: v40_tp_08 + pct_chg / mh 微调
-        ("v41_pctchg_04_10", {**base_v40, "pct_chg_low": 0.04}),                # 收紧下限
-        ("v41_pctchg_03_09", {**base_v40, "pct_chg_high": 0.09}),               # 收紧上限
-        ("v41_mh6",          {**base_v40, "max_hold": 6}),                      # 拉长持仓
-        ("v41_mh7",          {**base_v40, "max_hold": 7}),                      # 更长持仓
+        # v42 系列: v40_tp_08 + A 条件进一步放宽
+        ("v42_buf03",        {**base_v40, "close_ma60_buffer": 0.03}),          # close < ma60 * 1.03
+        ("v42_ratio04",     {**base_v40, "below_ratio_60": 0.4}),              # 60日只需 40% 时间在 MA60 下
+        ("v42_a_extra_relaxed", {**base_v40, "below_ratio_60": 0.4, "close_ma60_buffer": 0.03}),  # 双放宽
+        ("v42_buf05",        {**base_v40, "close_ma60_buffer": 0.05}),          # 更宽 buffer
     ]
 
     for name, cfg in candidates:
