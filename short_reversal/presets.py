@@ -6,6 +6,14 @@ from typing import Literal
 UniverseMode = Literal["mainboard_only", "exclude_hs300_zhongtou_finance"]
 
 PRESETS: dict[str, dict] = {
+    # ⚠️ ⚠️ ⚠️ 2026-09-21 重要警告 ⚠️ ⚠️ ⚠️
+    # 下方两个 v33 baseline preset 已在 cash gate 落地后被实测证明破产:
+    #   v33_mainboard_tp2_sl05_dneg: cash gate 触发时 NAV=-1.01亿 (透支初始资金 100 倍)
+    #   v33_mainboard_tp6_sl005_mh5_realistic: 同类问题, 数字仍为 paper-trading 幻影
+    # 它们的高 CAGR (10K+%) 是浮盈复利触底 0 的复利幻影, 实盘 margin call 会强平。
+    # 唯一真正可投资的 preset: v34_mainboard_pctchg_tight (12m 内 cash gate 未触发)。
+    # v33 系列仅保留为参照 baseline, 用于对比 v34 的相对收益改善。
+    # ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️
     # D 条件改为 DIF/DEA<0 后的最优 preset（TP2%/SL0.5%/mh=3）：
     # 2018-2025 实测 (Phase 1 trades 层, entry=T+1 open, TP/SL from T+2):
     #   n=541, 胜率 52.4%, avg_pnl +0.814%, 平均持仓 1.08 天 (≤ 3 月 ✅)
@@ -89,8 +97,12 @@ PRESETS: dict[str, dict] = {
     #   最低单窗 total_yield +51.6% (拉涨段); 4/4 窗口全为正收益, 跨周期稳健。
     #   隐藏脆弱性: 前 3 个窗口胜率 14-18%, SL 占比 84-92% — 信号质量在震荡段
     #   仍不够好, 收益依赖 SL 截断堆积, 不依赖 tp_pct 真实捕捉。
-    # 注: 仍未接 cash gate, max_dd 100%/55.8% 是 NAV-based, 不代表现金真的没破 0;
-    #     实盘部署前必须先加 cash gate (Task #10) + P6 信号/执行层守卫。
+    # === 2026-09-21 cash gate 修后 ===
+    #   cash gate = NAV < 5% * INITIAL_CAPITAL 时拒绝新开仓 (replay_strategy_v3.py:144)
+    #   关键观察: v33 baseline 在 cash gate 触发时 NAV 已跌到 -1.01 亿 (cash 透支 100 倍),
+    #            回测结束时才被停 — 实际破产触底, 数字是 paper-trading 幻影。
+    #   v34 在 cash gate 触发时从未触发 gate (DD 55.8% 是真实 NAV 回撤),
+    #            唯一真正不破产的 preset, 可投资性最高。
     "v34_mainboard_pctchg_tight": {
         "universe": "mainboard_only",
         "tp_pct": 0.06,

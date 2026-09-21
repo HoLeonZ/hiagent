@@ -30,6 +30,10 @@ def _run(name: str, cfg: dict) -> dict:
 
 
 def main():
+    base_cons = {
+        "universe": "mainboard_only",
+        "tp_pct": 0.02, "sl_pct": 0.005, "max_hold": 3,
+    }
     base_agg = {
         "universe": "mainboard_only",
         "tp_pct": 0.06, "sl_pct": 0.0005, "max_hold": 5,
@@ -37,18 +41,19 @@ def main():
     }
 
     candidates = [
-        ("agg_base",         base_agg),                                       # baseline
-        ("agg_tp05",         {**base_agg, "tp_pct": 0.05}),                   # 收窄 TP
-        ("agg_tp08",         {**base_agg, "tp_pct": 0.08}),                   # 拉宽 TP
-        ("agg_mh7",          {**base_agg, "max_hold": 7}),                    # 拉长持仓
-        ("agg_pctchg_03_08", {**base_agg, "pct_chg_low": 0.03, "pct_chg_high": 0.08}),  # 收紧入场信号
+        # v35 系列: 在 v33 保守线基础上加 pct_chg 收紧 (v34 思路移植)
+        ("v35_cons_pctchg_03_08",  {**base_cons, "pct_chg_low": 0.03, "pct_chg_high": 0.08}),
+        ("v35_cons_pctchg_025_06", {**base_cons, "pct_chg_low": 0.025, "pct_chg_high": 0.06}),
+        # v35 系列: 在 v34 基础上进一步收紧入场
+        ("v35_agg_pctchg_04_09",   {**base_agg, "pct_chg_low": 0.04, "pct_chg_high": 0.09}),
+        ("v35_agg_pctchg_035_075", {**base_agg, "pct_chg_low": 0.035, "pct_chg_high": 0.075}),
     ]
 
     for name, cfg in candidates:
         t0 = time.time()
         m = _run(name, cfg)
         dt = time.time() - t0
-        print(f"  [{dt:>5.1f}s] {name:<22}  n={m['trades_count']:>4} "
+        print(f"  [{dt:>5.1f}s] {name:<30}  n={m['trades_count']:>4} "
               f"win={m['win_rate']*100:>5.1f}% CAGR={m['cagr']*100:>10.2f}% "
               f"Sharpe={m['sharpe']:>5.2f} DD={m['max_dd']*100:>5.1f}% "
               f"TP/SL/T={m['tp_count']}/{m['sl_count']}/{m['time_count']}",

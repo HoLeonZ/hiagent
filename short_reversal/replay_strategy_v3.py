@@ -11,8 +11,11 @@ backtrader 源码（pip 装的 1.9.78.123）保持原封不动，只走子类化
 """
 from __future__ import annotations
 
+import logging
 import backtrader as bt
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from short_reversal.indicators_bt import (
     Am60,
@@ -142,7 +145,14 @@ class Phase3V3Strategy(bt.Strategy):
             return
         # NAV-based cash gate: 用 cash + 当前持仓 mark-to-market 浮盈 估算真实净值
         nav = self._nav()
-        if nav < self.p.initial_capital * self.p.min_cash_ratio:
+        cash_gate_threshold = self.p.initial_capital * self.p.min_cash_ratio
+        if nav < cash_gate_threshold:
+            if not getattr(self, "_cash_gate_logged", False):
+                logger.warning(
+                    "[cash-gate] NAV=%.2f < threshold=%.2f, 拒绝 %d 个 pending entries",
+                    nav, cash_gate_threshold, len(self.pending_entries),
+                )
+                self._cash_gate_logged = True
             # 拒绝所有 pending entries (保留在 pending 让下一根 bar 重新评估)
             self.pending_entries.clear()
             return
