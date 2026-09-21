@@ -2,11 +2,50 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
-from datetime import date
+from datetime import date, datetime
+from pathlib import Path
 
 from hiagent_config import get_db_path
+from cycle_price_action.backtest import run_backtest
+from cycle_price_action.metrics import TradeRecord
 from cycle_price_action.walkforward import walkforward_windows
+
+
+def _resolve_window(start: str | None, end: str | None) -> tuple[date, date]:
+    e = date.fromisoformat(end) if end else date.today()
+    s = date.fromisoformat(start) if start else (e.toordinal() - 365)
+    s = date.fromordinal(s)
+    return s, e
+
+
+def _write_trades_csv(path: Path, trades: list[TradeRecord]) -> None:
+    import csv
+    cols = ["thscode", "entry_date", "exit_date", "entry_price",
+            "exit_price", "shares", "pnl", "hold_days",
+            "k_line_score", "phase_score", "calendar_score"]
+    with path.open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=cols)
+        w.writeheader()
+        for t in trades:
+            w.writerow({c: getattr(t, c) for c in cols})
+
+
+def _run_backtest(args) -> int:
+    start, end = _resolve_window(args.start, args.end)
+    out_dir = Path(args.out_dir) / f"run_{datetime.now():%Y%m%d_%H%M%S}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    db_path = args.db if args.db else str(get_db_path())
+    result = run_backtest(db_path=db_path, start=start, end=end, cash=args.cash)
+
+    _write_trades_csv(out_dir / "trades.csv", result.trades)
+    (out_dir / "metrics.json").write_text(json.dumps(result.metrics, indent=2))
+    m = result.metrics
+    print(f"wrote {out_dir}: n_trades={m['n_trades']}, "
+          f"pnl={m['total_pnl']:.2f}, win_rate={m['win_rate']:.2%}")
+    return 0
 
 
 def _run_walkforward(args) -> int:
@@ -44,8 +83,23 @@ def main(argv: list[str] | None = None) -> int:
 
     add_wf_parser(sub)
 
+    def add_run_parser(parent):
+        rp = parent.add_parser("run")
+        rp.add_argument("--start")
+        rp.add_argument("--end")
+        rp.add_argument("--cash", type=float, default=1_000_000)
+        rp.add_argument("--preset", default="v1", choices=["v1"])
+        rp.add_argument("--out-dir", default="results")
+        rp.add_argument("--db", default=None)
+        rp.set_defaults(func=_run_backtest)
+        return rp
+
+    add_run_parser(sub)
+
     args = p.parse_args(argv)
     if getattr(args, "cmd", None) == "walkforward":
+        return args.func(args)
+    if getattr(args, "cmd", None) == "run":
         return args.func(args)
 
     start = date.fromisoformat(args.start)
