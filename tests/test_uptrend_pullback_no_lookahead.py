@@ -582,7 +582,7 @@ def test_v3_e2e_signal_date_conditions_hold():
             bad.append("C")
         if not (row["macd_dif"] > 0 and row["macd_dea"] > 0):
             bad.append("D1/D2")
-        if not (abs(row["macd_bar"]) > abs(row["macd_bar_prev"])):
+        if not (abs(row["macd_bar"]) < abs(row["macd_bar_prev"])):
             bad.append("D3")
         if not (3e7 <= row["amount60"] <= 3e8):
             bad.append("E")

@@ -112,7 +112,11 @@ def _verify_trade_with_backtrader(
 
     cerebro = bt.Cerebro(stdstats=False)
     cerebro.adddata(bt.feeds.PandasData(dataname=feed_df))
-    initial_cash = max(target_size * entry_price * 2.0, 100_000.0)
+    # initial_cash 必须仅覆盖「买入本金 + 佣金缓冲」。若给 ×2 冗余，
+    # 一旦 sell 在 feed 耗尽时未成交（warning 路径），broker 不会回补卖出款，
+    # final_cash = initial_cash - buy_notional，导致 -notional 的虚假亏损被
+    # 当作真实 PnL 上报，触发 equity_delta 累计爆炸（实测一次 -918k delta）。
+    initial_cash = max(target_size * entry_price * 1.0025, 100_000.0)
     cerebro.broker = AStockBroker()
     cerebro.broker.set_cash(initial_cash)
     cerebro.addstrategy(
@@ -128,23 +132,25 @@ def _verify_trade_with_backtrader(
         return 0.0, entry_price, None
 
     final_cash = cerebro.broker.getcash()
-    net_pnl = final_cash - initial_cash
 
     # 优先用实际成交价（bar N+1 OPEN），保证 exit_price 与 net_pnl 口径一致
     if strat.actual_exit_price is not None:
         actual_exit = float(strat.actual_exit_price)
         actual_exit_date = strat.actual_exit_date
+        net_pnl = final_cash - initial_cash
     else:
-        # 订单已提交但 feed 耗尽未成交（max_hold+5 buffer 不够）；
-        # 这种情况下 net_pnl 也是 0（broker 还没收钱），所以这里记 entry_price
-        # 让 gross/fees 也归零，保持自洽。exit_date 保留 Phase 1 的决策日。
+        # 订单已提交但 feed 耗尽未成交（max_hold+5 buffer 不够）：
+        # broker 此时已扣买入本金但未收到卖出款，final_cash ≈ initial_cash - notional。
+        # 这种情况下 net_pnl 视作 0（成交未发生，不计入已实现盈亏），
+        # 改用 Phase 1 的 exit_price/exit_date/n_pnl 作为口径兜底。
         logger.warning(
             "_verify_trade_with_backtrader: thscode=%s exit_reason=%s 但订单未成交 "
-            "（feed 长度不足），actual_exit 退回 entry_price",
+            "（feed 长度不足），actual_exit 退回 entry_price，net_pnl 兜底为 0",
             thscode, strat.exit_reason,
         )
         actual_exit = entry_price
         actual_exit_date = None
+        net_pnl = 0.0
     return float(net_pnl), float(actual_exit), actual_exit_date
 
 
@@ -263,6 +269,13 @@ def run_backtrader_backtest(
             panel, t["thscode"], pd.Timestamp(t["entry_date"]),
             entry_price, size, tp_p, sl_p, max_hold,
         )
+        phase1_pnl = float(t["net_pnl"])
+        # warning 路径（exit_px == entry_price 且 exit_date is None）意味着 backtrader
+        # 没真正成交，net_pnl_bt 已被函数兜底为 0；但 equity_delta 不能因此把
+        # Phase 1 的真实盈亏从曲线里扣掉，否则 equity_p2 会突然塌陷。用 Phase 1
+        # 的 net_pnl 兜底，gross/fees 全部按 Phase 1 的口径重算，保持自洽。
+        if exit_date_bt is None and exit_px_bt == entry_price:
+            net_pnl_bt = phase1_pnl
         gross_pnl = (exit_px_bt - entry_price) * size
         fees = gross_pnl - net_pnl_bt
         invested = entry_price * size

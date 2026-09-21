@@ -240,6 +240,8 @@ def select_entries_v33_long_mirror(
     min_amount: float = 3e7,
     max_amount: float = 3e8,
     min_above_ma60_ratio: float = 0.6,
+    min_mom120: float = 0.0,
+    close_ma60_buffer: float = 0.0,
     regime_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """做多镜像信号 — 与 short_reversal v33 mainboard tp6 的5条件严格对应。
@@ -255,7 +257,7 @@ def select_entries_v33_long_mirror(
       A: close > MA60  ∧ above_ma60_ratio   ≥ 60%
       B: down_streak ∈ [3, 10]
       C: ret1 ∈ [-7%, -2%]
-      D: MACD dif>0 ∧ dea>0 ∧ |bar| > |prev_bar|
+      D: MACD dif>0 ∧ dea>0 ∧ |bar| < |prev_bar|  (动能衰减, 回调买进)
       E: amount60 ∈ [3e7, 3e8]
     """
     df = panel_ind
@@ -263,16 +265,17 @@ def select_entries_v33_long_mirror(
         # A —— 上升趋势
         (df["close"] > df["ma60"])
         & (df["above_ma60_ratio"] >= min_above_ma60_ratio)
+        & (df["mom120"] >= min_mom120)
         # B —— 连阴 (pullback within uptrend)
         & (df["down_streak"] >= min_down_streak)
         & (df["down_streak"] <= max_down_streak)
         # C —— 今日跌幅 (rip-down after run-up)
         & (df["ret1"] >= pct_chg_low)
         & (df["ret1"] <= pct_chg_high)
-        # D —— MACD 动能上升 (在上升趋势中意味着加速)
+        # D —— MACD 动能衰减 (上涨趋势中柱状缩短 = 回调买点)
         & (df["macd_dif"] > 0)
         & (df["macd_dea"] > 0)
-        & (df["macd_bar"].abs() > df["macd_bar_prev"].abs())
+        & (df["macd_bar"].abs() < df["macd_bar_prev"].abs())
         # E —— 流动性
         & (df["amount60"] >= min_amount)
         & (df["amount60"] <= max_amount)
@@ -286,6 +289,8 @@ def select_entries_v33_long_mirror(
         & (df["date"] >= pd.Timestamp(start_date))
         & (df["date"] <= pd.Timestamp(end_date))
     )
+    if close_ma60_buffer > 0:
+        mask = mask & (df["close"] >= df["ma60"] * (1 + close_ma60_buffer))
 
     hits = df[mask].copy()
 

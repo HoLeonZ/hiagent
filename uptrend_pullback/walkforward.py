@@ -37,14 +37,59 @@ def yearly_windows(first_year: int, last_year: int, month_day: str = "09-08") ->
     ]
 
 
+def monthly_windows(
+    start_month: str,
+    end_month: str,
+    window_months: int = 2,
+    step_months: int = 0,
+) -> list[tuple[str, str]]:
+    """生成 [start_month, end_month) 内的月级窗口。
+
+    start_month / end_month 格式 'YYYY-MM'，窗口左闭右开。
+    step_months = 0 时退化为不重叠 (= window_months)。
+    返回 (start_date, end_date) 列表，日期形如 'YYYY-MM-DD'。
+    """
+    step = step_months if step_months > 0 else window_months
+    sy, sm = map(int, start_month.split("-"))
+    ey, em = map(int, end_month.split("-"))
+    cur_y, cur_m = sy, sm
+    out = []
+    while True:
+        end_y, end_m = cur_y, cur_m + window_months
+        while end_m > 12:
+            end_m -= 12
+            end_y += 1
+        if (end_y, end_m) > (ey, em):
+            break
+        out.append((f"{cur_y:04d}-{cur_m:02d}-01", f"{end_y:04d}-{end_m:02d}-01"))
+        # 推进
+        cur_m += step
+        while cur_m > 12:
+            cur_m -= 12
+            cur_y += 1
+    return out
+
+
 def run_windows(
     preset: str | dict,
     windows: list[tuple[str, str]],
     db_path: Path,
+    engine: str = "simulate",
 ) -> pd.DataFrame:
-    """对每个窗口独立跑一次回测（各自加载数据与预热）。"""
+    """对每个窗口独立跑一次回测（各自加载数据与预热）。
+
+    engine:
+      - "simulate"    — 直接调用 uptrend_pullback.backtest.run_backtest（pandas 自循环）
+      - "backtrader"  — 调用 uptrend_pullback.backtrader_engine 的 AStockBroker 验证
+    """
     p = get_preset(preset) if isinstance(preset, str) else preset
     universe = set(load_universe(p["universe"], db_path))
+
+    if engine == "backtrader":
+        from uptrend_pullback.backtrader_engine import run_backtrader_backtest
+        _runner = run_backtrader_backtest
+    else:
+        _runner = run_backtest
 
     rows = []
     for start, end in windows:
@@ -56,10 +101,13 @@ def run_windows(
         panel_ind = compute_indicators(panel)
         reg = compute_regime(panel_ind, **p["regime"]) if p.get("regime") else None
 
-        res = run_backtest(p, start, end, db_path, panel_ind=panel_ind, regime_df=reg)
+        res = _runner(p, start, end, db_path, panel_ind=panel_ind, regime_df=reg)
         m = res["metrics"]
         rows.append({k: m.get(k) for k in RESULT_COLS})
         logger.info("%s..%s → %+.2f%%", start, end, m["total_return"] * 100)
+
+        # 释放 panel 内存
+        del panel, panel_ind, reg, res
 
     return pd.DataFrame(rows, columns=RESULT_COLS)
 
@@ -76,18 +124,38 @@ def summarize(df: pd.DataFrame) -> str:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="逐年滚动验证")
-    ap.add_argument("--preset", default="v33_long_reverse_v3")
+    ap = argparse.ArgumentParser(description="滚动窗口验证")
+    ap.add_argument("--preset", default="v33_long_reverse_v14")
+    ap.add_argument("--engine", choices=("simulate", "backtrader"), default="simulate")
+    # 年级窗口（向后兼容）
     ap.add_argument("--first-year", type=int, default=2017)
     ap.add_argument("--last-year", type=int, default=2026)
+    # 月级窗口
+    ap.add_argument("--start-month", default="", help="YYYY-MM, 启动月级窗口")
+    ap.add_argument("--end-month", default="", help="YYYY-MM, 结束月级窗口")
+    ap.add_argument("--window-months", type=int, default=2)
+    ap.add_argument("--step-months", type=int, default=0,
+                    help="0 = 不重叠 (= window-months)")
     ap.add_argument("--db-path", default=str(DB_PATH))
     ap.add_argument("--out", default="")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
 
-    windows = yearly_windows(args.first_year, args.last_year)
-    df = run_windows(args.preset, windows, Path(args.db_path))
+    if args.start_month and args.end_month:
+        step = args.step_months if args.step_months > 0 else args.window_months
+        windows = monthly_windows(
+            args.start_month, args.end_month,
+            window_months=args.window_months, step_months=step,
+        )
+        print(f"[mode] 月级窗口: {args.window_months} 月/窗, "
+              f"步长 {step} 月, 共 {len(windows)} 窗")
+    else:
+        windows = yearly_windows(args.first_year, args.last_year)
+        print(f"[mode] 年级窗口: {args.first_year}..{args.last_year} = {len(windows)} 窗")
+    print(f"[engine] {args.engine}")
+
+    df = run_windows(args.preset, windows, Path(args.db_path), engine=args.engine)
 
     show = df.copy()
     for c in ("win_rate", "total_return", "max_dd"):
