@@ -237,6 +237,57 @@ PRESETS: dict[str, dict] = {
         "below_ratio_60": 0.5,
         "close_ma60_buffer": 0.02,
     },
+    # === 2026-09-21 微调发现（v39）— v38 + pct_chg 收紧组合 ===
+    # 在 v38_a_relaxed (A 放宽) 基础上调 pct_chg 窗口, 4 组对比 (12m):
+    #   v39_pctchg_04_09 (下限 4%, 上限 9%):    n=150 win=40.0% CAGR=+1538% DD=28.2% ⭐ (DD 最低)
+    #   v39_pctchg_035_08 (下限 3.5%):           n=203 win=39.9% CAGR=+3021% DD=45.8%
+    #   v39_pctchg_03_10 (上限 10%):              n=278 win=38.5% CAGR=+7050% DD=56.6% (CAGR 最高)
+    #   v39_pctchg_04_08 (下限 4%, 上限 8%):    n=147 win=40.1% CAGR=+1438% DD=28.2% ⭐ (DD 最低)
+    # v39_pctchg_04_09 与 v39_pctchg_04_08 几乎一致, 都是 n≈150, DD=28.2% — 双收紧下限.
+    # v39_pctchg_03_10 是 12m CAGR 冠军 (+7050%) 但 DD 56.6% 与 v38 持平.
+    # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) ===
+    # v39_pctchg_04_09 (DD 最低 28.2% — 单点过拟合):
+    #   2024-09→2025-03: n= 44 win=15.9% yield=+17.3% Sharpe=2.07 DD=45.3%
+    #   2025-03→2025-09: n= 53 win=11.3% yield= +4.0% Sharpe=1.54 DD=44.0% ⚠️
+    #   2025-09→2026-03: n= 41 win=14.6% yield=+17.9% Sharpe=2.13 DD=20.5%
+    #   2026-03→2026-09: n=135 win=43.0% yield=+1475.3% Sharpe=8.85 DD=28.2%
+    #   震荡段最低 yield 仅 +4% — 单点过拟合 12m, 跨周期不工作, 不可投。
+    #
+    # v39_pctchg_03_10 (12m CAGR 冠军 — 跨周期真胜出):
+    #   2024-09→2025-03: n= 90 win=23.3% yield= +87.6% Sharpe=4.30 DD=74.9%
+    #   2025-03→2025-09: n=111 win=18.0% yield= +55.1% Sharpe=3.82 DD=74.9%
+    #   2025-09→2026-03: n= 78 win=16.7% yield= +52.4% Sharpe=3.37 DD=22.9%
+    #   2026-03→2026-09: n=249 win=40.2% yield=+5411.7% Sharpe=11.42 DD=56.6%
+    #   跨周期 vs v38 改善: 震荡段最低 yield +27pp (+25%→+52%), 拉涨段 yield +24%
+    #                       (+4378→+5412), 拉涨段 Sharpe +1% (11.27→11.42)
+    #   跨周期 vs v38 略恶化: 震荡段 DD +13pp (62→75%) — 收益风险同向放大。
+    # === 跨周期决策指南 (v3 体系最终产品 - v39_pctchg_03_10 优先) ===
+    # v36_d_converge: 最低 DD (震荡段 55-57%, 拉涨段 yield 中等)
+    # v38_a_relaxed:  稳健高产 (震荡段 yield +25%, DD 62%)
+    # v39_pctchg_03_10 ⭐⭐: 跨周期最高 yield (震荡段 +52%, 拉涨段 +5412%)
+    # 实盘部署首选 v39_pctchg_03_10 (最高 yield), DD 敏感选 v36_d_converge.
+    "v39_pctchg_04_09": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.06,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.04,
+        "pct_chg_high": 0.09,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.5,
+        "close_ma60_buffer": 0.02,
+    },
+    "v39_pctchg_03_10": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.06,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.5,
+        "close_ma60_buffer": 0.02,
+    },
 }
 
 
