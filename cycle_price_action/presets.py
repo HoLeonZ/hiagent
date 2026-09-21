@@ -32,6 +32,11 @@ PRESET_V1 = dict(
     # k_line / phase / cycle score 用 adj_close, SL/TP+exit 用 raw_close。
     price_source_for_signal="adj_close",
     price_source_for_execution="raw_close",
+    # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor 声明。
+    # cycle 单一 preset, 无 sweep; n_comparisons=1 (DSR→PSR)。
+    # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
+    # 自动套 DSR + Bonferroni 校正。
+    n_comparisons=1,
     weight_kline=1.0,
     weight_cycle=0.7,
     weight_calendar=0.5,

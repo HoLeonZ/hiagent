@@ -47,6 +47,11 @@ PRESETS: dict[str, dict] = {
         # 当前 preset 声明未来切到 dual loader 时使用的字段。
         "price_source_for_signal": "adj_close",
         "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
+        # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
+        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        "n_comparisons": 11,
         "tp_pct": 0.06,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -90,6 +95,11 @@ PRESETS: dict[str, dict] = {
         # 当前 preset 声明未来切到 dual loader 时使用的字段。
         "price_source_for_signal": "adj_close",
         "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
+        # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
+        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        "n_comparisons": 11,
         "tp_pct": 0.06,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -133,6 +143,11 @@ PRESETS: dict[str, dict] = {
         # 当前 preset 声明未来切到 dual loader 时使用的字段。
         "price_source_for_signal": "adj_close",
         "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
+        # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
+        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        "n_comparisons": 11,
         "tp_pct": 0.06,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -180,6 +195,11 @@ PRESETS: dict[str, dict] = {
         # 当前 preset 声明未来切到 dual loader 时使用的字段。
         "price_source_for_signal": "adj_close",
         "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
+        # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
+        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        "n_comparisons": 11,
         "tp_pct": 0.06,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -230,6 +250,11 @@ PRESETS: dict[str, dict] = {
         # 当前 preset 声明未来切到 dual loader 时使用的字段。
         "price_source_for_signal": "adj_close",
         "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
+        # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
+        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        "n_comparisons": 11,
         "tp_pct": 0.07,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -252,6 +277,11 @@ PRESETS: dict[str, dict] = {
         # 当前 preset 声明未来切到 dual loader 时使用的字段。
         "price_source_for_signal": "adj_close",
         "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
+        # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
+        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        "n_comparisons": 11,
         "tp_pct": 0.08,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -298,6 +328,11 @@ PRESETS: dict[str, dict] = {
         # 当前 preset 声明未来切到 dual loader 时使用的字段。
         "price_source_for_signal": "adj_close",
         "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
+        # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
+        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        "n_comparisons": 11,
         "tp_pct": 0.08,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -340,6 +375,11 @@ PRESETS: dict[str, dict] = {
         # 当前 preset 声明未来切到 dual loader 时使用的字段。
         "price_source_for_signal": "adj_close",
         "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
+        # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
+        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        "n_comparisons": 11,
         "tp_pct": 0.08,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -370,6 +410,11 @@ PRESETS: dict[str, dict] = {
         # 当前 preset 声明未来切到 dual loader 时使用的字段。
         "price_source_for_signal": "adj_close",
         "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
+        # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
+        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        "n_comparisons": 11,
         "tp_pct": 0.08,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -413,6 +458,11 @@ PRESETS: dict[str, dict] = {
         # 当前 preset 声明未来切到 dual loader 时使用的字段。
         "price_source_for_signal": "adj_close",
         "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
+        # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
+        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        "n_comparisons": 11,
         "tp_pct": 0.08,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -456,6 +506,11 @@ PRESETS: dict[str, dict] = {
         # 当前 preset 声明未来切到 dual loader 时使用的字段。
         "price_source_for_signal": "adj_close",
         "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
+        # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
+        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        "n_comparisons": 11,
         "tp_pct": 0.08,
         "sl_pct": 0.0002,
         "max_hold": 5,

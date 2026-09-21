@@ -33,6 +33,12 @@ PRESETS: dict[str, dict] = {
         # 当前 preset 声明未来切到 dual loader 时使用的字段。
         "price_source_for_signal": "adj_close",
         "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
+        # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
+        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
+        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        "n_comparisons": 10,
         "tp_pct": 0.30,         # fallback
         "sl_pct": 0.05,         # fallback
         "max_hold": 15,
@@ -71,6 +77,12 @@ PRESETS: dict[str, dict] = {
         # 当前 preset 声明未来切到 dual loader 时使用的字段。
         "price_source_for_signal": "adj_close",
         "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
+        # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
+        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
+        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
         "atr_tp_mult": 3.0, "atr_sl_mult": 1.0,
@@ -96,6 +108,12 @@ PRESETS: dict[str, dict] = {
         # 当前 preset 声明未来切到 dual loader 时使用的字段。
         "price_source_for_signal": "adj_close",
         "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
+        # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
+        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
+        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.08,
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
         "atr_tp_mult": 4.0, "atr_sl_mult": 1.5,
@@ -121,6 +139,12 @@ PRESETS: dict[str, dict] = {
         # 当前 preset 声明未来切到 dual loader 时使用的字段。
         "price_source_for_signal": "adj_close",
         "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
+        # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
+        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
+        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
         "atr_tp_mult": 4.0, "atr_sl_mult": 1.0,
@@ -146,6 +170,12 @@ PRESETS: dict[str, dict] = {
         # 当前 preset 声明未来切到 dual loader 时使用的字段。
         "price_source_for_signal": "adj_close",
         "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
+        # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
+        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
+        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 15, "max_positions": 3, "position_sizing": "equal",
         "atr_tp_mult": 4.0, "atr_sl_mult": 1.0,
@@ -171,6 +201,12 @@ PRESETS: dict[str, dict] = {
         # 当前 preset 声明未来切到 dual loader 时使用的字段。
         "price_source_for_signal": "adj_close",
         "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
+        # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
+        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
+        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
         "atr_tp_mult": 4.0, "atr_sl_mult": 1.0,
@@ -201,6 +237,12 @@ PRESETS: dict[str, dict] = {
         # 当前 preset 声明未来切到 dual loader 时使用的字段。
         "price_source_for_signal": "adj_close",
         "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
+        # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
+        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
+        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 10, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -226,6 +268,12 @@ PRESETS: dict[str, dict] = {
         # 当前 preset 声明未来切到 dual loader 时使用的字段。
         "price_source_for_signal": "adj_close",
         "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
+        # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
+        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
+        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 15, "max_positions": 3, "position_sizing": "all_in",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -251,6 +299,12 @@ PRESETS: dict[str, dict] = {
         # 当前 preset 声明未来切到 dual loader 时使用的字段。
         "price_source_for_signal": "adj_close",
         "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
+        # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
+        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
+        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
         "atr_tp_mult": 4.0, "atr_sl_mult": 1.0,
@@ -280,6 +334,12 @@ PRESETS: dict[str, dict] = {
         # 当前 preset 声明未来切到 dual loader 时使用的字段。
         "price_source_for_signal": "adj_close",
         "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
+        # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
+        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
+        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 10, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -317,6 +377,12 @@ PRESETS: dict[str, dict] = {
         # 当前 preset 声明未来切到 dual loader 时使用的字段。
         "price_source_for_signal": "adj_close",
         "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
+        # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
+        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
+        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -352,6 +418,11 @@ PRESETS: dict[str, dict] = {
         "intraday_tiebreak": "sl_first",
         # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
         "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): sweep size
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -378,6 +449,11 @@ PRESETS: dict[str, dict] = {
         "intraday_tiebreak": "sl_first",
         # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
         "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): sweep size
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -410,6 +486,11 @@ PRESETS: dict[str, dict] = {
         "intraday_tiebreak": "sl_first",
         # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
         "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): sweep size
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -443,6 +524,11 @@ PRESETS: dict[str, dict] = {
         "intraday_tiebreak": "sl_first",
         # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
         "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): sweep size
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -480,6 +566,11 @@ PRESETS: dict[str, dict] = {
         "intraday_tiebreak": "sl_first",
         # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
         "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): sweep size
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -512,6 +603,11 @@ PRESETS: dict[str, dict] = {
         "intraday_tiebreak": "sl_first",
         # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
         "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): sweep size
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -537,6 +633,11 @@ PRESETS: dict[str, dict] = {
         "intraday_tiebreak": "sl_first",
         # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
         "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): sweep size
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -563,6 +664,11 @@ PRESETS: dict[str, dict] = {
         "intraday_tiebreak": "sl_first",
         # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
         "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): sweep size
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -589,6 +695,11 @@ PRESETS: dict[str, dict] = {
         "intraday_tiebreak": "sl_first",
         # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
         "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): sweep size
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -617,6 +728,11 @@ PRESETS: dict[str, dict] = {
         "intraday_tiebreak": "sl_first",
         # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
         "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): sweep size
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.6,
@@ -645,6 +761,11 @@ PRESETS: dict[str, dict] = {
         "intraday_tiebreak": "sl_first",
         # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
         "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): sweep size
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.75,
