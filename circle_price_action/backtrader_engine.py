@@ -35,6 +35,7 @@ class CirclePriceActionStrategy(bt.Strategy):
         atr_period=14,
         atr_sl_mult=1.5,
         tp_pct=0.06,
+        db_path=None,
     )
 
     def __init__(self):

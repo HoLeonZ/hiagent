@@ -29,7 +29,7 @@ def walkforward_windows(
         raise ValueError("horizon too short for train+test windows")
 
     windows: list[WalkForwardWindow] = []
-    train_start = start
+    train_start = pd.Timestamp(start).normalize()
     while True:
         train_end = _add_months(train_start, train_months) - pd.tseries.offsets.BDay(1)
         test_start = _add_months(train_start, train_months)
@@ -38,7 +38,7 @@ def walkforward_windows(
             break
         windows.append(
             WalkForwardWindow(
-                train_start=train_start,
+                train_start=train_start.date(),
                 train_end=train_end.date(),
                 test_start=test_start.date(),
                 test_end=test_end.date(),
