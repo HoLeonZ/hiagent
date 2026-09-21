@@ -127,6 +127,8 @@ def run_backtest(
         atr_sl_mult=p.get("atr_sl_mult"),
         position_sizing=p.get("position_sizing", "equal"),
         kelly_fraction=p.get("kelly_fraction"),
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System execution source。
+        price_source_for_execution=p.get("price_source_for_execution", "adj_close"),
     )
 
     metrics = compute_metrics(
