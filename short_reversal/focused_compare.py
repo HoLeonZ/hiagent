@@ -38,12 +38,11 @@ def main():
     }
 
     candidates = [
-        # v37 系列: E 流动性窗口微调 (v36 默认 [3e7, 3e8])
-        ("v37_liq_5e7_3e8", {**base_v36, "liq_low": 5e7}),                           # 收窄下限 (剔除冷门小票)
-        ("v37_liq_3e7_5e8", {**base_v36, "liq_high": 5e8}),                          # 拓宽上限 (纳入超大票)
-        # v37 系列: A 条件微调 (v36 默认 below_ratio_60=0.6, close_ma60_buffer=0)
-        ("v37_ratio_07",    {**base_v36, "below_ratio_60": 0.7}),                    # A 更严: 60日必须 70% 时间在 MA60 下
-        ("v37_buf_neg02",   {**base_v36, "close_ma60_buffer": -0.02}),               # A 更严: close 必须 < ma60*0.98 (留 2% buffer 下方)
+        # v38 系列: A 条件放宽 (v36 默认 ratio=0.6 / buffer=0)
+        ("v38_buf_pos01",   {**base_v36, "close_ma60_buffer": 0.01}),   # close < ma60*1.01 (放宽 1%)
+        ("v38_buf_pos02",   {**base_v36, "close_ma60_buffer": 0.02}),   # 放宽 2%
+        ("v38_ratio_05",    {**base_v36, "below_ratio_60": 0.5}),       # 60日只需 50% 时间在 MA60 下 (放宽)
+        ("v38_a_relaxed",   {**base_v36, "below_ratio_60": 0.5, "close_ma60_buffer": 0.02}),
     ]
 
     for name, cfg in candidates:

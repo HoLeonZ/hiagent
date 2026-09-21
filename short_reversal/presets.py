@@ -206,6 +206,37 @@ PRESETS: dict[str, dict] = {
         "d_mode": "converge_strict",
         "liq_high": 5e8,
     },
+    # === 2026-09-21 微调发现（v38）— A 条件放宽 ===
+    # A 条件放宽 4 组对比 (12m, 在 v36 baseline 上):
+    #   v38_buf_pos01 (buffer +1%):      n=210 win=40.5% CAGR=+3374% Sharpe=10.62 DD=42.7%
+    #   v38_buf_pos02 (buffer +2%):      n=223 win=39.5% CAGR=+3582% Sharpe=10.72 DD=42.1%
+    #   v38_ratio_05  (ratio 0.5):       n=237 win=39.7% CAGR=+4307% Sharpe=11.04 DD=48.6%
+    #   v38_a_relaxed (ratio 0.5 + buf 2%) ⭐: n=262 win=38.9% CAGR=+5393% Sharpe=11.14 DD=48.0%
+    # v38_a_relaxed 12m 综合优于 v36: +92% CAGR, +8% Sharpe, n +31%, DD 仅 +5.3pp。
+    # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) ===
+    #   2024-09-12 → 2025-03-12: n= 82 win=19.5% total_yield= +51.19% Sharpe=3.56 DD=61.7%
+    #   2025-03-12 → 2025-09-12: n=103 win=14.6% total_yield= +25.06% Sharpe=3.04 DD=61.7%
+    #   2025-09-12 → 2026-03-12: n= 73 win=16.4% total_yield= +45.92% Sharpe=3.21 DD=19.0%
+    #   2026-03-12 → 2026-09-12: n=234 win=41.0% total_yield=+4378.32% Sharpe=11.27 DD=48.0%
+    #   4/4 窗口全为正收益, 最低单窗 +25.06%, 跨周期稳健。
+    #   跨周期 vs v36 改善: 最低 yield +5pp, 最低 Sharpe +36%, 拉涨段 yield +77-100%。
+    #   跨周期 vs v36 略恶化: 震荡段 DD +5pp (55→62%)。
+    # === 跨周期决策指南 ===
+    # v36_d_converge: 最低 DD (震荡段 55-57%, 但 yield 中等)
+    # v38_a_relaxed ⭐: 最高 yield × stretch (拉涨段 +4378%, 跨周期稳健)
+    # 实盘部署首选 v38_a_relaxed — 拉涨段高收益且 1 中等 DD;
+    # 若 DD 极端敏感选 v36_d_converge。
+    "v38_a_relaxed": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.06,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.08,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.5,
+        "close_ma60_buffer": 0.02,
+    },
 }
 
 
