@@ -30,21 +30,21 @@ def _run(name: str, cfg: dict) -> dict:
 
 
 def main():
-    base_v43 = {
+    base_v44 = {
         "universe": "mainboard_only",
         "tp_pct": 0.08, "sl_pct": 0.0005, "max_hold": 5,
         "pct_chg_low": 0.03, "pct_chg_high": 0.10,
         "d_mode": "converge_strict",
-        "below_ratio_60": 0.3,
-        "close_ma60_buffer": 0.05,
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
     }
 
     candidates = [
-        # v44 系列: v43_ratio03 进一步极端放宽
-        ("v44_ratio02",       {**base_v43, "below_ratio_60": 0.2}),                # 极端放宽 ratio
-        ("v44_ratio01",       {**base_v43, "below_ratio_60": 0.1}),                # 更极端
-        ("v44_buf07",         {**base_v43, "close_ma60_buffer": 0.07}),           # 同时放宽 buffer
-        ("v44_ratio02_buf07", {**base_v43, "below_ratio_60": 0.2, "close_ma60_buffer": 0.07}),  # 双向极端
+        # v45 系列: v44 进一步极端放宽 (但已接近工程上限)
+        ("v45_ratio01_buf07", {**base_v44, "below_ratio_60": 0.1}),                # ratio 0.1
+        ("v45_ratio02_buf10", {**base_v44, "close_ma60_buffer": 0.10}),           # buffer 0.10
+        ("v45_ratio01_buf10", {**base_v44, "below_ratio_60": 0.1, "close_ma60_buffer": 0.10}),  # 双极端
+        ("v45_sl_001",        {**base_v44, "sl_pct": 0.001}),                       # SL 放宽 0.0005→0.001
     ]
 
     for name, cfg in candidates:
