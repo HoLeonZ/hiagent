@@ -173,7 +173,14 @@ class Phase3V3Strategy(bt.Strategy):
             if code not in self.pending_entries:
                 continue
             entry_price = float(d.open[0])
-            target_value = self.cash * self.p.position_fraction
+            # 防穿仓 (R4, 2026-09-21): budget base 用 NAV (cash + 持仓浮盈) 而非
+            # 仅 self.cash。前一笔大亏会让 cash 跌至初始资金一小部分, 若仍按
+            # self.cash all-in, 后续每笔名义资金随 cash 缩水 — 这等同于"现金自适应"
+            # sizing, 会让 cash gate 在 cash-only 维度上失守 (NAV 含浮盈可能仍 > 5%
+            # initial)。改用 NAV 后, cash gate 与 sizing 同口径, 防止 NAV 触底 0
+            # 路径上的盲区。
+            nav_for_budget = self._nav()
+            target_value = nav_for_budget * self.p.position_fraction
             size = (
                 int(target_value / entry_price / self.p.lot_size) * self.p.lot_size
             )
@@ -201,6 +208,16 @@ class Phase3V3Strategy(bt.Strategy):
         # CRITICAL: exit 必须滞后 entry → 至少 1 完整 bar 后才允许出场
         # (CLAUDE.md P3: exit_date > entry_date, ≥ 1 日历日 / ≥ 1 bar)
         if held < 1:
+            return
+        # 防穿仓 (R2, 2026-09-21): NAV-gate 强制 close。
+        # 当 NAV 已跌到 cash_gate_threshold 以下 (cash gate 已拒绝新开仓),
+        # 已持仓继续按 SL/TP/time 退出可能让 NAV 在持仓期内进一步跌穿 0。
+        # 此时强制用 close 平掉所有持仓, 阻止浮亏继续扩大。
+        # 与 chase_up / uptrend_pullback 的 NAV gate 入口 (R1) 同口径:
+        # cash gate 拦 entry, NAV-gate 拦 active close。
+        nav = self._nav()
+        if nav < self.p.initial_capital * self.p.min_cash_ratio:
+            self._close(d, float(d.close[0]), "nav_gate_eod")
             return
         low, high, close = float(d.low[0]), float(d.high[0]), float(d.close[0])
         open_p = float(d.open[0])

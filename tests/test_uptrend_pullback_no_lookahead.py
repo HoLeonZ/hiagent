@@ -678,3 +678,48 @@ def test_v3_e2e_entry_price_is_entry_bar_open():
             fails.append((code, entry_date.date(), t["entry_price"], actual_open))
 
     assert not fails, f"{len(fails)} trades entry_price != entry bar open:\n{fails[:5]}"
+
+
+def test_simulate_portfolio_nav_gate_rejects_entries_when_nav_below_threshold():
+    """NAV < initial_capital × NAV_GATE_RATIO 时,simulate_portfolio 必须拒绝新开仓。
+
+    复刻真实穿仓场景: 一次大亏把 cash 打到接近 0, NAV 跌穿 5% 阈值。
+    新信号出现时,模拟器必须拒开仓, 不能继续 all-in 累积亏损。
+    """
+    from uptrend_pullback.portfolio import NAV_GATE_RATIO
+    # 票 A: day 1 signal → day 2 open @ 10 入场 → day 3 open=0.4 跳空破止损 (sl_p=0.4)
+    # 票 B: day 3 signal → 应被 NAV gate 拒绝 (cash=360 < 5% × 9k = 450)
+    panel = pd.DataFrame([
+        # 票 A
+        {"date": pd.Timestamp("2025-09-01"), "thscode": "AAA.SZ", "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "volume": 1e6, "amount": 1e7, "atr_pct": 0.02},
+        {"date": pd.Timestamp("2025-09-02"), "thscode": "AAA.SZ", "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "volume": 1e6, "amount": 1e7, "atr_pct": 0.02},
+        {"date": pd.Timestamp("2025-09-03"), "thscode": "AAA.SZ", "open": 0.4,  "high": 0.4,  "low": 0.4,  "close": 0.4,  "volume": 1e6, "amount": 1e7, "atr_pct": 0.50},
+        {"date": pd.Timestamp("2025-09-04"), "thscode": "AAA.SZ", "open": 0.4,  "high": 0.4,  "low": 0.4,  "close": 0.4,  "volume": 1e6, "amount": 1e7, "atr_pct": 0.02},
+        # 票 B
+        {"date": pd.Timestamp("2025-09-01"), "thscode": "BBB.SZ", "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "volume": 1e6, "amount": 1e7, "atr_pct": 0.02},
+        {"date": pd.Timestamp("2025-09-02"), "thscode": "BBB.SZ", "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "volume": 1e6, "amount": 1e7, "atr_pct": 0.02},
+        {"date": pd.Timestamp("2025-09-03"), "thscode": "BBB.SZ", "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "volume": 1e6, "amount": 1e7, "atr_pct": 0.02},
+        {"date": pd.Timestamp("2025-09-04"), "thscode": "BBB.SZ", "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "volume": 1e6, "amount": 1e7, "atr_pct": 0.02},
+    ])
+    entries = pd.DataFrame([
+        {"date": pd.Timestamp("2025-09-01"), "thscode": "AAA.SZ", "score": 1.0, "atr_pct": 0.02},
+        {"date": pd.Timestamp("2025-09-03"), "thscode": "BBB.SZ", "score": 1.0, "atr_pct": 0.02},
+    ])
+    trades, equity = simulate_portfolio(
+        entries, panel,
+        tp_pct=0.20, sl_pct=0.96, max_hold=8, max_positions=1,
+        start_date="2025-09-01", end_date="2025-09-04",
+        initial_capital=9_000.0,
+        position_sizing="all_in",
+        commission_rate=0.0, stamp_duty_rate=0.0, min_commission=0.0,
+    )
+    a_trades = trades[trades["thscode"] == "AAA.SZ"]
+    assert len(a_trades) == 1, f"票 A 应入场并被 SL 击穿, 实际 {len(a_trades)} 笔"
+    final_cash = equity["cash"].iloc[-1]
+    assert final_cash < 9_000.0 * NAV_GATE_RATIO, (
+        f"测试 fixture 不足: cash={final_cash}, 需 < {9_000.0 * NAV_GATE_RATIO} 才触发 NAV gate"
+    )
+    b_trades = trades[trades["thscode"] == "BBB.SZ"]
+    assert len(b_trades) == 0, (
+        f"NAV gate 应拒绝票 B 入场 (cash={final_cash:.0f} < 5% × initial=450), 但成交了 {len(b_trades)} 笔"
+    )

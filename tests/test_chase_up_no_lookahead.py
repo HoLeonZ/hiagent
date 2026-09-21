@@ -1055,3 +1055,65 @@ def test_simulate_portfolio_never_lets_cash_go_negative_in_phase1():
         f"phase-1 cash 路径出现负值: min={equity['cash'].min():.2f}。"
         f"若 < 0,说明 budget base 用了未实现 PnL (Bug A 隐式融资)。"
     )
+
+
+# --------------------------------------------------------------------------- #
+# 防穿仓 R1 (2026-09-21): NAV-floor cash gate — chase_up
+# --------------------------------------------------------------------------- #
+
+
+def test_simulate_portfolio_nav_gate_rejects_entries_when_nav_below_threshold():
+    """NAV < initial_capital × NAV_GATE_RATIO 时,simulate_portfolio 必须拒绝新开仓。
+
+    复刻真实穿仓场景: 一次大亏把 cash 打到接近 0, 持仓 mark-to-market 浮盈也低,
+    NAV 跌穿 5% 阈值。新信号出现时,模拟器必须拒开仓, 不能继续 all-in 累积亏损。
+    """
+    from chase_up.portfolio import NAV_GATE_RATIO
+    # 用 minimal initial_capital=10k + sl_pct=0.96 让单笔击穿 5% × initial
+    # 票 A: day 1 signal → day 2 open @ 10 入场 → day 3 open=0.4 跳空破止损 (sl_p=10*0.04=0.4)
+    # 票 B: day 3 signal → 应被 NAV gate 拒绝 (cash < 10k × 5% = 500)
+    panel = pd.DataFrame([
+        # 票 A
+        {"date": pd.Timestamp("2025-09-01"), "thscode": "AAA.SZ", "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "volume": 1e6, "amount": 1e7, "atr_pct": 0.02},
+        {"date": pd.Timestamp("2025-09-02"), "thscode": "AAA.SZ", "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "volume": 1e6, "amount": 1e7, "atr_pct": 0.02},
+        {"date": pd.Timestamp("2025-09-03"), "thscode": "AAA.SZ", "open": 0.4,  "high": 0.4,  "low": 0.4,  "close": 0.4,  "volume": 1e6, "amount": 1e7, "atr_pct": 0.50},  # 跳空 -96%
+        {"date": pd.Timestamp("2025-09-04"), "thscode": "AAA.SZ", "open": 0.4,  "high": 0.4,  "low": 0.4,  "close": 0.4,  "volume": 1e6, "amount": 1e7, "atr_pct": 0.02},
+        # 票 B
+        {"date": pd.Timestamp("2025-09-01"), "thscode": "BBB.SZ", "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "volume": 1e6, "amount": 1e7, "atr_pct": 0.02},
+        {"date": pd.Timestamp("2025-09-02"), "thscode": "BBB.SZ", "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "volume": 1e6, "amount": 1e7, "atr_pct": 0.02},
+        {"date": pd.Timestamp("2025-09-03"), "thscode": "BBB.SZ", "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "volume": 1e6, "amount": 1e7, "atr_pct": 0.02},
+        {"date": pd.Timestamp("2025-09-04"), "thscode": "BBB.SZ", "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "volume": 1e6, "amount": 1e7, "atr_pct": 0.02},
+    ])
+    entries = pd.DataFrame([
+        {"date": pd.Timestamp("2025-09-01"), "thscode": "AAA.SZ", "score": 1.0, "sub_signal_type": "A", "atr_pct": 0.02,
+         "sig_close": 10.0, "sig_ma20": 9.5, "sig_ma60": 9.0, "sig_ret1": 0.05,
+         "sig_breakout_score": 0.5, "sig_momentum_score": 0.3, "sig_macross_score": np.nan,
+         "sig_mom120": 0.05, "sig_amount60": 5e7},
+        {"date": pd.Timestamp("2025-09-03"), "thscode": "BBB.SZ", "score": 1.0, "sub_signal_type": "A", "atr_pct": 0.02,
+         "sig_close": 10.0, "sig_ma20": 9.5, "sig_ma60": 9.0, "sig_ret1": 0.05,
+         "sig_breakout_score": 0.5, "sig_momentum_score": 0.3, "sig_macross_score": np.nan,
+         "sig_mom120": 0.05, "sig_amount60": 5e7},
+    ])
+    # initial_capital=9k, sl_pct=0.96 → sl_p=0.4, day 3 open=0.4 → SL @ open → -96%
+    # 900 股 @ 0.4 = 360 → cash_end = 9k - 9k + 360 = 360 < 5% × 9k = 450
+    # 关掉手续费以避免 commission-floor (¥5) 残留干扰单笔击穿的断言
+    trades, equity = simulate_portfolio(
+        entries, panel,
+        tp_pct=0.20, sl_pct=0.96, max_hold=8, max_positions=1,
+        start_date="2025-09-01", end_date="2025-09-04",
+        initial_capital=9_000.0,
+        position_sizing="all_in",
+        commission_rate=0.0, stamp_duty_rate=0.0, min_commission=0.0,
+    )
+    a_trades = trades[trades["thscode"] == "AAA.SZ"]
+    assert len(a_trades) == 1, f"票 A 应入场并被 SL 击穿, 实际 {len(a_trades)} 笔"
+    # 验证 cash 确实大跌
+    final_cash = equity["cash"].iloc[-1]
+    assert final_cash < 9_000.0 * NAV_GATE_RATIO, (
+        f"测试 fixture 不足: cash={final_cash}, 需 < {9_000.0 * NAV_GATE_RATIO} 才触发 NAV gate"
+    )
+    # 票 B 必须被 NAV gate 拒绝 (day 4 是 day 3 signal 的执行日, 此时 NAV 已 < 5% × 9k = 450)
+    b_trades = trades[trades["thscode"] == "BBB.SZ"]
+    assert len(b_trades) == 0, (
+        f"NAV gate 应拒绝票 B 入场 (cash={final_cash:.0f} < 5% × initial=450), 但成交了 {len(b_trades)} 笔"
+    )

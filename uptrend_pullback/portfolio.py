@@ -31,6 +31,13 @@ TRADE_COLS = [
 # A 股主板涨跌停 10%；开盘涨幅超过该阈值视为无法买入
 LIMIT_UP_THRESHOLD = 0.098
 
+# 防穿仓 (R1, 2026-09-21): NAV-floor cash gate 阈值。
+# 与 short_reversal/replay_strategy_v3.py:64 (min_cash_ratio=0.05) 口径一致。
+NAV_GATE_RATIO = 0.05
+
+# 同一天内 NAV gate 触发只打一次 warning
+_nav_gate_logged_dates: set = set()
+
 
 def _empty_trades() -> pd.DataFrame:
     return pd.DataFrame(columns=TRADE_COLS)
@@ -224,18 +231,41 @@ def simulate_portfolio(
         if t > 0 and t < last_t:
             candidates = sigs_by_day.get(cal[t - 1], [])
             if candidates:
-                holdings_val = 0.0
+                # 防穿仓 (R1, 2026-09-21): NAV-floor cash gate。
+                # 若 NAV (cash + 持仓 mark-to-market 浮盈) 跌到 initial_capital ×
+                # NAV_GATE_RATIO 以下, 拒绝新开仓 — 已持仓仍按 SL/TP/time exit 正常执行。
+                # 与 short_reversal/replay_strategy_v3.py:160-170 口径一致, 防止多仓
+                # 策略在反复 gap-down 击穿 SL 后继续 all-in 累积亏损直到穿仓 0。
+                holdings_val_for_gate = 0.0
                 for code, pos in positions.items():
                     j = _row_at(pidx[code], day)
                     px = pidx[code]["close"][j] if j is not None else pos["entry_price"]
-                    holdings_val += pos["size"] * px
-                equity_now = cash + holdings_val
+                    holdings_val_for_gate += pos["size"] * px
+                nav_now = cash + holdings_val_for_gate
+                if nav_now < initial_capital * NAV_GATE_RATIO:
+                    if day not in _nav_gate_logged_dates:
+                        logger.warning(
+                            "[nav-gate] NAV=%.2f < threshold=%.2f, 拒绝 %d 个 pending entries",
+                            nav_now,
+                            initial_capital * NAV_GATE_RATIO,
+                            len(candidates),
+                        )
+                        _nav_gate_logged_dates.add(day)
+                    continue
+                # 防穿仓 (R7, 2026-09-21): 只用 cash (实有资金), 不用 cash + holdings_val
+                # 含未实现浮盈做 budget 会让多仓策略在持仓浮盈期隐式加杠杆 — 一旦浮盈回吐
+                # 等价于用未变现利润继续 all-in, 单次回撤即可击穿 0。
+                # 此修复与 chase_up/portfolio.py:239 (commit 3845380) 口径一致:
+                # 仅以 cash_only = max(cash, 0) 为 budget base。
+                cash_only = float(cash)
+                if cash_only <= 0:
+                    continue
                 if position_sizing == "equal":
-                    slot_value = equity_now / max_positions
+                    slot_value = cash_only / max_positions
                 elif position_sizing == "all_in":
-                    slot_value = equity_now
+                    slot_value = cash_only
                 else:  # kelly
-                    slot_value = equity_now * kelly_fraction
+                    slot_value = cash_only * kelly_fraction
 
                 for code in candidates:
                     if len(positions) >= max_positions:

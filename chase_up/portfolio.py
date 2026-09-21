@@ -40,6 +40,15 @@ TRADE_COLS = [
 # A 股主板涨跌停 10%;开盘涨幅超过该阈值视为无法买入
 LIMIT_UP_THRESHOLD = 0.098
 
+# 防穿仓 (R1, 2026-09-21): NAV-floor cash gate 阈值。
+# 当 NAV (cash + 持仓 mark-to-market 浮盈) 跌至 initial_capital × NAV_GATE_RATIO
+# 以下时, 拒绝新开仓。已持仓仍按 SL/TP/time exit 正常执行 (不主动平仓)。
+# 与 short_reversal/replay_strategy_v3.py:64 (min_cash_ratio=0.05) 口径一致。
+NAV_GATE_RATIO = 0.05
+
+# 同一天内 NAV gate 触发只打一次 warning,避免静默刷屏
+_nav_gate_logged_dates: set = set()
+
 
 def _empty_trades() -> pd.DataFrame:
     return pd.DataFrame(columns=TRADE_COLS)
@@ -231,11 +240,27 @@ def simulate_portfolio(
                 # 现在用 cash_only = max(cash, 0),cash < 0 时不开仓。
                 if cash < 0:
                     continue
+                # 防穿仓 (R1, 2026-09-21): NAV-floor cash gate。
+                # 若 NAV (cash + 持仓 mark-to-market 浮盈) 跌到 initial_capital ×
+                # NAV_GATE_RATIO 以下, 拒绝新开仓 — 已持仓仍按 SL/TP/time exit 正常执行。
+                # 与 short_reversal/replay_strategy_v3.py:160-170 口径一致, 防止多仓
+                # 策略在反复 gap-down 击穿 SL 后继续 all-in 累积亏损直到穿仓 0。
                 holdings_val = 0.0
                 for code, pos in positions.items():
                     j = _row_at(pidx[code], day)
                     px = pidx[code]["close"][j] if j is not None else pos["entry_price"]
                     holdings_val += pos["size"] * px
+                nav_now = cash + holdings_val
+                if nav_now < initial_capital * NAV_GATE_RATIO:
+                    if day not in _nav_gate_logged_dates:
+                        logger.warning(
+                            "[nav-gate] NAV=%.2f < threshold=%.2f, 拒绝 %d 个 pending entries",
+                            nav_now,
+                            initial_capital * NAV_GATE_RATIO,
+                            len(candidates),
+                        )
+                        _nav_gate_logged_dates.add(day)
+                    continue
                 cash_only = float(cash)
                 if position_sizing == "equal":
                     slot_value = cash_only / max_positions
