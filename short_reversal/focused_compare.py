@@ -40,11 +40,11 @@ def main():
     }
 
     candidates = [
-        # v48 系列: 最后的边际探索
-        ("v48_pctchg_025",    {**base_v44, "pct_chg_low": 0.025}),                  # pct_chg 下限放宽 3%→2.5%
-        ("v48_pctchg_028",    {**base_v44, "pct_chg_low": 0.028}),                  # 中间值
-        ("v48_buf05_pctchg025", {**base_v44, "pct_chg_low": 0.025, "close_ma60_buffer": 0.05}),  # 双向微调
-        ("v48_tp_085",        {**base_v44, "tp_pct": 0.085}),                       # TP 中间值 8.5%
+        # v49 系列: SL 收紧梯度 (最终验证)
+        ("v49_sl_00010",  {**base_v44, "sl_pct": 0.0001}),                          # SL 极端收紧
+        ("v49_sl_00015",  {**base_v44, "sl_pct": 0.00015}),                         # SL 较紧
+        ("v49_sl_00025",  {**base_v44, "sl_pct": 0.00025}),                         # SL 中间
+        ("v49_sl_00010_tp09", {**base_v44, "sl_pct": 0.0001, "tp_pct": 0.09}),       # SL+TP 双向
     ]
 
     for name, cfg in candidates:
