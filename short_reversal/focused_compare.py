@@ -40,11 +40,11 @@ def main():
     }
 
     candidates = [
-        # v45 系列: v44 进一步极端放宽 (但已接近工程上限)
-        ("v45_ratio01_buf07", {**base_v44, "below_ratio_60": 0.1}),                # ratio 0.1
-        ("v45_ratio02_buf10", {**base_v44, "close_ma60_buffer": 0.10}),           # buffer 0.10
-        ("v45_ratio01_buf10", {**base_v44, "below_ratio_60": 0.1, "close_ma60_buffer": 0.10}),  # 双极端
-        ("v45_sl_001",        {**base_v44, "sl_pct": 0.001}),                       # SL 放宽 0.0005→0.001
+        # v46 系列: 探索新方向 — SL 收紧 + max_hold 调整 (从放宽切换到风险控制)
+        ("v46_sl_0003", {**base_v44, "sl_pct": 0.0003}),                            # SL 收紧 0.0005→0.0003
+        ("v46_sl_0002", {**base_v44, "sl_pct": 0.0002}),                            # SL 更紧
+        ("v46_mh4",     {**base_v44, "max_hold": 4}),                                # max_hold 缩短
+        ("v46_mh7",     {**base_v44, "max_hold": 7}),                                # max_hold 拉长
     ]
 
     for name, cfg in candidates:

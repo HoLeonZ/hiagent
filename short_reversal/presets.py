@@ -484,6 +484,38 @@ PRESETS: dict[str, dict] = {
         "below_ratio_60": 0.1,
         "close_ma60_buffer": 0.10,
     },
+    # === 2026-09-21 微调发现（v46）— SL 收紧 / max_hold 调整（新方向） ===
+    # 14 次迭代后, "放宽入场" 主线已工程上限 (v45 触底 DD 临界).
+    # 切换到风险控制方向: SL 收紧 / max_hold 调整.
+    # 4 组对比 (12m, 在 v44 基础上):
+    #   v46_sl_0003 (SL 0.0005→0.0003):       n=425 win=33.2% CAGR=+40365% Sharpe=10.01 DD=63.9% ⭐
+    #   v46_sl_0002 (SL 0.0005→0.0002) ⭐:    n=425 win=33.2% CAGR=+41201% Sharpe=10.05 DD=63.8% ⭐⭐
+    #   v46_mh4     (max_hold 5→4):            n=425 win=34.8% CAGR=+39676% Sharpe=10.14 DD=64.0%
+    #   v46_mh7     (max_hold 5→7):            n=424 win=31.8% CAGR=+40785% Sharpe= 9.87 DD=64.0%
+    # v46_sl_0002 是新方向最佳: CAGR 几乎与 v44 持平, DD 压到 63.8% (vs v44 64-87%).
+    # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) ===
+    #   2024-09→2025-03: n=230 win=21.7% yield= +536.61% Sharpe=6.75 DD=87.1%
+    #   2025-03→2025-09: n=225 win=17.3% yield= +207.34% Sharpe=5.60 DD=87.1%
+    #   2025-09→2026-03: n=188 win=20.7% yield= +396.13% Sharpe=6.20 DD=38.1%
+    #   2026-03→2026-09: n=357 win=34.5% yield=+19012.54% Sharpe=10.37 DD=63.8%
+    # 跨周期 vs v44_ratio02_buf07:
+    #   震荡段 yield +12-23% (+513→+537, +195→+207, +377→+396) ⭐
+    #   拉涨段 yield -1% (19230→19013, 微缩)
+    #   震荡段 DD 87% 完全一致 (SL 收紧跨周期未生效) ⚠️
+    #   拉涨段 DD -0.2pp (64→64, 微降) ⭐
+    # === 综合: v46_sl_0002 是 v44 的边际改善 (震荡段 yield +12-23%, DD 持平) ===
+    # 实盘部署: v44 仍是首选 (12m CAGR 略高); v46_sl_0002 备选 (震荡段 yield 略高).
+    "v46_sl_0002": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.08,
+        "sl_pct": 0.0002,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
 }
 
 
