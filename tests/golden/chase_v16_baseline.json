@@ -1,0 +1,47 @@
+{
+  "preset": "chase_v16_pos2_equal_atr_tp6_sl15_mh18_score17_atr035_mom115_ma60buf08",
+  "window": ["2025-09-19", "2026-09-19"],
+  "engine": "simulate",
+  "metrics": {
+    "trades": 73,
+    "win_rate": 0.493,
+    "total_return": 12.7011,
+    "cagr": 12.8501,
+    "sharpe": 4.18,
+    "max_dd": 0.1807,
+    "tp_count": 31,
+    "sl_count": 35,
+    "time_count": 5,
+    "eod_count": 2,
+    "profit_factor": 1.93,
+    "avg_net_return": 0.0844,
+    "exposure": 0.847,
+    "final_equity": 13701108.0,
+    "initial_capital": 1000000.0,
+    "avg_hold_days": 5.8,
+    "max_hold_days": 18
+  },
+  "trades_csv_sha256": "f733347dacd72c6682ebfc58897c2bb9cd2094c1891291c91b005920aac1df6a",
+  "trades_csv_rows": 73,
+  "trades_csv_cols": [
+    "entry_date", "exit_date", "thscode", "exit_reason",
+    "entry_price", "exit_price", "size", "hold_days",
+    "gross_pnl", "fees", "net_pnl", "net_return", "atr_pct", "sub_signal_type"
+  ],
+  "vs_v15": {
+    "v15_cagr": 12.8501,
+    "v15_walkforward_mean": "+105.62%",
+    "v15_walkforward_worst": "-79.08%"
+  },
+  "vs_v14": {
+    "v14_cagr": 12.8501,
+    "v14_walkforward_mean": "+101.16%",
+    "v14_walkforward_worst": "-79.37%"
+  },
+  "walkforward_v16": {
+    "mean": "+106.70%",
+    "worst": "-79.08%",
+    "profitable_windows": "3/9"
+  },
+  "note": "v16 = v15 + min_mom120 0.11 → 0.115(再次收紧 6 个月涨幅门槛)。Pareto 改善 walkforward mean +105.62% → +106.70%(+1.08pp),worst 持平;锁定 CAGR / Sharpe / DD / WR / PF 完全不变(73 trades 全部已通过 11.5% mom120)。trades.csv SHA256 与 v15/v14 相同。"
+}

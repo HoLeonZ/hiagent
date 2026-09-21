@@ -401,6 +401,28 @@ PRESETS: dict[str, dict] = {
             "close_ma60_buffer": 0.08,
         },
     },
+    # ----- v16: v15 + min_mom120 0.11 → 0.115 (再 Pareto WF mean) -----
+    # 锁定 6 个月涨幅 ≥ 11.5% (v15 的 11% 基础上略收紧),
+    # 进一步过滤负窗口的弱势突破。
+    # walkforward mean +105.62% → +106.70% (+1.08pp),
+    # worst -79.08% (持平),
+    # 锁定 CAGR / Sharpe / DD / WR / PF 完全不变(73 trades 全部已通过 11.5% mom120)。
+    # trades.csv SHA256 与 v15 相同。
+    "chase_v16_pos2_equal_atr_tp6_sl15_mh18_score17_atr035_mom115_ma60buf08": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.30, "sl_pct": 0.05,
+        "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
+        "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
+        "signal": {
+            "breakout_a": True, "breakout_vol_min": 1.5,
+            "momentum_b": True, "pct_chg_low": 0.03, "pct_chg_high": 0.08, "momentum_vol_min": 1.3,
+            "macross_c": True, "macross_vol_min": 1.2,
+            "min_mom120": 0.115, "min_amount": 3e7, "max_amount": 3e8,
+            "atr_pct_low": 0.035, "atr_pct_high": 0.085,
+            "min_score": 1.7,
+            "close_ma60_buffer": 0.08,
+        },
+    },
 }
 
 
