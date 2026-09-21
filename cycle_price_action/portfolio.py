@@ -37,6 +37,7 @@ class Portfolio:
     def __init__(self, cash: float) -> None:
         self.cash = float(cash)
         self._pos: PositionState | None = None
+        self.closed_trades: list[dict] = []
 
     @property
     def position(self) -> PositionState | None:
@@ -91,7 +92,20 @@ class Portfolio:
             raise ValueError("no open position")
         if exit_date <= self._pos.entry_date:
             raise ValueError("P3 violation: same-day or earlier exit forbidden")
-        proceeds = self._sell_proceeds(fill_price, self._pos.shares)
+        gross_in = self._buy_cost(self._pos.entry_price, self._pos.shares)
+        net_out = self._sell_proceeds(fill_price, self._pos.shares)
+        self.closed_trades.append(dict(
+            thscode=self._pos.thscode,
+            entry_date=self._pos.entry_date,
+            exit_date=exit_date,
+            entry_price=self._pos.entry_price,
+            exit_price=fill_price,
+            shares=self._pos.shares,
+            pnl=net_out - gross_in,
+            hold_days=(exit_date - self._pos.entry_date).days,
+            decision_meta=dict(self._pos.decision_meta),
+        ))
+        proceeds = net_out
         self.cash += proceeds
         self._pos = None
         return proceeds

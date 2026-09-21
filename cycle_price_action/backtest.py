@@ -26,22 +26,29 @@ class BacktestResult:
 def _extract_trades(
     state: Any,  # CyclePriceActionStrategy after cerebro.run()
 ) -> list[TradeRecord]:
-    """Pull closed trades from strategy state.
+    """Build TradeRecord list from strategy's Portfolio ledger.
 
-    The strategy holds at most one position at a time. We reconstruct
-    closed trades from Portfolio + ReplayBroker's _open_positions dict.
-    Per P3, any open position at end-of-run is force-closed at the last
-    bar's close with forced_exit semantics (annotated via pnl=0 marker
-    is omitted in v1 — we just skip open positions in this version).
+    strategy._portfolio.closed_trades stores dicts with all P2 meta fields
+    (k_line_score / phase_score / calendar_score via decision_meta).
     """
     portfolio = state._portfolio
-    broker = state._broker_ext
-    # Currently Portfolio has no list of closed trades; rely on broker.
-    # In v1 the strategy emits fills via broker; closed round-trips live
-    # in the broker._open_positions lifecycle. Without an explicit ledger,
-    # we expose what Portfolio recorded via decision_meta snapshots.
-    # Implementation note: leverage existing Portfolio fields.
-    raise NotImplementedError("wired in Task 4 after P2 ledger extension")
+    out: list[TradeRecord] = []
+    for rec in portfolio.closed_trades:
+        meta = rec["decision_meta"]
+        out.append(TradeRecord(
+            thscode=rec["thscode"],
+            entry_date=rec["entry_date"],
+            exit_date=rec["exit_date"],
+            entry_price=rec["entry_price"],
+            exit_price=rec["exit_price"],
+            shares=rec["shares"],
+            pnl=rec["pnl"],
+            hold_days=rec["hold_days"],
+            k_line_score=float(meta.get("k_line_score", 0.0)),
+            phase_score=float(meta.get("phase_score", 0.0)),
+            calendar_score=float(meta.get("calendar_score", 0.0)),
+        ))
+    return out
 
 
 def run_backtest(
@@ -79,8 +86,8 @@ def run_backtest(
             logger.warning("backtest failed for %s: %s", code, e)
             continue
         strat = results[0]
-        # _extract_trades is intentionally outside the try/except: in this
-        # RED state it raises NotImplementedError so the test fails loudly.
+        # _extract_trades is intentionally outside the try/except: decision-
+        # extraction bugs must fail loudly rather than be silently skipped.
         all_trades.extend(_extract_trades(strat))
 
     return BacktestResult(trades=all_trades, metrics=compute_metrics(all_trades))
