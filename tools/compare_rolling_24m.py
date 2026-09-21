@@ -34,7 +34,7 @@ def compute_n_way_ranking(
     pivot = pivot[presets]  # 固定列顺序
     pivot = pivot.reset_index(drop=True)
 
-    # rank (1 = 最高 total_yield, dense 方式; ties 同 rank)
+    # rank (1 = 最高 total_yield, min 方式: ties 共享最小 rank 号)
     rank_df = pivot.rank(axis=1, ascending=False, method="min").astype(int)
     rank_df.columns = [f"rank_{p}" for p in pivot.columns]
     rank_df = rank_df.reset_index(drop=True)
