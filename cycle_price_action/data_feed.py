@@ -23,10 +23,16 @@ def load_universe_data(
     con = duckdb.connect(db_path, read_only=True)
     try:
         # P8: only stocks with MAX(date) >= end are still listed.
+        # Use DB's actual last day as the in-DB reference — the data file
+        # may lag the requested `end` by a few days. Comparing against the
+        # user-requested `end` would silently drop the entire universe when
+        # the DB is stale.
+        db_last = con.execute("SELECT MAX(date) FROM v_daily").fetchone()[0]
+        ref_end = min(end, db_last) if db_last else end
         listed_rows = con.execute(
             "SELECT thscode, MAX(date) AS last_date FROM v_daily GROUP BY thscode"
         ).fetchall()
-        listed = {r[0] for r in listed_rows if r[1] is not None and r[1] >= end}
+        listed = {r[0] for r in listed_rows if r[1] is not None and r[1] >= ref_end}
         main_board = {c for c in listed if is_main_board(c)}
         if not main_board:
             return {}

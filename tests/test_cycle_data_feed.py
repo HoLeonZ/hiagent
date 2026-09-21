@@ -66,3 +66,40 @@ def test_main_board_only_returns_main_board_data(temp_db):
     for code, slice in universe.items():
         assert isinstance(slice.df, pd.DataFrame)
         assert {"date", "open", "high", "low", "close", "volume", "amount"} <= set(slice.df.columns)
+
+
+def test_p8_handles_stale_db_relative_to_end(tmp_path):
+    """P8 should not silently drop the universe when DB lags the requested end.
+
+    Repro of production bug: DB's MAX(date) = 2026-09-18, user asks for
+    --end 2026-09-21. Before fix, all stocks were excluded because
+    `MAX(date) >= end` evaluated False everywhere. Fix uses min(end, db_last)
+    as the in-DB reference so data staleness doesn't masquerade as P8
+    exclusion.
+    """
+    db = tmp_path / "stale.duckdb"
+    con = duckdb.connect(str(db))
+    try:
+        con.execute("""
+            CREATE TABLE v_daily (
+                thscode VARCHAR, date DATE,
+                open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE,
+                volume DOUBLE, amount DOUBLE
+            )
+        """)
+        # ~252 BD rows ending 2026-09-18 (DB lags the requested end by 3 days).
+        dates = pd.date_range("2025-09-22", "2026-09-18", freq="B")
+        rows = [
+            ("600000.SH", d.date(), 10.0, 10.5, 9.8, 10.2, 1000.0, 1e8)
+            for d in dates
+        ]
+        con.executemany("INSERT INTO v_daily VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
+    finally:
+        con.close()
+
+    universe = load_universe_data(
+        str(db), date(2025, 9, 21), date(2026, 9, 21),
+    )
+    assert "600000.SH" in universe, (
+        "P8 must not silently exclude stocks just because the DB lags end"
+    )
