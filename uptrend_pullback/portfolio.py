@@ -48,14 +48,22 @@ def _empty_trades() -> pd.DataFrame:
 
 
 def _build_index(panel: pd.DataFrame) -> dict[str, dict]:
-    """按 thscode 建立 numpy 数组索引，便于 O(log n) 定位日期。"""
+    """按 thscode 建立 numpy 数组索引，便于 O(log n) 定位日期。
+
+    V3a (2026-09-22, CLAUDE.md §3): 当 panel 含 raw_* 列 (来自 v_daily_qfq +
+    raw_kline_daily LEFT JOIN), 把 raw_open/raw_high/raw_low/raw_close 也注入
+    index。portfolio 在 price_source_for_execution="raw_close" 时切换 SL/TP
+    触发价格到 raw_* 列。raw_* 缺失时 (LEFT JOIN miss, NaN) 自动回退到 adj 列,
+    不破 baseline parity。
+    """
     idx: dict[str, dict] = {}
+    has_raw = "raw_close" in panel.columns
     for code, sub in panel.groupby("thscode", sort=False):
         closes = sub["close"].to_numpy(dtype=float)
         prev_closes = np.empty_like(closes)
         prev_closes[0] = np.nan
         prev_closes[1:] = closes[:-1]
-        idx[code] = {
+        entry: dict = {
             "dates": sub["date"].to_numpy(),
             "open": sub["open"].to_numpy(dtype=float),
             "high": sub["high"].to_numpy(dtype=float),
@@ -65,6 +73,13 @@ def _build_index(panel: pd.DataFrame) -> dict[str, dict]:
             # R8 (2026-09-21): Volume Participation Limit 需要每根 bar 的成交量
             "volume": sub["volume"].to_numpy(dtype=float) if "volume" in sub.columns else np.full(len(sub), np.nan),
         }
+        if has_raw:
+            entry["raw_open"] = sub["raw_open"].to_numpy(dtype=float) if "raw_open" in sub.columns else np.full(len(sub), np.nan)
+            entry["raw_high"] = sub["raw_high"].to_numpy(dtype=float) if "raw_high" in sub.columns else np.full(len(sub), np.nan)
+            entry["raw_low"] = sub["raw_low"].to_numpy(dtype=float) if "raw_low" in sub.columns else np.full(len(sub), np.nan)
+            entry["raw_close"] = sub["raw_close"].to_numpy(dtype=float) if "raw_close" in sub.columns else np.full(len(sub), np.nan)
+            entry["raw_prev_close"] = sub["raw_prev_close"].to_numpy(dtype=float) if "raw_prev_close" in sub.columns else np.full(len(sub), np.nan)
+        idx[code] = entry
     return idx
 
 
@@ -100,6 +115,11 @@ def simulate_portfolio(
     atr_pct_floor: float = 0.01,
     atr_pct_cap: float = 0.08,
     position_sizing: str = "equal",
+    # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System execution source。
+    # "raw_close" → SL/TP 触发用 raw_high/raw_low/raw_close (除权日 raw > adj,
+    # 实际止损触发价更高, 这是真实的 physical market event)。
+    # "adj_close" (或 legacy 默认) → 用 adj high/low/close, 保持旧行为。
+    price_source_for_execution: str = "adj_close",
     kelly_fraction: float | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """逐日模拟组合，返回 (trades_df, equity_df)。
@@ -218,6 +238,17 @@ def simulate_portfolio(
             h = pi["high"][j]
             lo = pi["low"][j]
             c = pi["close"][j]
+            # V3a (2026-09-22, CLAUDE.md §3): 当 preset 声明 raw_close 作为
+            # execution source 且 panel 含 raw_* 列, 用 raw 价格判 SL/TP。
+            # raw_* 缺失 (NaN, LEFT JOIN miss) → 回退到 adj high/low/close,
+            # 保持 baseline parity。
+            if price_source_for_execution == "raw_close" and "raw_close" in pi:
+                r_o = pi["raw_open"][j]
+                r_h = pi["raw_high"][j]
+                r_lo = pi["raw_low"][j]
+                r_c = pi["raw_close"][j]
+                if not np.isnan(r_o) and not np.isnan(r_h) and not np.isnan(r_lo) and not np.isnan(r_c):
+                    o, h, lo, c = r_o, r_h, r_lo, r_c
             tp_p, sl_p = pos["tp"], pos["sl"]
 
             if o <= sl_p:
@@ -290,6 +321,14 @@ def simulate_portfolio(
 
                     o = pi["open"][j]
                     pc = pi["prev_close"][j]
+                    # V3a (2026-09-22, CLAUDE.md §3): 当 raw_close 是 execution
+                    # source 且 raw_open 存在, 用 raw_open 作为 entry fill 价。
+                    # raw 缺失 → 回退到 adj open, baseline parity 保留。
+                    if price_source_for_execution == "raw_close" and "raw_open" in pi:
+                        r_o_entry = pi["raw_open"][j]
+                        r_pc_entry = pi["raw_prev_close"][j]
+                        if not np.isnan(r_o_entry) and not np.isnan(r_pc_entry) and r_pc_entry > 0:
+                            o, pc = r_o_entry, r_pc_entry
                     # 涨停开盘视为无法买入
                     if not np.isnan(pc) and pc > 0 and (o / pc - 1) >= LIMIT_UP_THRESHOLD:
                         continue

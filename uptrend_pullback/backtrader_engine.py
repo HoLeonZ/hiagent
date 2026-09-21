@@ -221,6 +221,8 @@ def run_backtrader_backtest(
         atr_sl_mult=p.get("atr_sl_mult"),
         position_sizing=position_sizing,
         kelly_fraction=kelly_fraction,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System execution source。
+        price_source_for_execution=p.get("price_source_for_execution", "adj_close"),
     )
 
     if not verify or trades_p1.empty:
