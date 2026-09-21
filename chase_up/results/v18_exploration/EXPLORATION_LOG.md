@@ -66,3 +66,49 @@ walkforward 均值 +116.94% / worst -79.08% / 3/9 盈利。
 - [ ] 改用 volatility-targeted position sizing
 - [ ] 增加 sector concentration limit
 - [ ] 添加"连续 2 日 close > MA20"动量确认
+
+---
+
+## 第二轮探索 (2026-09-21 续)
+
+### close_above_ma20_streak 测试
+
+streak=1: 与 v17 **完全一致** (locked 73 trades +1285%, WF +116.94%)。
+streak=2: locked 微改善 (CAGR +1528%, Sharpe 4.41) 但 WF **回归** (-15pp), worst -79.08% → -85.46%。
+不 Pareto。
+
+### min_mom120 测试
+
+0.30: locked 严重回归 (72 trades, +394% CAGR)。
+0.50: 同上。
+locked 中含 mom120=0.13 但 ABC 信号 +24% net_return 的赢家,过滤会切掉金块。
+
+### min_amount 测试
+
+3.2e7/3.5e7/4e7/5e7 都回归 locked:
+- 3.2e7: 69 trades, +1018% CAGR
+- 3.5e7: 69 trades, +1018% CAGR (相同!)  
+- 4e7: 69 trades, +1018% CAGR, WF worst -72.47% (微改善)
+- 5e7: 66 trades, +584% CAGR
+
+发现:**min_amount 升高对 locked 一律负面**,因 locked 是大牛市期,大量满足更高门槛的小盘交易实际是赢家。min_amount 提升能改善 WF worst 但破坏 locked mean。
+
+### 总结:所有路径都不 Pareto
+
+每一种 v18 候选都呈现以下 trade-off:
+- locked CAGR 微改善 / WF mean 显著回归 (streak=2, atr_sl_mult=1.7)
+- locked CAGR 显著回归 / WF worst 改善 (min_amount=4e7)
+- 全部回归 (bvol20, bvol17, score175, atr_low 0.04, mh15, mom120=0.30, etc.)
+
+不存在同时改善 locked + WF mean + WF worst 的 v18 候选。
+
+### 最终结论
+
+**v17 是在 73-trade locked golden baseline + 9-window walkforward 双重约束下的 Pareto 最优点**。
+
+继续改善需要:
+1. 新增独立的信号组件 (例如 OBV / 北向资金 / 龙虎榜 / sector rotation)
+2. 或引入外部 market index (SH index) 作为 regime filter (需新增数据源)
+3. 或重做 SL/TP 机制 (例如 trailing stop / 时间衰减 TP)
+
+参数微调已经走到尽头。
