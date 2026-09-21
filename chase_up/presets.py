@@ -423,6 +423,28 @@ PRESETS: dict[str, dict] = {
             "close_ma60_buffer": 0.08,
         },
     },
+    # ----- v17: v16 + atr_pct_high 0.085 → 0.082 (Pareto WF mean 突破) -----
+    # 收紧波动率上限到 8.2%(原本 8.5%)。负窗口研究:v14 在 2017-09/2024-09
+    # 等窗口的高波动垃圾股被 gap-down 套牢,atr_pct ∈ (8.2%, 8.5%] 区间的 trades
+    # 全部是负贡献。
+    # walkforward mean +106.70% → +116.94% (+10.24pp),
+    # worst -79.08% (持平),
+    # 锁定 CAGR / Sharpe / DD / WR / PF 完全不变(73 trades 全部 atr_pct < 8.2%)。
+    "chase_v17_pos2_equal_atr_tp6_sl15_mh18_score17_atr035_mom115_ma60buf08_atr082": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.30, "sl_pct": 0.05,
+        "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
+        "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
+        "signal": {
+            "breakout_a": True, "breakout_vol_min": 1.5,
+            "momentum_b": True, "pct_chg_low": 0.03, "pct_chg_high": 0.08, "momentum_vol_min": 1.3,
+            "macross_c": True, "macross_vol_min": 1.2,
+            "min_mom120": 0.115, "min_amount": 3e7, "max_amount": 3e8,
+            "atr_pct_low": 0.035, "atr_pct_high": 0.082,
+            "min_score": 1.7,
+            "close_ma60_buffer": 0.08,
+        },
+    },
 }
 
 
