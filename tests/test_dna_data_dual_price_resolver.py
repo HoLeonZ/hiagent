@@ -145,3 +145,40 @@ def test_signal_close_with_raw_close_source_uses_raw_close():
     row = pd.Series({"adj_close": 10.0, "raw_close": 15.0})
     sig = signal_close(row, "raw_close")
     assert sig == pytest.approx(15.0)
+
+
+# ---------- integration: real DuckDB v_daily_dual view ----------
+
+def test_real_dual_panel_adj_raw_divergence_enforced():
+    """Real DuckDB v_daily_dual: adj_close 与 raw_close 必须真实发散。
+
+    CLAUDE.md §3 要求 indicator 用 adj, trigger 用 raw — 这意味着对
+    真实 A 股历史数据, signal_close() 和 execution_close() 必须返回
+    不同值。这是 runtime integration 的 smoke test。
+    """
+    from hiagent_config import DB_PATH
+    if not DB_PATH.exists():
+        pytest.skip("需要 hiagent_config.DB_PATH (real DuckDB)")
+    from dna_data.dual_price import load_dual_price_panel
+    panel = load_dual_price_panel("2025-09-01", "2025-09-05")
+    if panel.empty:
+        pytest.skip("v_daily_dual 返回空")
+    # 至少一行 adj_close 与 raw_close 不同
+    diff_rows = panel[
+        (panel["adj_close"].notna())
+        & (panel["raw_close"].notna())
+        & (panel["adj_close"] != panel["raw_close"])
+    ]
+    assert len(diff_rows) > 0, (
+        "v_daily_dual 数据似乎没有真实复权调整 — 违反 CLAUDE.md §3 reality mapping"
+    )
+    # 验证 resolver 真实读到不同价格
+    sample = diff_rows.iloc[0]
+    sig = signal_close(sample, "adj_close")
+    exe = execution_close(sample, "raw_close")
+    assert sig != exe, (
+        f"resolver 应读到不同值 (adj={sig}, raw={exe}), 但 {sig} == {exe}"
+    )
+    # adj 必须等于 row.adj_close, raw 必须等于 row.raw_close
+    assert sig == pytest.approx(float(sample["adj_close"]))
+    assert exe == pytest.approx(float(sample["raw_close"]))
