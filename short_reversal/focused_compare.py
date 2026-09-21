@@ -40,11 +40,11 @@ def main():
     }
 
     candidates = [
-        # v47 系列: v44 + 进一步探索 (d_mode, pct_chg_low, ratio 进一步放宽)
-        ("v47_d_strict",      {**base_v44, "d_mode": "strict"}),                    # D 切回 strict (放弃 converge_strict)
-        ("v47_pctchg_025",    {**base_v44, "pct_chg_low": 0.025}),                  # pct_chg 下限放宽 3%→2.5%
-        ("v47_ratio02_buf05", {**base_v44, "below_ratio_60": 0.2, "close_ma60_buffer": 0.05}),  # 回退 buffer 7%→5%
-        ("v47_tp_10",         {**base_v44, "tp_pct": 0.10}),                        # TP 拉宽 8%→10%
+        # v48 系列: 最后的边际探索
+        ("v48_pctchg_025",    {**base_v44, "pct_chg_low": 0.025}),                  # pct_chg 下限放宽 3%→2.5%
+        ("v48_pctchg_028",    {**base_v44, "pct_chg_low": 0.028}),                  # 中间值
+        ("v48_buf05_pctchg025", {**base_v44, "pct_chg_low": 0.025, "close_ma60_buffer": 0.05}),  # 双向微调
+        ("v48_tp_085",        {**base_v44, "tp_pct": 0.085}),                       # TP 中间值 8.5%
     ]
 
     for name, cfg in candidates:
