@@ -338,6 +338,39 @@ PRESETS: dict[str, dict] = {
         "below_ratio_60": 0.5,
         "close_ma60_buffer": 0.02,
     },
+    # === 2026-09-21 微调发现（v41）— v40_tp_08 + pct_chg / mh 微调 ===
+    # 在 v40_tp_08 (TP 8%) 基础上微调, 4 组对比 (12m):
+    #   v41_pctchg_04_10 (下限 4%, 上限 10%): n=164 win=39.6% CAGR=+2815% Sharpe=9.44 DD=35.3% ⭐
+    #   v41_pctchg_03_09 (下限 3%, 上限 9%):  n=265 win=37.0% CAGR=+7449% Sharpe=10.85 DD=48.0%
+    #   v41_mh6         (max_hold 6):         n=278 win=35.6% CAGR=+8946% Sharpe=10.69 DD=56.6%
+    #   v41_mh7         (max_hold 7):         n=277 win=35.4% CAGR=+9199% Sharpe=10.68 DD=56.6%
+    # v41_mh6/mh7 几乎与 v40_tp_08 相同 — TP 拉宽已让所有 trade 在 day 1-2 出场,
+    # max_hold 拉长无效。
+    # v41_pctchg_04_10 12m DD 35.3% (类似 v37 的 n=164), 但配置完全不同 (pct_chg 下限收紧)。
+    # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) — 单点过拟合确认 ===
+    #   2024-09→2025-03: n= 52 win=23.1% yield=+65.74% Sharpe=3.24 DD=57.7%
+    #   2025-03→2025-09: n= 61 win=18.0% yield=+43.89% Sharpe=2.83 DD=57.5%
+    #   2025-09→2026-03: n= 45 win=15.6% yield=+28.55% Sharpe=2.35 DD=19.4%
+    #   2026-03→2026-09: n=148 win=41.9% yield=+2495.61% Sharpe=9.44 DD=35.3%
+    #   4/4 窗口全部 yield 缩水 vs v40_tp_08:
+    #     拉涨段 -64% (6871→2495) ⚠️⚠️
+    #     震荡段 -10% ~ -34%
+    #   DD 改善 3-17pp, 但 yield 损失远超 DD 改善, 单点过拟合 12m 样本。
+    # === 微调方法论教训 (v41 失败案例) ===
+    # pct_chg 下限收紧 (3%→4%) 看似改善 DD, 实则砍掉有效入场信号。
+    # 与 v37_liq_3e7_5e8 (E 放宽单点过拟合) 同根问题: 单参数 12m 优化不可信。
+    # v40_tp_08 保持 v3 体系最终胜出者位置 — 不动。
+    "v41_pctchg_04_10": {
+        "universe": "mainboard_only",
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.04,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.5,
+        "close_ma60_buffer": 0.02,
+    },
 }
 
 

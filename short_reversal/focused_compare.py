@@ -30,9 +30,9 @@ def _run(name: str, cfg: dict) -> dict:
 
 
 def main():
-    base_v39 = {
+    base_v40 = {
         "universe": "mainboard_only",
-        "tp_pct": 0.06, "sl_pct": 0.0005, "max_hold": 5,
+        "tp_pct": 0.08, "sl_pct": 0.0005, "max_hold": 5,
         "pct_chg_low": 0.03, "pct_chg_high": 0.10,
         "d_mode": "converge_strict",
         "below_ratio_60": 0.5,
@@ -40,11 +40,11 @@ def main():
     }
 
     candidates = [
-        # v40 系列: v39_03_10 + SL/TP 微调
-        ("v40_sl_001",      {**base_v39, "sl_pct": 0.001}),                # SL 放宽 (减 SL 命中)
-        ("v40_tp_07",       {**base_v39, "tp_pct": 0.07}),                 # TP 拉宽 (频次降, 单笔增)
-        ("v40_tp_08",       {**base_v39, "tp_pct": 0.08}),                 # TP 更宽
-        ("v40_sl001_tp07",  {**base_v39, "sl_pct": 0.001, "tp_pct": 0.07}),# 双向
+        # v41 系列: v40_tp_08 + pct_chg / mh 微调
+        ("v41_pctchg_04_10", {**base_v40, "pct_chg_low": 0.04}),                # 收紧下限
+        ("v41_pctchg_03_09", {**base_v40, "pct_chg_high": 0.09}),               # 收紧上限
+        ("v41_mh6",          {**base_v40, "max_hold": 6}),                      # 拉长持仓
+        ("v41_mh7",          {**base_v40, "max_hold": 7}),                      # 更长持仓
     ]
 
     for name, cfg in candidates:
