@@ -128,3 +128,135 @@ def test_try_enter_volume_cap_none_nan_skipped():
         bar_volume=float("nan"),
     )
     assert s2 is not None and s2.shares == 9_900
+
+
+# ---- V6'' (2026-09-22, CLAUDE.md §4) Intraday SL-first tiebreak ----
+
+def test_intraday_check_gap_down_sl_first():
+    """V6'': open ≤ sl_p → SL @ open (gap-down through stop)."""
+    pf = Portfolio(cash=100_000.0)
+    pf.try_enter("600000.SH", 10.0, date(2024, 6, 3), {"k_line_score": 1.5})
+    # entry=10, tp_pct=0.06 → tp_p=10.60, sl_pct=0.05 → sl_p=9.50
+    # open=9.00 ≤ sl_p=9.50 → SL @ open
+    fill, reason = pf.try_exit_with_intraday_check(
+        exit_date=date(2024, 6, 4),
+        open_price=9.00,
+        high=10.50,
+        low=8.80,
+        close=9.10,
+        tp_pct=0.06,
+        sl_pct=0.05,
+    )
+    assert reason == "SL"
+    assert fill == 9.00
+
+
+def test_intraday_check_gap_up_tp_first():
+    """V6'': open ≥ tp_p → TP @ open (gap-up through target)."""
+    pf = Portfolio(cash=100_000.0)
+    pf.try_enter("600000.SH", 10.0, date(2024, 6, 3), {"k_line_score": 1.5})
+    # entry=10, tp_pct=0.06 → tp_p=10.60, sl_pct=0.05 → sl_p=9.50
+    # open=11.00 ≥ tp_p=10.60 → TP @ open
+    fill, reason = pf.try_exit_with_intraday_check(
+        exit_date=date(2024, 6, 4),
+        open_price=11.00,
+        high=11.50,
+        low=10.50,
+        close=10.80,
+        tp_pct=0.06,
+        sl_pct=0.05,
+    )
+    assert reason == "TP"
+    assert fill == 11.00
+
+
+def test_intraday_check_intraday_sl_only():
+    """V6'': low ≤ sl_p (open 没破), high 没破 tp → SL @ sl_p."""
+    pf = Portfolio(cash=100_000.0)
+    pf.try_enter("600000.SH", 10.0, date(2024, 6, 3), {"k_line_score": 1.5})
+    # open=10.10 (no gap), low=9.30 ≤ sl_p=9.50, high=10.40 ≤ tp_p=10.60
+    fill, reason = pf.try_exit_with_intraday_check(
+        exit_date=date(2024, 6, 4),
+        open_price=10.10,
+        high=10.40,
+        low=9.30,
+        close=9.80,
+        tp_pct=0.06,
+        sl_pct=0.05,
+    )
+    assert reason == "SL"
+    assert fill == 9.50    # exit @ sl_p (not @ low)
+
+
+def test_intraday_check_intraday_tp_only():
+    """V6'': high ≥ tp_p (open 没破), low 没破 sl → TP @ tp_p."""
+    pf = Portfolio(cash=100_000.0)
+    pf.try_enter("600000.SH", 10.0, date(2024, 6, 3), {"k_line_score": 1.5})
+    # open=10.10 (no gap), high=10.80 ≥ tp_p=10.60, low=9.80 ≥ sl_p=9.50
+    fill, reason = pf.try_exit_with_intraday_check(
+        exit_date=date(2024, 6, 4),
+        open_price=10.10,
+        high=10.80,
+        low=9.80,
+        close=10.70,
+        tp_pct=0.06,
+        sl_pct=0.05,
+    )
+    assert reason == "TP"
+    assert fill == pytest.approx(10.60)    # exit @ tp_p (not @ high)
+
+
+def test_intraday_check_sl_first_tiebreak():
+    """V6'': 同 bar SL+TP 双触发 → 假设 SL 命中 (CLAUDE.md §4 worst-case)。
+    open 没破, low ≤ sl_p AND high ≥ tp_p 同时发生 → SL @ sl_p。
+    """
+    pf = Portfolio(cash=100_000.0)
+    pf.try_enter("600000.SH", 10.0, date(2024, 6, 3), {"k_line_score": 1.5})
+    # open=10.10 (no gap, 但紧贴)
+    # low=9.40 ≤ sl_p=9.50 (intraday stop hit)
+    # high=10.70 ≥ tp_p=10.60 (intraday target hit)
+    # → SL-first → exit @ sl_p
+    fill, reason = pf.try_exit_with_intraday_check(
+        exit_date=date(2024, 6, 4),
+        open_price=10.10,
+        high=10.70,
+        low=9.40,
+        close=10.05,
+        tp_pct=0.06,
+        sl_pct=0.05,
+    )
+    assert reason == "SL"
+    assert fill == 9.50
+
+
+def test_intraday_check_no_trigger_time_exit():
+    """V6'': open/low/high 都不破 → time exit @ close."""
+    pf = Portfolio(cash=100_000.0)
+    pf.try_enter("600000.SH", 10.0, date(2024, 6, 3), {"k_line_score": 1.5})
+    fill, reason = pf.try_exit_with_intraday_check(
+        exit_date=date(2024, 6, 4),
+        open_price=10.10,
+        high=10.30,
+        low=9.90,
+        close=10.20,
+        tp_pct=0.06,    # tp_p = 10.60
+        sl_pct=0.05,    # sl_p = 9.50
+    )
+    assert reason == "time"
+    assert fill == 10.20
+
+
+def test_intraday_check_p3_no_same_day_exit():
+    """V6'' + P3: exit_date == entry_date → raise ValueError."""
+    pf = Portfolio(cash=100_000.0)
+    pf.try_enter("600000.SH", 10.0, date(2024, 6, 3), {"k_line_score": 1.5})
+    with pytest.raises(ValueError):
+        pf.try_exit_with_intraday_check(
+            exit_date=date(2024, 6, 3),
+            open_price=10.10,
+            high=10.30,
+            low=9.90,
+            close=10.20,
+            tp_pct=0.06,
+            sl_pct=0.05,
+        )

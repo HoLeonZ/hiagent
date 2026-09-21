@@ -3,11 +3,13 @@
 Compliance declaration (CLAUDE.md audit 2026-09-22):
   V5 (R8, 2026-09-21, CLAUDE.md §4) — Volume Participation Limit:
     Portfolio.try_enter accepts bar_volume; cap shares at Bar_Volume × 0.10.
-    backtrader_engine.py:73-79 passes bar["volume"]. 单笔最大成交量 = Bar_Vol × 0.10。
-  V6 (2026-09-22, CLAUDE.md §4) — Intraday SL-first tiebreak: NOT APPLICABLE.
-    cycle_price_action 只有 max_hold time-exit, 无 strategy-side TP/SL check
-    (P7 不变 — next() 只在 hold_days ≥ max_hold 时平仓)。若未来增加 TP/SL,
-    必须按 SL-first 优先级落地 (同 chase_up / uptrend_pullback / short_reversal)。
+    backtrader_engine.py:107-113 passes bar["volume"]. 单笔最大成交量 = Bar_Vol × 0.10。
+  V6'' (2026-09-22, CLAUDE.md §4) — Intraday SL-first tiebreak:
+    Portfolio.try_exit_with_intraday_check 落地 SL-first 优先级 (gap-down SL,
+    gap-up TP, intraday SL-first, TP fallback, time fallback). 7 个 regression
+    tests 覆盖全部 5 个分支 + P3 same-day guard。
+    backtrader_engine.py:66-89 在持仓每个 bar 调用 intraday check, exit 触发
+    reason ∈ {"SL", "TP", "time"}。max_hold time exit 保留为 P7 fallback。
 """
 from __future__ import annotations
 
@@ -18,6 +20,12 @@ PRESET_V1 = dict(
     atr_period=14,
     atr_sl_mult=1.5,
     tp_pct=0.06,
+    # V6'' (2026-09-22, CLAUDE.md §4): SL fraction for intraday tiebreak.
+    # Used by backtrader_engine to compute sl_p = entry × (1 - sl_pct)。
+    # 0.05 = 5% stop, conservative for cycle strategy (vs chase_up 1.5-2.5%)。
+    sl_pct=0.05,
+    # V5 (R8, 2026-09-21, CLAUDE.md §4): Volume Participation Limit declaration。
+    max_volume_participation=0.10,
     weight_kline=1.0,
     weight_cycle=0.7,
     weight_calendar=0.5,

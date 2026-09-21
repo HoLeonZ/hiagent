@@ -63,9 +63,10 @@ def run_backtest(
     universe = load_universe_data(db_path, start, end)
     all_trades: list[TradeRecord] = []
     # Filter preset to keys CyclePriceActionStrategy.params accepts
-    # (weight_kline / weight_cycle / weight_calendar / periods live in PRESET_V1
-    # but are not in the strategy params tuple; passing them would TypeError).
-    _accepted = {"threshold", "min_dim", "max_hold", "atr_period", "atr_sl_mult", "tp_pct"}
+    # (weight_kline / weight_cycle / weight_calendar / periods / max_volume_participation
+    # live in PRESET_V1 but are not in the strategy params tuple; passing them
+    # would TypeError). V6'' (2026-09-22): sl_pct added for SL-first intraday tiebreak.
+    _accepted = {"threshold", "min_dim", "max_hold", "atr_period", "atr_sl_mult", "tp_pct", "sl_pct"}
     strategy_kwargs = {k: v for k, v in preset.items() if k in _accepted}
 
     for code, slice in universe.items():
