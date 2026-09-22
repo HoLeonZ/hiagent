@@ -47,11 +47,26 @@ def _load_panel(db_path: Path, start: str, end: str, universe: list[str]) -> pd.
     panel_end = (pd.Timestamp(end) + pd.Timedelta(days=60)).strftime("%Y-%m-%d")
     con = duckdb.connect(str(db_path), read_only=True)
     try:
+        # V3a (2026-09-22, CLAUDE.md §3): LEFT JOIN v_daily_hfq (back-adjusted)
+        # 增加 adj_open/adj_high/adj_low/adj_close 列, 让 strategy 可选用 adj
+        # 用于指标计算, 仍用 v_daily 的 raw 列作为 execution trigger。
+        # 当前 baseline parity: short_reversal 默认 price_source_for_execution
+        # 走 raw 域 (v_daily IS raw), signal 也走 raw (为防止 baseline 漂移)。
+        # 完整 V3a 落地 (signal 用 adj) 需要 golden baseline 重生成。
         df = con.execute(
-            "SELECT thscode, date, open, high, low, close, amount, volume "
-            "FROM v_daily "
-            "WHERE date BETWEEN ? AND ? AND thscode = ANY(?) "
-            "ORDER BY thscode, date",
+            """
+            SELECT v.thscode, v.date,
+                   v.open, v.high, v.low, v.close, v.amount, v.volume,
+                   h.open  AS adj_open,
+                   h.high  AS adj_high,
+                   h.low   AS adj_low,
+                   h.close AS adj_close
+            FROM v_daily v
+            LEFT JOIN v_daily_hfq h
+              ON v.thscode = h.thscode AND v.date = h.date
+            WHERE v.date BETWEEN ? AND ? AND v.thscode = ANY(?)
+            ORDER BY v.thscode, v.date
+            """,
             [panel_start, panel_end, universe],
         ).fetchdf()
     finally:
@@ -172,6 +187,14 @@ def run_backtest_v3(
         initial_capital=INITIAL_CAPITAL,
         lot_size=100,
         min_cash_ratio=cfg.get("min_cash_ratio", 0.05),
+        # V5' (2026-09-22, CLAUDE.md §4): ATR-aware slippage is opt-in via preset。
+        # 默认 0.0 = baseline parity (无 slippage), preset 可上调启用真实市场摩擦。
+        atr_slip_scale=cfg.get("atr_slip_scale", 0.0),
+        # V8 (2026-09-22, CLAUDE.md §4): max_volume_participation 与 intraday_tiebreak
+        # 从 preset 显式 plumb 到 strategy (而非依赖模块常量/默认值)。
+        # 当前 preset 默认 0.10 / 'sl_first', 完整覆盖 11/11 preset。
+        max_volume_participation=cfg.get("max_volume_participation", 0.10),
+        intraday_tiebreak=cfg.get("intraday_tiebreak", "sl_first"),
         result_holder=holder,
     )
     cerebro.run()

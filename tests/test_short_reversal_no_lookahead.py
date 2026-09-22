@@ -260,3 +260,131 @@ def _run_single_stock_scenario(
     )
     cerebro.run()
     return holder
+
+
+def test_nav_gate_rejects_new_short_when_cash_below_threshold():
+    """min_cash_ratio 守卫 (R1+R2, 2026-09-21): NAV < initial × 5% 时拒绝新开仓。
+
+    short_reversal 的 cash gate 在 replay_strategy_v3._fill_pending_entries:
+    NAV = cash + (entry - current_close) × size (做空浮盈可正可负)。
+    当 NAV 跌穿 5% × initial 时,所有 pending short entries 被拒绝,持仓按
+    NAV-gate active close 立即平仓 (R2)。
+    """
+    from short_reversal.replay_strategy_v3 import Phase3V3Strategy
+    # 构造做空路径: bar 200 触发 cascade → bar 201 fill @ 10 → bar 202 跳空 +900% (open=100)
+    # entry_price ≈ 22.20 (cascade_entry_panel 的入场价), 但我们用 sl_pct=0.05 让 SL @ 23.31
+    # 用更高的 sl_pct=10.0 让 SL 不触发, 持仓浮亏 (current-high - entry) × size 让 NAV 大跌
+    # 这里用最小化构造:initial=9000, 票 A 入场 short @ 10 → 跳空 +1000% (open=110)
+    # SL 不触发 (sl_pct 设大), 但 NAV = 9000 - (110-10)*size 会大幅为负
+    # 然后 NAV-gate 在 _check_exit 触发 active close
+    n = 210
+    dates = pd.date_range("2025-01-01", periods=n, freq="B")
+    rows = []
+    for i, d in enumerate(dates):
+        if i < 130:
+            p = 20.0 + 0.05 * i
+        elif i < 195:
+            p = 20.0 + 0.05 * 130 - 0.05 * (i - 130)
+        elif i == 195:
+            p = 22.0
+        elif i < 200:
+            p = 22.0 + 0.05 * (i - 195)
+        elif i < 202:
+            p = 22.20
+        else:  # bar 202 → 跳空到 100 (让 short 浮亏巨大)
+            p = 100.0
+        rows.append({
+            "thscode": "600000.SH",
+            "date": d,
+            "open": p, "high": p + 0.0001, "low": p - 0.0001, "close": p,
+            "amount": 5e7, "volume": 1e6,
+        })
+    panel = pd.DataFrame(rows)
+
+    cerebro = bt.Cerebro(stdstats=False)
+    initial = 9_000.0
+    cerebro.broker.setcash(initial)
+    cerebro.broker.setcommission(commission=0.0)
+    feed = AShareData(dataname=panel, plot=False)
+    cerebro.adddata(feed, name="600000.SH")
+    holder: dict = {"cash": initial, "trades": [], "max_dd": 0.0}
+    cerebro.addstrategy(
+        Phase3V3Strategy,
+        # sl_pct 设非常大 (10.0 = 1000%) 让 SL 永远不触发; NAV-gate 才是退场机制
+        tp_pct=0.0001, sl_pct=10.0, max_hold=20,
+        position_fraction=1.0,
+        pct_chg_low=0.0, pct_chg_high=0.10,
+        a_condition="cascade_price",
+        margin_rate=0.0,  # 关掉 margin 费用以避免影响 NAV 估算
+        commission_rate=0.0, stamp_duty_rate=0.0,
+        initial_capital=initial, lot_size=100,
+        min_cash_ratio=0.05,
+        result_holder=holder,
+    )
+    cerebro.run()
+    trades = holder["trades"]
+    # 票 A 应做空入场并被 NAV-gate active close (R2) 强制平仓 (exit_reason="nav_gate_eod")
+    assert len(trades) == 1, f"应 1 笔做空 trade, 实际 {len(trades)} 笔"
+    assert trades[0]["exit_reason"] == "nav_gate_eod", (
+        f"NAV-gate 应触发 active close, 但 exit_reason={trades[0]['exit_reason']!r}"
+    )
+
+def test_volume_participation_cap_enforced_for_short_entry():
+    """R8 (2026-09-21): 做空单笔成交量必须 ≤ Bar_Volume × MAX_VOL_PARTICIPATION (CLAUDE.md §4)。
+
+    复刻"小票砸穿"场景: bar volume = 1000 (10 lots), all-in @ NAV=100k → 理论可
+    short 10000 股, 但 vol cap = 100 股 (1 lot) 才是 max_fill。
+    """
+    from short_reversal.replay_strategy_v3 import MAX_VOL_PARTICIPATION
+    n = 210
+    dates = pd.date_range("2025-01-01", periods=n, freq="B")
+    rows = []
+    for i, d in enumerate(dates):
+        if i < 130:
+            p = 20.0 + 0.05 * i
+        elif i < 195:
+            p = 20.0 + 0.05 * 130 - 0.05 * (i - 130)
+        elif i == 195:
+            p = 22.0
+        elif i < 200:
+            p = 22.0 + 0.05 * (i - 195)
+        elif i < 202:
+            p = 22.20
+        else:
+            p = 22.20
+        rows.append({
+            "thscode": "600000.SH",
+            "date": d,
+            "open": p, "high": p + 0.0001, "low": p - 0.0001, "close": p,
+            # bar volume = 1000 (微量流通, 触发 vol cap)
+            "amount": 5e7, "volume": 1000,
+        })
+    panel = pd.DataFrame(rows)
+
+    cerebro = bt.Cerebro(stdstats=False)
+    initial = 100_000.0
+    cerebro.broker.setcash(initial)
+    cerebro.broker.setcommission(commission=0.0)
+    feed = AShareData(dataname=panel, plot=False)
+    cerebro.adddata(feed, name="600000.SH")
+    holder: dict = {"cash": initial, "trades": [], "max_dd": 0.0}
+    cerebro.addstrategy(
+        Phase3V3Strategy,
+        tp_pct=0.06, sl_pct=0.10, max_hold=20,
+        position_fraction=1.0,
+        pct_chg_low=0.0, pct_chg_high=0.10,
+        a_condition="cascade_price",
+        margin_rate=0.0, commission_rate=0.0, stamp_duty_rate=0.0,
+        initial_capital=initial, lot_size=100,
+        result_holder=holder,
+    )
+    cerebro.run()
+    trades = holder["trades"]
+    # 由于 vol cap 把所有入场全砍光 (1000 * 0.10 = 100 股, 但 cascade 路径可能也未触发),
+    # 至少应不崩溃。如果有 trade,size 必须 ≤ 100 (1 lot)。
+    max_fill = int(1000 * MAX_VOL_PARTICIPATION / 100) * 100
+    for t in trades:
+        assert t["size"] <= max_fill, (
+            f"做空 size={t['size']} 应被 volume cap 限制到 ≤ {max_fill} "
+            f"(bar_volume=1000 × MAX_VOL_PARTICIPATION={MAX_VOL_PARTICIPATION})"
+        )

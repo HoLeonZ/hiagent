@@ -6,111 +6,13 @@ from typing import Literal
 UniverseMode = Literal["mainboard_only", "exclude_hs300_zhongtou_finance"]
 
 PRESETS: dict[str, dict] = {
-    # ⚠️ ⚠️ ⚠️ 2026-09-21 重要警告 ⚠️ ⚠️ ⚠️
-    # 下方两个 v33 baseline preset 已在 cash gate 落地后被实测证明破产:
-    #   v33_mainboard_tp2_sl05_dneg: cash gate 触发时 NAV=-1.01亿 (透支初始资金 100 倍)
-    #   v33_mainboard_tp6_sl005_mh5_realistic: 同类问题, 数字仍为 paper-trading 幻影
-    # 它们的高 CAGR (10K+%) 是浮盈复利触底 0 的复利幻影, 实盘 margin call 会强平。
-    # 唯一真正可投资的 preset: v34_mainboard_pctchg_tight (12m 内 cash gate 未触发)。
-    # v33 系列仅保留为参照 baseline, 用于对比 v34 的相对收益改善。
-    # ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️
-    # D 条件改为 DIF/DEA<0 后的最优 preset（TP2%/SL0.5%/mh=3）：
-    # 2018-2025 实测 (Phase 1 trades 层, entry=T+1 open, TP/SL from T+2):
-    #   n=541, 胜率 52.4%, avg_pnl +0.814%, 平均持仓 1.08 天 (≤ 3 月 ✅)
-    #   8 年累计复利 +1471% → CAGR +79.06%
-    # Walk-forward 验证 (4 个不重叠 2 年窗口):
-    #   2018-2019: CAGR +79.5%, n=107
-    #   2020-2021: CAGR +63.1%, n=147
-    #   2022-2023: CAGR +79.1%, n=151
-    #   2024-2025: CAGR +60.8%, n=136
-    #   平均 CAGR +70.6%, 最低 +60.8% — 跨牛熊均稳定。
-    # 单只持仓 1.07-1.09 天, 远低于 3 个月约束 ✅
-    # 12 个月窗口 (2025-09-12 → 2026-09-12) v3 引擎实测 (post-bugfix):
-    #   n=563, 胜率 53.6%, CAGR +7149.71%, Sharpe 10.01, DD 46.99%
-    #   TP/SL/time = 298/260/5
-    #   注：CAGR 数字物理合理（SL 截断 + TP 截断复利 1 年），但异常高不建议直接对外宣称；
-    #       修复前 CAGR +36.39% / DD 79.0% 来自 3 个引擎 bug（SL 跳空放大、hold_days off-by-1、
-    #       max_dd 未含浮盈），修复后 DD 真实值下降 32pp，CAGR 因 SL 损失被截断而复利放大。
-    # === 2026-09-21 P3+P5 修复后 (held<1 守卫 + SL-first P5) ===
-    #   12m (2025-09-12 → 2026-09-12) v3 引擎实测:
-    #   n=566, win=47.0%, CAGR=+9958%, Sharpe=9.12, DD=100.0% ⚠️ 浮盈复利触底
-    #   TP/SL/time = 262/299/5
-    #   ⚠️ DD 100% 是 NAV 真触底 0（cash gate 未接通；实盘 margin call 会强平）
-    #   max_dd=100% 是 paper-trading 性质数字，相对比较仍能看参数优劣。
-    "v33_mainboard_tp2_sl05_dneg": {
-        "universe": "mainboard_only",
-        "tp_pct": 0.02,
-        "sl_pct": 0.005,
-        "max_hold": 3,
-    },
-    # TP6 / SL0.05 / mh5 / pct_chg [2%, 7%] — grid search 在真实 A 股成本下
-    # 找到的最优 preset (2018-2025, 7.67 年):
-    #   8 年总 CAGR +79.69%, 最低单年 CAGR +24.78%, 全部 8 个 1 年窗口为正。
-    #   8 年串联累计 +11537% (final_capital 12.5M from 1M)。
-    #   2018 +24.8% / 2019 +37.5% / 2020 +55.9% / 2021 +132.0%
-    #   2022 +122.7% / 2023 +141.2% / 2024 +93.3% / 2025-Jan-Aug +67.3%
-    #   (用 yearly 独立复利口径；trades 层跨年串联 8 年 CAGR +81.07%)
-    # 平均持仓 1.0-2.5 天 ≤ 3 月 ✅
-    # 真实成本结构 (commission 万 0.6 双边 0.12% + stamp_duty 万 1 单边 0.10%
-    #   + 融券 8.6%/年 × hold_days) 已经从 trades 层精确扣。
-    # 80% 目标: 8 年 CAGR +79.69% 字面差 0.31% 几乎达标, 但已
-    #   经 240 configs grid search 确认是结构性上限 — 0/240 configs
-    #   能让最低单年 CAGR ≥ 50% 同时总 CAGR ≥ 80%。
-    # 2 年滚动窗口平均 CAGR +76.89% (最低 2018-2019 +58.31%,
-    #   最高 2022-2023 +103.56%)。
-    # 12 个月窗口 (2025-09-12 → 2026-09-12) v3 引擎实测 (post-bugfix):
-    #   n=586, 胜率 30.4%, CAGR +25229.78%, Sharpe 9.55, DD 42.67%
-    #   TP/SL/time = 165/408/13
-    #   注：CAGR 数字物理合理（SL=0.05% 单笔截断 + TP=6% 频次不变，复利 1 年），但异常高
-    #       不建议直接对外宣称；修复前 CAGR +81.60% / DD 91.62% 来自 3 个引擎 bug
-    #       （SL 跳空放大让单笔 SL 损失从 -0.05% 变 -10%，hold_days off-by-1，
-    #       max_dd 未含浮盈），修复后 DD 真实值下降 49pp。
-    # === 2026-09-21 P3+P5 修复后 ===
-    #   12m (2025-09-12 → 2026-09-12) v3 引擎实测:
-    #   n=589, win=36.3%, CAGR=+70377%, Sharpe=10.66, DD=100.0% ⚠️
-    #   TP/SL/time = 188/375/26
-    "v33_mainboard_tp6_sl005_mh5_realistic": {
-        "universe": "mainboard_only",
-        "tp_pct": 0.06,
-        "sl_pct": 0.0005,
-        "max_hold": 5,
-        "pct_chg_low": 0.02,
-        "pct_chg_high": 0.07,
-    },
-    # === 2026-09-21 微调发现（v34） ===
-    # 单轴 focused compare 在 P3+P5 修复后的 v3 引擎上跑出 (baseline 保持 baseline 的设计选择;
-    # 这里只调 pct_chg 入场信号侧):
-    #   v33 agg_base:                n=589 win=36.3% CAGR=+70377% Sharpe=10.66 DD=100% ⚠️
-    #   v33 agg_tp05:                n=589 win=38.0% CAGR=+61756% Sharpe=11.00 DD=100%
-    #   v33 agg_tp08:                n=589 win=34.5% CAGR=+90857% Sharpe=10.10 DD=100%
-    #   v33 agg_mh7:                 n=588 win=34.2% CAGR=+59599% Sharpe=10.40 DD=100%
-    #   v34 agg_pctchg_03_08 ⭐:     n=303 win=38.3% CAGR=+7122%  Sharpe=11.14 DD=55.8% ✅
-    # 微调方向: pct_chg_low 0.02→0.03, pct_chg_high 0.07→0.08 (收紧入场信号)
-    # 效果: n -48%, win% +2pp, CAGR 从爆炸 +70377% 跌到 +7122% (但仍是可观),
-    #       DD 从 100% 降至 55.8% — 唯一摆脱破产触底的方案,可投资性最高。
-    # 代价: CAGR 数字缩水到 1/10 量级,但 max_dd 改善 44pp — 风险调整收益显著改善。
-    # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) ===
-    #   2024-09-12 → 2025-03-12: n=162 win=14.8% total_yield=+59.79% Sharpe=3.75 DD=100% ⚠️
-    #   2025-03-12 → 2025-09-12: n=189 win=14.3% total_yield=+62.58% Sharpe=4.00 DD=100% ⚠️
-    #   2025-09-12 → 2026-03-12: n= 73 win=17.8% total_yield=+51.60% Sharpe=3.29 DD= 30.0% ✅
-    #   2026-03-12 → 2026-09-12: n=276 win=39.1% total_yield=+5247.91% Sharpe=11.39 DD=55.8% ✅
-    #   最低单窗 total_yield +51.6% (拉涨段); 4/4 窗口全为正收益, 跨周期稳健。
-    #   隐藏脆弱性: 前 3 个窗口胜率 14-18%, SL 占比 84-92% — 信号质量在震荡段
-    #   仍不够好, 收益依赖 SL 截断堆积, 不依赖 tp_pct 真实捕捉。
-    # === 2026-09-21 cash gate 修后 ===
-    #   cash gate = NAV < 5% * INITIAL_CAPITAL 时拒绝新开仓 (replay_strategy_v3.py:144)
-    #   关键观察: v33 baseline 在 cash gate 触发时 NAV 已跌到 -1.01 亿 (cash 透支 100 倍),
-    #            回测结束时才被停 — 实际破产触底, 数字是 paper-trading 幻影。
-    #   v34 在 cash gate 触发时从未触发 gate (DD 55.8% 是真实 NAV 回撤),
-    #            唯一真正不破产的 preset, 可投资性最高。
-    "v34_mainboard_pctchg_tight": {
-        "universe": "mainboard_only",
-        "tp_pct": 0.06,
-        "sl_pct": 0.0005,
-        "max_hold": 5,
-        "pct_chg_low": 0.03,
-        "pct_chg_high": 0.08,
-    },
+    # ⚠️ 2026-09-22 preset 库重组 ⚠️
+    # 7 个破产/失败 preset 已删除 (v33×2 / v34 / v37 / v39_pctchg_04_09 / v41 / v47):
+    #   - v33×2 + v47_d_strict: cash gate 触发时 NAV 透支 6-100 倍, paper-trading 幻影
+    #   - v34: 12m DD 100% 触底破产 (cash gate 落地后实测)
+    #   - v37 / v39_pctchg_04_09 / v41: 单点过拟合 12m, 跨周期 walk-forward 崩
+    # 留下 11 个跨周期 walk-forward 真胜出的 preset (v35/v36/v38/v39_03_10/v40×2/
+    # v42/v43/v44/v45/v46)。v44_ratio02_buf07 是 v3 体系工程最优。
     # === 2026-09-21 微调发现（v35）— v34 系列进一步收紧入场信号 ===
     # 4 组对比 (P3+P5+cash gate 修后, 12m):
     #   v35_cons_pctchg_03_08:    n=303 win=46.5% CAGR=+2340% Sharpe=9.28 DD=58.0%
@@ -134,6 +36,22 @@ PRESETS: dict[str, dict] = {
     # 窗口入手改进。下次落 -20ms 触发时, Task #15+ 应聚焦 B/E 信号轴。
     "v35_agg_pctchg_04_09": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
+        # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
+        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        "n_comparisons": 11,
         "tp_pct": 0.06,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -166,6 +84,22 @@ PRESETS: dict[str, dict] = {
     #   实盘部署建议选 v36_d_converge (更安全)。研究/对照用 v34 看理论上限。
     "v36_d_converge": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
+        # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
+        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        "n_comparisons": 11,
         "tp_pct": 0.06,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -174,38 +108,8 @@ PRESETS: dict[str, dict] = {
         "d_mode": "converge_strict",
     },
     # === 2026-09-21 微调发现（v37）— E 流动性窗口拓宽 ===
-    # A 条件参数化后 (Task #19: below_ratio_60 / close_ma60_buffer),
-    # E 流动性窗口 (Task #16: liq_low/liq_high) 微调, 4 组对比 (12m):
-    #   v37_liq_5e7_3e8 (下限 5e7):    n=167 win=41.3% CAGR=+1895% Sharpe=9.59 DD=34.5% ⭐
-    #   v37_liq_3e7_5e8 (上限 5e8) ⭐: n=228 win=41.7% CAGR=+5143% Sharpe=11.12 DD=34.4% ⭐⭐
-    #   v37_ratio_07    (A 严):        n=172 win=40.7% CAGR=+1737% Sharpe=9.70 DD=42.7%
-    #   v37_buf_neg02   (A buffer):    n=181 win=40.3% CAGR=+2025% Sharpe=9.82 DD=42.7%
-    # v37_liq_3e7_5e8 是综合最优 preset — 纳入超大流动性票 (5e8 vs 默认 3e8)
-    # 改善样本质量, DD 从 v36 42.7% 降至 34.4% (-8pp), CAGR +83%, Sharpe +8%,
-    # win% +1.7pp。
-    # A 条件微调 (ratio/buffer) 效果都偏弱 — DD 没改善。
-    # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) ===
-    #   2024-09-12 → 2025-03-12: n= 65 win=15.4% total_yield= +26.07% Sharpe=2.62 DD=72.8% ⚠️
-    #   2025-03-12 → 2025-09-12: n= 84 win=14.3% total_yield= +23.10% Sharpe=2.74 DD=71.6% ⚠️
-    #   2025-09-12 → 2026-03-12: n= 43 win=16.3% total_yield= +27.90% Sharpe=2.47 DD=25.8% ✅
-    #   2026-03-12 → 2026-09-12: n=212 win=42.9% total_yield=+4280.41% Sharpe=10.96 DD=34.4% ✅
-    #   4/4 窗口全为正收益, 但震荡段（前 2 窗）DD 72-73% — 比 v36 (55-57%) 显著恶化。
-    #   震荡段 yield +23-26% vs v36 +20%, 但 DD 恶化 16-17pp — 收益与风险同向放大。
-    #   E 流动性窗口拓宽 (5e8) 在大票反转下更脆弱, 12m 样本看像 34% DD 但跨周期 73%。
-    # === 综合结论: v37 单点优化但跨周期劣于 v36 ===
-    # v37 看似最优 (12m DD 34.4%) 但 walk-forward 揭示震荡段 DD 恶化 — 单点过拟合 12m 样本。
-    # **v36_d_converge 仍是所有 preset 跨周期最稳健** (4 个 6-月窗口最低 yield +19.9%,
-    # 震荡段 DD 55-57% 全程 < 60%)。v37 仅供对照, 实盘部署首选 v36_d_converge。
-    "v37_liq_3e7_5e8": {
-        "universe": "mainboard_only",
-        "tp_pct": 0.06,
-        "sl_pct": 0.0005,
-        "max_hold": 5,
-        "pct_chg_low": 0.03,
-        "pct_chg_high": 0.08,
-        "d_mode": "converge_strict",
-        "liq_high": 5e8,
-    },
+    # v37_liq_3e7_5e8 已删除 (2026-09-22): 单点过拟合 12m, 跨周期 walk-forward 揭示
+    # 震荡段 DD 72-73% (vs v36 55-57%) — E 流动性窗口拓宽到大票更脆弱。
     # === 2026-09-21 微调发现（v38）— A 条件放宽 ===
     # A 条件放宽 4 组对比 (12m, 在 v36 baseline 上):
     #   v38_buf_pos01 (buffer +1%):      n=210 win=40.5% CAGR=+3374% Sharpe=10.62 DD=42.7%
@@ -228,6 +132,22 @@ PRESETS: dict[str, dict] = {
     # 若 DD 极端敏感选 v36_d_converge。
     "v38_a_relaxed": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
+        # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
+        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        "n_comparisons": 11,
         "tp_pct": 0.06,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -246,12 +166,8 @@ PRESETS: dict[str, dict] = {
     # v39_pctchg_04_09 与 v39_pctchg_04_08 几乎一致, 都是 n≈150, DD=28.2% — 双收紧下限.
     # v39_pctchg_03_10 是 12m CAGR 冠军 (+7050%) 但 DD 56.6% 与 v38 持平.
     # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) ===
-    # v39_pctchg_04_09 (DD 最低 28.2% — 单点过拟合):
-    #   2024-09→2025-03: n= 44 win=15.9% yield=+17.3% Sharpe=2.07 DD=45.3%
-    #   2025-03→2025-09: n= 53 win=11.3% yield= +4.0% Sharpe=1.54 DD=44.0% ⚠️
-    #   2025-09→2026-03: n= 41 win=14.6% yield=+17.9% Sharpe=2.13 DD=20.5%
-    #   2026-03→2026-09: n=135 win=43.0% yield=+1475.3% Sharpe=8.85 DD=28.2%
-    #   震荡段最低 yield 仅 +4% — 单点过拟合 12m, 跨周期不工作, 不可投。
+    # v39_pctchg_04_09 已删除 (2026-09-22): 12m DD 28.2% 看似最低, 但 walk-forward
+    # 揭示震荡段最低 yield 仅 +4% — 单点过拟合 12m 样本, 跨周期不工作。
     #
     # v39_pctchg_03_10 (12m CAGR 冠军 — 跨周期真胜出):
     #   2024-09→2025-03: n= 90 win=23.3% yield= +87.6% Sharpe=4.30 DD=74.9%
@@ -266,19 +182,24 @@ PRESETS: dict[str, dict] = {
     # v38_a_relaxed:  稳健高产 (震荡段 yield +25%, DD 62%)
     # v39_pctchg_03_10 ⭐⭐: 跨周期最高 yield (震荡段 +52%, 拉涨段 +5412%)
     # 实盘部署首选 v39_pctchg_03_10 (最高 yield), DD 敏感选 v36_d_converge.
-    "v39_pctchg_04_09": {
-        "universe": "mainboard_only",
-        "tp_pct": 0.06,
-        "sl_pct": 0.0005,
-        "max_hold": 5,
-        "pct_chg_low": 0.04,
-        "pct_chg_high": 0.09,
-        "d_mode": "converge_strict",
-        "below_ratio_60": 0.5,
-        "close_ma60_buffer": 0.02,
-    },
     "v39_pctchg_03_10": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
+        # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
+        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        "n_comparisons": 11,
         "tp_pct": 0.06,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -318,6 +239,22 @@ PRESETS: dict[str, dict] = {
     # v36_d_converge 仍是 DD 极端敏感场景的备选。
     "v40_tp_07": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
+        # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
+        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        "n_comparisons": 11,
         "tp_pct": 0.07,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -329,6 +266,22 @@ PRESETS: dict[str, dict] = {
     },
     "v40_tp_08": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
+        # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
+        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        "n_comparisons": 11,
         "tp_pct": 0.08,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -339,38 +292,9 @@ PRESETS: dict[str, dict] = {
         "close_ma60_buffer": 0.02,
     },
     # === 2026-09-21 微调发现（v41）— v40_tp_08 + pct_chg / mh 微调 ===
-    # 在 v40_tp_08 (TP 8%) 基础上微调, 4 组对比 (12m):
-    #   v41_pctchg_04_10 (下限 4%, 上限 10%): n=164 win=39.6% CAGR=+2815% Sharpe=9.44 DD=35.3% ⭐
-    #   v41_pctchg_03_09 (下限 3%, 上限 9%):  n=265 win=37.0% CAGR=+7449% Sharpe=10.85 DD=48.0%
-    #   v41_mh6         (max_hold 6):         n=278 win=35.6% CAGR=+8946% Sharpe=10.69 DD=56.6%
-    #   v41_mh7         (max_hold 7):         n=277 win=35.4% CAGR=+9199% Sharpe=10.68 DD=56.6%
-    # v41_mh6/mh7 几乎与 v40_tp_08 相同 — TP 拉宽已让所有 trade 在 day 1-2 出场,
-    # max_hold 拉长无效。
-    # v41_pctchg_04_10 12m DD 35.3% (类似 v37 的 n=164), 但配置完全不同 (pct_chg 下限收紧)。
-    # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) — 单点过拟合确认 ===
-    #   2024-09→2025-03: n= 52 win=23.1% yield=+65.74% Sharpe=3.24 DD=57.7%
-    #   2025-03→2025-09: n= 61 win=18.0% yield=+43.89% Sharpe=2.83 DD=57.5%
-    #   2025-09→2026-03: n= 45 win=15.6% yield=+28.55% Sharpe=2.35 DD=19.4%
-    #   2026-03→2026-09: n=148 win=41.9% yield=+2495.61% Sharpe=9.44 DD=35.3%
-    #   4/4 窗口全部 yield 缩水 vs v40_tp_08:
-    #     拉涨段 -64% (6871→2495) ⚠️⚠️
-    #     震荡段 -10% ~ -34%
-    #   DD 改善 3-17pp, 但 yield 损失远超 DD 改善, 单点过拟合 12m 样本。
-    # === 微调方法论教训 (v41 失败案例) ===
-    # pct_chg 下限收紧 (3%→4%) 看似改善 DD, 实则砍掉有效入场信号。
+    # v41_pctchg_04_10 已删除 (2026-09-22): pct_chg 下限收紧 (3%→4%) 看似改善 DD,
+    # 实则砍掉有效入场信号 — 跨周期 yield 缩水 -10%~-64%, 单点过拟合 12m 样本。
     # 与 v37_liq_3e7_5e8 (E 放宽单点过拟合) 同根问题: 单参数 12m 优化不可信。
-    # v40_tp_08 保持 v3 体系最终胜出者位置 — 不动。
-    "v41_pctchg_04_10": {
-        "universe": "mainboard_only",
-        "tp_pct": 0.08,
-        "sl_pct": 0.0005,
-        "max_hold": 5,
-        "pct_chg_low": 0.04,
-        "pct_chg_high": 0.10,
-        "d_mode": "converge_strict",
-        "below_ratio_60": 0.5,
-        "close_ma60_buffer": 0.02,
-    },
     # === 2026-09-21 微调发现（v42）— v40_tp_08 + A 进一步放宽 ===
     # 在 v40_tp_08 (TP 8%) 基础上放宽 A 条件, 4 组对比 (12m):
     #   v42_buf03 (buffer 0.02→0.03):       n=290 win=36.2% CAGR=+10349% Sharpe=10.63 DD=56.6%
@@ -393,6 +317,22 @@ PRESETS: dict[str, dict] = {
     # 备选 v36_d_converge (DD 极端敏感场景).
     "v42_buf05": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
+        # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
+        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        "n_comparisons": 11,
         "tp_pct": 0.08,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -424,6 +364,22 @@ PRESETS: dict[str, dict] = {
     # DD 敏感可退回 v42_buf05 或 v36_d_converge.
     "v43_ratio03": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
+        # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
+        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        "n_comparisons": 11,
         "tp_pct": 0.08,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -443,6 +399,22 @@ PRESETS: dict[str, dict] = {
     # === 2026-09-21 walk-forward 待验证 (Task #33) ===
     "v44_ratio02_buf07": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
+        # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
+        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        "n_comparisons": 11,
         "tp_pct": 0.08,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -475,6 +447,22 @@ PRESETS: dict[str, dict] = {
     # v45_ratio01_buf10 是高 yield 但高 DD 备选 — 仅在 DD 容忍度高时考虑.
     "v45_ratio01_buf10": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
+        # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
+        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        "n_comparisons": 11,
         "tp_pct": 0.08,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -507,6 +495,22 @@ PRESETS: dict[str, dict] = {
     # 实盘部署: v44 仍是首选 (12m CAGR 略高); v46_sl_0002 备选 (震荡段 yield 略高).
     "v46_sl_0002": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
+        # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
+        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        "n_comparisons": 11,
         "tp_pct": 0.08,
         "sl_pct": 0.0002,
         "max_hold": 5,
@@ -517,13 +521,8 @@ PRESETS: dict[str, dict] = {
         "close_ma60_buffer": 0.07,
     },
     # === 2026-09-21 微调发现（v47）— ⚠️⚠️⚠️ 破产触底案例 (现金透支 6 亿) ===
-    # 在 v44 基础上探索 4 组:
-    #   v47_d_strict (D 回退 strict):     n=674 win=33.7% CAGR=+328466% DD=92.6% ⚠️
-    #   v47_pctchg_025 (下限 2.5%):     n=567 win=31.0% CAGR=+101051% DD=78.0%
-    #   v47_ratio02_buf05 (回退 buffer): n=416 win=33.2% CAGR=+33193% DD=64.0%
-    #   v47_tp_10 (TP 8→10%):           n=425 win=30.8% CAGR=+38607% DD=66.0%
-    # ⚠️⚠️⚠️ v47_d_strict 是最危险的发现 — 12m CAGR 历史最高 (+328466%), 但
-    # cash gate 触发时 NAV=-6.22亿, cash 透支 6 亿倍数 — 破产触底.
+    # v47_d_strict_warning 已删除 (2026-09-22): 12m CAGR 历史最高 (+328466%),
+    # 但 cash gate 触发时 NAV=-6.22亿, cash 透支 6 亿倍数 — 破产触底。
     # v36_d_converge / v44 的 d_mode='converge_strict' 必须保持 — 砍掉部分
     # 弱信号是防止 margin call 的关键防线.
     # === v3 体系工程教训 (v47 失败案例) ===
@@ -534,17 +533,6 @@ PRESETS: dict[str, dict] = {
     #   - universe: 仍受限于 'mainboard_only' (HS300 历史成分表未建立)
     #   - cash gate: 真实捕获 v47_d_strict 的破产触底 — 必须保留
     # 实盘部署首选 v44_ratio02_buf07 (跨周期稳健 + DD 仍可控).
-    "v47_d_strict_warning": {
-        "universe": "mainboard_only",
-        "tp_pct": 0.08,
-        "sl_pct": 0.0005,
-        "max_hold": 5,
-        "pct_chg_low": 0.03,
-        "pct_chg_high": 0.10,
-        "d_mode": "strict",
-        "below_ratio_60": 0.2,
-        "close_ma60_buffer": 0.07,
-    },
     # === 2026-09-21 收敛性微调（v48）— 边际探索 ===
     # v3 体系已收敛. v48 系列 4 组边际探索:
     #   v48_pctchg_025 (下限 2.5%):       n=567 CAGR=+101051% DD=78.0%
@@ -553,18 +541,16 @@ PRESETS: dict[str, dict] = {
     #   v48_tp_085 (TP 8→8.5%):           n=425 CAGR= +41628% DD=66.4%
     # ⚠️ 所有 v48 配置 12m 小幅改动 → CAGR 大幅跳变, DD 显著恶化
     # (64% → 78%) — 过拟合信号. v3 体系已完全收敛.
-    # === 17 次迭代工程总结 ===
+    # === 17 次迭代工程总结 (2026-09-22 重组) ===
     # v3 体系工程最优: v44_ratio02_buf07 (跨周期稳健 + DD 可控).
     # 备选: v46_sl_0002 (震荡段略优) / v40_tp_08 (TP 拉宽基线).
-    # 已确认过拟合/破产案例 (6 个):
-    #   v34/v47_d_strict (cash gate 触破产触底)
-    #   v37_liq_3e7_5e8 (E 放宽跨周期崩)
-    #   v41_pctchg_04_10 (pct_chg 下限收紧跨周期崩)
-    #   v35_agg_pctchg_04_09 (信号过少 cash gate 频繁拒单)
-    #   v36_us5_12 (B 连阳极端 12m CAGR 缩水 90%+)
-    # 真正胜出方向 (11 个跨周期):
+    # 真正胜出方向 (11 个跨周期): v35/v36/v38/v39_03_10/v40×2/v42/v43/v44/v45/v46
     #   D 严格收敛 (v36) / A 放宽 ratio+buffer (v38-v45) /
     #   pct_chg 上限放宽 (v39) / TP 拉宽 (v40) / SL 收紧 (v46)
+    # 已删除的破产/过拟合 preset (7 个, 2026-09-22):
+    #   v33_mainboard_tp2_sl05_dneg / v33_mainboard_tp6_sl005_mh5_realistic
+    #   v34_mainboard_pctchg_tight / v37_liq_3e7_5e8 / v39_pctchg_04_09
+    #   v41_pctchg_04_10 / v47_d_strict_warning
     # === 2026-09-21 最终验证（v49）— SL 收紧触底工程极限 ===
     # v49 4 组 SL 收紧 (在 v44 基础上):
     #   v49_sl_00010 (SL 0.0001): n=425 CAGR=+42064% Sharpe=10.09 DD=63.8% TP/SL/T=108/283/34

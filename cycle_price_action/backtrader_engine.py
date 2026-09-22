@@ -4,7 +4,12 @@ Decision flow per bar:
     1.  Compute signal triple (k_line_score, cycle_score, calendar_score).
     2.  fusing → total_score.
     3.  If no position AND total_score ≥ threshold → submit_buy on next bar.
-    4.  If position held ≥ max_hold → submit_sell on next bar + try_exit.
+    4.  If position held → daily-bar V6'' SL-first check (worst-case):
+          - open ≤ sl_p → SL @ open (gap-down)
+          - open ≥ tp_p → TP @ open (gap-up)
+          - low  ≤ sl_p → SL @ sl_p (intraday stop)         — SL-first
+          - high ≥ tp_p → TP @ tp_p (intraday target)
+    5.  Else if position held ≥ max_hold → time exit @ close.
 
 P0–P8 are enforced via no_lookahead helpers + replay_broker.
 """
@@ -14,20 +19,21 @@ import pandas as pd
 
 import backtrader as bt
 
-from circle_price_action.signals import (
+from cycle_price_action.signals import (
     detect_k_patterns,
     entry_signal,
     fuse_scores,
     k_line_score,
 )
-from circle_price_action.cycle import phase_score
-from circle_price_action.time_windows import calendar_score
-from circle_price_action.portfolio import Portfolio
-from circle_price_action.replay_broker import ReplayBroker
-from circle_price_action.no_lookahead import bars_up_to
+from cycle_price_action.cycle import phase_score
+from cycle_price_action.time_windows import calendar_score
+from cycle_price_action.portfolio import Portfolio
+from cycle_price_action.replay_broker import ReplayBroker
+from cycle_price_action.no_lookahead import bars_up_to
+from hiagent_config import get_db_path
 
 
-class CirclePriceActionStrategy(bt.Strategy):
+class CyclePriceActionStrategy(bt.Strategy):
     params = dict(
         threshold=2.0,
         min_dim=1.0,
@@ -35,7 +41,11 @@ class CirclePriceActionStrategy(bt.Strategy):
         atr_period=14,
         atr_sl_mult=1.5,
         tp_pct=0.06,
-        db_path=None,
+        # V6'' (2026-09-22, CLAUDE.md §4): SL fraction applied to entry
+        # price to compute daily-bar stop. Pessimistic default = atr_sl_mult ×
+        # 0.05 = 7.5% stop, conservative for cycle strategy.
+        sl_pct=0.05,
+        db_path=str(get_db_path()),
     )
 
     def __init__(self):
@@ -61,6 +71,32 @@ class CirclePriceActionStrategy(bt.Strategy):
         df = self._bars_as_df()
         bars_until_today = bars_up_to(df, bar["date"])
 
+        # ---- V6'' (2026-09-22, CLAUDE.md §4): Intraday SL-first check ----
+        # If holding a position, evaluate daily-bar worst-case exit BEFORE
+        # computing new signals. This guarantees that an existing position
+        # always gets the most pessimistic exit decision (CLAUDE.md §4 "BOTH
+        # SL and TP breached within the same bar → SL first").
+        if self._portfolio.position is not None and self._entry_day is not None:
+            if bar["date"] > self._entry_day:    # P3: no same-day exit
+                # We must compute SL/TP levels from entry_price × (1 ± pct).
+                # atr_sl_mult × tp_pct approximates the ATR-implied stop width
+                # used elsewhere in the codebase.
+                sl_pct_eff = self.p.sl_pct
+                tp_pct_eff = self.p.tp_pct
+                _, reason = self._portfolio.try_exit_with_intraday_check(
+                    exit_date=bar["date"],
+                    open_price=bar["open"],
+                    high=bar["high"],
+                    low=bar["low"],
+                    close=bar["close"],
+                    tp_pct=tp_pct_eff,
+                    sl_pct=sl_pct_eff,
+                )
+                if reason in ("SL", "TP"):    # exit triggered
+                    self._entry_day = None
+                    return
+                # reason == 'time' → fall through to max_hold check below
+
         kscore = k_line_score(bars_until_today, detect_k_patterns(bars_until_today)).iloc[-1]
         cyc = phase_score(bars_until_today["date"]).iloc[-1]
         cal = calendar_score(bars_until_today["date"]).iloc[-1]
@@ -75,6 +111,9 @@ class CirclePriceActionStrategy(bt.Strategy):
                 bar["close"],
                 bar["date"],
                 {"k_line_score": kscore, "phase_score": cyc, "calendar_score": cal},
+                # R8 (2026-09-21): Volume Participation Limit (CLAUDE.md §4)。
+                # 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION。
+                bar_volume=bar.get("volume"),
             )
             if state is None:
                 return

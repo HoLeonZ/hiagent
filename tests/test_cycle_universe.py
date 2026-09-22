@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from circle_price_action.universe import (
+from cycle_price_action.universe import (
     is_main_board,
     apply_liquidity_filter,
     is_excluded_status,

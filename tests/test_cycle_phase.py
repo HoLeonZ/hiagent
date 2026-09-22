@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from circle_price_action.cycle import phase_score
+from cycle_price_action.cycle import phase_score
 
 
 def test_phase_score_constant_zero_when_length_below_max_period():

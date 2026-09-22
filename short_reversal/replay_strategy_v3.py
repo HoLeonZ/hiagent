@@ -32,6 +32,10 @@ LIQ_HIGH = 3e8
 UP_STREAK_LOW = 3
 UP_STREAK_HIGH = 10
 
+# 防穿仓 (R8, 2026-09-21): Volume Participation Limit (CLAUDE.md §4)。
+# 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION。超出部分丢弃(不挂单)。
+MAX_VOL_PARTICIPATION = 0.10
+
 
 class Phase3V3Strategy(bt.Strategy):
     """事件驱动做空策略。"""
@@ -62,6 +66,16 @@ class Phase3V3Strategy(bt.Strategy):
         initial_capital=1_000_000.0,
         lot_size=100,
         min_cash_ratio=0.05,
+        # V5' (2026-09-22, CLAUDE.md §4): ATR-aware slippage (R5 mirror)。
+        # 当 atr_slip_scale > 0, 在 entry 时 slippage = atr_pct × participation × scale
+        # (做空方向: slippage 上调 entry_price, 即扣更少 sale proceeds = 悲观假设)。
+        # 当 atr_slip_scale = 0, 沿用 R3 默认无 slippage (保持 v33 baseline parity)。
+        atr_slip_scale=0.0,
+        atr_period=14,
+        # V8 (2026-09-22, CLAUDE.md §4): max_volume_participation 与 intraday_tiebreak
+        # 显式声明在 strategy params, preset 可覆盖。
+        max_volume_participation=0.10,
+        intraday_tiebreak="sl_first",
         result_holder=None,
     )
 
@@ -91,6 +105,8 @@ class Phase3V3Strategy(bt.Strategy):
                 "am60": Am60(d, period=60),
                 "up_streak": UpStreak(d),
                 "below_ma60_ratio_60": below_ratio,
+                # V5' (R5): ATR(14) for slippage estimation
+                "atr": bt.indicators.ATR(d, period=self.p.atr_period),
             }
 
         # 持仓/账户状态
@@ -173,10 +189,51 @@ class Phase3V3Strategy(bt.Strategy):
             if code not in self.pending_entries:
                 continue
             entry_price = float(d.open[0])
-            target_value = self.cash * self.p.position_fraction
+            # 防穿仓 (R5, 2026-09-22, CLAUDE.md §4): ATR-aware slippage。
+            # short 仓的 entry_price 是 sell price, slippage 上调 sell price
+            # (即收到的 sale proceeds 减少) —— pessimistic 假设"卖得更贵"。
+            #   slip_eff = max(0, atr_pct × participation × scale)
+            #   entry_price_sold = entry_price × (1 + slip_eff)
+            # 当 atr_slip_scale = 0, 沿用旧行为 (保持 baseline parity)。
+            if self.p.atr_slip_scale > 0:
+                indi = self.indi.get(code, {})
+                atr_indi = indi.get("atr")
+                bar_vol = float(d.volume[0]) if d.volume[0] is not None else 0.0
+                close_v = float(d.close[0])
+                if atr_indi is not None and not np.isnan(float(atr_indi[0])) and close_v > 0:
+                    atr_pct = float(atr_indi[0]) / close_v
+                    # participation 用于 sizing 时已知, 这里用 size_pre_cap 估算
+                    nav_for_budget = self._nav()
+                    target_value = nav_for_budget * self.p.position_fraction
+                    size_pre_cap = int(target_value / entry_price / self.p.lot_size) * self.p.lot_size
+                    if bar_vol > 0:
+                        participation = min(1.0, size_pre_cap / bar_vol)
+                    else:
+                        participation = 0.0
+                    atr_slip = atr_pct * participation * self.p.atr_slip_scale
+                    if atr_slip > 0:
+                        entry_price = entry_price * (1.0 + atr_slip)
+            # 防穿仓 (R4, 2026-09-21): budget base 用 NAV (cash + 持仓浮盈) 而非
+            # 仅 self.cash。前一笔大亏会让 cash 跌至初始资金一小部分, 若仍按
+            # self.cash all-in, 后续每笔名义资金随 cash 缩水 — 这等同于"现金自适应"
+            # sizing, 会让 cash gate 在 cash-only 维度上失守 (NAV 含浮盈可能仍 > 5%
+            # initial)。改用 NAV 后, cash gate 与 sizing 同口径, 防止 NAV 触底 0
+            # 路径上的盲区。
+            nav_for_budget = self._nav()
+            target_value = nav_for_budget * self.p.position_fraction
             size = (
                 int(target_value / entry_price / self.p.lot_size) * self.p.lot_size
             )
+            # 防穿仓 (R8, 2026-09-21): Volume Participation Limit
+            # 单笔最大成交量 = Bar_Volume × max_volume_participation, 超出丢弃。
+            # CLAUDE.md §4 "Max_Fill_Qty = MIN(Order_Qty, Bar_Volume * 0.10)"。
+            bar_vol = float(d.volume[0])
+            if bar_vol > 0:
+                max_fill = int(
+                    bar_vol * self.p.max_volume_participation / self.p.lot_size
+                ) * self.p.lot_size
+                if max_fill > 0 and size > max_fill:
+                    size = max_fill
             if size < self.p.lot_size:
                 self.pending_entries.pop(code, None)
                 continue
@@ -202,15 +259,29 @@ class Phase3V3Strategy(bt.Strategy):
         # (CLAUDE.md P3: exit_date > entry_date, ≥ 1 日历日 / ≥ 1 bar)
         if held < 1:
             return
+        # 防穿仓 (R2, 2026-09-21): NAV-gate 强制 close。
+        # 当 NAV 已跌到 cash_gate_threshold 以下 (cash gate 已拒绝新开仓),
+        # 已持仓继续按 SL/TP/time 退出可能让 NAV 在持仓期内进一步跌穿 0。
+        # 此时强制用 close 平掉所有持仓, 阻止浮亏继续扩大。
+        # 与 chase_up / uptrend_pullback 的 NAV gate 入口 (R1) 同口径:
+        # cash gate 拦 entry, NAV-gate 拦 active close。
+        nav = self._nav()
+        if nav < self.p.initial_capital * self.p.min_cash_ratio:
+            self._close(d, float(d.close[0]), "nav_gate_eod")
+            return
         low, high, close = float(d.low[0]), float(d.high[0]), float(d.close[0])
         open_p = float(d.open[0])
         reason, price = None, None
         # gap-aware：short 仓 TP/SL
-        # CLAUDE.md P5 要求 SL-first：开盘同时穿越 TP/SL 时优先 SL（保 loss cap）。
+        # CLAUDE.md P5 要求 SL-first (self.p.intraday_tiebreak='sl_first'):
+        # 开盘同时穿越 TP/SL 时优先 SL（保 loss cap）。
         # 此实现已对齐 P5；保留 v33 baseline parity 的"gap SL 用 sl_p, gap TP 用 open_p"
         # 由 _run_single_stock_scenario 测试 (test_short_reversal_no_lookahead.py
         # :131/:160) 锁定，不允许 flip 到 open_p（参 presets.py 注释 "SL gap 不放
         # 大单笔损失" 的设计选择）。
+        assert self.p.intraday_tiebreak == "sl_first", (
+            f"short_reversal 必须 'sl_first', got {self.p.intraday_tiebreak}"
+        )
         if open_p >= sl_p:
             reason, price = "SL", sl_p
         elif high >= sl_p:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from circle_price_action.time_windows import calendar_score
+from cycle_price_action.time_windows import calendar_score
 
 
 def test_calendar_score_treats_month_end_with_positive_weight():

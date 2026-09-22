@@ -22,6 +22,23 @@ PRESETS: dict[str, dict] = {
     #   macross_c=True   vol_min=1.2
     "chase_v1_atr_tp4_sl1": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
+        # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
+        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
+        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        "n_comparisons": 10,
         "tp_pct": 0.30,         # fallback
         "sl_pct": 0.05,         # fallback
         "max_hold": 15,
@@ -49,6 +66,23 @@ PRESETS: dict[str, dict] = {
     # ----- v1a: TP 收紧到 mult=3 (期望更高 TP 命中率) -----
     "chase_v1a_atr_tp3_sl1": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
+        # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
+        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
+        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
         "atr_tp_mult": 3.0, "atr_sl_mult": 1.0,
@@ -63,6 +97,23 @@ PRESETS: dict[str, dict] = {
     # ----- v1b: SL 放宽到 mult=1.5 (覆盖更大 gap) -----
     "chase_v1b_atr_tp4_sl15": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
+        # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
+        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
+        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.08,
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
         "atr_tp_mult": 4.0, "atr_sl_mult": 1.5,
@@ -77,6 +128,23 @@ PRESETS: dict[str, dict] = {
     # ----- v1c: max_hold 拉长到 18 (给突破留时间) -----
     "chase_v1c_atr_tp4_sl1_hold18": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
+        # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
+        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
+        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
         "atr_tp_mult": 4.0, "atr_sl_mult": 1.0,
@@ -91,6 +159,23 @@ PRESETS: dict[str, dict] = {
     # ----- v2: 多仓分散 max_positions=3 + equal sizing (追求更高频 + 更稳) -----
     "chase_v2_atr_tp4_sl1_pos3": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
+        # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
+        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
+        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 15, "max_positions": 3, "position_sizing": "equal",
         "atr_tp_mult": 4.0, "atr_sl_mult": 1.0,
@@ -105,6 +190,23 @@ PRESETS: dict[str, dict] = {
     # ----- v3: mom120 收紧到 0.15 (更强中期趋势要求) -----
     "chase_v3_atr_tp4_sl1_mom15": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
+        # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
+        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
+        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
         "atr_tp_mult": 4.0, "atr_sl_mult": 1.0,
@@ -124,6 +226,23 @@ PRESETS: dict[str, dict] = {
     # equal sizing 比 all_in 在多仓场景下更能平滑净值。
     "chase_v5_pos2_equal_atr_tp6_sl15_mh10": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
+        # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
+        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
+        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 10, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -138,6 +257,23 @@ PRESETS: dict[str, dict] = {
     # ----- v6: 3 仓 all_in (CAGR ~245%, 略高 DD) -----
     "chase_v6_pos3_all_in_atr_tp6_sl15_mh15": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
+        # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
+        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
+        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 15, "max_positions": 3, "position_sizing": "all_in",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -152,6 +288,23 @@ PRESETS: dict[str, dict] = {
     # ----- v4: 子信号只保留 A + B (去掉金叉,更高频) -----
     "chase_v4_atr_tp4_sl1_ABonly": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
+        # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
+        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
+        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
         "atr_tp_mult": 4.0, "atr_sl_mult": 1.0,
@@ -170,6 +323,23 @@ PRESETS: dict[str, dict] = {
     # 预期目标窗口 CAGR 仍能维持 200%+(因为目标窗口本身就在强趋势里)。
     "chase_v7_pos2_equal_atr_tp6_sl15_mh10_regime": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
+        # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
+        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
+        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 10, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -196,6 +366,23 @@ PRESETS: dict[str, dict] = {
     # 同时不影响 SL 退出逻辑(SL-TP 比例不变)。
     "chase_v8_pos2_equal_atr_tp6_sl15_mh18": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        # 当前 strategy 仍读 v_daily (单 close = forward-adjusted) 作为信号+执行共用价。
+        # 完整 V3a 落地需: panel 改读 v_daily_dual (含 adj_*/raw_* 列),
+        # 信号用 adj_close, SL/TP+mark-to-market 用 raw_close。
+        # 当前 preset 声明未来切到 dual loader 时使用的字段。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
+        # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
+        # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
+        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
+        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -227,6 +414,15 @@ PRESETS: dict[str, dict] = {
     #   2021-09 → 2022-09 +85.93% (v8 一致)
     "chase_v9_pos2_equal_atr_tp6_sl15_mh18_score12": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): sweep size
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -249,6 +445,15 @@ PRESETS: dict[str, dict] = {
     # 所以 max_hold 仍保持 18 这个 sweet spot。
     "chase_v10_pos2_equal_atr_tp6_sl15_mh18_score16": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): sweep size
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -277,6 +482,15 @@ PRESETS: dict[str, dict] = {
     # 密集但离散的 regime 切换点。
     "chase_v11_pos2_equal_atr_tp6_sl15_mh18_score17": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): sweep size
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -306,6 +520,15 @@ PRESETS: dict[str, dict] = {
     # 而波动率稍高(>= 0.035)的突破才携带真实的动量信息。
     "chase_v12_pos2_equal_atr_tp6_sl15_mh18_score17_atr035": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): sweep size
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -339,6 +562,15 @@ PRESETS: dict[str, dict] = {
     # 收紧 Pareto 改善 5 项指标。max_hold 仍保持 18。
     "chase_v13_pos2_equal_atr_tp6_sl15_mh18_score17_atr035_mom10": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): sweep size
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -367,6 +599,15 @@ PRESETS: dict[str, dict] = {
     # mom120 ≥ 0.11 过滤掉 6 个月涨幅 < 11% 的弱势股,要求更强的中长期动量。
     "chase_v14_pos2_equal_atr_tp6_sl15_mh18_score17_atr035_mom11": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): sweep size
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -388,6 +629,15 @@ PRESETS: dict[str, dict] = {
     # 49% 都是 sub-signal_type='A' 的弱势突破,close < MA60 不足。
     "chase_v15_pos2_equal_atr_tp6_sl15_mh18_score17_atr035_mom11_ma60buf08": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): sweep size
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -410,6 +660,15 @@ PRESETS: dict[str, dict] = {
     # trades.csv SHA256 与 v15 相同。
     "chase_v16_pos2_equal_atr_tp6_sl15_mh18_score17_atr035_mom115_ma60buf08": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): sweep size
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -432,6 +691,15 @@ PRESETS: dict[str, dict] = {
     # 锁定 CAGR / Sharpe / DD / WR / PF 完全不变(73 trades 全部 atr_pct < 8.2%)。
     "chase_v17_pos2_equal_atr_tp6_sl15_mh18_score17_atr035_mom115_ma60buf08_atr082": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): sweep size
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
@@ -456,6 +724,15 @@ PRESETS: dict[str, dict] = {
     # 大幅收益);仅 1.6 处于"够宽给收益 + 不够宽给无谓损失"的甜区。
     "chase_v18_pos2_equal_atr_tp6_sl16_mh18_score17_atr035_mom115_ma60buf08_atr082": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): sweep size
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.6,
@@ -480,6 +757,15 @@ PRESETS: dict[str, dict] = {
     # 注意 sl=1.65/1.72/1.74/1.76/1.78 都因特定 intraday wicks 触发 SL 异常回归。
     "chase_v19_pos2_equal_atr_tp6_sl175_mh18_score17_atr035_mom115_ma60buf08_atr082": {
         "universe": "mainboard_only",
+        # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
+        "intraday_tiebreak": "sl_first",
+        # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
+        "max_volume_participation": 0.10,
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        # V7 (2026-09-22, CLAUDE.md §5): sweep size
+        "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.75,

@@ -1,40 +1,55 @@
 {
   "preset": "chase_v8_pos2_equal_atr_tp6_sl15_mh18",
-  "window": ["2025-09-19", "2026-09-19"],
+  "window": [
+    "2025-09-19",
+    "2026-09-19"
+  ],
   "engine": "simulate",
   "metrics": {
     "trades": 82,
-    "win_rate": 0.390,
-    "total_return": 2.5922,
-    "cagr": 2.6112,
-    "sharpe": 2.32,
-    "max_dd": 0.4258,
+    "win_rate": 0.3902,
+    "total_return": 1.7895,
+    "cagr": 1.8013,
+    "sharpe": 2.39,
+    "max_dd": 0.3333,
     "tp_count": 25,
     "sl_count": 50,
     "time_count": 5,
     "eod_count": 2,
-    "profit_factor": 1.33,
+    "profit_factor": 1.43,
     "avg_net_return": 0.0412,
-    "exposure": 0.966,
-    "final_equity": 3592153.0,
+    "exposure": 0.715,
+    "final_equity": 2789463.962342924,
     "initial_capital": 1000000.0,
     "avg_hold_days": 5.9,
     "max_hold_days": 18
   },
-  "trades_csv_sha256": "531b01f5b718d2fdfeb9ea55316d83e06750fab207c8bdf15ca8dc38c5aa22eb",
+  "trades_csv_sha256": "60c748a1a06eff1f157dd877004e9b37bb6410dc824d6b7e5cdd00f99b931180",
   "trades_csv_rows": 82,
   "trades_csv_cols": [
-    "entry_date", "exit_date", "thscode", "exit_reason",
-    "entry_price", "exit_price", "size", "hold_days",
-    "gross_pnl", "fees", "net_pnl", "net_return", "atr_pct", "sub_signal_type"
+    "entry_date",
+    "exit_date",
+    "thscode",
+    "exit_reason",
+    "entry_price",
+    "exit_price",
+    "size",
+    "hold_days",
+    "gross_pnl",
+    "fees",
+    "net_pnl",
+    "net_return",
+    "atr_pct",
+    "sub_signal_type"
   ],
   "vs_v5": {
-    "v5_cagr": 2.4160,
+    "v5_cagr": 2.416,
     "v5_walkforward_profitable_windows": "2/9",
     "v5_walkforward_mean_return": "-19.36%",
     "v8_cagr": 2.6112,
     "v8_walkforward_profitable_windows": "3/9",
     "v8_walkforward_mean_return": "+30.68%"
   },
-  "note": "v8 = v5 + max_hold 10 → 18.优化目标窗口 CAGR 522%(回到 1y window)+ walkforward 稳定性。"
+  "note": "v8 = v5 + max_hold 10 → 18.优化目标窗口 CAGR 522%(回到 1y window)+ walkforward 稳定性。",
+  "v6_change_note": "V6 (2026-09-22): chase_up/portfolio.py intraday tiebreak flipped TP-first → SL-first per CLAUDE.md §4 worst-case. Some TP exits where intraday low also crossed SL became SL exits. Compare tp_count/sl_count against pre-V6 baseline."
 }

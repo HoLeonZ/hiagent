@@ -1,32 +1,46 @@
 {
   "preset": "chase_v18_pos2_equal_atr_tp6_sl16_mh18_score17_atr035_mom115_ma60buf08_atr082",
-  "window": ["2025-09-19", "2026-09-19"],
+  "window": [
+    "2025-09-19",
+    "2026-09-19"
+  ],
   "engine": "simulate",
   "metrics": {
-    "trades": 72,
-    "win_rate": 0.5,
-    "total_return": 13.1674,
-    "cagr": 13.1674,
-    "sharpe": 4.24,
-    "max_dd": 0.1807,
-    "tp_count": 31,
-    "sl_count": 34,
+    "trades": 71,
+    "win_rate": 0.493,
+    "total_return": 5.7615,
+    "cagr": 5.8151,
+    "sharpe": 3.9,
+    "max_dd": 0.2111,
+    "tp_count": 30,
+    "sl_count": 35,
     "time_count": 5,
-    "eod_count": 2,
-    "profit_factor": 1.94,
-    "avg_net_return": 0.0856,
-    "exposure": 0.85,
-    "final_equity": 14167417.0,
+    "eod_count": 1,
+    "profit_factor": 2.08,
+    "avg_net_return": 0.0835,
+    "exposure": 0.629,
+    "final_equity": 6761503.971393934,
     "initial_capital": 1000000.0,
-    "avg_hold_days": 5.7,
+    "avg_hold_days": 6.0,
     "max_hold_days": 18
   },
-  "trades_csv_sha256": "9356ae4b7a80688804982600a648eec43bf9a7c978b9d11fb3c6634297184637",
-  "trades_csv_rows": 72,
+  "trades_csv_sha256": "02a141e434f8c6442774f7ad3ee68db345d9b3096d3e6299783dffab83fa365e",
+  "trades_csv_rows": 71,
   "trades_csv_cols": [
-    "entry_date", "exit_date", "thscode", "exit_reason",
-    "entry_price", "exit_price", "size", "hold_days",
-    "gross_pnl", "fees", "net_pnl", "net_return", "atr_pct", "sub_signal_type"
+    "entry_date",
+    "exit_date",
+    "thscode",
+    "exit_reason",
+    "entry_price",
+    "exit_price",
+    "size",
+    "hold_days",
+    "gross_pnl",
+    "fees",
+    "net_pnl",
+    "net_return",
+    "atr_pct",
+    "sub_signal_type"
   ],
   "vs_v17": {
     "v17_cagr": 12.8501,
@@ -38,5 +52,6 @@
     "worst": "-79.58%",
     "profitable_windows": "3/9"
   },
-  "note": "v18 = v17 + atr_sl_mult 1.5 → 1.6(微调 ATR-based SL 乘数)。Pareto 双改善:locked CAGR +1285% → +1317% (+32pp),Sharpe 4.18→4.24,WR 49.3%→50.0%,PF 1.93→1.94,DD 持平 18.07%;walkforward mean +116.94% → +154.37%(+37pp),worst -79.08% → -79.58%(持平,0.5pp 噪声),3/9 盈利不变。参数扫描发现 1.5→1.6 是甜区:1.5x 已触底(再低也是 SL),1.55x 反而因 SL 触发收紧破坏 locked(73→68 trades, +705%),1.6x 给出 1 天额外喘息让盈利不被擦掉。trades 73→72(1 trade 被略宽 SL 救回变赢家),hash 已更新。"
+  "note": "v18 = v17 + atr_sl_mult 1.5 → 1.6(微调 ATR-based SL 乘数)。Pareto 双改善:locked CAGR +1285% → +1317% (+32pp),Sharpe 4.18→4.24,WR 49.3%→50.0%,PF 1.93→1.94,DD 持平 18.07%;walkforward mean +116.94% → +154.37%(+37pp),worst -79.08% → -79.58%(持平,0.5pp 噪声),3/9 盈利不变。参数扫描发现 1.5→1.6 是甜区:1.5x 已触底(再低也是 SL),1.55x 反而因 SL 触发收紧破坏 locked(73→68 trades, +705%),1.6x 给出 1 天额外喘息让盈利不被擦掉。trades 73→72(1 trade 被略宽 SL 救回变赢家),hash 已更新。",
+  "v6_change_note": "V6 (2026-09-22): chase_up/portfolio.py intraday tiebreak flipped TP-first → SL-first per CLAUDE.md §4 worst-case. Some TP exits where intraday low also crossed SL became SL exits. Compare tp_count/sl_count against pre-V6 baseline."
 }

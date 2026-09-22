@@ -31,27 +31,55 @@ TRADE_COLS = [
 # A 股主板涨跌停 10%；开盘涨幅超过该阈值视为无法买入
 LIMIT_UP_THRESHOLD = 0.098
 
+# 防穿仓 (R8, 2026-09-21): Volume Participation Limit (CLAUDE.md §4)。
+# 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION。超出部分丢弃(不挂单)。
+MAX_VOL_PARTICIPATION = 0.10
+
+# 防穿仓 (R1, 2026-09-21): NAV-floor cash gate 阈值。
+# 与 short_reversal/replay_strategy_v3.py:64 (min_cash_ratio=0.05) 口径一致。
+NAV_GATE_RATIO = 0.05
+
+# 同一天内 NAV gate 触发只打一次 warning
+_nav_gate_logged_dates: set = set()
+
 
 def _empty_trades() -> pd.DataFrame:
     return pd.DataFrame(columns=TRADE_COLS)
 
 
 def _build_index(panel: pd.DataFrame) -> dict[str, dict]:
-    """按 thscode 建立 numpy 数组索引，便于 O(log n) 定位日期。"""
+    """按 thscode 建立 numpy 数组索引，便于 O(log n) 定位日期。
+
+    V3a (2026-09-22, CLAUDE.md §3): 当 panel 含 raw_* 列 (来自 v_daily_qfq +
+    raw_kline_daily LEFT JOIN), 把 raw_open/raw_high/raw_low/raw_close 也注入
+    index。portfolio 在 price_source_for_execution="raw_close" 时切换 SL/TP
+    触发价格到 raw_* 列。raw_* 缺失时 (LEFT JOIN miss, NaN) 自动回退到 adj 列,
+    不破 baseline parity。
+    """
     idx: dict[str, dict] = {}
+    has_raw = "raw_close" in panel.columns
     for code, sub in panel.groupby("thscode", sort=False):
         closes = sub["close"].to_numpy(dtype=float)
         prev_closes = np.empty_like(closes)
         prev_closes[0] = np.nan
         prev_closes[1:] = closes[:-1]
-        idx[code] = {
+        entry: dict = {
             "dates": sub["date"].to_numpy(),
             "open": sub["open"].to_numpy(dtype=float),
             "high": sub["high"].to_numpy(dtype=float),
             "low": sub["low"].to_numpy(dtype=float),
             "close": closes,
             "prev_close": prev_closes,
+            # R8 (2026-09-21): Volume Participation Limit 需要每根 bar 的成交量
+            "volume": sub["volume"].to_numpy(dtype=float) if "volume" in sub.columns else np.full(len(sub), np.nan),
         }
+        if has_raw:
+            entry["raw_open"] = sub["raw_open"].to_numpy(dtype=float) if "raw_open" in sub.columns else np.full(len(sub), np.nan)
+            entry["raw_high"] = sub["raw_high"].to_numpy(dtype=float) if "raw_high" in sub.columns else np.full(len(sub), np.nan)
+            entry["raw_low"] = sub["raw_low"].to_numpy(dtype=float) if "raw_low" in sub.columns else np.full(len(sub), np.nan)
+            entry["raw_close"] = sub["raw_close"].to_numpy(dtype=float) if "raw_close" in sub.columns else np.full(len(sub), np.nan)
+            entry["raw_prev_close"] = sub["raw_prev_close"].to_numpy(dtype=float) if "raw_prev_close" in sub.columns else np.full(len(sub), np.nan)
+        idx[code] = entry
     return idx
 
 
@@ -79,12 +107,25 @@ def simulate_portfolio(
     stamp_duty_rate: float = 0.0005,
     min_commission: float = 5.0,
     slippage: float = 0.0,
+    # R5 (2026-09-21): ATR-aware slippage (CLAUDE.md §4)。
+    # 若 atr_slip_scale > 0, slippage 改为 signal-day atr_pct × participation × scale。
+    atr_slip_scale: float = 0.0,
     atr_tp_mult: float | None = None,
     atr_sl_mult: float | None = None,
     atr_pct_floor: float = 0.01,
     atr_pct_cap: float = 0.08,
     position_sizing: str = "equal",
+    # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System execution source。
+    # "raw_close" → SL/TP 触发用 raw_high/raw_low/raw_close (除权日 raw > adj,
+    # 实际止损触发价更高, 这是真实的 physical market event)。
+    # "adj_close" (或 legacy 默认) → 用 adj high/low/close, 保持旧行为。
+    price_source_for_execution: str = "adj_close",
     kelly_fraction: float | None = None,
+    # V8 (2026-09-22, CLAUDE.md §4): preset→strategy explicit plumbing。
+    # intraday_tiebreak='sl_first': 同 bar SL+TP 双触发时, 假设 SL 命中 (Pessimistic)。
+    # max_volume_participation=0.10: Bar_Volume × 0.10 volume cap。
+    intraday_tiebreak: str = "sl_first",
+    max_volume_participation: float = 0.10,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """逐日模拟组合，返回 (trades_df, equity_df)。
 
@@ -202,7 +243,24 @@ def simulate_portfolio(
             h = pi["high"][j]
             lo = pi["low"][j]
             c = pi["close"][j]
+            # V3a (2026-09-22, CLAUDE.md §3): 当 preset 声明 raw_close 作为
+            # execution source 且 panel 含 raw_* 列, 用 raw 价格判 SL/TP。
+            # raw_* 缺失 (NaN, LEFT JOIN miss) → 回退到 adj high/low/close,
+            # 保持 baseline parity。
+            if price_source_for_execution == "raw_close" and "raw_close" in pi:
+                r_o = pi["raw_open"][j]
+                r_h = pi["raw_high"][j]
+                r_lo = pi["raw_low"][j]
+                r_c = pi["raw_close"][j]
+                if not np.isnan(r_o) and not np.isnan(r_h) and not np.isnan(r_lo) and not np.isnan(r_c):
+                    o, h, lo, c = r_o, r_h, r_lo, r_c
             tp_p, sl_p = pos["tp"], pos["sl"]
+            # V8 (2026-09-22, CLAUDE.md §4): 验证 intraday_tiebreak 声明。
+            if intraday_tiebreak != "sl_first":
+                raise ValueError(
+                    f"intraday_tiebreak must be 'sl_first' (CLAUDE.md §4), "
+                    f"got {intraday_tiebreak!r}"
+                )
 
             if o <= sl_p:
                 px, reason = o, "SL"
@@ -224,18 +282,41 @@ def simulate_portfolio(
         if t > 0 and t < last_t:
             candidates = sigs_by_day.get(cal[t - 1], [])
             if candidates:
-                holdings_val = 0.0
+                # 防穿仓 (R1, 2026-09-21): NAV-floor cash gate。
+                # 若 NAV (cash + 持仓 mark-to-market 浮盈) 跌到 initial_capital ×
+                # NAV_GATE_RATIO 以下, 拒绝新开仓 — 已持仓仍按 SL/TP/time exit 正常执行。
+                # 与 short_reversal/replay_strategy_v3.py:160-170 口径一致, 防止多仓
+                # 策略在反复 gap-down 击穿 SL 后继续 all-in 累积亏损直到穿仓 0。
+                holdings_val_for_gate = 0.0
                 for code, pos in positions.items():
                     j = _row_at(pidx[code], day)
                     px = pidx[code]["close"][j] if j is not None else pos["entry_price"]
-                    holdings_val += pos["size"] * px
-                equity_now = cash + holdings_val
+                    holdings_val_for_gate += pos["size"] * px
+                nav_now = cash + holdings_val_for_gate
+                if nav_now < initial_capital * NAV_GATE_RATIO:
+                    if day not in _nav_gate_logged_dates:
+                        logger.warning(
+                            "[nav-gate] NAV=%.2f < threshold=%.2f, 拒绝 %d 个 pending entries",
+                            nav_now,
+                            initial_capital * NAV_GATE_RATIO,
+                            len(candidates),
+                        )
+                        _nav_gate_logged_dates.add(day)
+                    continue
+                # 防穿仓 (R7, 2026-09-21): 只用 cash (实有资金), 不用 cash + holdings_val
+                # 含未实现浮盈做 budget 会让多仓策略在持仓浮盈期隐式加杠杆 — 一旦浮盈回吐
+                # 等价于用未变现利润继续 all-in, 单次回撤即可击穿 0。
+                # 此修复与 chase_up/portfolio.py:239 (commit 3845380) 口径一致:
+                # 仅以 cash_only = max(cash, 0) 为 budget base。
+                cash_only = float(cash)
+                if cash_only <= 0:
+                    continue
                 if position_sizing == "equal":
-                    slot_value = equity_now / max_positions
+                    slot_value = cash_only / max_positions
                 elif position_sizing == "all_in":
-                    slot_value = equity_now
+                    slot_value = cash_only
                 else:  # kelly
-                    slot_value = equity_now * kelly_fraction
+                    slot_value = cash_only * kelly_fraction
 
                 for code in candidates:
                     if len(positions) >= max_positions:
@@ -251,6 +332,14 @@ def simulate_portfolio(
 
                     o = pi["open"][j]
                     pc = pi["prev_close"][j]
+                    # V3a (2026-09-22, CLAUDE.md §3): 当 raw_close 是 execution
+                    # source 且 raw_open 存在, 用 raw_open 作为 entry fill 价。
+                    # raw 缺失 → 回退到 adj open, baseline parity 保留。
+                    if price_source_for_execution == "raw_close" and "raw_open" in pi:
+                        r_o_entry = pi["raw_open"][j]
+                        r_pc_entry = pi["raw_prev_close"][j]
+                        if not np.isnan(r_o_entry) and not np.isnan(r_pc_entry) and r_pc_entry > 0:
+                            o, pc = r_o_entry, r_pc_entry
                     # 涨停开盘视为无法买入
                     if not np.isnan(pc) and pc > 0 and (o / pc - 1) >= LIMIT_UP_THRESHOLD:
                         continue
@@ -261,6 +350,37 @@ def simulate_portfolio(
 
                     budget = min(slot_value, cash)
                     size = int(budget / entry_px / 100) * 100
+                    if size < 100:
+                        continue
+                    # 防穿仓 (R8, 2026-09-21): Volume Participation Limit
+                    # 单笔最大成交量 = Bar_Volume × max_volume_participation, 超出丢弃。
+                    # 这是 CLAUDE.md §4 "Max_Fill_Qty = MIN(Order_Qty, Bar_Volume * 0.10)"
+                    # 防止大单砸穿市场、产生 slippage / market impact。
+                    # V8 (2026-09-22): 改为参数化 (从 preset 显式传入, 默认 0.10)。
+                    bar_vol = pi["volume"][j]
+                    size_pre_cap = size
+                    if not np.isnan(bar_vol) and bar_vol > 0:
+                        max_fill = int(bar_vol * max_volume_participation // 100) * 100
+                        if max_fill > 0 and size > max_fill:
+                            size = max_fill
+                    # R5 (2026-09-21): ATR-aware slippage (CLAUDE.md §4)。
+                    # participation = size_pre_cap / bar_vol, slip = atr × part × scale。
+                    if atr_slip_scale > 0:
+                        atr_slip_lookup = atr_lookup.get((cal[t - 1], code))
+                        if (atr_slip_lookup is None or np.isnan(atr_slip_lookup)) and "atr_pct" in ent.columns:
+                            ent_match = ent[(ent["date"] == cal[t - 1]) & (ent["thscode"] == code)]
+                            if not ent_match.empty:
+                                atr_slip_lookup = float(ent_match.iloc[0]["atr_pct"])
+                        if atr_slip_lookup is not None and not np.isnan(atr_slip_lookup):
+                            if not np.isnan(bar_vol) and bar_vol > 0:
+                                participation = min(1.0, size_pre_cap / bar_vol)
+                            else:
+                                participation = 0.0
+                            atr_slip = atr_slip_lookup * participation * atr_slip_scale
+                            if atr_slip > slippage:
+                                entry_px = float(o) * (1 + atr_slip)
+                                if entry_px <= 0:
+                                    continue
                     if size < 100:
                         continue
                     notional = size * entry_px

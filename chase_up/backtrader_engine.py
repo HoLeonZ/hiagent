@@ -149,6 +149,11 @@ def run_backtrader_backtest(
         atr_tp_mult=atr_tp, atr_sl_mult=atr_sl,
         position_sizing=p.get("position_sizing", "equal"),
         kelly_fraction=p.get("kelly_fraction"),
+        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System execution source。
+        price_source_for_execution=p.get("price_source_for_execution", "adj_close"),
+        # V8 (2026-09-22, CLAUDE.md §4): preset→strategy explicit plumbing。
+        intraday_tiebreak=p.get("intraday_tiebreak", "sl_first"),
+        max_volume_participation=p.get("max_volume_participation", 0.10),
     )
 
     if not verify or trades_p1.empty:
@@ -226,10 +231,47 @@ def run_backtrader_backtest(
         equity_delta += net_pnl_bt - float(t["net_pnl"])
 
     trades_p2 = pd.DataFrame(new_rows, columns=TRADE_COLS) if new_rows else trades_p1.iloc[:0].copy()
-    if equity is not None and equity_delta != 0.0:
+    # 修正 Bug B:旧实现把 equity_delta 均匀加到 equity_p1 每一行(含 row 0),
+    # 会让 phase-2 day0 cash = initial_capital + total_delta (= 错误起始现金),
+    # 并把 peak 拉低,让 max_dd 虚高。
+    # 正确做法:把每笔 phase-2 修正 (p2_pnl - p1_pnl) 在该笔实际 exit_date
+    # 起向前填充。day0 cash = initial_capital 不变。
+    if equity is not None and equity_delta != 0.0 and len(equity_p1) > 0 and len(trades_p2) > 0:
         equity_p2 = equity_p1.copy()
-        equity_p2["equity"] = equity_p2["equity"] + equity_delta
-        equity_p2["cash"] = equity_p2["cash"] + equity_delta
+        # 收集每笔 (exit_date, cumulative_delta),按日期累计
+        deltas_by_exit: dict[pd.Timestamp, float] = {}
+        cumulative = 0.0
+        # 按 phase-1 顺序遍历 trades_p1,与上一步累加逻辑一致
+        p1_pnl_map = trades_p1.set_index(
+            [trades_p1["thscode"], trades_p1["entry_date"]]
+        )["net_pnl"].to_dict()
+        for row in new_rows:
+            key = (row["thscode"], row["entry_date"])
+            p1_pnl = float(p1_pnl_map.get(key, 0.0))
+            cumulative += float(row["net_pnl"]) - p1_pnl
+            ed = pd.Timestamp(row["exit_date"])
+            deltas_by_exit[ed] = deltas_by_exit.get(ed, 0.0) + cumulative
+        # 把累计 delta 按 exit_date 前向填充到 cash / equity
+        running_delta = 0.0
+        delta_events = sorted(deltas_by_exit.items())
+        event_iter = iter(delta_events)
+        next_event = next(event_iter, None)
+        cash_arr = equity_p2["cash"].to_numpy(dtype=float).copy()
+        eq_arr = equity_p2["equity"].to_numpy(dtype=float).copy()
+        for i, d in enumerate(equity_p2["date"].tolist()):
+            d_ts = pd.Timestamp(d)
+            while next_event is not None and d_ts >= next_event[0]:
+                running_delta = next_event[1]
+                try:
+                    next_event = next(event_iter)
+                except StopIteration:
+                    next_event = None
+            if running_delta != 0.0:
+                cash_arr[i] = cash_arr[i] + running_delta
+                eq_arr[i] = eq_arr[i] + running_delta
+        equity_p2 = equity_p2.copy()
+        equity_p2["cash"] = cash_arr
+        equity_p2["equity"] = eq_arr
     else:
         equity_p2 = equity_p1
 
