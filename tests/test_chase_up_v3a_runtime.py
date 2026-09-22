@@ -133,3 +133,44 @@ def test_raw_close_falls_back_to_adj_when_raw_missing():
     )
     assert len(trades) == 1
     assert trades.iloc[0]["entry_price"] == pytest.approx(10.0)
+
+
+def test_raw_close_uses_raw_open_even_when_raw_prev_close_nan():
+    """V3a+ regression (CLAUDE.md §3): entry fill must use raw_open even when
+    raw_prev_close is NaN (real DuckDB panel reality: raw_kline_daily.prev_close
+    is NULL upstream, LEFT JOIN yields NaN, prev V3a guard rejected override).
+
+    Per §3, entry fill is a cash mark-to-market operation and MUST use raw.
+    prev_close is only used for LIMIT_UP noise filter and can fall back to adj.
+    """
+    n = 60
+    dates = pd.date_range("2025-01-01", periods=n, freq="B")
+    rows = []
+    for i, d in enumerate(dates):
+        is_post_div = i >= 30
+        rows.append({
+            "thscode": "TEST.SH",
+            "date": d,
+            "open": 10.0, "high": 10.5, "low": 9.5, "close": 10.0,
+            "volume": 1e6, "amount": 1e7,
+            "raw_open": 8.0 if is_post_div else 10.0,
+            "raw_high": 8.5 if is_post_div else 10.5,
+            "raw_low": 7.5 if is_post_div else 9.5,
+            "raw_close": 8.0 if is_post_div else 10.0,
+            "raw_prev_close": np.nan,  # upstream NULL — real panel reality
+        })
+    panel = pd.DataFrame(rows)
+    entries = _build_entries(panel, signal_bar=29)
+    trades, _ = simulate_portfolio(
+        entries, panel,
+        tp_pct=0.10, sl_pct=0.05, max_hold=10, max_positions=1,
+        start_date=panel.iloc[0]["date"].strftime("%Y-%m-%d"),
+        end_date=panel.iloc[-1]["date"].strftime("%Y-%m-%d"),
+        initial_capital=100_000.0,
+        position_sizing="all_in",
+        commission_rate=0.0, stamp_duty_rate=0.0, min_commission=0.0,
+        price_source_for_execution="raw_close",
+    )
+    assert len(trades) == 1
+    # Entry fill MUST use raw_open (8.0), NOT adj_open (10.0)
+    assert trades.iloc[0]["entry_price"] == pytest.approx(8.0)

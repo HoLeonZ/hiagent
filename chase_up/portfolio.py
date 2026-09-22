@@ -342,14 +342,19 @@ def simulate_portfolio(
 
                     o = pi["open"][j]
                     pc = pi["prev_close"][j]
-                    # V3a (2026-09-22, CLAUDE.md §3): 当 raw_close 是 execution
-                    # source 且 raw_open 存在, 用 raw_open 作为 entry fill 价。
-                    # raw 缺失 → 回退到 adj open, baseline parity 保留。
+                    # V3a+ (2026-09-22, CLAUDE.md §3): entry fill 用 raw_open。
+                    # 守卫拆解:
+                    #   - entry fill: 仅需 raw_open 非 NaN (panel 实测 raw_prev_close 全 NaN)
+                    #   - LIMIT_UP 守卫: prev_close 缺失时回退到 adj prev_close (best-effort)
                     if price_source_for_execution == "raw_close" and "raw_open" in pi:
                         r_o_entry = pi["raw_open"][j]
+                        if not np.isnan(r_o_entry):
+                            o = r_o_entry
+                    # LIMIT_UP 守卫: pc 优先用 raw, NaN 时回退 adj prev_close
+                    if price_source_for_execution == "raw_close" and "raw_prev_close" in pi:
                         r_pc_entry = pi["raw_prev_close"][j]
-                        if not np.isnan(r_o_entry) and not np.isnan(r_pc_entry) and r_pc_entry > 0:
-                            o, pc = r_o_entry, r_pc_entry
+                        if not np.isnan(r_pc_entry) and r_pc_entry > 0:
+                            pc = r_pc_entry
                     # 涨停开盘视为无法买入
                     if not np.isnan(pc) and pc > 0 and (o / pc - 1) >= LIMIT_UP_THRESHOLD:
                         continue

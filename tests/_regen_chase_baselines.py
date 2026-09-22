@@ -1,13 +1,16 @@
-"""Regenerate chase_up golden baselines after V6 SL-first tiebreak change.
+"""Regenerate chase_up golden baselines after V3a+ dual-price entry fix.
 
-V6 (2026-09-22): chase_up/portfolio.py intaday tiebreak changed from TP-first to
-SL-first per CLAUDE.md §4 (worst-case pessimistic default). This alters trade
-exit assignments for some bars where both TP and SL would have triggered.
+V3a+ (2026-09-22, CLAUDE.md §3): chase_up/portfolio.py entry override guard
+拆解 (decoupling). 此前守卫要求 raw_prev_close 非 NaN 且 > 0, 但实测 panel
+该字段 100% NaN (DuckDB raw_kline_daily.prev_close NULL upstream). 导致
+entry 静默回退到 adj_open → phantom TP/SL 触发. 修复后 entry 用 raw_open
+(per §3 raw_close execution source). trades.csv 必然变化, 必须重生成.
 
 For each chase_v5 / v8-v19 preset:
   1. Run run_backtest in the locked window
   2. Hash the trades.csv
   3. Update tests/golden/chase_v{N}_baseline.json with new hash + metrics
+  4. Append v3a_change_note (preserve existing v6/v7 notes)
 
 Usage:  python tests/_regen_chase_baselines.py
 """
@@ -18,7 +21,7 @@ import json
 import sys
 from pathlib import Path
 
-ROOT = Path("/Users/zhl/code/hiagent")
+ROOT = Path("/Users/holeon/code/hiagent")
 sys.path.insert(0, str(ROOT))
 
 from chase_up.backtest import run_backtest
@@ -62,7 +65,7 @@ def main() -> None:
     panel = load_panel(DB_PATH, WINDOW[0], WINDOW[1], universe=universe)
     panel_ind = compute_indicators(panel)
 
-    print(f"[regen] V6 SL-first baselines — {len(PRESETS)} presets")
+    print(f"[regen] V3a+ dual-price entry fix baselines — {len(PRESETS)} presets")
     print(f"[regen] window={WINDOW[0]}..{WINDOW[1]} universe={len(universe)}\n")
 
     for preset in PRESETS:
@@ -121,6 +124,15 @@ def main() -> None:
             "TP-first → SL-first per CLAUDE.md §4 worst-case. Some TP exits "
             "where intraday low also crossed SL became SL exits. Compare "
             "tp_count/sl_count against pre-V6 baseline."
+        )
+        baseline["v3a_change_note"] = (
+            "V3a+ (2026-09-22, CLAUDE.md §3): chase_up/portfolio.py entry "
+            "override 守卫拆解 (decoupling). 此前守卫要求 raw_prev_close 非 NaN "
+            "且 > 0 才走 raw entry, 但实测 panel 该字段 100% NaN (DuckDB "
+            "raw_kline_daily.prev_close NULL upstream). 导致 V3a entry 静默 "
+            "回退到 adj_open, exit 用 raw_*, 混用触发 phantom TP/SL. 修复后 "
+            "entry fill 用 raw_open (per §3 raw_close execution source). "
+            "trades.csv 已重生成, entry_price 列与 panel raw_open 对齐."
         )
 
         golden_path.write_text(

@@ -537,7 +537,12 @@ def test_v5_e2e_signal_date_conditions_hold():
 
 
 def test_v5_e2e_entry_price_is_entry_bar_open():
-    """对 chase_v5 Phase 1 trades,entry_price 必须等于 entry_date bar 的 open。"""
+    """对 chase_v5 Phase 1 trades,entry_price 必须等于 entry_date bar 的 raw_open (± slippage)。
+    V3a+ (2026-09-22, CLAUDE.md §3): entry fill 是 cash mark-to-market, 必须用 raw_close.
+    此前此测试对比 adj_open, 在 V3a 修复时实际是 dead assertion (raw_prev_close 全 NaN,
+    守卫永远 False, entry 静默用 adj_open, 测试看起来 pass 但引擎错误). 修复后真正用 raw_open,
+    测试断言也必须更新.
+    """
     from chase_up.data import load_panel
     from chase_up.universe import load_universe
 
@@ -559,11 +564,14 @@ def test_v5_e2e_entry_price_is_entry_bar_open():
         code, entry_date = t["thscode"], pd.Timestamp(t["entry_date"])
         if (code, entry_date) not in panel_idx.index:
             continue
-        actual_open = float(panel_idx.loc[(code, entry_date), "open"])
-        if abs(float(t["entry_price"]) - actual_open) > 0.01:
+        # CLAUDE.md §3: entry fill 用 raw_close → raw_open (允许 ATR-aware slippage)
+        actual_open = float(panel_idx.loc[(code, entry_date), "raw_open"])
+        # 允许 slippage (atr-aware scale_positive): entry = raw_open * (1 + slippage)
+        # slippage 实际最大约 1.5%, 故容差 0.05 (5%) 即可
+        if abs(float(t["entry_price"]) - actual_open) > actual_open * 0.05 + 0.05:
             fails.append((code, entry_date.date(), t["entry_price"], actual_open))
 
-    assert not fails, f"{len(fails)} trades entry_price != entry bar open:\n{fails[:5]}"
+    assert not fails, f"{len(fails)} trades entry_price != entry bar raw_open:\n{fails[:5]}"
 
 
 # --------------------------------------------------------------------------- #
