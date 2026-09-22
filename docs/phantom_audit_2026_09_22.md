@@ -203,6 +203,17 @@ CLAUDE.md §3 铁律达成: 4 engine 共用 core.dual_price, phantom 防护结�
 | **§1 Temporal banned patterns** | 0 hits | `.bfill() / .shift(-N) / rolling(center=True) / .ffill()` 全无 |
 | **实际 production 影响** | 0 / 350 non-gap tests fail | gap tests 锁定已知问题, 不影响 production |
 
+### 子测试套件维度审计 (2026-09-23 audit tick)
+
+| 子套件 | tests | 状态 | 覆盖维度 |
+|--------|------|------|----------|
+| `test_backtest_data_integrity.py` | 5 | ✓ | §3 Dual-Price 5-layer framework (raw_prev_close coverage / entry_uses_raw_open / no_phantom_tp / per_trade_math_closure / cash_walk_conservation) |
+| `test_chase_up_no_lookahead.py` + `test_uptrend_pullback_no_lookahead.py` + `test_cycle_no_lookahead.py` + `test_cycle_price_action_no_lookahead.py` | 77 | ✓ | §1 Temporal / §3 PIT Mandate / 数据无未来函数 |
+| `test_dual_price.py` + `test_dual_price_cross_engine.py` + `test_dna_data_dual_price.py` + `test_dna_data_dual_price_resolver.py` | 65 | ✓ | §3 Dual-Price raw/adj 隔离, cross-engine 一致性 |
+| `test_core_walkforward.py` + `test_sweep_scripts_dsr.py` + `test_dna_stats_deflated.py` + `test_dna_stats_walkforward_report.py` | 38 | ✓ | §5 WFV 基类 + §5 DSR Penalty Metrics |
+| `test_chase_up_v3a_runtime.py` + `test_uptrend_pullback_v3a_runtime.py` + `test_short_reversal_v3a_runtime.py` + `test_cycle_price_action_slippage_atr.py` + `test_chase_up_backtrader_engine_dual_price.py` + `test_cycle_replay_broker.py` + `test_cycle_price_action_layout_c_invariants.py` | 39 | ✓ | §3 + §4 runtime invariants |
+| **子套件合计** | **224** | **✓** | §1 §3 §4 §5 全维度覆盖 |
+
 ### Trade-level phantom audit — 真实证据 (本 tick 重跑验证)
 
 | engine | presets 总数 | 有 trades.csv | 审计方法 | phantom ratio |
