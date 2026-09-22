@@ -157,6 +157,7 @@ CLAUDE.md §3 铁律达成: 4 engine 共用 core.dual_price, phantom 防护结�
 | §3 Dual-Price (raw for execution) | ✓ Layout A (22 csv trade-level audit) | ✓ Layout A (2 csv trade-level audit) | ✓ Layout B (6 csv direction-violation test) | ✓ Layout C (11 invariant test, code-level) |
 | §4 Volume cap (Bar_Volume × 0.10) | ✓ all 22 presets | ✓ 2 presets | n/a (event-driven) | ✓ R8 MAX_VOL_PARTICIPATION = 0.10 |
 | §4 SL-first tiebreak | ✓ all 22 presets | ✓ 2 presets | n/a | ✓ try_exit_with_intraday_check |
+| §4 ATR-aware slippage | ✓ R5 atr_slip_scale | ✓ R5 atr_slip_scale | ✓ V5' atr_slip_scale | **✗ flat-rate 5bps (replay_broker.py:62)** — `tests/test_cycle_price_action_slippage_atr.py` RED 3/3 |
 | §5 Walk-Forward Validation | ✓ `from core.walkforward import monthly_windows` | ✓ `from core.walkforward import (monthly, yearly)` | ✓ wf_v3*_focused.py (inline windows, 12 presets) | ✓ `from core.walkforward import walkforward_windows` |
 | §6 三层分离 (control/strategy/broker) | ✓ | ✓ | ✓ | ✓ |
 
@@ -260,11 +261,17 @@ Layout C 是单价格域, 结构性 phantom-free。trade-level 审计需要先�
    yearly_windows), 3 engine (chase_up + uptrend_pullback + cycle_price_action) 全部 re-export.
    diff: -93 net lines (119 deletions, 26 insertions). 12 pytest 契约测试锁定共用契约.
    short_reversal 用 wf_v3*_focused.py inline windows (不重构, 不同 abstraction).
-2. **数据层 SQL 修复** (用户已确认 follow-up): chase_up/data.py + uptrend_pullback/data.py
+2. **§4 ATR-aware slippage (cycle_price_action)** ⚠️ **AUDIT FINDING (2026-09-23)**:
+   `cycle_price_action/replay_broker.py:62` 用 flat-rate 5bps `notional * 0.0005`,
+   违反 CLAUDE.md §4 "Do not use flat-rate slippage". 3 其他 engine (chase_up +
+   uptrend_pullback + short_reversal) 已通过 R5/V5' 引入 `atr_slip_scale` opt-in.
+   `tests/test_cycle_price_action_slippage_atr.py` 3/3 RED, 待 GREEN (修复方案:
+   参考 chase_up/portfolio.py:415-420 模式, 引入 `atr_slip_scale` 参数).
+3. **数据层 SQL 修复** (用户已确认 follow-up): chase_up/data.py + uptrend_pullback/data.py
    应切换读 v_daily_dual view (raw_prev_close 0% 覆盖 → 100%).
-3. **9 个 chase_up preset golden baseline 缺失**: v1/v1a/v1b/v1c/v2/v3/v4/v6/v7.
-4. **uptrend_pullback 完全无 golden baseline**.
-5. **3 个 test errors**: test_presets.py / test_engine_v3.py / test_short_reversal_no_lookahead.py
+4. **9 个 chase_up preset golden baseline 缺失**: v1/v1a/v1b/v1c/v2/v3/v4/v6/v7.
+5. **uptrend_pullback 完全无 golden baseline**.
+6. **3 个 test errors**: test_presets.py / test_engine_v3.py / test_short_reversal_no_lookahead.py
    引用已被移除的 legacy preset 名 (v33_mainboard_*).
 
 ### §5 WFV 共享基类 — 落地证据 (commit c101ba3, 2026-09-23)
