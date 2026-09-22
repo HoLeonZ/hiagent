@@ -52,6 +52,13 @@ PRESETS: dict[str, dict] = {
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
         "n_comparisons": 11,
+        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
+        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
+        # 显式声明如下, 表明预设遵循 §2。
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
         "tp_pct": 0.06,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -100,6 +107,13 @@ PRESETS: dict[str, dict] = {
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
         "n_comparisons": 11,
+        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
+        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
+        # 显式声明如下, 表明预设遵循 §2。
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
         "tp_pct": 0.06,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -148,6 +162,13 @@ PRESETS: dict[str, dict] = {
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
         "n_comparisons": 11,
+        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
+        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
+        # 显式声明如下, 表明预设遵循 §2。
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
         "tp_pct": 0.06,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -200,6 +221,13 @@ PRESETS: dict[str, dict] = {
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
         "n_comparisons": 11,
+        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
+        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
+        # 显式声明如下, 表明预设遵循 §2。
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
         "tp_pct": 0.06,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -255,6 +283,13 @@ PRESETS: dict[str, dict] = {
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
         "n_comparisons": 11,
+        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
+        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
+        # 显式声明如下, 表明预设遵循 §2。
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
         "tp_pct": 0.07,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -282,6 +317,13 @@ PRESETS: dict[str, dict] = {
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
         "n_comparisons": 11,
+        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
+        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
+        # 显式声明如下, 表明预设遵循 §2。
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
         "tp_pct": 0.08,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -333,6 +375,13 @@ PRESETS: dict[str, dict] = {
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
         "n_comparisons": 11,
+        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
+        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
+        # 显式声明如下, 表明预设遵循 §2。
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
         "tp_pct": 0.08,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -380,6 +429,13 @@ PRESETS: dict[str, dict] = {
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
         "n_comparisons": 11,
+        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
+        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
+        # 显式声明如下, 表明预设遵循 §2。
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
         "tp_pct": 0.08,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -415,6 +471,13 @@ PRESETS: dict[str, dict] = {
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
         "n_comparisons": 11,
+        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
+        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
+        # 显式声明如下, 表明预设遵循 §2。
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
         "tp_pct": 0.08,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -463,6 +526,13 @@ PRESETS: dict[str, dict] = {
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
         "n_comparisons": 11,
+        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
+        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
+        # 显式声明如下, 表明预设遵循 §2。
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
         "tp_pct": 0.08,
         "sl_pct": 0.0005,
         "max_hold": 5,
@@ -511,6 +581,13 @@ PRESETS: dict[str, dict] = {
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
         "n_comparisons": 11,
+        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
+        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
+        # 显式声明如下, 表明预设遵循 §2。
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
         "tp_pct": 0.08,
         "sl_pct": 0.0002,
         "max_hold": 5,

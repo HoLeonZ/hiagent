@@ -44,6 +44,8 @@ PRESETS: dict[str, dict] = {
         "max_hold": 15,
         "max_positions": 1,
         "position_sizing": "all_in",
+        "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
+        "MAX_POSITION_PCT": 1.0,    # §2
         "atr_tp_mult": 4.0,
         "atr_sl_mult": 1.0,
         "signal": {
@@ -85,6 +87,8 @@ PRESETS: dict[str, dict] = {
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
+        "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
+        "MAX_POSITION_PCT": 1.0,    # §2
         "atr_tp_mult": 3.0, "atr_sl_mult": 1.0,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -116,6 +120,8 @@ PRESETS: dict[str, dict] = {
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.08,
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
+        "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
+        "MAX_POSITION_PCT": 1.0,    # §2
         "atr_tp_mult": 4.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -147,6 +153,8 @@ PRESETS: dict[str, dict] = {
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
+        "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
+        "MAX_POSITION_PCT": 1.0,    # §2
         "atr_tp_mult": 4.0, "atr_sl_mult": 1.0,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -156,7 +164,11 @@ PRESETS: dict[str, dict] = {
             "atr_pct_low": 0.03, "atr_pct_high": 0.10,
         },
     },
-    # ----- v2: 多仓分散 max_positions=3 + equal sizing (追求更高频 + 更稳) -----
+    # ----- v2: 历史=多仓分散 (max_positions=3 + equal sizing)
+    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22): 强制转为单仓 all_in。
+    # 历史 v2 walk-forward 在 max_positions=3 + equal 1/3 each 下扫描;
+    # 此次仅修字段,mh / atr / tp / sl / 信号参数保留以兼容旧报告。
+    # Walk-forward 应在 single-slot 下重新校核 (新 §2 语义)。
     "chase_v2_atr_tp4_sl1_pos3": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
@@ -177,7 +189,9 @@ PRESETS: dict[str, dict] = {
         # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
-        "max_hold": 15, "max_positions": 3, "position_sizing": "equal",
+        "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
+        "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
+        "MAX_POSITION_PCT": 1.0,    # §2
         "atr_tp_mult": 4.0, "atr_sl_mult": 1.0,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -209,6 +223,8 @@ PRESETS: dict[str, dict] = {
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
+        "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
+        "MAX_POSITION_PCT": 1.0,    # §2
         "atr_tp_mult": 4.0, "atr_sl_mult": 1.0,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -218,7 +234,10 @@ PRESETS: dict[str, dict] = {
             "atr_pct_low": 0.03, "atr_pct_high": 0.10,
         },
     },
-    # ----- v5: 2 仓分散 + equal sizing + tight hold (CAGR ~240% sweet spot) -----
+    # ----- v5: 历史=2 仓分散 (max_positions=2 + equal sizing)
+    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22): 强制转为单仓 all_in。
+    # 历史 CAGR ~241% / Sharpe 2.16 / DD 31.3% 来自并行双仓 1/2 each 的 cash 时序,
+    # 切换到 single-slot all_in 后净值动态变化, walk-forward 应重新校核。
     # 2025-09-19 → 2026-09-19 12m 实测:
     #   CAGR +241.6% / Sharpe 2.16 / DD 31.3% / win_rate 40.2%
     #   trades 107 / profit_factor 2.30
@@ -244,7 +263,9 @@ PRESETS: dict[str, dict] = {
         # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
-        "max_hold": 10, "max_positions": 2, "position_sizing": "equal",
+        "max_hold": 10, "max_positions": 1, "position_sizing": "all_in",
+        "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
+        "MAX_POSITION_PCT": 1.0,    # §2
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -254,7 +275,11 @@ PRESETS: dict[str, dict] = {
             "atr_pct_low": 0.03, "atr_pct_high": 0.10,
         },
     },
-    # ----- v6: 3 仓 all_in (CAGR ~245%, 略高 DD) -----
+    # ----- v6: 历史=3 槽 all_in (max_positions=3)
+    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22): 强制 max_positions=3 → 1。
+    # Engine `portfolio.py:332` `if len(positions) >= max_positions: break` 已天然
+    # 将 N-slot all_in 串行化为 first-slot-wins (无隐式杠杆),但 preset 显式声明
+    # max_positions=1 更忠实于 §2 政策。MH / ATR / TP / SL / 信号参数保留。
     "chase_v6_pos3_all_in_atr_tp6_sl15_mh15": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
@@ -275,7 +300,9 @@ PRESETS: dict[str, dict] = {
         # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
-        "max_hold": 15, "max_positions": 3, "position_sizing": "all_in",
+        "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
+        "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
+        "MAX_POSITION_PCT": 1.0,    # §2
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -307,6 +334,8 @@ PRESETS: dict[str, dict] = {
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
+        "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
+        "MAX_POSITION_PCT": 1.0,    # §2
         "atr_tp_mult": 4.0, "atr_sl_mult": 1.0,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -316,11 +345,11 @@ PRESETS: dict[str, dict] = {
             "atr_pct_low": 0.03, "atr_pct_high": 0.10,
         },
     },
-    # ----- v7: v5 + 中长期趋势过滤(MA60>MA120 + MA60 上行 20 日)-----
-    # 直击 2017-09 / 2022-09 / 2024-09 这类熊市窗口大量亏损:
-    #   那些窗口里大部分"突破"实际上发生在 MA60 < MA120 的下降通道里,
-    #   加入趋势过滤后这些假突破直接被拦掉,walkforward 应从 2/9 提升到 5-7/9。
-    # 预期目标窗口 CAGR 仍能维持 200%+(因为目标窗口本身就在强趋势里)。
+    # ----- v7: 历史=v5 + 中长期趋势过滤(MA60>MA120 + MA60 上行 20 日)
+    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22): 历史 v5 baseline
+    # 是 2 仓 equal, 强制转为单仓 all_in (max_positions=1)。直击 2017-09 /
+    # 2022-09 / 2024-09 这类熊市窗口大量亏损: 那些窗口里大部分"突破"实际
+    # 上发生在 MA60 < MA120 的下降通道里, 加入趋势过滤后这些假突破直接被拦掉。
     "chase_v7_pos2_equal_atr_tp6_sl15_mh10_regime": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
@@ -341,7 +370,9 @@ PRESETS: dict[str, dict] = {
         # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
-        "max_hold": 10, "max_positions": 2, "position_sizing": "equal",
+        "max_hold": 10, "max_positions": 1, "position_sizing": "all_in",
+        "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
+        "MAX_POSITION_PCT": 1.0,    # §2
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -354,7 +385,10 @@ PRESETS: dict[str, dict] = {
             "ma60_slope_window": 20,
         },
     },
-    # ----- v8: 优化版 = v5 + max_hold 10 → 18(给赢家更长时间奔跑)-----
+    # ----- v8: 历史=v5 + max_hold 10 → 18(给赢家更长时间奔跑)
+    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22): 历史 v8 在 2 仓 equal 下
+    # 实测 CAGR +522.21% / Sharpe 2.32 / DD 27.5%; 强制转为单仓 all_in 后净值
+    # 动态会变, walk-forward 应重新校核。
     # 目标窗口 2025-09 → 2026-09 实测:
     #   CAGR +522.21%(v5 的 268.44% → +253%)
     #   Sharpe / DD 维持在合理区间
@@ -384,7 +418,9 @@ PRESETS: dict[str, dict] = {
         # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
-        "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
+        "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
+        "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
+        "MAX_POSITION_PCT": 1.0,    # §2
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -424,7 +460,9 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): sweep size
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
-        "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
+        "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
+        "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
+        "MAX_POSITION_PCT": 1.0,    # §2
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -455,7 +493,9 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): sweep size
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
-        "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
+        "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
+        "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
+        "MAX_POSITION_PCT": 1.0,    # §2
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -492,7 +532,9 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): sweep size
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
-        "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
+        "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
+        "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
+        "MAX_POSITION_PCT": 1.0,    # §2
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -530,7 +572,9 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): sweep size
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
-        "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
+        "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
+        "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
+        "MAX_POSITION_PCT": 1.0,    # §2
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -572,7 +616,9 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): sweep size
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
-        "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
+        "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
+        "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
+        "MAX_POSITION_PCT": 1.0,    # §2
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -609,7 +655,9 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): sweep size
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
-        "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
+        "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
+        "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
+        "MAX_POSITION_PCT": 1.0,    # §2
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -639,7 +687,9 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): sweep size
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
-        "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
+        "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
+        "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
+        "MAX_POSITION_PCT": 1.0,    # §2
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -670,7 +720,9 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): sweep size
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
-        "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
+        "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
+        "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
+        "MAX_POSITION_PCT": 1.0,    # §2
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -701,7 +753,9 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): sweep size
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
-        "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
+        "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
+        "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
+        "MAX_POSITION_PCT": 1.0,    # §2
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -734,7 +788,9 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): sweep size
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
-        "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
+        "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
+        "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
+        "MAX_POSITION_PCT": 1.0,    # §2
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.6,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -767,7 +823,9 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): sweep size
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
-        "max_hold": 18, "max_positions": 2, "position_sizing": "equal",
+        "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
+        "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
+        "MAX_POSITION_PCT": 1.0,    # §2
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.75,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,

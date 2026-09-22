@@ -24,7 +24,7 @@
     "avg_hold_days": 6.0,
     "max_hold_days": 18
   },
-  "trades_csv_sha256": "8977a2f9be03a5f2aa3b828267b68f02a8db1fe391902c33ed5626893afdc7f2",
+  "trades_csv_sha256": "a787f7489e31d1ab72ee40ebabf06eb49d83898b055d2cebcb1670aebe06fc84",
   "trades_csv_rows": 71,
   "trades_csv_cols": [
     "entry_date",
@@ -62,5 +62,6 @@
     "v5_walkforward_mean": "-19.36%"
   },
   "note": "v11 = v10 + min_score 1.6 → 1.7(进一步收紧信号强度门槛)。在锁定窗口 2025-09-19 → 2026-09-19 上 Pareto 改善 CAGR / Sharpe / DD / WR / PF 五项指标同时上升,12m walkforward 均值从 +42.9% 跳到 +80.5%,worst 从 -80.9% 改善到 -73.9%。1.7 是 score 1.6-1.8 区间的 isolated peak(1.65/1.75/1.8 都不如它)。",
-  "v6_change_note": "V6 (2026-09-22): chase_up/portfolio.py intraday tiebreak flipped TP-first → SL-first per CLAUDE.md §4 worst-case. Some TP exits where intraday low also crossed SL became SL exits. Compare tp_count/sl_count against pre-V6 baseline."
+  "v6_change_note": "V6 (2026-09-22): chase_up/portfolio.py intraday tiebreak flipped TP-first → SL-first per CLAUDE.md §4 worst-case. Some TP exits where intraday low also crossed SL became SL exits. Compare tp_count/sl_count against pre-V6 baseline.",
+  "v7_change_note": "V7 (2026-09-22, CLAUDE.md §2 All-In Sizing Policy): preset converted from multi-slot equal sizing to single-slot all_in (position_sizing='equal' max_positions=2 → 'all_in' max_positions=1). Engine `chase_up/portfolio.py:325` now locks 100% cash per slot. trades.csv regenerated under new sizing; row count and PnL reflect single-slot dynamics. Walk-forward results originally searched under multi-slot diversification are now stale — see docs/claudemd_preset_audit_2026_09_22.md for §2 re-baseline plan."
 }

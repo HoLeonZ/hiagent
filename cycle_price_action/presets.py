@@ -41,6 +41,12 @@ PRESET_V1 = dict(
     # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
     # 自动套 DSR + Bonferroni 校正。
     n_comparisons=1,
+    # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
+    # Engine `portfolio.py:65` hardcodes MAX_POSITION_PCT=1.0; 显式声明如下。
+    position_sizing="all_in",
+    max_positions=1,
+    position_fraction=1.0,
+    MAX_POSITION_PCT=1.0,
     weight_kline=1.0,
     weight_cycle=0.7,
     weight_calendar=0.5,

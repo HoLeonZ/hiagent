@@ -93,6 +93,8 @@ PRESETS: dict[str, dict] = {
         "max_hold": 15,
         "max_positions": 1,
         "position_sizing": "all_in",
+        "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
+        "MAX_POSITION_PCT": 1.0,    # §2
         "signal": {
             "entry_mode": "v33_long_mirror",
             "min_down_streak": 3,
@@ -135,6 +137,8 @@ PRESETS: dict[str, dict] = {
         "max_hold": 18,
         "max_positions": 1,
         "position_sizing": "all_in",
+        "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
+        "MAX_POSITION_PCT": 1.0,    # §2
         "signal": {
             "entry_mode": "v33_long_mirror",
             "min_down_streak": 3,

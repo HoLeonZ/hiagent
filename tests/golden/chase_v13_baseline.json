@@ -6,7 +6,7 @@
   ],
   "engine": "simulate",
   "metrics": {
-    "trades": 72,
+    "trades": 73,
     "win_rate": 0.4861,
     "total_return": 5.6393,
     "cagr": 5.6914,
@@ -24,8 +24,8 @@
     "avg_hold_days": 5.8,
     "max_hold_days": 18
   },
-  "trades_csv_sha256": "93558d0760c55cd69a71f7f686c8f8b9ee365af982e6a292ac503d97763a5fcf",
-  "trades_csv_rows": 72,
+  "trades_csv_sha256": "2a3a6884b94d06a55bf133bfd629bb9948473b41fd2bde0adadc773e5ff94738",
+  "trades_csv_rows": 73,
   "trades_csv_cols": [
     "entry_date",
     "exit_date",
@@ -66,5 +66,6 @@
     "v5_walkforward_mean": "-19.36%"
   },
   "note": "v13 = v12 + min_mom120 0.05→0.10 + atr_pct_high 0.10→0.085(双重收紧)。Pareto 改善 CAGR / Sharpe / DD / WR / PF 五项全部上升。关键洞察:(1) mom120 ≥ 0.10 过滤掉 6 个月涨幅 < 10% 的弱势股;(2) atr_pct ≤ 0.085 排除波动率过高的垃圾股(>8.5% 容易跳空打 SL)。两者同时作用产生 isolated peak,单独收紧任一项收益较小。",
-  "v6_change_note": "V6 (2026-09-22): chase_up/portfolio.py intraday tiebreak flipped TP-first → SL-first per CLAUDE.md §4 worst-case. Some TP exits where intraday low also crossed SL became SL exits. Compare tp_count/sl_count against pre-V6 baseline."
+  "v6_change_note": "V6 (2026-09-22): chase_up/portfolio.py intraday tiebreak flipped TP-first → SL-first per CLAUDE.md §4 worst-case. Some TP exits where intraday low also crossed SL became SL exits. Compare tp_count/sl_count against pre-V6 baseline.",
+  "v7_change_note": "V7 (2026-09-22, CLAUDE.md §2 All-In Sizing Policy): preset converted from multi-slot equal sizing to single-slot all_in (position_sizing='equal' max_positions=2 → 'all_in' max_positions=1). Engine `chase_up/portfolio.py:325` now locks 100% cash per slot. trades.csv regenerated under new sizing; row count +1 (72→73) reflects single-slot dynamics. Walk-forward results originally searched under multi-slot diversification are now stale — see docs/claudemd_preset_audit_2026_09_22.md for §2 re-baseline plan."
 }
