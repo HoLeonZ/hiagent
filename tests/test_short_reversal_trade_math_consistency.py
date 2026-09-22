@@ -33,6 +33,7 @@ PRESETS_WITH_CSV = [
     "v38_a_relaxed",
     "v39_pctchg_03_10",
     "v40_tp_07",
+    "v40_tp_08",
 ]
 
 
