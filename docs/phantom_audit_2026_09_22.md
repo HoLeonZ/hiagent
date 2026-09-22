@@ -214,6 +214,31 @@ CLAUDE.md §3 铁律达成: 4 engine 共用 core.dual_price, phantom 防护结�
 | `test_chase_up_v3a_runtime.py` + `test_uptrend_pullback_v3a_runtime.py` + `test_short_reversal_v3a_runtime.py` + `test_cycle_price_action_slippage_atr.py` + `test_chase_up_backtrader_engine_dual_price.py` + `test_cycle_replay_broker.py` + `test_cycle_price_action_layout_c_invariants.py` | 39 | ✓ | §3 + §4 runtime invariants |
 | **子套件合计** | **224** | **✓** | §1 §3 §4 §5 全维度覆盖 |
 
+### 数据层 schema 审计 (2026-09-23 audit tick)
+
+| View / Table | columns | 用途 |
+|--------------|---------|------|
+| `v_daily_qfq` | thscode, date, open/high/low/close, volume, amount (无 prev_close) | chase_up + uptrend_pullback signal panel |
+| `v_daily` | + prev_close | 单价 (qfq 含昨收, 用于 LIMIT_UP 守卫 fallback) |
+| `v_daily_dual` | adj_open/high/low/close + raw_open/high/low/close + **raw_prev_close** | 双价 + 昨收 (本次 audit 发现: **engines 未消费**) |
+
+**已知 follow-up (Layer 1 数据 SQL 修复)**:
+- chase_up/data.py + uptrend_pullback/data.py LEFT JOIN `raw_kline_daily.prev_close` (永远 NULL)
+- 应改为读 `v_daily_dual` view (已有 `raw_prev_close`)
+- 或用 `LAG(r.close, 1) OVER (PARTITION BY thscode ORDER BY date)` (pattern 在
+  `sql/migrate_v_daily_dual.sql:30-35` 已存在)
+- 现状: engines 走 adj_prev_close fallback (V3a fix at 86832f7 落地), entry fill
+  已用 raw_open ✓, LIMIT_UP guard 是 best-effort — **§3 字面要求已部分达成**
+
+### Determinism / Reproducibility (2026-09-23 audit tick)
+
+| 维度 | 状态 | 证据 |
+|------|------|------|
+| 核心 backtest 随机源 | ✓ 0 hits | `random.*` / `np.random.*` 仅在 `uptrend_pullback/iter_reverse.py:80+184` sweep 工具, `seed=42` 默认 |
+| 时间戳非确定性 | ✓ 0 hits | `time.time()` 仅用于 elapsed-time 报告, 不影响 trade 逻辑; 无 `datetime.now()` 在 core |
+| Hash 容器顺序 | ✓ 0 hits | 核心无 `hash()` / `set()` 依赖排序的运算 |
+| **Reproducibility** | ✓ **CORE 完全确定性** | 同 input → 同 output, 仅 sweep 工具需 seed |
+
 ### Trade-level phantom audit — 真实证据 (本 tick 重跑验证)
 
 | engine | presets 总数 | 有 trades.csv | 审计方法 | phantom ratio |
