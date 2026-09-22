@@ -239,6 +239,30 @@ CLAUDE.md §3 铁律达成: 4 engine 共用 core.dual_price, phantom 防护结�
 | Hash 容器顺序 | ✓ 0 hits | 核心无 `hash()` / `set()` 依赖排序的运算 |
 | **Reproducibility** | ✓ **CORE 完全确定性** | 同 input → 同 output, 仅 sweep 工具需 seed |
 
+### Position Sizing & NAV Gate (2026-09-23 audit tick)
+
+| 维度 | chase_up | uptrend_pullback | short_reversal | CPA |
+|------|----------|------------------|----------------|-----|
+| **All-In sizing** | ✓ `slot_value = cash_only` (line 352) + `budget = min(slot_value, cash)` (line 394) | ✓ 同 pattern | n/a (单仓) | n/a (单仓) |
+| **Margin blowout (no leverage)** | ✓ `if notional + fee_in > cash: continue` (line 441) | ✓ 同 | ✓ NAV-based gate | ✓ P3 hard contract |
+| **NAV floor gate** | ✓ `NAV_GATE_RATIO = 0.05` (line 64) + `if nav_now < initial_capital × 0.05: reject` (line 338) | ✓ | ✓ `cash_gate_threshold = initial_capital × min_cash_ratio` (line 181) | n/a |
+| **100-share lot round** | ✓ `int(budget / entry_px / 100) * 100` (line 395) | ✓ | n/a | n/a |
+
+§2 Capital Determinism 落地证据: 全部 position sizing + margin blowout + NAV gate 一致, **不依赖 leverage, fail-fast on cash violation**.
+
+### Causal Stats in Signal Compute (2026-09-23 audit tick)
+
+| Pattern | Hits | 状态 |
+|---------|-----:|------|
+| `.rolling(w, min_periods=w).mean()` (causal) | chase_up + uptrend + CPA 多处 | ✓ past-only |
+| `.ewm(span=N, adjust=False).mean()` (causal) | chase_up/signals.py:94/95/97 (EMA12/26/MACD) | ✓ past-only |
+| `.shift(1).rolling(N).mean()` (lag-then-rolling) | chase_up:106 + CPA:94 | ✓ uses past 5 days excluding today |
+| `.bfill()` / `.ffill()` / `rolling(center=True)` | 0 hits | ✓ 全部禁止 |
+| `StandardScaler` / `MinMaxScaler` / sklearn normalize | 0 hits | ✓ 无全局归一化 |
+| Global `.mean()` / `.std()` on full series | 0 hits | ✓ 仅 causal rolling |
+
+§1 Temporal Determinism 在信号层完全达成: 无未来函数, 仅用 past-only rolling / ewm / shift-then-rolling。
+
 ### Trade-level phantom audit — 真实证据 (本 tick 重跑验证)
 
 | engine | presets 总数 | 有 trades.csv | 审计方法 | phantom ratio |
