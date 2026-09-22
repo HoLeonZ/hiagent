@@ -58,22 +58,28 @@ mark-to-market (含 entry fill)。Phantom TP/SL = 此铁律的违反。
 
 | preset | trades | phantom |
 |--------|-------:|--------:|
-| v35_agg_pctchg_04_09 | 171 | (Layout B, no adj/raw split) |
-| v36_d_converge | TBD | TBD |
-| v38_a_relaxed | TBD | TBD |
-| v39_pctchg_03_10 | TBD | TBD |
-| v40_tp_07 | TBD | TBD |
-| v40_tp_08 | TBD | TBD |
-| v42_buf05 | TBD | TBD |
-| v43_ratio03 | TBD | TBD |
-| v44_ratio02_buf07 | TBD | TBD |
-| v45_ratio01_buf10 | TBD | TBD |
-| v46_sl_0002 | TBD | TBD |
+| v35_agg_pctchg_04_09 | 171 | 0 direction-violation |
+| v36_d_converge | 200 | 0 |
+| v38_a_relaxed | 262 | 0 |
+| v39_pctchg_03_10 | 278 | 0 |
+| v40_tp_07 | 278 | 0 |
+| v40_tp_08 | 278 | 0 |
+| v42_buf05 | 312 | 0 |
+| v43_ratio03 | 378 | 0 |
+| v44_ratio02_buf07 | 425 | 0 |
+| v45_ratio01_buf10 | 458 | 0 |
+| v46_sl_0002 | 425 | 0 |
+| **Total** | **3465** | **0 direction-violation** |
 
 注: short_reversal Layout B (v_daily IS raw) 数据加载仅使用 v_daily raw 列,
 exit 逻辑不引用 adj_* 列,结构性 phantom-free。trades.csv 不含 entry_date/exit_date
 (引擎输出只暴露 thscode/prices/reason),按 trade-level phantom 检测需要重新跑
 engine + 在 audit 脚本加入 thscode/price-based phantom 检测。
+
+**Audit 脚本** (`tests/test_short_reversal_trade_math_consistency.py`):
+- 12 个 pytest 测试 (11 个 parametrized + 1 个 summary)
+- 用 SHORTSHORT 方向一致性: SL exit > entry, TP exit < entry
+- 3465/3465 trade 0 direction-violation
 
 ### cycle_price_action (Layout C)
 
@@ -136,7 +142,7 @@ uptrend_pullback/backtrader_engine.py:115-132 同构)。
 
 - **chase_up 22/22 preset 0 phantom** (1116 trades audited, trade-level)
 - **uptrend_pullback 2/2 preset 0 phantom** (117 trades audited, trade-level)
-- **short_reversal 6/11 preset 0 direction-violation** (1467 trades audited, trade-level; Layout B raw-only)
+- **short_reversal 11/11 preset 0 direction-violation** (3465 trades audited, trade-level; Layout B raw-only)
 - **cycle_price_action 11/11 Layout C invariant PASSED** (code-level; trade-level 待 ETL 修复)
 - **总 phantom ratio: 0.00%**
 
@@ -178,9 +184,9 @@ CLAUDE.md §3 铁律达成: 4 engine 共用 core.dual_price, phantom 防护结�
 |--------|----------:|----------:|----------|--------------:|
 | chase_up | 22 | 22 | `audit_phantom.py` 真实 trade-vs-qfq_open 比对 | **0/1116 (0.00%)** |
 | uptrend_pullback | 2 | 2 | `audit_phantom.py` 真实 trade-vs-qfq_open 比对 | **0/117 (0.00%)** |
-| short_reversal | 11 | 6 (v35+v36+v38+v39+v40_tp_07+v40_tp_08) | direction-consistency test (Layout B SHORT 语义) | **0/1467 direction-violation** |
+| short_reversal | 11 | **11 (全部)** | direction-consistency test (Layout B SHORT 语义) | **0/3465 direction-violation** |
 | cycle_price_action | 1 | 0 (trade csv); code-level 11/11 invariant PASSED | backtest fail-fast (数据缺口 000695.SZ@2025-04-30) + 11 invariant tests | **N/A trade-level — Layout C 单源 + code-level phantom-free** |
-| **合计 trade-level 已审计** | **36** | **30** | | **0/2700 phantom direction-clean (trade) + 11/11 Layout C invariant (code)** |
+| **合计 trade-level 已审计** | **36** | **35 (含 code-level CPA 11)** | | **0/4698 phantom direction-clean (trade) + 11/11 Layout C invariant (code)** |
 
 ### short_reversal Layout B 代码审计 (本 tick 验证, 2026-09-22 ~ 2026-09-23)
 
@@ -191,18 +197,19 @@ CLAUDE.md §3 铁律达成: 4 engine 共用 core.dual_price, phantom 防护结�
 - L161: `current_close = float(d.close[0])` — `d.close` 来自 v_daily raw
 - L296-318: SL/TP 触发用 `d.open[0]` / `d.close[0]` / `d.low[0]` / `d.high[0]`,全部 raw
 
-**Trade-level 验证 (6 csvs, 1467 trades)** — `tests/test_short_reversal_trade_math_consistency.py`:
+**Trade-level 验证 (11 csvs, 3465 trades)** — `tests/test_short_reversal_trade_math_consistency.py`:
 - SHORT 语义: SL exit > entry (价格 up 触发), TP exit < entry (价格 down 触发)
 - direction-violation = phantom 信号 (策略 fire SL 但 exit < entry 说明 clamp 到 adj_open)
-- v35 171 / v36 200 / v38 262 / v39 278 / v40_tp_07 278 / v40_tp_08 278 → **0 direction-violation**
-- 7/7 unit tests PASSED (含 summary test)
+- v35 171 / v36 200 / v38 262 / v39 278 / v40_tp_07 278 / v40_tp_08 278 /
+  v42 312 / v43 378 / v44 425 / v45 458 / v46 425 → **0 direction-violation**
+- **12/12 unit tests PASSED** (11 parametrized + 1 summary aggregating all csvs)
 
 **Contract 锁定** — `tests/test_dual_price_cross_engine.py::TestShortReversalLayoutBContract`:
 - `test_replay_strategy_v3_does_not_read_adj_in_exit_path`: 锁定 exit 路径不读 `d.adj_*`
 - `test_feed_bt_loads_adj_columns_for_v3a_migration_path`: feed 预埋 adj_* 但 strategy 暂不读
 - `test_short_reversal_preset_declares_dual_price_intent`: 11 preset 全部声明 dual-price intent + execution="raw_close"
 
-**结论**: short_reversal 当前 strategy 用 raw (Layout B), 1467 trades 0 phantom direction-violation. V3a 完整信号迁移 (切到 adj) 时**必须**重生成 golden baseline + 重跑 trade-level phantom audit (见 follow-up)。
+**结论**: short_reversal 当前 strategy 用 raw (Layout B), 3465 trades 0 phantom direction-violation. V3a 完整信号迁移 (切到 adj) 时**必须**重生成 golden baseline + 重跑 trade-level phantom audit (见 follow-up)。
 
 ### cycle_price_action Layout C 代码审计 (本 tick 验证, 2026-09-23)
 

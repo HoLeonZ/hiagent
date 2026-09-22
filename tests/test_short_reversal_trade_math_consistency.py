@@ -34,6 +34,11 @@ PRESETS_WITH_CSV = [
     "v39_pctchg_03_10",
     "v40_tp_07",
     "v40_tp_08",
+    "v42_buf05",
+    "v43_ratio03",
+    "v44_ratio02_buf07",
+    "v45_ratio01_buf10",
+    "v46_sl_0002",
 ]
 
 
