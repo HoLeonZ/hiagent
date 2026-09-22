@@ -1,4 +1,4 @@
-# Phantom TP/SL 全 Engine 审计报告 (2026-09-22)
+# Phantom TP/SL 全 Engine 审计报告 (2026-09-22 ~ 2026-09-23)
 
 CLAUDE.md §3 铁律: ALWAYS use raw_close for limit-order triggers / SL / 物理 cash
 mark-to-market (含 entry fill)。Phantom TP/SL = 此铁律的违反。
@@ -155,11 +155,11 @@ CLAUDE.md §3 铁律达成: 4 engine 共用 core.dual_price, phantom 防护结�
 |--------|----------:|----------:|----------|--------------:|
 | chase_up | 22 | 22 | `audit_phantom.py` 真实 trade-vs-qfq_open 比对 | **0/1116 (0.00%)** |
 | uptrend_pullback | 2 | 2 | `audit_phantom.py` 真实 trade-vs-qfq_open 比对 | **0/117 (0.00%)** |
-| short_reversal | 11 | 3 (v35+v36+v38) | direction-consistency test (Layout B SHORT 语义) | **0/633 direction-violation** |
-| cycle_price_action | 1 | 0 | trade-level 待跑 (backtest 排队中) | **N/A — Layout C 单源** |
-| **合计 trade-level 已审计** | **36** | **27** | | **0/1866 direction-clean** |
+| short_reversal | 11 | 5 (v35+v36+v38+v39+v40_tp_07) | direction-consistency test (Layout B SHORT 语义) | **0/1189 direction-violation** |
+| cycle_price_action | 1 | 0 | backtest fail-fast (数据缺口 000695.SZ@2025-04-30) | **N/A — Layout C 单源** |
+| **合计 trade-level 已审计** | **36** | **29** | | **0/2422 phantom direction-clean** |
 
-### short_reversal Layout B 代码审计 (本 tick 验证, 2026-09-22)
+### short_reversal Layout B 代码审计 (本 tick 验证, 2026-09-22 ~ 2026-09-23)
 
 `short_reversal/feed_bt.py:8-29` 文档明确:
 > 当前 strategy 仍读 raw (v_daily IS raw) 作 baseline parity。完整 V3a 信号迁移需 strategy 切到 d.adj_close 系列 — golden baseline 重生成。
@@ -168,11 +168,11 @@ CLAUDE.md §3 铁律达成: 4 engine 共用 core.dual_price, phantom 防护结�
 - L161: `current_close = float(d.close[0])` — `d.close` 来自 v_daily raw
 - L296-318: SL/TP 触发用 `d.open[0]` / `d.close[0]` / `d.low[0]` / `d.high[0]`,全部 raw
 
-**Trade-level 验证 (3 csvs, 633 trades)** — `tests/test_short_reversal_trade_math_consistency.py`:
+**Trade-level 验证 (5 csvs, 1189 trades)** — `tests/test_short_reversal_trade_math_consistency.py`:
 - SHORT 语义: SL exit > entry (价格 up 触发), TP exit < entry (价格 down 触发)
 - direction-violation = phantom 信号 (策略 fire SL 但 exit < entry 说明 clamp 到 adj_open)
-- v35 171 trades / v36 200 trades / v38 262 trades → **0 direction-violation**
-- 4/4 unit tests PASSED
+- v35 171 trades / v36 200 trades / v38 262 trades / v39 278 trades / v40_tp_07 278 trades → **0 direction-violation**
+- 6/6 unit tests PASSED
 
 **Contract 锁定** — `tests/test_dual_price_cross_engine.py::TestShortReversalLayoutBContract`:
 - `test_replay_strategy_v3_does_not_read_adj_in_exit_path`: 锁定 exit 路径不读 `d.adj_*`
@@ -188,6 +188,12 @@ CLAUDE.md §3 铁律达成: 4 engine 共用 core.dual_price, phantom 防护结�
 - `LAYOUT_CYCLE_PRICE` 显式引用 ✓
 
 Layout C 是单价格域, 结构性 phantom-free。trade-level 审计需要先生成 cycle_price_action/results csv (当前 0 csv, follow-up)。
+
+**Backtest fail-fast 验证 (2026-09-23)** — `cycle_price_action/replay_broker.py:53`:
+- 1-year window (2024-09-19 → 2025-09-19) 跑 9+ min cpu, hit 数据缺口 `000695.SZ on 2025-04-30`, 抛 RuntimeError
+- 这是 **CLAUDE.md §0 Fail-Fast** 体现 (Pessimistic Default): 数据缺口 → 不假装有数据,直接抛出
+- 2-month window (2025-08-01 → 2025-09-19) 排队中
+- 缺口根因待查 (corporate action / suspension / data ETL miss), 见 follow-up
 
 ### 待办 follow-up (CLAUDE.md 整体合规)
 
