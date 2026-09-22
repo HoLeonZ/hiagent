@@ -113,6 +113,7 @@ invariant 锁定,任何 raw/adj split 回归会触发 RED。
 7. `d507ca6` feat(audit): short_reversal trade-math consistency test + audit doc 更新
 8. `c33ce11` feat(audit): short_reversal Layout B 契约测试 + uptrend_pullback audit 脚本
 9. **(pending)** feat(audit): cycle_price_action Layout C invariant test + 脚本
+10. `c101ba3` feat(wfv): core.walkforward shared base — 3-engine 共享同一份 WFV 窗口生成
 
 ## 关键修复: chase_up Phase 2 backtrader feed (commit 2fb34fc)
 
@@ -131,12 +132,12 @@ uptrend_pullback/backtrader_engine.py:115-132 同构)。
 
 ## 4-Engine 共用代码状态
 
-| engine | Layout | 接入 core.dual_price | 共享入口 | 审计方式 |
-|--------|--------|----------------------|----------|----------|
-| chase_up | A (raw/adj split) | ✓ | `extract_execution_bar(LAYOUT_CHASE_UPTREND)` | trade-level 22/22 csv (1116 trades, 0 phantom) |
-| uptrend_pullback | A (raw/adj split) | ✓ | `extract_execution_bar(LAYOUT_CHASE_UPTREND)` | trade-level 2/2 csv (117 trades, 0 phantom) |
-| short_reversal | B (v_daily IS raw) | N/A (单价格域) | n/a | trade-level 6/11 csv (1467 trades, 0 direction-violation) |
-| cycle_price_action | C (单价格) | ✓ | `extract_execution_bar(LAYOUT_CYCLE_PRICE)` | code-level 11/11 invariant + 10 pytest tests |
+| engine | Layout | 接入 core.dual_price | 接入 core.walkforward | 审计方式 |
+|--------|--------|----------------------|----------------------|----------|
+| chase_up | A (raw/adj split) | ✓ | ✓ `monthly_windows` re-export | trade-level 22/22 csv (1116 trades, 0 phantom) |
+| uptrend_pullback | A (raw/adj split) | ✓ | ✓ `monthly_windows + yearly_windows` re-export | trade-level 2/2 csv (117 trades, 0 phantom) |
+| short_reversal | B (v_daily IS raw) | N/A (单价格域) | n/a (inline wf_v3*_focused.py) | trade-level 11/11 csv (3465 trades, 0 direction-violation) |
+| cycle_price_action | C (单价格) | ✓ | ✓ `walkforward_windows` re-export | code-level 11/11 invariant + 10 pytest tests |
 
 ## 结论
 
@@ -156,7 +157,7 @@ CLAUDE.md §3 铁律达成: 4 engine 共用 core.dual_price, phantom 防护结�
 | §3 Dual-Price (raw for execution) | ✓ Layout A (22 csv trade-level audit) | ✓ Layout A (2 csv trade-level audit) | ✓ Layout B (6 csv direction-violation test) | ✓ Layout C (11 invariant test, code-level) |
 | §4 Volume cap (Bar_Volume × 0.10) | ✓ all 22 presets | ✓ 2 presets | n/a (event-driven) | ✓ R8 MAX_VOL_PARTICIPATION = 0.10 |
 | §4 SL-first tiebreak | ✓ all 22 presets | ✓ 2 presets | n/a | ✓ try_exit_with_intraday_check |
-| §5 Walk-Forward Validation | ✗ 缺 WFV module | ✗ 缺 WFV module | ✗ 缺 WFV module | ✓ `walkforward.py` |
+| §5 Walk-Forward Validation | ✓ `from core.walkforward import monthly_windows` | ✓ `from core.walkforward import (monthly, yearly)` | ✓ wf_v3*_focused.py (inline windows, 12 presets) | ✓ `from core.walkforward import walkforward_windows` |
 | §6 三层分离 (control/strategy/broker) | ✓ | ✓ | ✓ | ✓ |
 
 ### 测试套件 PASS 矩阵 (2026-09-22)
@@ -177,6 +178,8 @@ CLAUDE.md §3 铁律达成: 4 engine 共用 core.dual_price, phantom 防护结�
 | test_uptrend_pullback_no_lookahead.py | ? | ✓ |
 | test_uptrend_pullback_v3a_runtime.py | ? | ✓ |
 | **合计** | **172 passed, 3 errors** | errors 来自 commit b514885 移除的 legacy preset 名 (本 tick 范围外) |
+| test_core_walkforward.py (c101ba3) | 12 | ✓ WFV 共用基类契约锁定 |
+| **本 tick 累计** | **89 passed** (dual_price + cross_engine + CPA invariants + short_reversal + core walkforward) | 0 failure |
 
 ### Trade-level phantom audit — 真实证据 (本 tick 重跑验证)
 
@@ -252,11 +255,28 @@ Layout C 是单价格域, 结构性 phantom-free。trade-level 审计需要先�
 
 ### 待办 follow-up (CLAUDE.md 整体合规)
 
-1. **§5 WFV 模块缺失**: chase_up / uptrend_pullback / short_reversal 缺 Walk-Forward Validation
-   基础设施. 当前 cycle_price_action/walkforward.py 是唯一实现, 应抽取共用基类.
+1. **§5 WFV 共用基类** ✅ **RESOLVED (commit c101ba3, 2026-09-23)**: `core/walkforward.py`
+   提供 3 个共用 API (WalkForwardWindow dataclass / walkforward_windows / monthly_windows /
+   yearly_windows), 3 engine (chase_up + uptrend_pullback + cycle_price_action) 全部 re-export.
+   diff: -93 net lines (119 deletions, 26 insertions). 12 pytest 契约测试锁定共用契约.
+   short_reversal 用 wf_v3*_focused.py inline windows (不重构, 不同 abstraction).
 2. **数据层 SQL 修复** (用户已确认 follow-up): chase_up/data.py + uptrend_pullback/data.py
    应切换读 v_daily_dual view (raw_prev_close 0% 覆盖 → 100%).
 3. **9 个 chase_up preset golden baseline 缺失**: v1/v1a/v1b/v1c/v2/v3/v4/v6/v7.
 4. **uptrend_pullback 完全无 golden baseline**.
 5. **3 个 test errors**: test_presets.py / test_engine_v3.py / test_short_reversal_no_lookahead.py
    引用已被移除的 legacy preset 名 (v33_mainboard_*).
+
+### §5 WFV 共享基类 — 落地证据 (commit c101ba3, 2026-09-23)
+
+```
+core/walkforward.py           [+117 lines, new]   # WalkForwardWindow + 3 generators
+chase_up/walkforward.py       [35 → 19 lines]     # local monthly_windows 删除
+uptrend_pullback/walkforward.py [50 → 24 lines]   # local monthly+yearly 删除
+cycle_price_action/walkforward.py [60 → 12 lines] # 整文件 re-export
+tests/test_core_walkforward.py [+182 lines, new]  # 12 pytest 契约测试
+
+test count: 12 passed in 0.01s (test_core_walkforward.py)
+全 audit suite: 89 passed in 0.10s (含 dual_price + cross_engine + CPA invariants
+                                    + short_reversal trade-math + core walkforward)
+```
