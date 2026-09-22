@@ -33,7 +33,7 @@ def test_end_to_end_one_preset():
     db = _real_db()
     assert db is not None
     m = run_backtest_v3(
-        "v33_mainboard_tp6_sl005_mh5_realistic", "2025-09-12", "2026-09-12", db
+        "v35_agg_pctchg_04_09", "2025-09-12", "2026-09-12", db
     )
     # 字段齐全
     expected_keys = {
@@ -63,11 +63,11 @@ def test_end_to_end_one_preset():
 
 
 def test_high_cagr_preset_profitable():
-    """tp6_sl005_mh5_realistic preset 应触发交易且 CAGR 为正。"""
+    """v35_agg_pctchg_04_09 preset 应触发交易且 CAGR 为正。"""
     db = _real_db()
     assert db is not None
     m = run_backtest_v3(
-        "v33_mainboard_tp6_sl005_mh5_realistic", "2025-09-12", "2026-09-12", db
+        "v35_agg_pctchg_04_09", "2025-09-12", "2026-09-12", db
     )
     # 高 CAGR preset 在 12 个月窗口下应有交易且总收益为正
     assert m["trades_count"] > 0
@@ -79,7 +79,7 @@ def test_short_window_returns_empty():
     db = _real_db()
     assert db is not None
     m = run_backtest_v3(
-        "v33_mainboard_tp6_sl005_mh5_realistic", "2025-09-12", "2025-09-19", db
+        "v35_agg_pctchg_04_09", "2025-09-12", "2025-09-19", db
     )
     assert m["trades_count"] == 0
     assert m["final_capital"] == pytest.approx(1_000_000.0, abs=1.0)

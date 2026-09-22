@@ -1,4 +1,4 @@
-"""No-lookahead regression tests for short_reversal v33_mainboard_tp6_sl005_mh5_realistic.
+"""No-lookahead regression tests for short_reversal v35_agg_pctchg_04_09.
 
 Locks the audit findings (2026-09-20) so future regressions re-trigger these guards.
 
@@ -61,7 +61,7 @@ pytestmark = pytest.mark.skipif(_REAL_DB is None, reason="需要 hiagent_config.
 
 # ---------- fixtures --------------------------------------------------------
 
-PRESET = "v33_mainboard_tp6_sl005_mh5_realistic"
+PRESET = "v35_agg_pctchg_04_09"
 START = "2025-09-12"
 END = "2026-09-12"
 

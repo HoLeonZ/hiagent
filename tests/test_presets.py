@@ -1,8 +1,8 @@
 """PRESETS dict + get_preset() 完整覆盖。
 
-NOTE: `short_reversal/presets.py` 增长为 19 个 preset (含 v33-v49 系列);
-本测试从 "key 数量硬等于" 放宽为 "至少包含 v33 双 baseline 且 get_preset()
-可正常返回"。
+NOTE: 2026-09-23 rebase (commit acc7d31) 移除 v33-v49 旧 series, 保留
+canonical presets v35_agg_pctchg_04_09 与 v46_sl_0002 作为覆盖参照.
+本测试断言两个 canonical preset 必须存在, get_preset() 可正常返回.
 """
 from __future__ import annotations
 
@@ -11,15 +11,15 @@ import pytest
 from short_reversal.presets import PRESETS, get_preset
 
 
-# v33 baselines — 必须保留 (用于回测对比参照)
+# Canonical presets — 必须保留 (用于回测对比参照)
 REQUIRED_KEYS = {
-    "v33_mainboard_tp2_sl05_dneg",
-    "v33_mainboard_tp6_sl005_mh5_realistic",
+    "v35_agg_pctchg_04_09",
+    "v46_sl_0002",
 }
 
 
-def test_presets_contains_required_v33_baselines():
-    """Required v33 baselines must remain in PRESETS (注释中明确为破产/对比参照)。"""
+def test_presets_contains_required_canonical_baselines():
+    """Required canonical baselines must remain in PRESETS."""
     assert REQUIRED_KEYS.issubset(set(PRESETS.keys()))
 
 
@@ -36,7 +36,7 @@ def test_preset_required_fields(name):
 
 
 def test_get_preset_returns_dict():
-    p = get_preset("v33_mainboard_tp6_sl005_mh5_realistic")
+    p = get_preset("v35_agg_pctchg_04_09")
     assert p["universe"] == "mainboard_only"
     assert p["tp_pct"] == 0.06
 

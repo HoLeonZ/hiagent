@@ -1,7 +1,7 @@
 """Trade-level trace to identify pre-window / post-window contamination.
 
 按 request:
-  1. 跑 v3 引擎 (v33_mainboard_tp6_sl005_mh5_realistic, 2025-09-12 → 2026-09-12)
+  1. 跑 v3 引擎 (v35_agg_pctchg_04_09, 2025-09-12 → 2026-09-12)
   2. 给 strategy 加 hook，记录 entry / exit 的 bar idx + date
   3. 分类:
        - pre-window entry: entry_date < start (但 exit 在 end 内)
@@ -149,7 +149,7 @@ class TraceStrategy(Phase3V3Strategy):
 
 
 def run() -> dict:
-    preset = "v33_mainboard_tp6_sl005_mh5_realistic"
+    preset = "v35_agg_pctchg_04_09"
     start = "2025-09-12"
     end = "2026-09-12"
     cfg = dict(get_preset(preset))
