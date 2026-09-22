@@ -116,7 +116,7 @@ invariant 锁定,任何 raw/adj split 回归会触发 RED。
 10. `c101ba3` feat(wfv): core.walkforward shared base — 3-engine 共享同一份 WFV 窗口生成
 11. `57b34f8` audit(claude.md §4): cycle_price_action flat-rate slippage 违规锁定 (3 RED tests)
 12. `fbfde71` fix(dual-price): cycle_price_action R5' ATR-aware slippage (3 RED → 3 GREEN)
-13. **(pending)** audit(claude.md §5): sweep scripts DSR/Bonferroni 缺失 (9/9 RED → 9/9 GREEN, 待 commit)
+13. `467793b` fix(§5): 9 sweep scripts 输出 DSR/Bonferroni (9/9 RED → 9/9 GREEN)
 
 ## 关键修复: chase_up Phase 2 backtrader feed (commit 2fb34fc)
 
