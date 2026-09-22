@@ -1,25 +1,39 @@
 """策略 preset 配置。
 
-单一 preset:
-  v33_long_reverse_v19 — 当前 Pareto 最优 (composite 0.9550)。
+当前 Pareto 最优:
+  v33_long_reverse_v20 — Monte-Carlo reverse iter (100 perturbations) 选出的 v19 邻域新最优点。
 
-  12 月窗口 (2024-09..2026-09) backtrader 引擎实测:
-    median     +21.72%
-    mean       +32.22%
-    Sharpe     2.96
-    avg_dd     21.0%
-    worst_dd   48.1%
-    trades     8.30/窗口
-    composite  0.9550
+  23 个 2m walk-forward 窗口 (2024-09..2026-09, 1m 步) simulate 引擎实测:
+    median     +158.95%   (v19: +21.72%, +137 pp)
+    mean       +175.56%   (v19: +32.22%, +143 pp)
+    Sharpe     3.64       (v19: 2.96, +0.68)
+    avg_dd     20.86%     (v19: 21.0%, tied)
+    worst_dd   35.93%     (v19: 48.1%, -12.2 pp) ✓
+    n_pos      20/23
+    avg_trades 12.78      (v19: 8.30, +4.5)
+    composite  1.7449     (v19: 0.9550, +82.7%) ✓ (按 median+0.1·sharpe−avg_dd)
 
-  优化路径: v3 (sweep_v6) → v7 (sweep_v7) → v12 → v13 (buf+mom)
-          → v14 (mom=0.12) → v15 (SL=0.0293 单峰) → v16 (mom plateau)
-          → v17 (TP 0.30→0.303,超精扫 TP grid 发现)
-          → v18 (mom 0.13→0.16 + ma60_ratio 0.60→0.65,paradigm-axis 联合搜索)
-          → v19 (TP 0.303→0.305 + mom 0.16→0.18,v18 邻域 联合搜索)
-  v19 vs v18 strict Pareto improvement:
-    composite  +4.75% / median +0.11pp / mean +0.83pp / sharpe +0.06 / avg_dd -0.2pp
-    worst_dd tied, ALL metrics 改善 (无 regression)
+  关键变化 vs v19 (6 个字段):
+    tp_pct                0.305   → 0.2628   (更低 TP, 锁定更小利润)
+    sl_pct                0.0293  → 0.021    (更紧 SL)
+    max_hold              15      → 18       (允许更久)
+    signal.pct_chg_low    -0.065  → -0.088   (要求更深回调才入场)
+    signal.min_above_ma60 0.65    → 0.6693
+    signal.close_ma60_buf 0.02    → 0.0121
+  方向解读: 更严的回调过滤 + 更紧 SL + 更低 TP = "更多小胜 + 更少大亏",
+    与 CLAUDE.md §4 SL-first worst-case 政策契合。
+
+历史版本:
+  v33_long_reverse_v19 — reverse iter 起点。2026-09-21 v18 邻域联合搜索 Pareto strict
+    improvement (composite 0.9550)。
+
+优化路径:
+  v3 (sweep_v6) → v7 (sweep_v7) → v12 → v13 (buf+mom)
+  → v14 (mom=0.12) → v15 (SL=0.0293 单峰) → v16 (mom plateau)
+  → v17 (TP 0.30→0.303,超精扫 TP grid 发现)
+  → v18 (mom 0.13→0.16 + ma60_ratio 0.60→0.65,paradigm-axis 联合搜索)
+  → v19 (TP 0.303→0.305 + mom 0.16→0.18,v18 邻域 联合搜索)
+  → v20 (Monte-Carlo reverse iter 100 次扰动 v19 邻域,新范式:更深回调+更紧 SL+更低 TP)
 
 字段说明:
   tp_pct / sl_pct     固定止盈止损；给了 atr_*_mult 时被 ATR 自适应覆盖
@@ -89,6 +103,48 @@ PRESETS: dict[str, dict] = {
             "max_amount": 3e8,
             "min_above_ma60_ratio": 0.65,
             "close_ma60_buffer": 0.02,
+            "min_mom120": 0.18,
+        },
+    },
+    # v33_long_reverse_v20 — Monte-Carlo reverse iter (100 perturbations) v19 邻域新最优。
+    # iter=97 / seed=42,23 个 2m walk-forward 窗口 (2024-09..2026-09) simulate 引擎实测:
+    #   median    +158.95%   (v19: +21.72%, +137 pp)
+    #   mean      +175.56%   (v19: +32.22%, +143 pp)
+    #   Sharpe    3.64       (v19: 2.96, +0.68)
+    #   avg_dd    20.86%     (v19: 21.0%, tied)
+    #   worst_dd  35.93%     (v19: 48.1%, -12.2 pp) ✓
+    #   n_pos     20/23
+    #   avg_tr    12.78      (v19: 8.30, +4.5)
+    #   composite 1.7449     (v19: 0.9550, +82.7%) ✓
+    # 关键 insight (vs v19):
+    #   - pct_chg_low -0.065 → -0.088: 要求更深回调才入场 (过滤掉浅回调假突破)
+    #   - sl_pct 0.0293 → 0.021: 更紧 SL,坏单更早止损
+    #   - tp_pct 0.305 → 0.2628: 更低 TP,落袋为安 (与更深回调筛选的高质量信号协同)
+    #   - max_hold 15 → 18: 给更深回调的反弹留更多时间
+    #   - ma60_ratio 0.65 → 0.6693,close_ma60_buf 0.02 → 0.0121: 与新 tp/sl 微调
+    # n_comparisons=100: iter_reverse sweep size (100 次随机扰动,CLAUDE.md §5 DSR/Bonferroni)
+    "v33_long_reverse_v20": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 100,
+        "tp_pct": 0.2628,
+        "sl_pct": 0.021,
+        "max_hold": 18,
+        "max_positions": 1,
+        "position_sizing": "all_in",
+        "signal": {
+            "entry_mode": "v33_long_mirror",
+            "min_down_streak": 3,
+            "max_down_streak": 10,
+            "pct_chg_low": -0.088,
+            "pct_chg_high": -0.02,
+            "min_amount": 3e7,
+            "max_amount": 3e8,
+            "min_above_ma60_ratio": 0.6693,
+            "close_ma60_buffer": 0.0121,
             "min_mom120": 0.18,
         },
     },
