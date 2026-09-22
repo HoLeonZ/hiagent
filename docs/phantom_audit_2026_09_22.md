@@ -300,7 +300,8 @@ Layout C 是单价格域, 结构性 phantom-free。trade-level 审计需要先�
    修复方案: 参考 cycle_price_action `load_universe_data` 的 `MAX(date) >= asof`
    模式为 chase_up / uptrend_pullback 增加 asof_date 参数, 并更新 5+ 调用方
    (walkforward / backtrader_engine / wf_sweep / backtest / sweep 等) 同步传入.
-9. **§2 Settlement Isolation (T+0 vs T+1)** ⚠️ **AUDIT FINDING (2026-09-23)**:
+9. **§2 Settlement Isolation (T+0 vs T+1)** ⚠️ **AUDIT FINDING (2026-09-23)** (实际
+   影响: 零 — 见下方 P2):
    `chase_up/portfolio.py:237` `cash += notional - fees_out` 立即把卖出
    所得计入 cash, 同 bar 内后续 entry 可立即使用 → 隐式 T+0 结算假设.
    CLAUDE.md §2 强制要求三态分离: Settling_Funds (T+1 才可用) /
@@ -320,6 +321,16 @@ Layout C 是单价格域, 结构性 phantom-free。trade-level 审计需要先�
    - `cycle_price_action/portfolio.py:5` P3 hard contract: `try_exit raises if
      exit_date == entry_date` → ✓ 合规
    修复范围扩大: chase_up + uptrend_pullback 两 engine 需同步落地.
+   **P2 (2026-09-23 audit tick) 实际影响重评估**:
+   - 当前 4 engine 全部单仓模型:
+     - chase_up + uptrend_pullback: 历史 v2/v5/v6/v7 `max_positions>=2`
+       已在 2026-09-22 §2 All-In Sizing Policy 强制改为 `max_positions=1`,
+       当前 active preset 全部 max_positions=1 (grep 验证: 0 hit)
+     - short_reversal: 单仓位 (line 144 `self._pos = PositionState(...)`)
+     - cycle_price_action: 单仓位 (`self._pos` 单个 PositionState, 非 dict)
+   - 单仓下 T 日 close 卖出后无同日 re-buy 路径, T+0 vs T+1 区别无实际影响
+   - **gap 仍存在代码层** (latent risk), 但**对当前 production preset 无影响**
+   - 修复优先级: 低 — 仅在有人恢复 max_positions>=2 时才需要
 10. **§3 Event-Sourced Corporate Actions (dividends + splits)** ⚠️ **AUDIT FINDING (2026-09-23)**:
     4 engine (chase_up + uptrend_pullback + short_reversal + cycle_price_action)
     均无 dividend_handler / split_handler 实现. CLAUDE.md §3 字面要求:
