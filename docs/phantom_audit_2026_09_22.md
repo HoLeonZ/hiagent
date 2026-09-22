@@ -159,6 +159,7 @@ CLAUDE.md §3 铁律达成: 4 engine 共用 core.dual_price, phantom 防护结�
 | §1 Temporal (no .bfill/.shift(-x)/center=True) | ✓ 0 hits | ✓ 0 hits | ✓ 0 hits | ✓ 0 hits |
 | §3 Dual-Price (raw for execution) | ✓ Layout A (22 csv trade-level audit) | ✓ Layout A (2 csv trade-level audit) | ✓ Layout B (6 csv direction-violation test) | ✓ Layout C (11 invariant test, code-level) |
 | §3 PIT Mandate (universe asof) | **✗ load_universe 缺 asof_date** — `tests/test_pit_universe_gap.py` RED 2/2 | **✗ load_universe 缺 asof_date** — RED 2/2 | ✓ `load_universe_data` 用 `MAX(date) >= end` 过滤 | ✓ `load_universe_asof` PIT-correct (7 unit tests GREEN) |
+| §2 Settlement Isolation (T+1) | **✗ _close_position 立即计入 cash** — `tests/test_settlement_isolation_gap.py` RED 2/2 (chase_up) | 需复核 | 需复核 | 需复核 |
 | §4 Volume cap (Bar_Volume × 0.10) | ✓ all 22 presets | ✓ 2 presets | n/a (event-driven) | ✓ R8 MAX_VOL_PARTICIPATION = 0.10 |
 | §4 SL-first tiebreak | ✓ all 22 presets | ✓ 2 presets | n/a | ✓ try_exit_with_intraday_check |
 | §4 ATR-aware slippage | ✓ R5 atr_slip_scale | ✓ R5 atr_slip_scale | ✓ V5' atr_slip_scale | ✓ R5' atr_slip_scale (replay_broker.py:43-46) |
@@ -297,6 +298,18 @@ Layout C 是单价格域, 结构性 phantom-free。trade-level 审计需要先�
    修复方案: 参考 cycle_price_action `load_universe_data` 的 `MAX(date) >= asof`
    模式为 chase_up / uptrend_pullback 增加 asof_date 参数, 并更新 5+ 调用方
    (walkforward / backtrader_engine / wf_sweep / backtest / sweep 等) 同步传入.
+9. **§2 Settlement Isolation (T+0 vs T+1)** ⚠️ **AUDIT FINDING (2026-09-23)**:
+   `chase_up/portfolio.py:237` `cash += notional - fees_out` 立即把卖出
+   所得计入 cash, 同 bar 内后续 entry 可立即使用 → 隐式 T+0 结算假设.
+   CLAUDE.md §2 强制要求三态分离: Settling_Funds (T+1 才可用) /
+   Free_Cash (立即可用) / Locked_Margin (持仓占用).
+   后果: A 股 T+1 真实结算, current 实现对 max_positions >= 2 preset 存在
+   轻微 over-allocation (当日卖出可当日买入).
+   `tests/test_settlement_isolation_gap.py` 2 RED tests 锁定 gap
+   (无 settling 状态 + _close_position 立即计入 cash).
+   修复方案: portfolio.py 增加三态 cash dict + _settle_cash() (每 bar 开始
+   把 settling → free). uptrend_pullback / short_reversal / cycle_price_action
+   需同步复核 (本 tick 范围外).
 
 ### §5 WFV 共享基类 — 落地证据 (commit c101ba3, 2026-09-23)
 
