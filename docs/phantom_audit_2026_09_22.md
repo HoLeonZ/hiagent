@@ -118,3 +118,44 @@ uptrend_pullback/backtrader_engine.py:115-132 同构)。
 - **总 phantom ratio: 0.00%**
 
 CLAUDE.md §3 铁律达成: 4 engine 共用 core.dual_price, phantom 防护结构性保证。
+
+## 跨 §3 全维度 CLAUDE.md 合规状态 (2026-09-22 audit tick)
+
+| 维度 | chase_up | uptrend_pullback | short_reversal | cycle_price_action |
+|------|----------|------------------|----------------|--------------------|
+| §1 Temporal (no .bfill/.shift(-x)/center=True) | ✓ 0 hits | ✓ 0 hits | ✓ 0 hits | ✓ 0 hits |
+| §3 Dual-Price (raw for execution) | ✓ Layout A | ✓ Layout A | ✓ Layout B (raw 单源) | ✓ Layout C (单源) |
+| §4 Volume cap (Bar_Volume × 0.10) | ✓ all 22 presets | ✓ 2 presets | n/a (event-driven) | n/a |
+| §4 SL-first tiebreak | ✓ all 22 presets | ✓ 2 presets | n/a | n/a |
+| §5 Walk-Forward Validation | ✗ 缺 WFV module | ✗ 缺 WFV module | ✗ 缺 WFV module | ✓ `walkforward.py` |
+| §6 三层分离 (control/strategy/broker) | ✓ | ✓ | ✓ | ✓ |
+
+### 测试套件 PASS 矩阵 (2026-09-22)
+
+| test file | tests | 状态 |
+|-----------|------:|------|
+| test_dual_price.py | 22 | ✓ |
+| test_dual_price_cross_engine.py | 14 | ✓ |
+| test_chase_up_backtrader_engine_dual_price.py | 5 | ✓ |
+| test_chase_up_no_lookahead.py | ? | ✓ |
+| test_chase_up_v3a_runtime.py | ? | ✓ |
+| test_backtest_data_integrity.py | ? | ✓ |
+| test_dna_data_dual_price.py | 16 | ✓ (含 v_daily_dual view 修复) |
+| test_dna_data_dual_price_resolver.py | ? | ✓ |
+| test_cycle_no_lookahead.py | ? | ✓ |
+| test_cycle_price_action_no_lookahead.py | ? | ✓ |
+| test_short_reversal_v3a_runtime.py | ? | ✓ |
+| test_uptrend_pullback_no_lookahead.py | ? | ✓ |
+| test_uptrend_pullback_v3a_runtime.py | ? | ✓ |
+| **合计** | **172 passed, 3 errors** | errors 来自 commit b514885 移除的 legacy preset 名 (本 tick 范围外) |
+
+### 待办 follow-up (CLAUDE.md 整体合规)
+
+1. **§5 WFV 模块缺失**: chase_up / uptrend_pullback / short_reversal 缺 Walk-Forward Validation
+   基础设施. 当前 cycle_price_action/walkforward.py 是唯一实现, 应抽取共用基类.
+2. **数据层 SQL 修复** (用户已确认 follow-up): chase_up/data.py + uptrend_pullback/data.py
+   应切换读 v_daily_dual view (raw_prev_close 0% 覆盖 → 100%).
+3. **9 个 chase_up preset golden baseline 缺失**: v1/v1a/v1b/v1c/v2/v3/v4/v6/v7.
+4. **uptrend_pullback 完全无 golden baseline**.
+5. **3 个 test errors**: test_presets.py / test_engine_v3.py / test_short_reversal_no_lookahead.py
+   引用已被移除的 legacy preset 名 (v33_mainboard_*).
