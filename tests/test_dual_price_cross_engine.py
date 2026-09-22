@@ -167,3 +167,45 @@ class TestCyclePriceActionIntegration:
         assert "LAYOUT_CYCLE_PRICE" in text, (
             "cycle_price_action 必须显式声明 LAYOUT_CYCLE_PRICE — 防 Layout 漂移"
         )
+
+
+# ============================================================ chase_up 集成契约
+
+class TestChaseUpIntegration:
+    """chase_up Phase 2 backtrader 必须接入 core.dual_price (Layout A, 双价格域).
+
+    chase_up 22 preset 默认 price_source_for_execution="raw_close",backtrader engine
+    必须重映射 feed 到 raw 域,否则 Phase 1 (portfolio.py 用 raw_open) 与 Phase 2
+    (ChaseUpTradeReplay 跑在 qfq feed) 口径不一 → phantom SL/TP。
+    """
+
+    def test_chase_up_uses_extract_execution_bar_for_layout_a(self):
+        """chase_up/backtrader_engine.py 的 feed 构建必须走 Layout A 提取。
+        """
+        from pathlib import Path
+        engine_path = Path("chase_up/backtrader_engine.py")
+        text = engine_path.read_text()
+        assert "core.dual_price" in text or "extract_execution_bar" in text, (
+            "chase_up/backtrader_engine.py 未接入 core.dual_price — "
+            "Phase 2 backtrader 跑在 qfq 域,触发 phantom SL/TP"
+        )
+
+    def test_chase_up_uses_LAYOUT_CHASE_UPTREND(self):
+        """backtrader_engine 必须显式用 LAYOUT_CHASE_UPTREND 声明 Layout A。"""
+        from pathlib import Path
+        engine_path = Path("chase_up/backtrader_engine.py")
+        text = engine_path.read_text()
+        assert "LAYOUT_CHASE_UPTREND" in text, (
+            "chase_up 必须显式声明 LAYOUT_CHASE_UPTREND — 防 Layout 漂移"
+        )
+
+    def test_chase_up_verify_trade_takes_price_source_param(self):
+        """_verify_trade_with_backtrader 必须接受 price_source_for_execution 参数。
+        """
+        from pathlib import Path
+        engine_path = Path("chase_up/backtrader_engine.py")
+        text = engine_path.read_text()
+        assert "price_source_for_execution" in text, (
+            "chase_up _verify_trade_with_backtrader 必须接受 price_source_for_execution — "
+            "否则 Phase 2 backtrader 永远跑在 qfq 域,与 Phase 1 raw entry 不对齐"
+        )

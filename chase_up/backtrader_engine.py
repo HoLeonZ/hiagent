@@ -47,6 +47,48 @@ def compute_trade_tp_sl(
     return entry_price * (1 + fixed_tp_pct), entry_price * (1 - fixed_sl_pct)
 
 
+def _build_bt_feed(
+    span: pd.DataFrame,
+    price_source_for_execution: str,
+) -> pd.DataFrame:
+    """V3a+ (2026-09-22, CLAUDE.md §3): backtrader feed 必须遵循 price_source_for_execution。
+
+    Layout A 行为 (与 uptrend_pullback/backtrader_engine.py:115-132 同构):
+      - raw_close: 用 extract_execution_bar(LAYOUT_CHASE_UPTREND) 重映射 open/high/low/close
+        → raw_* 优先, raw_* 缺失时回退 adj_*, 防 phantom TP/SL
+      - adj_close (默认): 用 span[open/high/low/close] (qfq 列,backtrader 跑在 qfq 域)
+      - raw_* 列缺失时: best-effort 回退到 span[*],与 portfolio.py 行为一致
+
+    复现的 bug: 旧版无条件用 span[*] (qfq),与 portfolio.py Phase 1 entry 用 raw_open
+    (commit 86832f7) 口径不一 → Phase 2 backtrader ChaseUpTradeReplay 跑在 qfq 域,
+    在 `o <= sl_p` 判定上以 qfq_open 与 raw_sl 比较,qfq_open << raw_sl → 误触发 SL,
+    exit_price = qfq_open → phantom loss (v3 backtrader output: 4/59 SL phantom)。
+    """
+    if price_source_for_execution == "raw_close" and "raw_open" in span.columns:
+        from core.dual_price import LAYOUT_CHASE_UPTREND, extract_execution_bar
+        rows = []
+        for _, row in span.iterrows():
+            bar = extract_execution_bar(
+                {k: row.get(k) for k in (
+                    "open", "high", "low", "close", "prev_close",
+                    "raw_open", "raw_high", "raw_low", "raw_close", "raw_prev_close",
+                )},
+                LAYOUT_CHASE_UPTREND,
+            )
+            rows.append({
+                "open": bar.open, "high": bar.high,
+                "low": bar.low, "close": bar.close,
+            })
+        feed_df = pd.DataFrame(rows)
+        feed_df["date"] = pd.to_datetime(span["date"].values)
+        feed_df["volume"] = span["volume"].values
+    else:
+        feed_df = span[["date", "open", "high", "low", "close", "volume"]].copy()
+    feed_df["date"] = pd.to_datetime(feed_df["date"])
+    feed_df = feed_df.set_index("date").sort_index().astype(float)
+    return feed_df
+
+
 def _verify_trade_with_backtrader(
     panel: pd.DataFrame,
     thscode: str,
@@ -56,8 +98,13 @@ def _verify_trade_with_backtrader(
     tp_price: float,
     sl_price: float,
     max_hold: int,
+    price_source_for_execution: str = "adj_close",
 ) -> tuple[float, float, pd.Timestamp | None]:
-    """对单笔交易跑 backtrader,返回 (net_pnl, exit_price_actual, exit_date_actual)。"""
+    """对单笔交易跑 backtrader,返回 (net_pnl, exit_price_actual, exit_date_actual)。
+
+    V3a+ (2026-09-22, CLAUDE.md §3): price_source_for_execution 控制 feed 价格域。
+    与 portfolio.py Phase 1 口径对齐,防 Phase 2 backtrader 跑在 qfq 域 → phantom。
+    """
     code_data = panel[panel["thscode"] == thscode].sort_values("date")
     if code_data.empty:
         return 0.0, entry_price, None
@@ -69,9 +116,7 @@ def _verify_trade_with_backtrader(
     span = code_data[code_data["date"] >= feed_start].head(max_hold + 5)
     if span.empty:
         return 0.0, entry_price, None
-    feed_df = span[["date", "open", "high", "low", "close", "volume"]].copy()
-    feed_df["date"] = pd.to_datetime(feed_df["date"])
-    feed_df = feed_df.set_index("date").sort_index().astype(float)
+    feed_df = _build_bt_feed(span, price_source_for_execution)
 
     cerebro = bt.Cerebro(stdstats=False)
     cerebro.adddata(bt.feeds.PandasData(dataname=feed_df))
@@ -196,6 +241,10 @@ def run_backtrader_backtest(
         net_pnl_bt, exit_px_bt, exit_date_bt = _verify_trade_with_backtrader(
             panel, t["thscode"], pd.Timestamp(t["entry_date"]),
             entry_price, size, tp_p, sl_p, max_hold,
+            # V3a+ (2026-09-22, CLAUDE.md §3): feed 必须与 portfolio.py Phase 1
+            # 同价格域, 否则 backtrader strategy 跑在 qfq 域 → phantom SL/TP
+            # (audit 揭露 v3 backtrader output: 4/59 SL phantom, exit_px ≈ qfq_open)。
+            price_source_for_execution=p.get("price_source_for_execution", "adj_close"),
         )
         phase1_pnl = float(t["net_pnl"])
         if exit_date_bt is None and exit_px_bt == entry_price:
