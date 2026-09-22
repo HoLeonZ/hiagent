@@ -159,7 +159,7 @@ CLAUDE.md §3 铁律达成: 4 engine 共用 core.dual_price, phantom 防护结�
 | §1 Temporal (no .bfill/.shift(-x)/center=True) | ✓ 0 hits | ✓ 0 hits | ✓ 0 hits | ✓ 0 hits |
 | §3 Dual-Price (raw for execution) | ✓ Layout A (22 csv trade-level audit) | ✓ Layout A (2 csv trade-level audit) | ✓ Layout B (6 csv direction-violation test) | ✓ Layout C (11 invariant test, code-level) |
 | §3 PIT Mandate (universe asof) | **✗ load_universe 缺 asof_date** — `tests/test_pit_universe_gap.py` RED 2/2 | **✗ load_universe 缺 asof_date** — RED 2/2 | ✓ `load_universe_data` 用 `MAX(date) >= end` 过滤 | ✓ `load_universe_asof` PIT-correct (7 unit tests GREEN) |
-| §2 Settlement Isolation (T+1) | **✗ _close_position 立即计入 cash** — `tests/test_settlement_isolation_gap.py` RED 2/2 (chase_up) | 需复核 | 需复核 | 需复核 |
+| §2 Settlement Isolation (T+1) | **✗ _close_position 立即计入 cash** — `tests/test_settlement_isolation_gap.py` RED 2/2 (chase_up) | **✗ 同 chase_up pattern** (line 231 `cash += notional - fees_out`) | ✓ P3 强制 T+1: "信号在 T 日 close 触发 → T+1 日 open 成交" (line 5/168) + "exit_date > entry_date" (line 283) | ✓ P3 hard contract: `try_exit raises if exit_date == entry_date` (line 5) |
 | §2 Atomic Cash Locks (sort by conviction + sequential lock) | ✓ `entries.sort_values(["date","score"], ascending=[True,False])` (line 207) → `budget=min(slot_value,cash)` (line 394) → `cash-=notional+fee_in` (line 444), per-order cash lock enforced | ✓ 同样 pattern (line 207/383/429) | n/a (event-driven, 单一 entry/bar) | n/a (event-driven) |
 | §3 Event-Sourced Corporate Actions | **✗ 无 dividend/split handler** — `tests/test_corporate_actions_gap.py` RED 4/4 | ✗ RED | ✗ RED | ✗ RED |
 | §4 Volume cap (Bar_Volume × 0.10) | ✓ all 22 presets | ✓ 2 presets | n/a (event-driven) | ✓ R8 MAX_VOL_PARTICIPATION = 0.10 |
@@ -312,6 +312,14 @@ Layout C 是单价格域, 结构性 phantom-free。trade-level 审计需要先�
    修复方案: portfolio.py 增加三态 cash dict + _settle_cash() (每 bar 开始
    把 settling → free). uptrend_pullback / short_reversal / cycle_price_action
    需同步复核 (本 tick 范围外).
+   **2026-09-23 复核结果**:
+   - `uptrend_pullback/portfolio.py:231` 同 chase_up pattern (`cash += notional
+     - fees_out`) → ✗ 同样 gap
+   - `short_reversal/replay_strategy_v3.py:5/168/283` P3 强制 T+1 (信号 T 日 close
+     触发 → T+1 日 open 成交 + exit_date > entry_date) → ✓ 合规
+   - `cycle_price_action/portfolio.py:5` P3 hard contract: `try_exit raises if
+     exit_date == entry_date` → ✓ 合规
+   修复范围扩大: chase_up + uptrend_pullback 两 engine 需同步落地.
 10. **§3 Event-Sourced Corporate Actions (dividends + splits)** ⚠️ **AUDIT FINDING (2026-09-23)**:
     4 engine (chase_up + uptrend_pullback + short_reversal + cycle_price_action)
     均无 dividend_handler / split_handler 实现. CLAUDE.md §3 字面要求:
