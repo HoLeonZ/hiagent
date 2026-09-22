@@ -154,10 +154,10 @@ CLAUDE.md §3 铁律达成: 4 engine 共用 core.dual_price, phantom 防护结�
 | engine | presets 总数 | 有 trades.csv | 审计方法 | phantom ratio |
 |--------|----------:|----------:|----------|--------------:|
 | chase_up | 22 | 22 | `audit_phantom.py` 真实 trade-vs-qfq_open 比对 | **0/1116 (0.00%)** |
-| uptrend_pullback | 2 | 2 | inline DuckDB 比对 (audit script 待沉淀) | **0/117 (0.00%)** |
-| short_reversal | 11 | 2 (v35+v36) | trade-level 待跑 (csv 缺 entry_date/exit_date) | **N/A — 见下方代码审计** |
-| cycle_price_action | 2 | 0 | trade-level 待跑 | **N/A — Layout C 单源** |
-| **合计 trade-level 已审计** | **37** | **26** | | **0/1233 (0.00%)** |
+| uptrend_pullback | 2 | 2 | `audit_phantom.py` 真实 trade-vs-qfq_open 比对 | **0/117 (0.00%)** |
+| short_reversal | 11 | 3 (v35+v36+v38) | direction-consistency test (Layout B SHORT 语义) | **0/633 direction-violation** |
+| cycle_price_action | 1 | 0 | trade-level 待跑 (backtest 排队中) | **N/A — Layout C 单源** |
+| **合计 trade-level 已审计** | **36** | **27** | | **0/1866 direction-clean** |
 
 ### short_reversal Layout B 代码审计 (本 tick 验证, 2026-09-22)
 
@@ -168,7 +168,18 @@ CLAUDE.md §3 铁律达成: 4 engine 共用 core.dual_price, phantom 防护结�
 - L161: `current_close = float(d.close[0])` — `d.close` 来自 v_daily raw
 - L296-318: SL/TP 触发用 `d.open[0]` / `d.close[0]` / `d.low[0]` / `d.high[0]`,全部 raw
 
-**结论**: short_reversal 当前 strategy 用 raw (Layout B), 无 phantom 路径。V3a 完整信号迁移 (切到 adj) 时**必须**重生成 golden baseline + 重跑 trade-level phantom audit (见 follow-up)。
+**Trade-level 验证 (3 csvs, 633 trades)** — `tests/test_short_reversal_trade_math_consistency.py`:
+- SHORT 语义: SL exit > entry (价格 up 触发), TP exit < entry (价格 down 触发)
+- direction-violation = phantom 信号 (策略 fire SL 但 exit < entry 说明 clamp 到 adj_open)
+- v35 171 trades / v36 200 trades / v38 262 trades → **0 direction-violation**
+- 4/4 unit tests PASSED
+
+**Contract 锁定** — `tests/test_dual_price_cross_engine.py::TestShortReversalLayoutBContract`:
+- `test_replay_strategy_v3_does_not_read_adj_in_exit_path`: 锁定 exit 路径不读 `d.adj_*`
+- `test_feed_bt_loads_adj_columns_for_v3a_migration_path`: feed 预埋 adj_* 但 strategy 暂不读
+- `test_short_reversal_preset_declares_dual_price_intent`: 11 preset 全部声明 dual-price intent + execution="raw_close"
+
+**结论**: short_reversal 当前 strategy 用 raw (Layout B), 633 trades 0 phantom direction-violation. V3a 完整信号迁移 (切到 adj) 时**必须**重生成 golden baseline + 重跑 trade-level phantom audit (见 follow-up)。
 
 ### cycle_price_action Layout C 代码审计 (本 tick 验证)
 
