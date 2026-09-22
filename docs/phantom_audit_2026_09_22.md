@@ -341,6 +341,8 @@ Layout C 是单价格域, 结构性 phantom-free。trade-level 审计需要先�
        当前 active preset 全部 max_positions=1 (grep 验证: 0 hit)
      - short_reversal: 单仓位 (line 144 `self._pos = PositionState(...)`)
      - cycle_price_action: 单仓位 (`self._pos` 单个 PositionState, 非 dict)
+   - **35 preset 全量验证** (2026-09-23): chase_up 22 + uptrend_pullback 2
+     + short_reversal 11 = 35, 0 preset 有 `max_positions != 1`
    - 单仓下 T 日 close 卖出后无同日 re-buy 路径, T+0 vs T+1 区别无实际影响
    - **gap 仍存在代码层** (latent risk), 但**对当前 production preset 无影响**
    - 修复优先级: 低 — 仅在有人恢复 max_positions>=2 时才需要
