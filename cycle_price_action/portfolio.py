@@ -70,8 +70,16 @@ class Portfolio:
     # when None or NaN the cap is skipped (test fixtures without volume column)。
     MAX_VOL_PARTICIPATION = 0.10
 
-    def __init__(self, cash: float) -> None:
+    def __init__(
+        self,
+        cash: float,
+        # R5' (2026-09-23, CLAUDE.md §4): ATR-aware slippage opt-in.
+        # When atr_slip_scale > 0, slippage = max(0, atr_pct × participation × scale)
+        # is added on top of commission + tax. Default 0.0 = no slippage (back-compat).
+        atr_slip_scale: float = 0.0,
+    ) -> None:
         self.cash = float(cash)
+        self.atr_slip_scale = atr_slip_scale
         self._pos: PositionState | None = None
         self.closed_trades: list[dict] = []
 
