@@ -19,6 +19,7 @@ from uptrend_pullback.backtest import compute_metrics
 from uptrend_pullback.data import load_panel
 from uptrend_pullback.portfolio import simulate_portfolio
 from uptrend_pullback.signals import compute_indicators, select_entries_v33_long_mirror
+from dna_stats.deflated import deflated_sharpe_ratio
 from uptrend_pullback.universe import load_universe
 
 START, END = "2025-09-16", "2026-09-16"
@@ -162,6 +163,26 @@ def main():
         indent=2, default=str,
     ))
     print(f"\n已保存: {out}")
+
+    # CLAUDE.md §5 Penalty Metrics: 多 trial sweep 必须报告 DSR
+    if results:
+        all_sharpes: list[float] = []
+        for df in results.values():
+            if "sharpe" in df.columns:
+                vals = df["sharpe"].dropna().tolist()
+                all_sharpes.extend(float(v) for v in vals)
+        if all_sharpes:
+            observed = max(all_sharpes)
+            dsr = deflated_sharpe_ratio(
+                observed_sharpe=observed, n_trials=len(all_sharpes), n_returns=252
+            )
+            print(
+                f"\n§5 DSR | observed_sharpe={observed:.3f} | "
+                f"n_trials={len(all_sharpes)} | "
+                f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
+                f"expected_max={dsr['expected_max_sharpe']:.3f} | "
+                f"p_value={dsr['p_value']:.4f}"
+            )
 
 
 if __name__ == "__main__":

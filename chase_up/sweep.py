@@ -19,6 +19,7 @@ from chase_up.backtest import run_backtest
 from chase_up.data import load_panel
 from chase_up.signals import compute_indicators
 from chase_up.universe import load_universe
+from dna_stats.deflated import deflated_sharpe_ratio
 
 from hiagent_config import DB_PATH
 
@@ -121,6 +122,22 @@ def main() -> None:
                 show[c] = (show[c] * 100).round(2)
         show["sharpe"] = show["sharpe"].round(2)
         print(show.to_string(index=False))
+
+    # CLAUDE.md §5 Penalty Metrics: 多 trial sweep 必须报告 DSR
+    if not df.empty and "sharpe" in df.columns:
+        sharpes = df["sharpe"].dropna().tolist()
+        if sharpes:
+            observed = max(sharpes)
+            dsr = deflated_sharpe_ratio(
+                observed_sharpe=observed, n_trials=len(sharpes), n_returns=252
+            )
+            print(
+                f"\n§5 DSR | observed_sharpe={observed:.3f} | "
+                f"n_trials={len(sharpes)} | "
+                f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
+                f"expected_max={dsr['expected_max_sharpe']:.3f} | "
+                f"p_value={dsr['p_value']:.4f}"
+            )
 
 
 if __name__ == "__main__":
