@@ -158,6 +158,7 @@ CLAUDE.md §3 铁律达成: 4 engine 共用 core.dual_price, phantom 防护结�
 |------|----------|------------------|----------------|--------------------|
 | §1 Temporal (no .bfill/.shift(-x)/center=True) | ✓ 0 hits | ✓ 0 hits | ✓ 0 hits | ✓ 0 hits |
 | §3 Dual-Price (raw for execution) | ✓ Layout A (22 csv trade-level audit) | ✓ Layout A (2 csv trade-level audit) | ✓ Layout B (6 csv direction-violation test) | ✓ Layout C (11 invariant test, code-level) |
+| §3 PIT Mandate (universe asof) | **✗ load_universe 缺 asof_date** — `tests/test_pit_universe_gap.py` RED 2/2 | **✗ load_universe 缺 asof_date** — RED 2/2 | ✓ `load_universe_data` 用 `MAX(date) >= end` 过滤 | ✓ `load_universe_asof` PIT-correct (7 unit tests GREEN) |
 | §4 Volume cap (Bar_Volume × 0.10) | ✓ all 22 presets | ✓ 2 presets | n/a (event-driven) | ✓ R8 MAX_VOL_PARTICIPATION = 0.10 |
 | §4 SL-first tiebreak | ✓ all 22 presets | ✓ 2 presets | n/a | ✓ try_exit_with_intraday_check |
 | §4 ATR-aware slippage | ✓ R5 atr_slip_scale | ✓ R5 atr_slip_scale | ✓ V5' atr_slip_scale | ✓ R5' atr_slip_scale (replay_broker.py:43-46) |
@@ -283,6 +284,19 @@ Layout C 是单价格域, 结构性 phantom-free。trade-level 审计需要先�
 6. **uptrend_pullback 完全无 golden baseline**.
 7. **3 个 test errors**: test_presets.py / test_engine_v3.py / test_short_reversal_no_lookahead.py
    引用已被移除的 legacy preset 名 (v33_mainboard_*).
+8. **§3 PIT Mandate (universe 缺 asof_date)** ⚠️ **AUDIT FINDING (2026-09-23)**:
+   `chase_up/universe.py::load_universe` + `uptrend_pullback/universe.py::load_universe`
+   都缺 `asof_date` 参数, 返回全量历史代码而非 PIT 过滤. 仅
+   `short_reversal/universe.py::load_universe_asof` 与
+   `cycle_price_action/data_feed.py::load_universe_data` PIT-correct
+   (后者用 `MAX(date) >= end` 过滤退市票).
+   后果: 模拟 2025-06-01~2025-12-31 时 universe 集合包含 2025-01 已退市股票
+   (逻辑上不会成交, 但 universe 计数虚高, wf_sweep 报告里 "tested N stocks"
+   数字夸大).
+   `tests/test_pit_universe_gap.py` 2 RED tests 锁定 gap (asof_date kwarg TypeError).
+   修复方案: 参考 cycle_price_action `load_universe_data` 的 `MAX(date) >= asof`
+   模式为 chase_up / uptrend_pullback 增加 asof_date 参数, 并更新 5+ 调用方
+   (walkforward / backtrader_engine / wf_sweep / backtest / sweep 等) 同步传入.
 
 ### §5 WFV 共享基类 — 落地证据 (commit c101ba3, 2026-09-23)
 
