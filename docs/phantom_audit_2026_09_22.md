@@ -160,6 +160,7 @@ CLAUDE.md §3 铁律达成: 4 engine 共用 core.dual_price, phantom 防护结�
 | §3 Dual-Price (raw for execution) | ✓ Layout A (22 csv trade-level audit) | ✓ Layout A (2 csv trade-level audit) | ✓ Layout B (6 csv direction-violation test) | ✓ Layout C (11 invariant test, code-level) |
 | §3 PIT Mandate (universe asof) | **✗ load_universe 缺 asof_date** — `tests/test_pit_universe_gap.py` RED 2/2 | **✗ load_universe 缺 asof_date** — RED 2/2 | ✓ `load_universe_data` 用 `MAX(date) >= end` 过滤 | ✓ `load_universe_asof` PIT-correct (7 unit tests GREEN) |
 | §2 Settlement Isolation (T+1) | **✗ _close_position 立即计入 cash** — `tests/test_settlement_isolation_gap.py` RED 2/2 (chase_up) | 需复核 | 需复核 | 需复核 |
+| §2 Atomic Cash Locks (sort by conviction + sequential lock) | ✓ `entries.sort_values(["date","score"], ascending=[True,False])` (line 207) → `budget=min(slot_value,cash)` (line 394) → `cash-=notional+fee_in` (line 444), per-order cash lock enforced | ✓ 同样 pattern (line 207/383/429) | n/a (event-driven, 单一 entry/bar) | n/a (event-driven) |
 | §3 Event-Sourced Corporate Actions | **✗ 无 dividend/split handler** — `tests/test_corporate_actions_gap.py` RED 4/4 | ✗ RED | ✗ RED | ✗ RED |
 | §4 Volume cap (Bar_Volume × 0.10) | ✓ all 22 presets | ✓ 2 presets | n/a (event-driven) | ✓ R8 MAX_VOL_PARTICIPATION = 0.10 |
 | §4 SL-first tiebreak | ✓ all 22 presets | ✓ 2 presets | n/a | ✓ try_exit_with_intraday_check |
@@ -327,6 +328,20 @@ Layout C 是单价格域, 结构性 phantom-free。trade-level 审计需要先�
       B) 增加 dividend_events + split_events 表 + 引擎逐 bar 匹配 ex_date
          → cash += held_qty × div_per_share, held_qty *= split_ratio,
          avg_cost /= split_ratio.
+
+11. **§2 Atomic Cash Locks (sort by conviction + sequential lock)** ✅ **RESOLVED
+    (2026-09-23 audit tick)**:
+    - `chase_up/portfolio.py:207` `ent = entries.sort_values(["date","score"],
+      ascending=[True,False])` → 同 bar 内按 conviction DESC 排序
+    - `chase_up/portfolio.py:348` `cash_only = float(cash)` 进入 entry 循环前快照
+    - `chase_up/portfolio.py:394` `budget = min(slot_value, cash)` → 严格 lock
+    - `chase_up/portfolio.py:444` `cash -= notional + fee_in` → 顺序扣减,下一单
+      看到的 cash 严格小于上一单结算后
+    - `uptrend_pullback/portfolio.py:207/383/429` 同样 pattern
+    - **CLAUDE.md §2 字面达成**: "If concurrent signals are generated, sort by
+      conviction, lock estimated cost for Order 1, and size Order 2 based ONLY
+      on the strictly remaining Free_Cash."
+    - short_reversal / cycle_price_action 是 event-driven (单 entry/bar), N/A
 
 ### §5 WFV 共享基类 — 落地证据 (commit c101ba3, 2026-09-23)
 
