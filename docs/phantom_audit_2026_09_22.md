@@ -149,6 +149,35 @@ CLAUDE.md §3 铁律达成: 4 engine 共用 core.dual_price, phantom 防护结�
 | test_uptrend_pullback_v3a_runtime.py | ? | ✓ |
 | **合计** | **172 passed, 3 errors** | errors 来自 commit b514885 移除的 legacy preset 名 (本 tick 范围外) |
 
+### Trade-level phantom audit — 真实证据 (本 tick 重跑验证)
+
+| engine | presets 总数 | 有 trades.csv | 审计方法 | phantom ratio |
+|--------|----------:|----------:|----------|--------------:|
+| chase_up | 22 | 22 | `audit_phantom.py` 真实 trade-vs-qfq_open 比对 | **0/1116 (0.00%)** |
+| uptrend_pullback | 2 | 2 | inline DuckDB 比对 (audit script 待沉淀) | **0/117 (0.00%)** |
+| short_reversal | 11 | 2 (v35+v36) | trade-level 待跑 (csv 缺 entry_date/exit_date) | **N/A — 见下方代码审计** |
+| cycle_price_action | 2 | 0 | trade-level 待跑 | **N/A — Layout C 单源** |
+| **合计 trade-level 已审计** | **37** | **26** | | **0/1233 (0.00%)** |
+
+### short_reversal Layout B 代码审计 (本 tick 验证, 2026-09-22)
+
+`short_reversal/feed_bt.py:8-29` 文档明确:
+> 当前 strategy 仍读 raw (v_daily IS raw) 作 baseline parity。完整 V3a 信号迁移需 strategy 切到 d.adj_close 系列 — golden baseline 重生成。
+
+`short_reversal/replay_strategy_v3.py` exit 路径:
+- L161: `current_close = float(d.close[0])` — `d.close` 来自 v_daily raw
+- L296-318: SL/TP 触发用 `d.open[0]` / `d.close[0]` / `d.low[0]` / `d.high[0]`,全部 raw
+
+**结论**: short_reversal 当前 strategy 用 raw (Layout B), 无 phantom 路径。V3a 完整信号迁移 (切到 adj) 时**必须**重生成 golden baseline + 重跑 trade-level phantom audit (见 follow-up)。
+
+### cycle_price_action Layout C 代码审计 (本 tick 验证)
+
+`tests/test_dual_price_cross_engine.py::TestCyclePriceActionIntegration` 已通过 — 锁定 cycle_price_action/backtrader_engine.py:
+- `from core.dual_price import extract_execution_bar` ✓
+- `LAYOUT_CYCLE_PRICE` 显式引用 ✓
+
+Layout C 是单价格域, 结构性 phantom-free。trade-level 审计需要先生成 cycle_price_action/results csv (当前 0 csv, follow-up)。
+
 ### 待办 follow-up (CLAUDE.md 整体合规)
 
 1. **§5 WFV 模块缺失**: chase_up / uptrend_pullback / short_reversal 缺 Walk-Forward Validation
