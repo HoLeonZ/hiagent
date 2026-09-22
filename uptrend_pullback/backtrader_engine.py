@@ -81,6 +81,7 @@ def _verify_trade_with_backtrader(
     tp_price: float,
     sl_price: float,
     max_hold: int,
+    price_source_for_execution: str = "adj_close",
 ) -> tuple[float, float, pd.Timestamp | None]:
     """对单笔交易跑 backtrader，返回 (net_pnl, exit_price_actual, exit_date_actual)。
 
@@ -107,6 +108,28 @@ def _verify_trade_with_backtrader(
     if span.empty:
         return 0.0, entry_price, None
     feed_df = span[["date", "open", "high", "low", "close", "volume"]].copy()
+    # V3a+ (2026-09-22, CLAUDE.md §3): Phase 2 backtrader feed 必须遵循
+    # price_source_for_execution, 否则 preset 声明 'raw_close' 但策略读 adj
+    # → phantom TP (audit 揭露 v33_long_reverse_v20 Phase 2: 2/9 phantom)。
+    # 走 core.dual_price.extract_execution_bar 单一来源, 与 chase_up + short_reversal 一致。
+    if price_source_for_execution == "raw_close" and "raw_open" in span.columns:
+        from core.dual_price import LAYOUT_CHASE_UPTREND, extract_execution_bar
+        rows = []
+        for _, row in span.iterrows():
+            bar = extract_execution_bar(
+                {k: row.get(k) for k in (
+                    "open", "high", "low", "close", "prev_close",
+                    "raw_open", "raw_high", "raw_low", "raw_close", "raw_prev_close",
+                )},
+                LAYOUT_CHASE_UPTREND,
+            )
+            rows.append({
+                "open": bar.open, "high": bar.high,
+                "low": bar.low, "close": bar.close,
+            })
+        feed_df = pd.DataFrame(rows)
+        feed_df["date"] = pd.to_datetime(span["date"].values)
+        feed_df["volume"] = span["volume"].values
     feed_df["date"] = pd.to_datetime(feed_df["date"])
     feed_df = feed_df.set_index("date").sort_index().astype(float)
 
@@ -273,6 +296,7 @@ def run_backtrader_backtest(
         net_pnl_bt, exit_px_bt, exit_date_bt = _verify_trade_with_backtrader(
             panel, t["thscode"], pd.Timestamp(t["entry_date"]),
             entry_price, size, tp_p, sl_p, max_hold,
+            price_source_for_execution=p.get("price_source_for_execution", "adj_close"),
         )
         phase1_pnl = float(t["net_pnl"])
         # warning 路径（exit_px == entry_price 且 exit_date is None）意味着 backtrader

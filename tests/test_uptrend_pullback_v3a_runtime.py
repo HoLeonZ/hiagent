@@ -288,3 +288,61 @@ def test_raw_close_uses_raw_open_even_when_raw_prev_close_nan():
     assert len(trades) == 1
     # Entry fill MUST use raw_open (8.0), NOT adj_open (10.0)
     assert trades.iloc[0]["entry_price"] == pytest.approx(8.0)
+
+# ---------- Phase 2 phantom TP prevention (2026-09-22) ----------
+
+def test_phase2_backtrader_feed_uses_raw_when_price_source_is_raw_close():
+    """Phase 2 backtrader 验证必须使用 raw_* 列, 而非 adj_* (Layout A §3).
+
+    Bug (2026-09-22 audit): _verify_trade_with_backtrader 默认读 panel.open/high/low/close
+    (adj_*, 来自 v_daily_qfq LEFT JOIN), 与 preset price_source_for_execution='raw_close'
+    冲突 → phantom TP 触发在 adj 域 (e.g. v33_long_reverse_v20 Phase 2: 2/9 phantom).
+
+    修复后: 当传入 price_source_for_execution='raw_close' 且 panel 含 raw_* 列,
+    backtrader feed 用 raw_open/raw_high/raw_low/raw_close 重命名为 open/high/low/close,
+    策略读到的就是 raw 域。
+    """
+    try:
+        from uptrend_pullback.backtrader_engine import _verify_trade_with_backtrader
+    except ImportError:
+        pytest.skip("_verify_trade_with_backtrader not yet refactored to accept price_source")
+
+    # 构造 panel: adj 与 raw 在 entry 后 2 根 bar 出现 divergence
+    dates = pd.date_range("2025-01-01", periods=20, freq="B")
+    rows = []
+    for i, d in enumerate(dates):
+        # Bar 1 (i=1) = entry_date, open=10.0, buy fills
+        # Bar 3 (i=3): adj_high=10.95 (TP 触发 adj 域, 不会触发 raw 域)
+        #               raw_high=10.30 (raw 域未触达 TP=10.50)
+        if i == 1:
+            o = h = lo = c = 10.0
+            r_o = r_h = r_lo = r_c = 10.0
+        elif i == 3:
+            o, h, lo, c = 10.0, 10.95, 10.0, 10.0  # adj high > tp
+            r_o, r_h, r_lo, r_c = 10.0, 10.30, 10.0, 10.0  # raw high < tp (phantom)
+        else:
+            o = h = lo = c = 10.0
+            r_o = r_h = r_lo = r_c = 10.0
+        rows.append({
+            "thscode": "TEST.SH", "date": d,
+            "open": o, "high": h, "low": lo, "close": c,
+            "raw_open": r_o, "raw_high": r_h, "raw_low": r_lo, "raw_close": r_c,
+            "raw_prev_close": r_c, "volume": 1e6, "amount": 1e7,
+        })
+    panel = pd.DataFrame(rows)
+    entry_date = panel["date"].iloc[1]
+    entry_price = 10.0
+    tp_price = 10.50  # raw high=10.30 < tp → no TP trigger expected
+    sl_price = 9.50
+
+    net_pnl, exit_px, _ = _verify_trade_with_backtrader(
+        panel, "TEST.SH", entry_date,
+        entry_price, 1000,
+        tp_price=tp_price, sl_price=sl_price, max_hold=10,
+        price_source_for_execution="raw_close",  # ← 关键参数
+    )
+    # raw_high=10.30 < tp=10.50 → backtrader 不应触发 TP, exit 应为 time exit (close=10.0)
+    assert exit_px == pytest.approx(10.0, abs=1e-6), (
+        f"Phase 2 raw_close: TP 不应触发 (raw_high=10.30 < tp=10.50), "
+        f"但 exit_price={exit_px}, 表明 feed 仍读 adj_high=10.95 → phantom TP"
+    )

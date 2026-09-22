@@ -30,6 +30,7 @@ from cycle_price_action.time_windows import calendar_score
 from cycle_price_action.portfolio import Portfolio
 from cycle_price_action.replay_broker import ReplayBroker
 from cycle_price_action.no_lookahead import bars_up_to
+from core.dual_price import LAYOUT_CYCLE_PRICE, extract_execution_bar
 from hiagent_config import get_db_path
 
 
@@ -83,12 +84,21 @@ class CyclePriceActionStrategy(bt.Strategy):
                 # used elsewhere in the codebase.
                 sl_pct_eff = self.p.sl_pct
                 tp_pct_eff = self.p.tp_pct
+                # V3a+ (2026-09-22, CLAUDE.md §3): Layout C 单价格域
+                # 走 core.dual_price.extract_execution_bar 单一来源 —
+                # 与 chase_up / uptrend_pullback / short_reversal 共用同一函数,
+                # 未来若 Layout C 切到双价格域 (raw/adj split) 也能复用。
+                bar_exec = extract_execution_bar(
+                    {"open": bar["open"], "high": bar["high"],
+                     "low": bar["low"], "close": bar["close"]},
+                    LAYOUT_CYCLE_PRICE,
+                )
                 _, reason = self._portfolio.try_exit_with_intraday_check(
                     exit_date=bar["date"],
-                    open_price=bar["open"],
-                    high=bar["high"],
-                    low=bar["low"],
-                    close=bar["close"],
+                    open_price=bar_exec.open,
+                    high=bar_exec.high,
+                    low=bar_exec.low,
+                    close=bar_exec.close,
                     tp_pct=tp_pct_eff,
                     sl_pct=sl_pct_eff,
                 )
