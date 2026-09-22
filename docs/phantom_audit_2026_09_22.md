@@ -115,7 +115,8 @@ invariant 锁定,任何 raw/adj split 回归会触发 RED。
 9. **(pending)** feat(audit): cycle_price_action Layout C invariant test + 脚本
 10. `c101ba3` feat(wfv): core.walkforward shared base — 3-engine 共享同一份 WFV 窗口生成
 11. `57b34f8` audit(claude.md §4): cycle_price_action flat-rate slippage 违规锁定 (3 RED tests)
-12. **(pending)** fix(dual-price): cycle_price_action R5' ATR-aware slippage (3 RED → 3 GREEN)
+12. `fbfde71` fix(dual-price): cycle_price_action R5' ATR-aware slippage (3 RED → 3 GREEN)
+13. **(pending)** audit(claude.md §5): sweep scripts DSR/Bonferroni 缺失 (9/9 RED)
 
 ## 关键修复: chase_up Phase 2 backtrader feed (commit 2fb34fc)
 
@@ -161,6 +162,7 @@ CLAUDE.md §3 铁律达成: 4 engine 共用 core.dual_price, phantom 防护结�
 | §4 SL-first tiebreak | ✓ all 22 presets | ✓ 2 presets | n/a | ✓ try_exit_with_intraday_check |
 | §4 ATR-aware slippage | ✓ R5 atr_slip_scale | ✓ R5 atr_slip_scale | ✓ V5' atr_slip_scale | ✓ R5' atr_slip_scale (replay_broker.py:43-46) |
 | §5 Walk-Forward Validation | ✓ `from core.walkforward import monthly_windows` | ✓ `from core.walkforward import (monthly, yearly)` | ✓ wf_v3*_focused.py (inline windows, 12 presets) | ✓ `from core.walkforward import walkforward_windows` |
+| §5 Penalty Metrics (DSR/Bonferroni) | **✗ 9/9 sweep scripts 无 DSR/Bonferroni 输出** — `tests/test_sweep_scripts_dsr.py` RED 9/9 | **✗ 6/6 sweep_v33_long*.py 无 DSR 输出** | n/a (无 sweep script) | n/a (无 sweep script) |
 | §6 三层分离 (control/strategy/broker) | ✓ | ✓ | ✓ | ✓ |
 
 ### 测试套件 PASS 矩阵 (2026-09-22)
@@ -263,17 +265,26 @@ Layout C 是单价格域, 结构性 phantom-free。trade-level 审计需要先�
    yearly_windows), 3 engine (chase_up + uptrend_pullback + cycle_price_action) 全部 re-export.
    diff: -93 net lines (119 deletions, 26 insertions). 12 pytest 契约测试锁定共用契约.
    short_reversal 用 wf_v3*_focused.py inline windows (不重构, 不同 abstraction).
-2. **§4 ATR-aware slippage (cycle_price_action)** ✅ **RESOLVED (commit pending, 2026-09-23)**:
+2. **§4 ATR-aware slippage (cycle_price_action)** ✅ **RESOLVED (commit fbfde71, 2026-09-23)**:
    `cycle_price_action/replay_broker.py` 移除 flat-rate 5bps, 引入 R5' `atr_slip_scale`
    opt-in (default 0.0 = back-compat). `_fee()` 接受 `atr_pct` + `participation` 参数,
    slip_eff = max(static_slip, atr_pct × participation × atr_slip_scale).
    `cycle_price_action/portfolio.py` Portfolio.__init__ 同步接受 `atr_slip_scale`.
    `tests/test_cycle_price_action_slippage_atr.py` 3/3 GREEN.
-3. **数据层 SQL 修复** (用户已确认 follow-up): chase_up/data.py + uptrend_pullback/data.py
+3. **§5 Penalty Metrics (DSR/Bonferroni) — sweep scripts** ⚠️ **AUDIT FINDING (2026-09-23)**:
+   9 个 sweep / wf_sweep 脚本 (`chase_up/sweep.py` + `chase_up/sweep_all.py` +
+   `chase_up/wf_sweep_all.py` + 6 个 `uptrend_pullback/sweep_v33_long*.py`) 全部
+   违反 CLAUDE.md §5 "Evaluation scripts must output DSR or apply Bonferroni
+   corrections when reporting backtest results from multi-parameter sweeps".
+   `dna_stats.deflated` 模块已存在 (V7 2026-09-22) 但 sweep 脚本未消费.
+   `tests/test_sweep_scripts_dsr.py` 9/9 RED, 待 GREEN (修复方案: sweep 脚本
+   末尾调用 `dna_stats.deflated.deflated_sharpe_ratio(observed_sharpe, n_trials=n)`
+   并报告 DSR 值).
+4. **数据层 SQL 修复** (用户已确认 follow-up): chase_up/data.py + uptrend_pullback/data.py
    应切换读 v_daily_dual view (raw_prev_close 0% 覆盖 → 100%).
-4. **9 个 chase_up preset golden baseline 缺失**: v1/v1a/v1b/v1c/v2/v3/v4/v6/v7.
-5. **uptrend_pullback 完全无 golden baseline**.
-6. **3 个 test errors**: test_presets.py / test_engine_v3.py / test_short_reversal_no_lookahead.py
+5. **9 个 chase_up preset golden baseline 缺失**: v1/v1a/v1b/v1c/v2/v3/v4/v6/v7.
+6. **uptrend_pullback 完全无 golden baseline**.
+7. **3 个 test errors**: test_presets.py / test_engine_v3.py / test_short_reversal_no_lookahead.py
    引用已被移除的 legacy preset 名 (v33_mainboard_*).
 
 ### §5 WFV 共享基类 — 落地证据 (commit c101ba3, 2026-09-23)
