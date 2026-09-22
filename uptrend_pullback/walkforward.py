@@ -2,6 +2,9 @@
 
 用途：识别过拟合与未来函数。若某参数只在单一年份出色、其余年份崩溃，
 即为拟合噪声；若所有年份都异常优异，通常说明代码里有未来函数。
+
+2026-09-23 迁移: monthly_windows + yearly_windows 重新导出 core.walkforward
+共用 API, 4-engine 共享同一份窗口生成代码 (CLAUDE.md §5)。
 """
 from __future__ import annotations
 
@@ -20,6 +23,12 @@ from uptrend_pullback.regime import compute_regime
 from uptrend_pullback.signals import compute_indicators
 from uptrend_pullback.universe import load_universe
 
+# 4-engine 共用 WFV 窗口生成 (CLAUDE.md §5)
+from core.walkforward import (  # noqa: F401
+    monthly_windows as monthly_windows,
+    yearly_windows as yearly_windows,
+)
+
 logger = logging.getLogger(__name__)
 
 RESULT_COLS = [
@@ -27,47 +36,6 @@ RESULT_COLS = [
     "sharpe", "max_dd", "avg_hold_days", "max_hold_days",
     "tp_count", "sl_count", "time_count", "signals",
 ]
-
-
-def yearly_windows(first_year: int, last_year: int, month_day: str = "09-08") -> list[tuple[str, str]]:
-    """生成 [first_year..last_year] 的逐年窗口，起止日对齐 month_day。"""
-    return [
-        (f"{y}-{month_day}", f"{y + 1}-{month_day}")
-        for y in range(first_year, last_year)
-    ]
-
-
-def monthly_windows(
-    start_month: str,
-    end_month: str,
-    window_months: int = 2,
-    step_months: int = 0,
-) -> list[tuple[str, str]]:
-    """生成 [start_month, end_month) 内的月级窗口。
-
-    start_month / end_month 格式 'YYYY-MM'，窗口左闭右开。
-    step_months = 0 时退化为不重叠 (= window_months)。
-    返回 (start_date, end_date) 列表，日期形如 'YYYY-MM-DD'。
-    """
-    step = step_months if step_months > 0 else window_months
-    sy, sm = map(int, start_month.split("-"))
-    ey, em = map(int, end_month.split("-"))
-    cur_y, cur_m = sy, sm
-    out = []
-    while True:
-        end_y, end_m = cur_y, cur_m + window_months
-        while end_m > 12:
-            end_m -= 12
-            end_y += 1
-        if (end_y, end_m) > (ey, em):
-            break
-        out.append((f"{cur_y:04d}-{cur_m:02d}-01", f"{end_y:04d}-{end_m:02d}-01"))
-        # 推进
-        cur_m += step
-        while cur_m > 12:
-            cur_m -= 12
-            cur_y += 1
-    return out
 
 
 def run_windows(

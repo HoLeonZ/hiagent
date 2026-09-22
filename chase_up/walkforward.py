@@ -1,7 +1,10 @@
-"""滚动窗口验证 — 同一套参数在多个独立时间窗口上的表现 (沿用 uptrend_pullback/walkforward.py 口径)。
+"""滚动窗口验证 — 同一套参数在多个独立时间窗口上的表现。
 
 目的:识别过拟合与未来函数。若某参数只在主窗口出色、子窗口崩溃,即为拟合噪声;
 若所有窗口都异常优异,通常说明代码里有未来函数。
+
+2026-09-23 迁移: monthly_windows 重新导出 core.walkforward 共用 API,
+4-engine 共享同一份窗口生成代码 (CLAUDE.md §5)。
 """
 from __future__ import annotations
 
@@ -18,6 +21,9 @@ from chase_up.universe import load_universe
 
 from hiagent_config import DB_PATH
 
+# 4-engine 共用 WFV 窗口生成 (CLAUDE.md §5)
+from core.walkforward import monthly_windows as monthly_windows  # noqa: F401
+
 logger = logging.getLogger(__name__)
 
 RESULT_COLS = [
@@ -25,33 +31,6 @@ RESULT_COLS = [
     "cagr", "sharpe", "max_dd", "avg_hold_days", "max_hold_days",
     "tp_count", "sl_count", "time_count", "signals",
 ]
-
-
-def monthly_windows(
-    start_month: str,
-    end_month: str,
-    window_months: int = 2,
-    step_months: int = 0,
-) -> list[tuple[str, str]]:
-    """生成 [start_month, end_month) 内的月级窗口,日期形如 'YYYY-MM-DD'。"""
-    step = step_months if step_months > 0 else window_months
-    sy, sm = map(int, start_month.split("-"))
-    ey, em = map(int, end_month.split("-"))
-    cur_y, cur_m = sy, sm
-    out = []
-    while True:
-        end_y, end_m = cur_y, cur_m + window_months
-        while end_m > 12:
-            end_m -= 12
-            end_y += 1
-        if (end_y, end_m) > (ey, em):
-            break
-        out.append((f"{cur_y:04d}-{cur_m:02d}-01", f"{end_y:04d}-{end_m:02d}-01"))
-        cur_m += step
-        while cur_m > 12:
-            cur_m -= 12
-            cur_y += 1
-    return out
 
 
 def run_windows(
