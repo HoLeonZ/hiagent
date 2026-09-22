@@ -209,3 +209,82 @@ class TestChaseUpIntegration:
             "chase_up _verify_trade_with_backtrader 必须接受 price_source_for_execution — "
             "否则 Phase 2 backtrader 永远跑在 qfq 域,与 Phase 1 raw entry 不对齐"
         )
+
+
+# ============================================================ short_reversal Layout B 契约
+
+class TestShortReversalLayoutBContract:
+    """short_reversal Layout B: v_daily IS raw, strategy 必须只读 raw 域 (CLAUDE.md §3).
+
+    feed_bt.py:8-29 文档明确:
+      "当前 strategy 仍读 raw (v_daily IS raw) 作 baseline parity。完整 V3a
+       信号迁移需 strategy 切到 d.adj_close 系列 — golden baseline 重生成。"
+
+    即: 当前 Layout B 是 raw-only, 不需要 LAYOUT_SHORT_REVERSAL 路径走
+    extract_execution_bar (因为没有 raw/adj split). 未来 V3a 完整迁移时,
+    此 invariant 必须破坏 → RED → 触发重生成 baseline + trade-level audit。
+
+    测试锚定: replay_strategy_v3.py exit 路径必须只用 d.open/high/low/close
+    (raw), 禁止读 d.adj_open/adj_high/adj_low/adj_close.
+    """
+
+    def test_replay_strategy_v3_does_not_read_adj_in_exit_path(self):
+        """replay_strategy_v3.py:296-318 是 exit 路径, 必须只用 raw d.* 列。
+
+        若未来 V3a 完整迁移切到 d.adj_*, 此测试必须 FAIL → 提示重生成 baseline。
+        """
+        from pathlib import Path
+        engine_path = Path("short_reversal/replay_strategy_v3.py")
+        text = engine_path.read_text()
+        # 禁词: adj_open / adj_high / adj_low / adj_close 在 exit 相关行
+        forbidden_lines = []
+        for i, line in enumerate(text.splitlines(), 1):
+            stripped = line.lstrip()
+            if stripped.startswith("#"):
+                continue
+            if any(tok in line for tok in (
+                "d.adj_open", "d.adj_high", "d.adj_low", "d.adj_close",
+                "self.adj_open", "self.adj_high", "self.adj_low", "self.adj_close",
+            )):
+                forbidden_lines.append(f"L{i}: {line.strip()}")
+        assert not forbidden_lines, (
+            "short_reversal Layout B invariant 破坏: exit 路径开始读 adj_* 列 — "
+            "V3a 迁移必须先重生成 golden baseline + 跑 trade-level phantom audit. "
+            f"违例行: {forbidden_lines}"
+        )
+
+    def test_feed_bt_loads_adj_columns_for_v3a_migration_path(self):
+        """feed_bt.py 必须保留 adj_* 列加载 (为未来 V3a 迁移预埋) 但 strategy 暂不读。
+
+        当前 invariant: feed 同时含 raw + adj, 但 strategy 只用 raw。
+        """
+        from pathlib import Path
+        feed_path = Path("short_reversal/feed_bt.py")
+        text = feed_path.read_text()
+        assert "adj_open" in text and "adj_close" in text, (
+            "feed_bt.py 必须保留 adj_* 列加载 (为 V3a 迁移预埋)"
+        )
+
+    def test_short_reversal_preset_declares_dual_price_intent(self):
+        """presets.py 必须显式声明 price_source_for_signal/price_source_for_execution。
+
+        V3a 迁移的 contract: 当前 strategy 用 raw 但 preset 声明 dual intent,
+        表明 dual-price 设计已固化, 迁移时机由 strategy 重构触发。
+        """
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from short_reversal import presets as sr_presets
+
+        for preset_name in sr_presets.PRESETS:
+            p = sr_presets.get_preset(preset_name)
+            assert "price_source_for_signal" in p, (
+                f"{preset_name} 缺 price_source_for_signal 声明"
+            )
+            assert "price_source_for_execution" in p, (
+                f"{preset_name} 缺 price_source_for_execution 声明"
+            )
+            assert p["price_source_for_execution"] == "raw_close", (
+                f"{preset_name} price_source_for_execution 必须 = raw_close "
+                f"(CLAUDE.md §3 铁律), 实际 {p['price_source_for_execution']}"
+            )
