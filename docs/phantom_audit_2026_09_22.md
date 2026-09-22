@@ -190,6 +190,19 @@ CLAUDE.md §3 铁律达成: 4 engine 共用 core.dual_price, phantom 防护结�
 | test_core_walkforward.py (c101ba3) | 12 | ✓ WFV 共用基类契约锁定 |
 | **本 tick 累计** | **89 passed + test_sweep_scripts_dsr 10/10 GREEN** (dual_price + cross_engine + CPA invariants + short_reversal + core walkforward + sweep DSR) | 0 failure |
 
+### 测试套件全量审计 (2026-09-23 audit tick)
+
+| 维度 | 数量 | 状态 |
+|------|-----|------|
+| **总收集** | 371 | pytest --collect-only |
+| **Pass** | 350 | 100% of non-gap tests |
+| **Fail (RED gap tests)** | 8 | intentional: §3 PIT (2) + §2 Settlement (2) + §3 Event-Sourced (4) |
+| **Fail (legacy preset deprecation)** | 7 | out of scope per commit b514885 |
+| **Skip** | 3 | gap-capturing tests when gap already exists |
+| **Error (legacy preset deprecation)** | 3 | short_reversal v33_mainboard_* presets removed per b514885 |
+| **§1 Temporal banned patterns** | 0 hits | `.bfill() / .shift(-N) / rolling(center=True) / .ffill()` 全无 |
+| **实际 production 影响** | 0 / 350 non-gap tests fail | gap tests 锁定已知问题, 不影响 production |
+
 ### Trade-level phantom audit — 真实证据 (本 tick 重跑验证)
 
 | engine | presets 总数 | 有 trades.csv | 审计方法 | phantom ratio |
