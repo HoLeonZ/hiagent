@@ -160,6 +160,7 @@ CLAUDE.md §3 铁律达成: 4 engine 共用 core.dual_price, phantom 防护结�
 | §3 Dual-Price (raw for execution) | ✓ Layout A (22 csv trade-level audit) | ✓ Layout A (2 csv trade-level audit) | ✓ Layout B (6 csv direction-violation test) | ✓ Layout C (11 invariant test, code-level) |
 | §3 PIT Mandate (universe asof) | **✗ load_universe 缺 asof_date** — `tests/test_pit_universe_gap.py` RED 2/2 | **✗ load_universe 缺 asof_date** — RED 2/2 | ✓ `load_universe_data` 用 `MAX(date) >= end` 过滤 | ✓ `load_universe_asof` PIT-correct (7 unit tests GREEN) |
 | §2 Settlement Isolation (T+1) | **✗ _close_position 立即计入 cash** — `tests/test_settlement_isolation_gap.py` RED 2/2 (chase_up) | 需复核 | 需复核 | 需复核 |
+| §3 Event-Sourced Corporate Actions | **✗ 无 dividend/split handler** — `tests/test_corporate_actions_gap.py` RED 4/4 | ✗ RED | ✗ RED | ✗ RED |
 | §4 Volume cap (Bar_Volume × 0.10) | ✓ all 22 presets | ✓ 2 presets | n/a (event-driven) | ✓ R8 MAX_VOL_PARTICIPATION = 0.10 |
 | §4 SL-first tiebreak | ✓ all 22 presets | ✓ 2 presets | n/a | ✓ try_exit_with_intraday_check |
 | §4 ATR-aware slippage | ✓ R5 atr_slip_scale | ✓ R5 atr_slip_scale | ✓ V5' atr_slip_scale | ✓ R5' atr_slip_scale (replay_broker.py:43-46) |
@@ -310,6 +311,22 @@ Layout C 是单价格域, 结构性 phantom-free。trade-level 审计需要先�
    修复方案: portfolio.py 增加三态 cash dict + _settle_cash() (每 bar 开始
    把 settling → free). uptrend_pullback / short_reversal / cycle_price_action
    需同步复核 (本 tick 范围外).
+10. **§3 Event-Sourced Corporate Actions (dividends + splits)** ⚠️ **AUDIT FINDING (2026-09-23)**:
+    4 engine (chase_up + uptrend_pullback + short_reversal + cycle_price_action)
+    均无 dividend_handler / split_handler 实现. CLAUDE.md §3 字面要求:
+    "Cash dividends must explicitly trigger a physical cash deposit into
+    Free_Cash. Stock splits must trigger an atomic multiplier adjustment
+    to Position_Quantity and Average_Cost."
+    当前实现以 adj_close 前复权为 canonical source, 历史分红已隐式嵌入
+    adj_close 序列 (选项 A). 这与 §3 字面要求冲突 (选项 B: raw_close +
+    显式 event handler).
+    `tests/test_corporate_actions_gap.py` 4/4 RED tests 锁定 gap.
+    修复方案: 用户决策点
+      A) 在 CLAUDE.md §3 注释 "本项目以 adj_close 前复权为 canonical, 无需
+         显式 handler (隐式 event 注入)"
+      B) 增加 dividend_events + split_events 表 + 引擎逐 bar 匹配 ex_date
+         → cash += held_qty × div_per_share, held_qty *= split_ratio,
+         avg_cost /= split_ratio.
 
 ### §5 WFV 共享基类 — 落地证据 (commit c101ba3, 2026-09-23)
 
