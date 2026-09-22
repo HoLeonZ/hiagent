@@ -37,7 +37,8 @@ Backtest environment must perfectly reconstruct historical reality, warts and al
 ## 4. Microstructure & Liquidity (Illusion Prevention)
 Do not assume infinite market depth. Your orders impact the market.
 - **Volume Participation Limit:** Any generated execution engine must enforce a volume cap. Default rule: `Max_Fill_Qty = MIN(Order_Qty, Bar_Volume * 0.10)`. Unfilled quantities must be explicitly canceled or queued.
-- **Slippage as a Function of Volatility:** Do not use flat-rate slippage (e.g., 1 tick). Slippage must be modeled dynamically as a function of the asset's current ATR (Average True Range) and the order's participation rate.
+- **Slippage as a Function of Volatility (Execution Only):** Execution slippage (price impact between signal trigger and fill) MUST be modeled dynamically as a function of the asset's current ATR (Average True Range) and the order's participation rate. Do not use flat-rate slippage (e.g., 1 tick).
+- **Exit Thresholds (TP/SL):** Stop-loss and take-profit exit thresholds are policy decisions, NOT execution costs. They MAY be either fixed (e.g., `sl_pct=0.0005`) or ATR-based (`sl_pct = atr × mult`). Both are valid; document the choice in the preset's compliance header.
 - **Intraday Blindness:** On daily bar data, if BOTH the Stop-Loss and Take-Profit limits are breached within the same bar, the engine MUST assume the worst-case scenario (Stop-Loss hit first).
 
 ---
