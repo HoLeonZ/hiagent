@@ -31,6 +31,7 @@ PRESETS_WITH_CSV = [
     "v35_agg_pctchg_04_09",
     "v36_d_converge",
     "v38_a_relaxed",
+    "v39_pctchg_03_10",
 ]
 
 
