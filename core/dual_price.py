@@ -72,10 +72,24 @@ class ExecutionBar:
     prev_close: float | None = None  # None = 缺失, LIMIT_UP 检测跳过
 
     def __post_init__(self) -> None:
-        """Invariants: 高 >= 低, 低 <= 收 <= 高, 开 ∈ [低, 高]。"""
+        """Invariants: 高 >= 低, 低 <= 收 <= 高, 开 ∈ [低, 高]。
+
+        close <= 0 且 open > 0: 物理不合法 (有成交的 bar 必有非零 close)。
+        实证 blast path (2026-09-28 net_pnl=-99,029.75):
+        partial-NaN (raw_open/high/low real, raw_close=NaN) → _safe=0.0
+        → 上层 chase_up/uptrend_pullback gate (bar.open>0 AND bar.high>=bar.low)
+        通过 → c=0 → phantom max_hold exit at price 0。
+        close=0 + open=0 (all-NaN data gap) 不视为 phantom, 见 _safe fallback。
+        """
         if self.high < self.low:
             raise ValueError(
                 f"ExecutionBar 高低倒挂: high={self.high} < low={self.low}"
+            )
+        if self.close <= 0 and self.open > 0:
+            raise ValueError(
+                f"ExecutionBar close 无效 (phantom guard): "
+                f"close={self.close}, open={self.open} "
+                f"(partial-NaN: open/high/low 有效但 close 缺失 → _safe=0.0)"
             )
 
 

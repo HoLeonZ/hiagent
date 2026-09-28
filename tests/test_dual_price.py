@@ -55,6 +55,45 @@ class TestExecutionBar:
         with pytest.raises(ValueError, match="高低倒挂"):
             ExecutionBar(open=10.0, high=8.0, low=9.0, close=10.5)
 
+    def test_invariant_close_zero_when_open_positive_raises(self):
+        """raw_close=NaN → _safe=0.0 → bar.close=0 → 物理 phantom exit。
+
+        实证 blast path (2026-09-28 net_pnl=-99,029.75):
+        partial-NaN (raw_open/high/low real, raw_close=NaN)
+        → bar=(10.05, 10.10, 10.00, 0.0)
+        → 当前 __post_init__ 仅检 high<low (real values 通过)
+        → 上层 gate bar.open>0 AND bar.high>=bar.low 通过
+        → c=0.0 → phantom max_hold exit at price 0。
+
+        §0 Fail-Fast + §3 Pessimistic Default: close<=0 且 open>0 物理不合法
+        (有成交的 bar 必有非零 close), 必须 raise ValueError。
+        """
+        with pytest.raises(ValueError, match="close"):
+            ExecutionBar(open=10.05, high=10.10, low=10.00, close=0.0)
+
+    def test_invariant_all_zero_passes(self):
+        """All-NaN → 全部 0.0 (data gap, 见 _safe fallback) → 不 raise。
+
+        必须保留: 允许 raw_* 全 NaN 时仍构造 bar, 由上层 detect-best-effort 决策。
+        关键是 open=0 (无 open) 时 close=0 不视为 phantom。
+        """
+        bar = ExecutionBar(open=0.0, high=0.0, low=0.0, close=0.0)
+        assert bar.close == 0.0
+
+    def test_extract_partial_nan_close_raises(self):
+        """end-to-end: partial-NaN (raw_close=NaN) 必须 raise, 不能静默 phantom。
+
+        实证数据来自 Round 3 回归测试 (chase_up simulate_portfolio)。
+        """
+        row = {
+            "raw_open": 10.05, "raw_high": 10.10, "raw_low": 10.00,
+            "raw_close": float("nan"),
+            "raw_prev_close": 9.95,
+            "adj_open": 8.0, "adj_high": 8.5, "adj_low": 7.5, "adj_close": 8.2,
+        }
+        with pytest.raises(ValueError, match="close"):
+            extract_execution_bar(row, LAYOUT_CHASE_UPTREND)
+
     def test_frozen_immutability(self):
         """ExecutionBar 是 @dataclass(frozen=True) — 修改字段必须报错。"""
         bar = ExecutionBar(open=10.0, high=11.0, low=9.0, close=10.5)
