@@ -11,6 +11,8 @@ import json
 import sys
 from pathlib import Path
 
+import duckdb
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -56,7 +58,10 @@ def grid(axis: str, base: dict, values: list, base_name: str) -> list[dict]:
         t0 = time.time()
         try:
             m = _run(cfg, name)
-        except Exception as e:
+        except (duckdb.Error, ValueError, KeyError) as e:
+            # §0 Fail-Fast narrowed: IS-grid sweep is exploratory; keep
+            # warn + error row + continue. Only catch data-shape/lookup
+            # exceptions; programming errors / MemoryError propagate.
             print(f"  [ERR] {axis}={v}: {e}", flush=True)
             rows.append({"axis": axis, "value": v, "error": str(e)[:60]})
             continue

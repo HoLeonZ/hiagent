@@ -4,6 +4,12 @@ Order semantics:
     - Order is queued at decision_date close.
     - Fill occurs on the next trading day's open price.
     - P3 guard: same-day exits are rejected at queue time.
+
+§6 architecture (Tick 49, 2026-09-28): Execution Broker is DB-free.
+ReplayBroker receives a `ReplayDataProvider` (from Control Plane
+`cycle_price_action.data_feed`) and delegates all per-fill PIT lookups
+to it. This broker contains zero `duckdb.connect` calls — pure
+slippage / cost / position bookkeeping.
 """
 from __future__ import annotations
 
@@ -11,7 +17,9 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Optional
 
-import duckdb
+from core.dual_price import (
+    STAMP_DUTY_RATE,  # Round 9 (2026-09-28): canonical 万5 sell-only stamp duty
+)
 
 
 @dataclass(frozen=True)
@@ -27,41 +35,25 @@ class TradeFill:
 class ReplayBroker:
     def __init__(
         self,
-        db_path: str,
+        data_provider,  # cycle_price_action.data_feed.ReplayDataProvider
         # R5' (2026-09-23, CLAUDE.md §4): ATR-aware slippage opt-in.
         # atr_slip_scale = 0.0 (default) → no slippage applied (back-compat).
         # atr_slip_scale > 0 → slippage = max(static_slip, atr_pct × participation × scale).
         atr_slip_scale: float = 0.0,
     ) -> None:
-        self.db_path = db_path
+        self._data_provider = data_provider
         self.atr_slip_scale = atr_slip_scale
         self._open_positions: dict[str, int] = {}
 
     def _next_trading_date(self, after: date) -> date:
-        con = duckdb.connect(self.db_path, read_only=True)
-        try:
-            row = con.execute(
-                "SELECT MIN(date) FROM v_daily WHERE date > ?",
-                [after],
-            ).fetchone()
-            if row is None or row[0] is None:
-                raise RuntimeError(f"no trading date after {after}")
-            return row[0]
-        finally:
-            con.close()
+        # Tick 49: delegate to Control Plane data_provider (DB-free broker).
+        return self._data_provider.next_trading_date(after)
 
     def _open_price(self, thscode: str, on_date: date) -> float:
-        con = duckdb.connect(self.db_path, read_only=True)
-        try:
-            row = con.execute(
-                "SELECT open FROM v_daily WHERE thscode = ? AND date = ?",
-                [thscode, on_date],
-            ).fetchone()
-            if row is None:
-                raise RuntimeError(f"no data for {thscode} on {on_date}")
-            return float(row[0])
-        finally:
-            con.close()
+        # Tick 49 + N3: delegate to data_provider.open_price which routes
+        # through extract_execution_bar to enforce partial-NaN guard
+        # (open>0 + close=NaN raises ValueError).
+        return self._data_provider.open_price(thscode, on_date)
 
     def _fee(
         self,
@@ -74,7 +66,9 @@ class ReplayBroker:
     ) -> float:
         notional = qty * price
         commission = max(5.0, notional * 0.00025)
-        tax = notional * 0.001 if side == "sell" else 0.0
+        # Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical STAMP_DUTY_RATE (万5
+        # post-Aug2023); was 0.001 = 万10 pre-Aug2023 historical.
+        tax = notional * STAMP_DUTY_RATE if side == "sell" else 0.0
         # R5' (2026-09-23, CLAUDE.md §4): ATR-aware slippage.
         # Effective slip = max(static_slip, atr_pct × participation × scale) when scale > 0
         # and atr_pct provided; else static_slip only.

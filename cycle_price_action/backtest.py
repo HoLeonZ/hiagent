@@ -7,10 +7,11 @@ from datetime import date
 from typing import Any
 
 import backtrader as bt
+import duckdb
 import pandas as pd
 
 from cycle_price_action.backtrader_engine import CyclePriceActionStrategy
-from cycle_price_action.data_feed import load_universe_data
+from cycle_price_action.data_feed import ReplayDataProvider, load_universe_data
 from cycle_price_action.metrics import TradeRecord, compute_metrics
 from cycle_price_action.presets import PRESET_V1
 
@@ -60,13 +61,18 @@ def run_backtest(
 ) -> BacktestResult:
     """Run cycle_price_action v1 across all main-board stocks in [start, end]."""
     preset = preset or dict(PRESET_V1)
-    universe = load_universe_data(db_path, start, end)
+    # Round 14 (2026-09-28, CLAUDE.md §3): PIT-compliant universe at `start`
+    # (not `end`) — 避免 post-hoc constituents 入选。
+    universe = load_universe_data(db_path, start, end, asof_date=start)
     all_trades: list[TradeRecord] = []
     # Filter preset to keys CyclePriceActionStrategy.params accepts
     # (weight_kline / weight_cycle / weight_calendar / periods / max_volume_participation
     # live in PRESET_V1 but are not in the strategy params tuple; passing them
     # would TypeError). V6'' (2026-09-22): sl_pct added for SL-first intraday tiebreak.
-    _accepted = {"threshold", "min_dim", "max_hold", "atr_period", "atr_sl_mult", "tp_pct", "sl_pct"}
+    # Round 15 (2026-09-28, CLAUDE.md §4): intraday_tiebreak added to the
+    # accepted whitelist so cycle preset declarations flow preset → strategy
+    # params → Portfolio.__init__ (Tick 39 plumbing)。
+    _accepted = {"threshold", "min_dim", "max_hold", "atr_period", "atr_sl_mult", "tp_pct", "sl_pct", "initial_capital", "intraday_tiebreak"}
     strategy_kwargs = {k: v for k, v in preset.items() if k in _accepted}
 
     for code, slice in universe.items():
@@ -80,12 +86,25 @@ def run_backtest(
                 openinterest=-1,
             )
             cerebro.adddata(feed, name=code)
-            cerebro.addstrategy(CyclePriceActionStrategy, db_path=db_path, **strategy_kwargs)
+            # Tick 49 (2026-09-28, CLAUDE.md §6): Control Plane owns DuckDB I/O.
+            # Construct ReplayDataProvider here and inject into Strategy —
+            # Strategy no longer accepts db_path directly.
+            data_provider = ReplayDataProvider(db_path)
+            cerebro.addstrategy(
+                CyclePriceActionStrategy,
+                data_provider=data_provider,
+                **strategy_kwargs,
+            )
             cerebro.broker.setcash(cash)
             results = cerebro.run()
-        except Exception as e:
-            logger.warning("backtest failed for %s: %s", code, e)
-            continue
+        except (duckdb.Error, ValueError, KeyError) as e:
+            # §0 Fail-Fast: per-stock failure MUST propagate, not silently
+            # bypass. Scan/grid loops (per prior # noqa: BLE001 patterns)
+            # allow warn-log + continue; here in cycle_price_action the
+            # outer caller depends on full coverage.
+            raise RuntimeError(
+                f"backtest failed for {code}: {e}"
+            ) from e
         strat = results[0]
         # _extract_trades is intentionally outside the try/except: decision-
         # extraction bugs must fail loudly rather than be silently skipped.

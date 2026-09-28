@@ -88,6 +88,13 @@ import importlib
 import re
 from pathlib import Path
 
+import duckdb
+import pandas as pd
+import pytest
+
+from cycle_price_action import backtest as bt_mod
+from cycle_price_action.data_feed import StockSlice
+
 
 # ---------------------------------------------------------------------------
 # RED: silent except/continue in production hot paths
@@ -276,4 +283,109 @@ def test_acknowledged_batch_patterns_have_noqa_comment() -> None:
     assert "noqa: BLE001" in wf_sweep_all_src, (
         "Regression: chase_up/wf_sweep_all.py no longer has documented "
         "# noqa: BLE001 comment for batch pattern"
+    )
+
+
+# ---------------------------------------------------------------------------
+# RED runtime tests: hot path must propagate engine exceptions
+# (Ticks 44 + 57 + 59 fix verification)
+# ---------------------------------------------------------------------------
+
+
+def test_cycle_backtest_raises_on_engine_exception(tmp_path, monkeypatch):
+    """§0 RED: cycle_price_action/backtest.py:86 must propagate RuntimeError.
+
+    Pinned behavior: when cerebro.run() raises any exception, run_backtest
+    must re-raise (NOT log a warning + continue). Tests `except Exception
+    as e: logger.warning(...); continue` is a fail-fast violation.
+    """
+    from datetime import date
+
+    # Bypass load_universe_data entirely — inject one fake slice directly.
+    fake_panel = pd.DataFrame({
+        "date": pd.date_range("2025-03-01", periods=200, freq="B"),
+        "open": 10.0, "high": 10.5, "low": 9.8, "close": 10.2,
+        "volume": 1e6, "amount": 1e8, "adj_close": 10.2,
+    })
+    fake_slice = StockSlice(thscode="600000.SH", df=fake_panel)
+
+    monkeypatch.setattr(
+        bt_mod, "load_universe_data",
+        lambda db_path, start, end, asof_date=None: {"600000.SH": fake_slice},
+    )
+
+    def boom(self):  # noqa: ARG001
+        raise RuntimeError("simulated engine failure (RED test injection)")
+
+    monkeypatch.setattr(bt_mod.bt.Cerebro, "run", boom)
+
+    with pytest.raises(RuntimeError, match="simulated engine failure"):
+        bt_mod.run_backtest(
+            db_path="ignored",
+            start=date(2025, 3, 1),
+            end=date(2025, 9, 30),
+            cash=1_000_000,
+        )
+
+
+def test_short_reversal_scan_signals_raises_on_engine_exception(
+    temp_duckdb, monkeypatch
+):
+    """§0 RED: short_reversal/scan_signals.py:127 must propagate RuntimeError.
+
+    scan_signals is the WORST offender — per-stock failure silently skipped
+    means signal set loses crashed stocks (cherry-picking stable ones).
+    Pinned behavior: cerebro.run() exception must re-raise.
+    """
+    import short_reversal.scan_signals as scan_mod
+
+    # Minimal preset pointing at temp_duckdb (schema matches v_daily)
+    preset = {
+        "tp_pct": 0.06,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "universe": "mainboard_only",
+        "pct_chg_low": 0.02,
+        "pct_chg_high": 0.06,
+        "a_condition": "default",
+    }
+
+    def boom(self):  # noqa: ARG001
+        raise RuntimeError(
+            "simulated scan engine failure (RED test injection)"
+        )
+
+    monkeypatch.setattr(scan_mod.bt.Cerebro, "run", boom)
+
+    with pytest.raises(RuntimeError, match="simulated scan engine failure"):
+        scan_mod._scan_preset(
+            preset=preset,
+            signal_date="2025-12-01",
+            db_path=temp_duckdb,
+            min_bars=150,
+            exclude_st=False,
+        )
+
+
+def test_assert_replaced_with_raise():
+    """§0/§0 Tick 59 RED: replay_strategy_v3.py:306 must use raise not assert.
+
+    `assert` is stripped by `python -O` (production deployment). The
+    intraday_tiebreak invariant MUST use `if not ...: raise ValueError(...)`
+    so it cannot be bypassed.
+
+    Pin via AST: the file MUST NOT contain any top-level `assert` statement.
+    """
+    import ast
+
+    src = Path("short_reversal/replay_strategy_v3.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    asserts = [n for n in ast.walk(tree) if isinstance(n, ast.Assert)]
+    assert not asserts, (
+        f"§0 ASSERT VS RAISE VIOLATION: short_reversal/replay_strategy_v3.py "
+        f"contains {len(asserts)} `assert` statement(s) (lines "
+        f"{[n.lineno for n in asserts]}). `assert` is stripped by "
+        f"`python -O` in production. Use `if not cond: raise ValueError(...)` "
+        f"instead."
     )

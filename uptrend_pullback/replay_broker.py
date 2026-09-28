@@ -11,6 +11,14 @@ from __future__ import annotations
 
 import backtrader as bt
 
+# Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical cost rates imported from
+# core/dual_price.py single-source-of-truth.
+from core.dual_price import (
+    COMMISSION_RATE,
+    MIN_COMMISSION,
+    STAMP_DUTY_RATE,
+)
+
 
 class AStockCommInfo(bt.CommInfoBase):
     """A 股佣金信息：万 2.5 双边 + 最低 ¥5。
@@ -23,9 +31,9 @@ class AStockCommInfo(bt.CommInfoBase):
     """
 
     params = (
-        ("commission", 0.00025),  # 万 2.5
-        ("min_commission", 5.0),   # ¥5
-        ("stamp_duty", 0.0005),    # 万 5（仅 sell，由 broker 扣）
+        ("commission", COMMISSION_RATE),  # 万 2.5
+        ("min_commission", MIN_COMMISSION),   # ¥5
+        ("stamp_duty", STAMP_DUTY_RATE),    # 万 5（仅 sell，由 broker 扣）
         ("stocklike", True),
     )
 
@@ -40,9 +48,9 @@ class AStockBroker(bt.brokers.BackBroker):
     def __init__(
         self,
         *args,
-        commission: float = 0.00025,
-        stamp_duty: float = 0.0005,
-        min_commission: float = 5.0,
+        commission: float = COMMISSION_RATE,
+        stamp_duty: float = STAMP_DUTY_RATE,
+        min_commission: float = MIN_COMMISSION,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)

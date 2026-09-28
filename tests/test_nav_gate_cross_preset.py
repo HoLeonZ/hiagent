@@ -239,10 +239,12 @@ def test_short_reversal_engine_accepts_min_cash_ratio_from_preset() -> None:
 
 
 def test_cycle_price_action_lacks_nav_gate_documented() -> None:
-    """§2 PASS baseline: cycle_price_action has NO NAV gate (documented gap).
+    """§2 PASS baseline: cycle_price_action NAV gate integrated (Round 10 closed).
 
-    Per [[cycle-nav-gate-missing]], cycle is the only engine without
-    §2 NAV gate. This is a known forward-defense item, not a regression.
+    Round 10 (2026-09-28, CLAUDE.md §2): closed [[cycle-nav-gate-missing]] /
+    [[nav-gate-cycle-price-action-audit-2026-09-23]] by adding NAV_GATE_RATIO
+    + initial_capital + try_enter NAV check to cycle_price_action/portfolio.py.
+    This pin prevents future regression (e.g. someone reverts cycle to gap state).
     """
     portfolio = Path("cycle_price_action/portfolio.py")
     if not portfolio.exists():
@@ -251,8 +253,10 @@ def test_cycle_price_action_lacks_nav_gate_documented() -> None:
     has_nav_gate = bool(
         re.search(r"\bNAV_GATE\b|\bnav_gate_ratio\b|\bmin_cash_ratio\b", text)
     )
-    # Document the gap (this is currently expected per memory note)
-    assert not has_nav_gate, (
-        "cycle_price_action unexpectedly has NAV gate — update "
-        "[[cycle-nav-gate-missing]] memory note."
+    # Round 10 GREEN pin: cycle MUST have NAV gate. Was RED documented gap
+    # per memory note prior to 2026-09-28; now closes the gap.
+    assert has_nav_gate, (
+        "Regression: cycle_price_action lost NAV gate (Round 10 closed this "
+        "gap per [[cycle-nav-gate-missing]]). Restore NAV_GATE_RATIO + "
+        "initial_capital + try_enter NAV check."
     )

@@ -123,7 +123,7 @@ def run_backtest(
         raise ValueError(f"max_hold={p['max_hold']} 超过硬约束 {MAX_HOLD_LIMIT}")
 
     if panel_ind is None:
-        universe = set(load_universe(p["universe"], db_path))
+        universe = set(load_universe(p["universe"], db_path, asof_date=start))
         panel = load_panel(db_path, start, end, universe=universe)
         panel_ind = compute_indicators(panel)
 

@@ -72,6 +72,17 @@ def compute_trade_tp_sl(
     return entry_price * (1 + fixed_tp_pct), entry_price * (1 - fixed_sl_pct)
 
 
+def _itertuples_to_dict(row: tuple, columns: pd.Index) -> dict:
+    """Convert a namedtuple (from `itertuples(index=False)`) to a plain dict.
+
+    Replaces `Series.to_dict()` semantics used with the previous
+    per-row loop. Preserves column order and missing attributes
+    fall back to ``None`` for forward-compat with optional columns
+    (e.g. ``sub_signal_type``, ``atr_pct``).
+    """
+    return {col: getattr(row, col, None) for col in columns}
+
+
 def _verify_trade_with_backtrader(
     panel: pd.DataFrame,
     thscode: str,
@@ -115,9 +126,9 @@ def _verify_trade_with_backtrader(
     if price_source_for_execution == "raw_close" and "raw_open" in span.columns:
         from core.dual_price import LAYOUT_CHASE_UPTREND, extract_execution_bar
         rows = []
-        for _, row in span.iterrows():
+        for row in span.itertuples(index=False):
             bar = extract_execution_bar(
-                {k: row.get(k) for k in (
+                {k: getattr(row, k, None) for k in (
                     "open", "high", "low", "close", "prev_close",
                     "raw_open", "raw_high", "raw_low", "raw_close", "raw_prev_close",
                 )},
@@ -208,7 +219,7 @@ def run_backtrader_backtest(
     from uptrend_pullback.universe import load_universe
 
     if panel_ind is None:
-        universe = set(load_universe(p["universe"], db_path))
+        universe = set(load_universe(p["universe"], db_path, asof_date=start))
         panel = load_panel(db_path, start, end, universe=universe)
         panel_ind = compute_indicators(panel)
     else:
@@ -244,11 +255,22 @@ def run_backtrader_backtest(
         atr_sl_mult=p.get("atr_sl_mult"),
         position_sizing=position_sizing,
         kelly_fraction=kelly_fraction,
+        # Round 15 (2026-09-28, CLAUDE.md §0/§4): cost model plumbing
+        # (commission/stamp/floor) + ATR-aware slippage from preset。
+        # Defaults preserve pre-R15 behavior (legacy presets 无 key 时仍得
+        # canonical 0.00025+0.0005+5.0 与 0.0 slippage)。
+        commission_rate=p.get("commission_rate", 0.00025),
+        stamp_duty_rate=p.get("stamp_duty_rate", 0.0005),
+        min_commission=p.get("min_commission", 5.0),
+        slippage=p.get("slippage", 0.0),
+        atr_slip_scale=p.get("atr_slip_scale", 0.0),
         # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System execution source。
         price_source_for_execution=p.get("price_source_for_execution", "adj_close"),
         # V8 (2026-09-22, CLAUDE.md §4): preset→strategy explicit plumbing。
         intraday_tiebreak=p.get("intraday_tiebreak", "sl_first"),
         max_volume_participation=p.get("max_volume_participation", 0.10),
+        # Round 14 (2026-09-28, CLAUDE.md §2): NAV-floor cash gate threshold from preset。
+        nav_gate_ratio=p.get("nav_gate_ratio", 0.05),
     )
 
     if not verify or trades_p1.empty:
@@ -276,14 +298,14 @@ def run_backtrader_backtest(
     equity = equity_p1.set_index("date") if not equity_p1.empty else None
     equity_delta = 0.0  # sum(net_pnl_p2 - net_pnl_p1)，用于修正 equity 曲线
 
-    for _, t in trades_p1.iterrows():
-        entry_price = float(t["entry_price"])
-        size = int(t["size"])
+    for t in trades_p1.itertuples(index=False):
+        entry_price = float(t.entry_price)
+        size = int(t.size)
         if size <= 0:
-            new_rows.append(t.to_dict())
+            new_rows.append(_itertuples_to_dict(t, trades_p1.columns))
             continue
         # 用 compute_trade_tp_sl 取 tp/sl 宽度 —— 单点修复，去掉"读 entry_date atr_pct"的穿越路径
-        atr_pct_trade = float(t.get("atr_pct", np.nan)) if "atr_pct" in trades_p1.columns else np.nan
+        atr_pct_trade = float(getattr(t, "atr_pct", np.nan)) if "atr_pct" in trades_p1.columns else np.nan
         tp_p, sl_p = compute_trade_tp_sl(
             entry_price,
             fixed_tp_pct=p["tp_pct"],
@@ -294,11 +316,11 @@ def run_backtrader_backtest(
         )
 
         net_pnl_bt, exit_px_bt, exit_date_bt = _verify_trade_with_backtrader(
-            panel, t["thscode"], pd.Timestamp(t["entry_date"]),
+            panel, t.thscode, pd.Timestamp(t.entry_date),
             entry_price, size, tp_p, sl_p, max_hold,
             price_source_for_execution=p.get("price_source_for_execution", "adj_close"),
         )
-        phase1_pnl = float(t["net_pnl"])
+        phase1_pnl = float(t.net_pnl)
         # warning 路径（exit_px == entry_price 且 exit_date is None）意味着 backtrader
         # 没真正成交，net_pnl_bt 已被函数兜底为 0；但 equity_delta 不能因此把
         # Phase 1 的真实盈亏从曲线里扣掉，否则 equity_p2 会突然塌陷。用 Phase 1
@@ -314,17 +336,17 @@ def run_backtrader_backtest(
         if exit_date_bt is not None:
             actual_exit_date = exit_date_bt
             # 按 exit_date 与 entry_date 之间日历天数重算 hold_days
-            entry_ts = pd.Timestamp(t["entry_date"])
+            entry_ts = pd.Timestamp(t.entry_date)
             actual_hold_days = max(int((actual_exit_date - entry_ts).days), 1)
         else:
-            actual_exit_date = t["exit_date"]
-            actual_hold_days = int(t["hold_days"])
+            actual_exit_date = t.exit_date
+            actual_hold_days = int(t.hold_days)
 
         new_rows.append({
-            "entry_date": t["entry_date"],
+            "entry_date": t.entry_date,
             "exit_date": actual_exit_date,
-            "thscode": t["thscode"],
-            "exit_reason": t["exit_reason"],
+            "thscode": t.thscode,
+            "exit_reason": t.exit_reason,
             "entry_price": entry_price,
             "exit_price": float(exit_px_bt),
             "size": size,
@@ -333,9 +355,9 @@ def run_backtrader_backtest(
             "fees": fees,
             "net_pnl": net_pnl_bt,
             "net_return": net_return,
-            "atr_pct": float(t.get("atr_pct", np.nan)) if "atr_pct" in trades_p1.columns else np.nan,
+            "atr_pct": float(getattr(t, "atr_pct", np.nan)) if "atr_pct" in trades_p1.columns else np.nan,
         })
-        equity_delta += net_pnl_bt - float(t["net_pnl"])
+        equity_delta += net_pnl_bt - float(t.net_pnl)
 
     trades_p2 = pd.DataFrame(new_rows, columns=TRADE_COLS) if new_rows else trades_p1.iloc[:0].copy()
     if equity is not None and equity_delta != 0.0:

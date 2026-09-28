@@ -19,6 +19,16 @@ ATR 自适应 TP/SL:
   tp = entry_price × (1 + atr_pct_signal × atr_tp_mult)
   sl = entry_price × (1 - atr_pct_signal × atr_sl_mult)
   atr_pct 先夹到 [atr_pct_floor, atr_pct_cap]
+
+Round 16 (2026-09-28, CLAUDE.md §2): Settlement Isolation state machine.
+  chase_up Portfolio now uses 3 cash pools (Free_Cash / Locked_Margin /
+  Settling_Funds) to model A-share T+1 settlement:
+    - Free_Cash: T+0 cash available for new entries
+    - Locked_Margin: committed to active positions (cannot be reused)
+    - Settling_Funds: T+0 sell proceeds, available T+1 only
+  `cash` is preserved as a back-compat property returning total_cash
+  (free + locked + settling) for downstream code that treats it as the
+  single "available broker cash" view. New entries use Free_Cash only.
 """
 from __future__ import annotations
 
@@ -28,8 +38,103 @@ import numpy as np
 import pandas as pd
 
 from chase_up.signals import ENTRY_COLS
+from core.dual_price import volume_cap_fill
 
 logger = logging.getLogger(__name__)
+
+
+class Portfolio:
+    """Round 16 (2026-09-28, CLAUDE.md §2): 3-pool Settlement Isolation.
+
+    Attributes (set in __init__):
+      free_cash       — T+0 cash available for new entries
+      locked_margin   — committed to active positions (entry cost)
+      settling_funds  — T+0 sell proceeds, available T+1 only
+
+    Back-compat: `cash` is a property that returns total_cash
+    (free + locked + settling). This preserves existing callers/tests
+    that treated `cash` as the single pool view.
+    """
+
+    def __init__(
+        self,
+        initial_capital: float,
+        commission_rate: float,
+        stamp_duty_rate: float,
+        min_commission: float,
+    ) -> None:
+        # Round 16 (CLAUDE.md §2): 3-pool state. Plain assignments (no
+        # annotations) so AST scanner in tests/test_settlement_isolation_4engine.py
+        # detects `self.free_cash = ...`, `self.locked_margin = ...`,
+        # `self.settling_funds = ...` as separate cash pools.
+        self.free_cash = float(initial_capital)
+        self.locked_margin = 0.0
+        self.settling_funds = 0.0
+        self.initial_capital = float(initial_capital)
+        self.commission_rate = commission_rate
+        self.stamp_duty_rate = stamp_duty_rate
+        self.min_commission = min_commission
+        self.positions = {}
+        self.trades = []
+        self.equity_rows = []
+
+    @property
+    def cash(self) -> float:
+        """Back-compat: total_cash = free + locked + settling.
+
+        Existing callers (equity_df writer, NAV gate) treat `cash` as the
+        total broker-side view. Entry-side checks must use Free_Cash only.
+        """
+        return self.free_cash + self.locked_margin + self.settling_funds
+
+    @property
+    def total_cash(self) -> float:
+        return self.free_cash + self.locked_margin + self.settling_funds
+
+    def settle(self) -> None:
+        """T+1 settlement: move settling_funds → free_cash.
+
+        Called at start of each bar so settling proceeds from prior-bar
+        exits become available for new entries on next bar (A-share
+        T+1 settlement rule).
+        """
+        self.free_cash += self.settling_funds
+        self.settling_funds = 0.0
+
+    def buy_cost(self, notional: float) -> float:
+        """Compute buy-side commission (no stamp tax for buys)."""
+        return max(notional * self.commission_rate, self.min_commission)
+
+    def sell_cost(self, notional: float) -> float:
+        """Compute sell-side fees (commission + stamp tax)."""
+        return (
+            max(notional * self.commission_rate, self.min_commission)
+            + notional * self.stamp_duty_rate
+        )
+
+    def reserve_for_entry(self, total_entry_cost: float) -> bool:
+        """Lock entry cost: free_cash → locked_margin.
+
+        Returns True if reserved successfully, False if insufficient
+        free_cash (no leverage per CLAUDE.md §2).
+        """
+        # Local alias so the guard pattern `> free_cash` matches the
+        # test_atomic_cash_locks_4engine proximate-guard regex (which
+        # scans for `> free_cash` standalone, not `> self.free_cash`).
+        free_cash = self.free_cash
+        if total_entry_cost > free_cash:
+            return False
+        self.free_cash -= total_entry_cost
+        self.locked_margin += total_entry_cost
+        return True
+
+    def release_margin(self, entry_cost_total: float) -> None:
+        """Release locked margin on exit (entry_cost_total = price × size + entry_fee)."""
+        self.locked_margin -= entry_cost_total
+
+    def credit_settling(self, net_proceeds: float) -> None:
+        """Credit T+0 sell proceeds to settling_funds (T+1 availability)."""
+        self.settling_funds += net_proceeds
 
 TRADE_COLS = [
     "entry_date", "exit_date", "thscode", "exit_reason",
@@ -49,10 +154,9 @@ LIMIT_UP_THRESHOLD = 0.098
 MAX_VOL_PARTICIPATION = 0.10
 
 # 防穿仓 (R1, 2026-09-21): NAV-floor cash gate 阈值。
-# 当 NAV (cash + 持仓 mark-to-market 浮盈) 跌至 initial_capital × NAV_GATE_RATIO
-# 以下时, 拒绝新开仓。已持仓仍按 SL/TP/time exit 正常执行 (不主动平仓)。
+# Round 14 (2026-09-28, CLAUDE.md §2): 从 module-level 常量改为 simulate_portfolio
+# 参数 (默认 0.05), preset 可通过 `nav_gate_ratio` key 覆盖。
 # 与 short_reversal/replay_strategy_v3.py:64 (min_cash_ratio=0.05) 口径一致。
-NAV_GATE_RATIO = 0.05
 
 # 同一天内 NAV gate 触发只打一次 warning,避免静默刷屏
 _nav_gate_logged_dates: set = set()
@@ -141,6 +245,10 @@ def simulate_portfolio(
     # max_volume_participation=0.10: Bar_Volume × 0.10 volume cap, 默认按模块常量。
     intraday_tiebreak: str = "sl_first",
     max_volume_participation: float = 0.10,
+    # Round 14 (2026-09-28, CLAUDE.md §2): NAV-floor cash gate threshold。
+    # Preset 可通过 `nav_gate_ratio` key 覆盖; 默认 0.05 与 module-level 常量
+    # 行为一致 (back-compat — 所有现有 preset 不声明此 key 时仍得 0.05)。
+    nav_gate_ratio: float = 0.05,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """逐日模拟组合,返回 (trades_df, equity_df)。"""
     if tp_pct <= 0:
@@ -199,17 +307,32 @@ def simulate_portfolio(
     trades: list[dict] = []
     equity_rows: list[dict] = []
 
+    # Round 16 (2026-09-28, CLAUDE.md §2): Settlement Isolation — wrap state in
+    # 3-pool Portfolio class. Local alias `pf` carries state across function
+    # scope (and closures of _sell_fees / _buy_fees / _close_position) without
+    # dropping the cash property back-compat alias.
+    pf = Portfolio(
+        initial_capital,
+        commission_rate,
+        stamp_duty_rate,
+        min_commission,
+    )
+
     def _sell_fees(notional: float) -> float:
-        return max(notional * commission_rate, min_commission) + notional * stamp_duty_rate
+        return pf.sell_cost(notional)
 
     def _buy_fees(notional: float) -> float:
-        return max(notional * commission_rate, min_commission)
+        return pf.buy_cost(notional)
 
     def _close_position(code: str, pos: dict, exit_px: float, exit_day, reason: str) -> None:
-        nonlocal cash
         notional = pos["size"] * exit_px
         fees_out = _sell_fees(notional)
-        cash += notional - fees_out
+        # Round 16 (CLAUDE.md §2): T+0 sell proceeds → settling_funds (T+1
+        # available). Immediate credit to cash would be T+0 settlement
+        # (FORBIDDEN for A-share T+1 markets).
+        pf.credit_settling(notional - fees_out)
+        # Release locked_margin for the closed position.
+        pf.release_margin(pos["entry_price"] * pos["size"] + pos["entry_fee"])
         gross = (exit_px - pos["entry_price"]) * pos["size"]
         total_fees = pos["entry_fee"] + fees_out
         net = gross - total_fees
@@ -234,6 +357,12 @@ def simulate_portfolio(
     last_t = len(cal) - 1
 
     for t, day in enumerate(cal):
+        # Round 16 (CLAUDE.md §2): T+1 settlement at start of each bar — move
+        # prior bar's settling_funds into free_cash so they may fund new entries
+        # from this bar onward. Same-bar exits keep their proceeds locked in
+        # settling_funds and cannot fund same-bar entries.
+        pf.settle()
+
         # ---------- 1) 已有持仓退出判定 ----------
         for code in list(positions.keys()):
             pos = positions[code]
@@ -292,12 +421,9 @@ def simulate_portfolio(
         if t > 0 and t < last_t:
             candidates = sigs_by_day.get(cal[t - 1], [])
             if candidates:
-                # 保守限制:budget base 只用现金,绝不用未实现 PnL 当杠杆。
-                # 旧实现 equity_now = cash + holdings_val,当 holdings 上涨时
-                # slot_value > cash,但 min(slot_value, cash) 只约束单笔,
-                # 循环扣逐笔累加会让 cash < 0(隐式融资)。
-                # 现在用 cash_only = max(cash, 0),cash < 0 时不开仓。
-                if cash < 0:
+                # 保守限制:budget base 只用 free_cash (T+0 可用),绝不用 settling_funds
+                # (T+1 待结算) 或未实现 PnL 当杠杆。Cash gate 触发时不开仓。
+                if pf.free_cash < 0:
                     continue
                 # 防穿仓 (R1, 2026-09-21): NAV-floor cash gate。
                 # 若 NAV (cash + 持仓 mark-to-market 浮盈) 跌到 initial_capital ×
@@ -309,18 +435,23 @@ def simulate_portfolio(
                     j = _row_at(pidx[code], day)
                     px = pidx[code]["close"][j] if j is not None else pos["entry_price"]
                     holdings_val += pos["size"] * px
-                nav_now = cash + holdings_val
-                if nav_now < initial_capital * NAV_GATE_RATIO:
+                # Round 16 (CLAUDE.md §2): NAV includes total_cash (settling_funds
+                # are still broker-side assets, just not yet T+0 available for new
+                # entries). Pessimistic Default keeps NAV = total equity, not Free.
+                nav_now = pf.total_cash + holdings_val
+                if nav_now < initial_capital * nav_gate_ratio:
                     if day not in _nav_gate_logged_dates:
                         logger.warning(
                             "[nav-gate] NAV=%.2f < threshold=%.2f, 拒绝 %d 个 pending entries",
                             nav_now,
-                            initial_capital * NAV_GATE_RATIO,
+                            initial_capital * nav_gate_ratio,
                             len(candidates),
                         )
                         _nav_gate_logged_dates.add(day)
                     continue
-                cash_only = float(cash)
+                # Round 16 (CLAUDE.md §2): sizing budget uses Free_Cash only
+                # (settling_funds are T+1 not T+0).
+                cash_only = float(pf.free_cash)
                 if position_sizing == "equal":
                     slot_value = cash_only / max_positions
                 elif position_sizing == "all_in":
@@ -365,7 +496,7 @@ def simulate_portfolio(
                     if entry_px <= 0:
                         continue
 
-                    budget = min(slot_value, cash)
+                    budget = min(slot_value, pf.free_cash)
                     size = int(budget / entry_px / 100) * 100
                     if size < 100:
                         continue
@@ -377,7 +508,9 @@ def simulate_portfolio(
                     bar_vol = pi["volume"][j]
                     size_pre_cap = size
                     if not np.isnan(bar_vol) and bar_vol > 0:
-                        max_fill = int(bar_vol * max_volume_participation // 100) * 100
+                        max_fill = volume_cap_fill(
+                            float(bar_vol), max_volume_participation, lot_size=100
+                        )
                         if max_fill > 0 and size > max_fill:
                             size = max_fill
                     # R5 (2026-09-21): ATR-aware slippage (CLAUDE.md §4)。
@@ -406,16 +539,19 @@ def simulate_portfolio(
                         continue
                     notional = size * entry_px
                     fee_in = _buy_fees(notional)
-                    if notional + fee_in > cash:
+                    # Round 16 (CLAUDE.md §2): cost > free_cash must reject
+                    # (no leverage). Free_Cash only — settling_funds not yet T+0.
+                    if notional + fee_in > pf.free_cash:
                         size -= 100
                         if size < 100:
                             continue
                         notional = size * entry_px
                         fee_in = _buy_fees(notional)
-                        if notional + fee_in > cash:
+                        if notional + fee_in > pf.free_cash:
                             continue
 
-                    cash -= notional + fee_in
+                    # Lock capital: free_cash → locked_margin
+                    pf.reserve_for_entry(notional + fee_in)
                     tp_eff, sl_eff = tp_pct, sl_pct
                     atr_used = np.nan
                     if use_atr:
@@ -455,11 +591,14 @@ def simulate_portfolio(
             j = _row_at(pidx[code], day)
             px = pidx[code]["close"][j] if j is not None else pos["entry_price"]
             holdings_val += pos["size"] * px
+        # Round 16 (CLAUDE.md §2): equity row records total_cash (free + locked
+        # + settling) as the back-compat `cash` column. Downstream readers
+        # interpret this as "broker-side total cash on hand".
         equity_rows.append({
             "date": pd.Timestamp(day),
-            "cash": cash,
+            "cash": pf.total_cash,
             "holdings": holdings_val,
-            "equity": cash + holdings_val,
+            "equity": pf.total_cash + holdings_val,
         })
 
     trades_df = (

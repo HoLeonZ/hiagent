@@ -21,6 +21,7 @@ from cycle_price_action.universe import (
     is_main_board, apply_liquidity_filter, is_excluded_status,
 )
 from cycle_price_action.portfolio import Portfolio
+from cycle_price_action.data_feed import ReplayDataProvider
 from cycle_price_action.replay_broker import ReplayBroker
 from cycle_price_action.no_lookahead import (
     bars_up_to, group_by_stock, delivery_date_check, assert_exit_priority,
@@ -87,7 +88,7 @@ def test_p1_a_exit_price_uses_broker_fill_not_signal_price():
             ["X.SH", d.date(), 10.0 + i * 0.1, 10.5, 9.8, 10.2 + i * 0.1, 1e7, 1e6],
         )
     con.close()
-    b = ReplayBroker(db)
+    b = ReplayBroker(ReplayDataProvider(db))
     f1 = b.submit_buy("X.SH", 100, decision_date=date(2024, 6, 3))
     b.record_fill(f1)
     f2 = b.submit_sell("X.SH", 100, decision_date=date(2024, 6, 4))
@@ -113,7 +114,7 @@ def test_p1_b_fill_lag_is_at_least_one_trading_day():
             ["X.SH", d.date(), 10.0, 10.5, 9.8, 10.2, 1e7, 1e6],
         )
     con.close()
-    b = ReplayBroker(db)
+    b = ReplayBroker(ReplayDataProvider(db))
     f1 = b.submit_buy("X.SH", 100, decision_date=date(2024, 6, 3))
     assert f1.date > date(2024, 6, 3)
     os.remove(db)
@@ -164,7 +165,7 @@ def test_p3_b_replay_broker_records_buy_at_next_open():
             ["X.SH", d.date(), 10.0, 10.5, 9.8, 10.2, 1e7, 1e6],
         )
     con.close()
-    b = ReplayBroker(db)
+    b = ReplayBroker(ReplayDataProvider(db))
     f1 = b.submit_buy("X.SH", 100, decision_date=date(2024, 6, 3))
     assert f1.date == date(2024, 6, 4)
     os.remove(db)

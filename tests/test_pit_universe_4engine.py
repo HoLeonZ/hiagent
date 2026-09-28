@@ -148,7 +148,13 @@ def test_chase_up_sweep_passes_no_asof_date() -> None:
     src = Path("chase_up/sweep.py").read_text(encoding="utf-8")
 
     has_call = bool(re.search(r"load_universe\(", src))
-    has_pit_call = bool(re.search(r"load_universe\([^)]*asof_date", src))
+    # 检测 asof_date 是否在某个 load_universe(...) 调用的同一行内
+    # (原 `[^)]*` 在嵌套括号 (如 Path(args.db_path)) 处截断,误报 RED)。
+    has_pit_call = any(
+        "asof_date" in line
+        for line in src.splitlines()
+        if "load_universe(" in line
+    )
 
     if has_call and not has_pit_call:
         raise AssertionError(

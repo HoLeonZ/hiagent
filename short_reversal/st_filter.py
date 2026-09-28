@@ -46,12 +46,12 @@ def _fetch_name_map(codes: Iterable[str]) -> dict[str, str]:
                  "--asset-type", "a-share", "--format", "json"],
                 capture_output=True, text=True, timeout=15,
             )
-        except Exception as e:
+        except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired) as e:
             logger.warning("search %s failed: %s", code, e)
             continue
         try:
             env = json.loads(proc.stdout)
-        except Exception:
+        except json.JSONDecodeError:
             continue
         if not env.get("ok"):
             continue

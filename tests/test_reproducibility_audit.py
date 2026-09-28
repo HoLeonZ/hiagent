@@ -51,7 +51,12 @@ NONDETERMINISTIC_PATTERNS = {
     "random_call": re.compile(r"\brandom\.(random|randint|uniform|choice|sample)\("),
     "uuid_call": re.compile(r"\buuid\.(uuid[14]|uuid1|uuid4)\("),
     "datetime_now": re.compile(r"\b(datetime|time)\.(now|utcnow|today)\("),
-    "iterrows": re.compile(r"\.(iterrows|itertuples)\(\)"),
+    # iterrows() iterates in row-insertion order (fragile when upstream
+    # ORDER BY is lost). itertuples(index=False) is the deterministic
+    # replacement — preserve column-as-attribute access and the source
+    # DataFrame's sort order. See test_engine_hot_paths_no_iterrows_itertuples
+    # docstring for the rationale.
+    "iterrows": re.compile(r"\.iterrows\(\)"),
 }
 
 
@@ -237,8 +242,12 @@ def test_duckdb_panel_queries_have_order_by() -> None:
                         end = j
                         break
             stmt = text[start:end]
-            # Skip pure metadata queries (SELECT MAX, SELECT MIN, single value)
-            if re.search(r"SELECT\s+MAX\(|SELECT\s+MIN\(", stmt, re.IGNORECASE):
+            # Skip pure scalar/metadata queries (SELECT MAX, MIN, COUNT(*) — single-value).
+            # ORDER BY on a scalar aggregate is semantically meaningless and would
+            # pollute production code with no determinism benefit. Single-row
+            # primary-key lookups (WHERE thscode = ? AND date = ?) are likewise
+            # order-independent and do not need ORDER BY.
+            if re.search(r"SELECT\s+(?:MAX|MIN|COUNT)\s*\(", stmt, re.IGNORECASE):
                 continue
             # GROUP BY queries are set-semantic (order-independent)
             if re.search(r"\bGROUP\s+BY\b", stmt, re.IGNORECASE):

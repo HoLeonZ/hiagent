@@ -34,6 +34,12 @@ PRESETS: dict[str, dict] = {
     # v34_mainboard_pctchg_tight 在所有维度 (DD/跨周期/CAGR/Sharpe) 都优于 v35。
     # v35 暴露的本质问题: 信号收紧不能解决震荡段胜率, 必须从 B 连阳 / E 流动性
     # 窗口入手改进。下次落 -20ms 触发时, Task #15+ 应聚焦 B/E 信号轴。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.06
+    # max_hold: 5
+    # Note: Fixed TP/SL; ultra-tight stop for short-reversal mean-reversion. No ATR multiplier.
     "v35_agg_pctchg_04_09": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
@@ -89,6 +95,12 @@ PRESETS: dict[str, dict] = {
     #   v34_mainboard_pctchg_tight: 高收益高 DD (震荡段 yield 高但 DD 100% 破产触底)
     #   v36_d_converge:             中等收益低 DD (震荡段 yield 中等但 DD 55% 真稳)
     #   实盘部署建议选 v36_d_converge (更安全)。研究/对照用 v34 看理论上限。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.06
+    # max_hold: 5
+    # Note: Fixed TP/SL; ultra-tight stop for short-reversal mean-reversion. No ATR multiplier.
     "v36_d_converge": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
@@ -144,6 +156,12 @@ PRESETS: dict[str, dict] = {
     # v38_a_relaxed ⭐: 最高 yield × stretch (拉涨段 +4378%, 跨周期稳健)
     # 实盘部署首选 v38_a_relaxed — 拉涨段高收益且 1 中等 DD;
     # 若 DD 极端敏感选 v36_d_converge。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.06
+    # max_hold: 5
+    # Note: Fixed TP/SL; ultra-tight stop for short-reversal mean-reversion. No ATR multiplier.
     "v38_a_relaxed": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
@@ -203,6 +221,12 @@ PRESETS: dict[str, dict] = {
     # v38_a_relaxed:  稳健高产 (震荡段 yield +25%, DD 62%)
     # v39_pctchg_03_10 ⭐⭐: 跨周期最高 yield (震荡段 +52%, 拉涨段 +5412%)
     # 实盘部署首选 v39_pctchg_03_10 (最高 yield), DD 敏感选 v36_d_converge.
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.06
+    # max_hold: 5
+    # Note: Fixed TP/SL; ultra-tight stop for short-reversal mean-reversion. No ATR multiplier.
     "v39_pctchg_03_10": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
@@ -265,6 +289,12 @@ PRESETS: dict[str, dict] = {
     # === v3 体系最终产品 (v40_tp_08 优先) ===
     # 实盘部署首选 v40_tp_08 (跨周期最高 yield, DD 与 v39 持平)。
     # v36_d_converge 仍是 DD 极端敏感场景的备选。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.07
+    # max_hold: 5
+    # Note: Fixed TP/SL; TP widened from 0.06 to 0.07 for higher yield. No ATR multiplier.
     "v40_tp_07": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
@@ -299,6 +329,12 @@ PRESETS: dict[str, dict] = {
         "below_ratio_60": 0.5,
         "close_ma60_buffer": 0.02,
     },
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: Fixed TP/SL; aggressive TP 0.08 widening. No ATR multiplier.
     "v40_tp_08": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
@@ -357,6 +393,12 @@ PRESETS: dict[str, dict] = {
     # === v3 体系最终产品 (v42_buf05 优先) ===
     # 实盘部署首选 v42_buf05 (跨周期 yield 翻倍, DD 仅微升 3pp).
     # 备选 v36_d_converge (DD 极端敏感场景).
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: Fixed TP/SL; buffer widened to 0.05. No ATR multiplier.
     "v42_buf05": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
@@ -411,6 +453,12 @@ PRESETS: dict[str, dict] = {
     # === v3 体系最终产品 (v43_ratio03 优先) ===
     # 实盘部署首选 v43_ratio03 (12 次迭代的最终胜出, 跨周期 yield 翻倍再翻倍).
     # DD 敏感可退回 v42_buf05 或 v36_d_converge.
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: Fixed TP/SL; ratio extreme relaxation 0.5→0.3. No ATR multiplier.
     "v43_ratio03": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
@@ -453,6 +501,12 @@ PRESETS: dict[str, dict] = {
     #   v44_ratio02_buf07 (双极端) ⭐:          n=425 win=33.4% CAGR=+41166% Sharpe=9.99 DD=64.0%
     # ⚠️ 警惕: 全部 v44 配置 win% < 34%, SL 占比 65%+, 类似 v37 陷阱信号.
     # === 2026-09-21 walk-forward 待验证 (Task #33) ===
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: Fixed TP/SL; double extreme (ratio 0.2 + buf 0.07). v3 体系工程最优. No ATR multiplier.
     "v44_ratio02_buf07": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
@@ -508,6 +562,12 @@ PRESETS: dict[str, dict] = {
     # === v3 体系最终产品 (v44_ratio02_buf07 仍优先, v45 备选) ===
     # 实盘部署首选 v44_ratio02_buf07 (DD 仍可控, 跨周期稳健).
     # v45_ratio01_buf10 是高 yield 但高 DD 备选 — 仅在 DD 容忍度高时考虑.
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: Fixed TP/SL; extreme relaxation (ratio 0.1 + buf 0.10). DD临界 67-95%. No ATR multiplier.
     "v45_ratio01_buf10": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
@@ -563,6 +623,12 @@ PRESETS: dict[str, dict] = {
     #   拉涨段 DD -0.2pp (64→64, 微降) ⭐
     # === 综合: v46_sl_0002 是 v44 的边际改善 (震荡段 yield +12-23%, DD 持平) ===
     # 实盘部署: v44 仍是首选 (12m CAGR 略高); v46_sl_0002 备选 (震荡段 yield 略高).
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0002
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: Fixed TP/SL; SL tightened 0.0005→0.0002 for marginal DD improvement. No ATR multiplier.
     "v46_sl_0002": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地

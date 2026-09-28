@@ -1,0 +1,26 @@
+{
+  "preset": "v33_long_reverse_v20",
+  "window": [
+    "2024-09-01",
+    "2026-09-01"
+  ],
+  "engine": "simulate",
+  "trades_csv_sha256": "e1f2864d4ced42cfec1e53f69745e75fe510d92b50811dbe84ff4c71f8f91cc6",
+  "trades_csv_rows": 62,
+  "trades_csv_cols": [
+    "entry_date",
+    "exit_date",
+    "thscode",
+    "exit_reason",
+    "entry_price",
+    "exit_price",
+    "size",
+    "hold_days",
+    "gross_pnl",
+    "fees",
+    "net_pnl",
+    "net_return",
+    "atr_pct"
+  ],
+  "note": "uptrend_pullback v33_long_reverse_v20 trades.csv sha256 baseline (Tick 36 / Tick 68 Round 13). v20 = v19 + sl_pct 0.0293→0.021 + tp_pct 0.305→0.2628 + max_hold 15→18 + pct_chg_low -0.065→-0.088. Multi-run reproducibility invariant."
+}

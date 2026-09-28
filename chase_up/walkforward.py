@@ -12,6 +12,7 @@ import argparse
 import logging
 from pathlib import Path
 
+import duckdb
 import pandas as pd
 
 from chase_up.backtest import run_backtest
@@ -42,7 +43,11 @@ def run_windows(
     """对每个窗口独立跑一次回测(各自加载数据与预热)。"""
     from chase_up.presets import get_preset
     p = get_preset(preset) if isinstance(preset, str) else preset
-    universe = set(load_universe(p["universe"], db_path))
+    # §3 PIT: 用第一个窗口的起始日作为 asof_date 代理 (后续窗口逐窗口 O(n) 重载
+    # 会显著拖慢 WFV;且 universe 在 WFV 整体周期内相对稳定)
+    universe = set(load_universe(
+        p["universe"], db_path, asof_date=windows[0][0]
+    ))
 
     if engine == "backtrader":
         from chase_up.backtrader_engine import run_backtrader_backtest
@@ -54,7 +59,7 @@ def run_windows(
     for start, end in windows:
         try:
             panel = load_panel(db_path, start, end, universe=universe)
-        except Exception as e:
+        except (duckdb.Error, ValueError, KeyError) as e:
             logger.warning("窗口 %s..%s 加载失败: %s", start, end, e)
             continue
         panel_ind = compute_indicators(panel)

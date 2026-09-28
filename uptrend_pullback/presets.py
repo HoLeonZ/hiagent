@@ -68,6 +68,12 @@ PRESETS: dict[str, dict] = {
     #   worst_dd   48.1%     (v18: 48.1%, tied) ✓
     #   trades     8.30      (v18: 8.40, -0.1) ~
     #   composite  0.9550    (v18: 0.9117, +4.75%) ✓
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0293
+    # tp_pct: 0.305
+    # max_hold: 15
+    # Note: Fixed TP/SL; no ATR multiplier. Pessimistic Default = 2.93% stop / 30.5% TP.
     "v33_long_reverse_v19": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
@@ -125,6 +131,12 @@ PRESETS: dict[str, dict] = {
     #   - max_hold 15 → 18: 给更深回调的反弹留更多时间
     #   - ma60_ratio 0.65 → 0.6693,close_ma60_buf 0.02 → 0.0121: 与新 tp/sl 微调
     # n_comparisons=100: iter_reverse sweep size (100 次随机扰动,CLAUDE.md §5 DSR/Bonferroni)
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.021
+    # tp_pct: 0.2628
+    # max_hold: 18
+    # Note: Fixed TP/SL; no ATR multiplier. Pessimistic Default = 2.1% stop / 26.28% TP.
     "v33_long_reverse_v20": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",

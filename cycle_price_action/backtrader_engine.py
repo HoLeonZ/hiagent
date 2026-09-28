@@ -29,9 +29,9 @@ from cycle_price_action.cycle import phase_score
 from cycle_price_action.time_windows import calendar_score
 from cycle_price_action.portfolio import Portfolio
 from cycle_price_action.replay_broker import ReplayBroker
+from cycle_price_action.data_feed import ReplayDataProvider
 from cycle_price_action.no_lookahead import bars_up_to
 from core.dual_price import LAYOUT_CYCLE_PRICE, extract_execution_bar
-from hiagent_config import get_db_path
 
 
 class CyclePriceActionStrategy(bt.Strategy):
@@ -46,12 +46,40 @@ class CyclePriceActionStrategy(bt.Strategy):
         # price to compute daily-bar stop. Pessimistic default = atr_sl_mult ×
         # 0.05 = 7.5% stop, conservative for cycle strategy.
         sl_pct=0.05,
-        db_path=str(get_db_path()),
+        # Round 10 (2026-09-28, CLAUDE.md §2): NAV gate anchor — plumbed
+        # through to Portfolio constructor (initial_capital). Default 1M mirrors
+        # chase_up + uptrend_pullback + short_reversal (all 1M baseline)。
+        initial_capital=1_000_000.0,
+        # Tick 49 (2026-09-28, CLAUDE.md §6): Broker no longer accepts db_path
+        # directly. Control Plane (backtest.run_backtest) constructs a
+        # ReplayDataProvider from db_path and injects it here. Strategy stays
+        # DB-free per §6 (no db_path param).
+        data_provider=None,
+        # Round 15 (2026-09-28, CLAUDE.md §4): preset→strategy plumbing for
+        # intraday_tiebreak. Default 'sl_first' preserves pre-R15 behavior。
+        intraday_tiebreak="sl_first",
     )
 
     def __init__(self):
-        self._portfolio = Portfolio(cash=self.broker.getcash())
-        self._broker_ext = ReplayBroker(self.params.db_path)
+        self._portfolio = Portfolio(
+            cash=self.broker.getcash(),
+            initial_capital=self.p.initial_capital,
+            # Round 15 (2026-09-28, CLAUDE.md §4): preset→Portfolio plumbing
+            # for intraday_tiebreak (181st dropped preset key gap)。
+            # 与 chase_up + uptrend_pullback + short_reversal Portfolio 同口径。
+            intraday_tiebreak=self.p.intraday_tiebreak,
+        )
+        # Tick 49: ReplayBroker receives pre-built data_provider from Control
+        # Plane. If none was injected, raise — fail-fast rather than silently
+        # fall back to DB-construction (which would re-introduce the §6
+        # violation).
+        if self.p.data_provider is None:
+            raise ValueError(
+                "CyclePriceActionStrategy requires `data_provider` to be "
+                "injected by Control Plane (backtest.run_backtest). "
+                "CLAUDE.md §6: Strategy has no direct DB access."
+            )
+        self._broker_ext = ReplayBroker(self.p.data_provider)
         # State for live bar evaluation.
         self._bar_cache: list[dict] = []
         self._entry_day = None

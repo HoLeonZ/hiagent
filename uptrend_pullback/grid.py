@@ -18,6 +18,7 @@ import itertools
 import logging
 from pathlib import Path
 
+import duckdb
 import pandas as pd
 
 from hiagent_config import DB_PATH
@@ -95,7 +96,9 @@ def run_grid(
     logger.info("网格: %d 组合 × %d 窗口 = %d 次回测",
                 len(combos), len(windows), len(combos) * len(windows))
 
-    universe = set(load_universe(base["universe"], db_path))
+    universe = set(load_universe(
+        base["universe"], db_path, asof_date=windows[0][0]
+    ))
     # returns[combo_idx][window_key] = total_return
     returns: list[dict] = [{} for _ in combos]
     trades_n: list[dict] = [{} for _ in combos]
@@ -103,7 +106,12 @@ def run_grid(
     for start, end in windows:
         try:
             panel = load_panel(db_path, start, end, universe=universe)
-        except Exception as e:
+        except (duckdb.Error, ValueError, KeyError) as e:
+            # §0 Fail-Fast narrowed: WFV window load is known to drop
+            # early years with insufficient data. Keep warn-log + continue
+            # so a single missing window does not abort the whole sweep,
+            # but only catch data-shape exceptions. Programming errors /
+            # MemoryError propagate.
             logger.warning("窗口 %s..%s 跳过: %s", start, end, e)
             continue
         panel_ind = compute_indicators(panel)

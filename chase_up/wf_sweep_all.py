@@ -10,6 +10,7 @@ import json
 import logging
 from pathlib import Path
 
+import duckdb
 import pandas as pd
 
 from chase_up.backtrader_engine import run_backtrader_backtest
@@ -40,7 +41,7 @@ def run_one_window(
     db_path: Path,
 ) -> dict:
     p = get_preset(name)
-    universe = set(load_universe(p["universe"], db_path))
+    universe = set(load_universe(p["universe"], db_path, asof_date=start))
     panel = load_panel(db_path, start, end, universe=universe)
     panel_ind = compute_indicators(panel)
     res = run_backtrader_backtest(
@@ -88,7 +89,7 @@ def main() -> None:
         for p_idx, name in enumerate(sorted(PRESETS.keys()), 1):
             try:
                 m = run_one_window(name, start, end, Path(args.db_path))
-            except Exception as exc:  # noqa: BLE001
+            except (duckdb.Error, ValueError, KeyError) as exc:  # noqa: BLE001
                 print(f"  [{p_idx:2d}/{len(PRESETS)}] {name}  ERROR: {exc!r}")
                 continue
             tag = " 💥BLOWUP" if m["blowup"] else ""

@@ -32,7 +32,7 @@ OUT_HTML.parent.mkdir(parents=True, exist_ok=True)
 
 def _load_panel() -> pd.DataFrame:
     p = PRESETS[PRESET]
-    universe = set(load_universe(p["universe"], DB_PATH))
+    universe = set(load_universe(p["universe"], DB_PATH, asof_date=START))
     panel = load_panel(DB_PATH, START, END, universe=universe)
     return compute_indicators(panel)
 

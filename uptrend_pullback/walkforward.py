@@ -12,6 +12,7 @@ import argparse
 import logging
 from pathlib import Path
 
+import duckdb
 import pandas as pd
 
 from hiagent_config import DB_PATH
@@ -51,7 +52,10 @@ def run_windows(
       - "backtrader"  — 调用 uptrend_pullback.backtrader_engine 的 AStockBroker 验证
     """
     p = get_preset(preset) if isinstance(preset, str) else preset
-    universe = set(load_universe(p["universe"], db_path))
+    # §3 PIT: 用第一个窗口的起始日作为 asof_date 代理 (同 chase_up)
+    universe = set(load_universe(
+        p["universe"], db_path, asof_date=windows[0][0]
+    ))
 
     if engine == "backtrader":
         from uptrend_pullback.backtrader_engine import run_backtrader_backtest
@@ -63,7 +67,7 @@ def run_windows(
     for start, end in windows:
         try:
             panel = load_panel(db_path, start, end, universe=universe)
-        except Exception as e:  # 数据不足的早期年份
+        except (duckdb.Error, ValueError, KeyError) as e:  # 数据不足的早期年份
             logger.warning("窗口 %s..%s 加载失败: %s", start, end, e)
             continue
         panel_ind = compute_indicators(panel)

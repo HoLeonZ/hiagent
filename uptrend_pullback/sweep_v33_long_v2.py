@@ -121,7 +121,7 @@ def main():
         },
     }
 
-    universe = set(load_universe(base["universe"], Path(args.db_path)))
+    universe = set(load_universe(base["universe"], Path(args.db_path), asof_date=START))
     panel = load_panel(Path(args.db_path), START, END, universe=universe)
     panel_ind = compute_indicators(panel)
 

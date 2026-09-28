@@ -182,30 +182,188 @@ def test_cycle_try_enter_lacks_nav_gate_check() -> None:
 def test_chase_up_nav_gate_fully_integrated() -> None:
     """§2 PASS baseline: chase_up/portfolio.py FULLY integrated NAV gate.
 
-    chase_up/portfolio.py:64 NAV_GATE_RATIO + :143 initial_capital param +
-    :338-339 nav gate check. Pin compliance.
+    Round 14 (2026-09-28, CLAUDE.md §2): NAV gate 从 module-level 常量
+    NAV_GATE_RATIO 改为 simulate_portfolio 参数 nav_gate_ratio (默认 0.05)。
+    Pin 改为检查参数化 API 完整性。
     """
     src = Path("chase_up/portfolio.py").read_text(encoding="utf-8")
 
-    assert "NAV_GATE_RATIO" in src, (
-        "Regression: chase_up/portfolio.py lost NAV_GATE_RATIO constant"
+    assert "nav_gate_ratio" in src, (
+        "Regression: chase_up/portfolio.py lost nav_gate_ratio parameter"
     )
     assert "initial_capital" in src, (
         "Regression: chase_up/portfolio.py lost initial_capital param"
     )
-    assert "nav_now < initial_capital * NAV_GATE_RATIO" in src or \
-           "nav < initial_capital * NAV_GATE_RATIO" in src, (
+    assert "nav_now < initial_capital * nav_gate_ratio" in src or \
+           "nav < initial_capital * nav_gate_ratio" in src, (
         "Regression: chase_up/portfolio.py lost nav gate check"
     )
 
 
 def test_uptrend_pullback_nav_gate_fully_integrated() -> None:
-    """§2 PASS baseline: uptrend_pullback/portfolio.py FULLY integrated."""
+    """§2 PASS baseline: uptrend_pullback/portfolio.py FULLY integrated.
+
+    Round 14 (2026-09-28, CLAUDE.md §2): NAV gate 从 module-level 常量
+    NAV_GATE_RATIO 改为 simulate_portfolio 参数 nav_gate_ratio (默认 0.05)。
+    """
     src = Path("uptrend_pullback/portfolio.py").read_text(encoding="utf-8")
 
-    assert "NAV_GATE_RATIO" in src, (
-        "Regression: uptrend_pullback/portfolio.py lost NAV_GATE_RATIO"
+    assert "nav_gate_ratio" in src, (
+        "Regression: uptrend_pullback/portfolio.py lost nav_gate_ratio parameter"
     )
     assert "initial_capital" in src, (
         "Regression: uptrend_pullback/portfolio.py lost initial_capital"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Round 10 (2026-09-28, CLAUDE.md §2): GREEN verification suite for cycle
+# NAV gate fix — closes [[cycle-nav-gate-missing]] / [[nav-gate-cycle-price-action-audit-2026-09-23]].
+# ---------------------------------------------------------------------------
+
+
+def test_cycle_has_nav_gate_ratio_constant() -> None:
+    """Round 10 GREEN: cycle_price_action Portfolio.NAV_GATE_RATIO == 0.05。
+
+    Mirrors chase_up/portfolio.py:64 + uptrend_pullback/portfolio.py:48.
+    """
+    from cycle_price_action.portfolio import Portfolio
+
+    assert hasattr(Portfolio, "NAV_GATE_RATIO"), (
+        "cycle_price_action Portfolio missing NAV_GATE_RATIO class constant"
+    )
+    assert Portfolio.NAV_GATE_RATIO == 0.05, (
+        f"NAV_GATE_RATIO must be 0.05 (CLAUDE.md §2 NAV-floor mandate), "
+        f"got {Portfolio.NAV_GATE_RATIO}"
+    )
+
+
+def test_cycle_portfolio_takes_initial_capital() -> None:
+    """Round 10 GREEN: Portfolio.__init__ 接受 initial_capital 参数 (默认 1M)。
+
+    Mirrors chase_up + uptrend_pullback + short_reversal initial_capital=1_000_000.0
+    默认值, 防止预设未声明时回退到隐式 0 或 NaN。
+    """
+    import inspect
+
+    from cycle_price_action.portfolio import Portfolio
+
+    sig = inspect.signature(Portfolio.__init__)
+    assert "initial_capital" in sig.parameters, (
+        "Portfolio.__init__ 缺 initial_capital 参数 — NAV gate 无 baseline"
+    )
+    param = sig.parameters["initial_capital"]
+    assert param.default == 1_000_000.0, (
+        f"initial_capital 默认应为 1_000_000.0 (与其他 3 个 engine 一致), "
+        f"got default={param.default}"
+    )
+
+
+def test_cycle_try_enter_skips_when_nav_below_threshold() -> None:
+    """Round 10 GREEN: 当 cash < initial_capital × NAV_GATE_RATIO, try_enter 返回 None。
+
+    Setup: initial_capital=1_000_000, cash=0 (在 catastrophic blowup 后),
+    NAV gate threshold = 1_000_000 × 0.05 = 50_000. cash=0 < 50_000 →
+    try_enter 必须 return None (拒绝新开仓)。
+
+    Mirrors chase_up/portfolio.py:314-323 NAV-floor 守卫逻辑。
+    """
+    from cycle_price_action.portfolio import Portfolio
+
+    pf = Portfolio(cash=0.0, initial_capital=1_000_000.0)
+    assert pf.initial_capital == 1_000_000.0
+    assert pf.cash == 0.0
+
+    # NAV gate threshold = 1_000_000 × 0.05 = 50_000
+    # cash=0 << 50_000 → 拒绝 entry
+    state = pf.try_enter(
+        thscode="600000.SH",
+        price=10.0,
+        entry_date=__import__("datetime").date(2024, 6, 3),
+        decision_meta={"k_line_score": 1.5},
+    )
+    assert state is None, (
+        "try_enter 在 NAV 跌穿 gate threshold 后仍返回 PositionState — "
+        "NAV gate 未生效 (CLAUDE.md §2 violation)"
+    )
+    # cash 未被扣除 — 没有成交发生
+    assert pf.cash == 0.0, (
+        f"cash 应保持 0.0 (无成交), got {pf.cash}"
+    )
+
+
+def test_cycle_backtest_accepts_initial_capital() -> None:
+    """Round 10 GREEN: cycle_price_action/backtest.py _accepted whitelist 含 initial_capital。
+
+    防止 preset 中声明的 initial_capital 被 _accepted 过滤掉, 导致
+    backtrader_engine.params 拿不到 (AttributeError on self.p.initial_capital)。
+    """
+    src = Path("cycle_price_action/backtest.py").read_text(encoding="utf-8")
+
+    assert "initial_capital" in src, (
+        "cycle_price_action/backtest.py 缺 initial_capital — preset 声明的 "
+        "initial_capital 会被静默丢弃"
+    )
+    # 进一步确认 _accepted set 包含该 key (而非仅注释/docstring 提及)
+    assert '"initial_capital"' in src, (
+        "cycle_price_action/backtest.py _accepted set 不含 'initial_capital' "
+        "字符串字面量 — preset key 会因 _accepted 过滤被丢弃"
+    )
+
+
+def test_cycle_strategy_passes_initial_capital() -> None:
+    """Round 10 GREEN: CyclePriceActionStrategy.params 显式声明 initial_capital 默认值。
+
+    保证 backtrader 调用方 backtest.py → addstrategy(... initial_capital=...)
+    把预设值传递给 strategy, strategy 再传给 Portfolio (R1 NAV gate 边界)。
+    Mirrors chase_up/backtrader_engine.py:188-202 同样 pattern。
+
+    Note: backtrader MetaParams metaclass 把 `params = dict(...)` 包装成
+    AutoInfoClass 对象, 运行时通过 CyclePriceActionStrategy.params 拿到
+    不是 dict 实例。所以本测试用源文件静态扫描验证 preset plumbing,
+    跟其他 audit test 一致 (test_atr_slip_scale_cross_preset.py 等)。
+    """
+    src = Path("cycle_price_action/backtrader_engine.py").read_text(encoding="utf-8")
+
+    # Locate `params = dict(` block, scan until matching `)`
+    params_start = src.find("params = dict(")
+    assert params_start != -1, (
+        "cycle_price_action/backtrader_engine.py 缺 `params = dict(` 块"
+    )
+    # Find balanced close paren (depth 1 from `(`)
+    depth = 0
+    end = params_start
+    for i in range(params_start, len(src)):
+        if src[i] == "(":
+            depth += 1
+        elif src[i] == ")":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    params_block = src[params_start:end]
+
+    assert "initial_capital" in params_block, (
+        "CyclePriceActionStrategy.params 块缺 `initial_capital=...` 声明 — "
+        "NAV gate anchor 无法传给 Portfolio"
+    )
+    # 进一步验证默认值是 1_000_000.0 (与其他 3 个 engine 一致)
+    import re as _re
+    # Match only valid Python float literals (e.g., 1_000_000.0, 1000000.0, 1e6)
+    # — strict pattern avoids `initial_capital=...)` from comment false-matches.
+    m = _re.search(
+        r"initial_capital\s*=\s*([\d_]+(?:\.[\d_]+)?(?:[eE][+-]?[\d_]+)?)",
+        params_block,
+    )
+    assert m is not None, (
+        "params 块声明 initial_capital 但未匹配到数值默认值"
+    )
+    assert m.group(1) == "1_000_000.0", (
+        f"initial_capital 默认值应为 1_000_000.0, got {m.group(1)}"
+    )
+
+    # 验证 __init__ 把 initial_capital 传给 Portfolio
+    assert "initial_capital=self.p.initial_capital" in src, (
+        "CyclePriceActionStrategy.__init__ 未把 self.p.initial_capital "
+        "传给 Portfolio(初始 NAV gate anchor 丢失)"
     )

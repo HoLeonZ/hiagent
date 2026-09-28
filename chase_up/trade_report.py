@@ -505,7 +505,7 @@ def build_html(
     out_path: Path,
 ) -> None:
     p = get_preset(preset_name)
-    universe = set(load_universe(p["universe"], db_path))
+    universe = set(load_universe(p["universe"], db_path, asof_date=start))
     panel = load_panel(db_path, start, end, universe=universe)
     panel_ind = compute_indicators(panel)
 

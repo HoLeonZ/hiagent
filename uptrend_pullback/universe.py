@@ -37,12 +37,31 @@ def _is_a_share_ex_bj(code: str) -> bool:
     return code.endswith(".SH") or code.endswith(".SZ")
 
 
-def _all_thscodes(db_path: Path) -> list[str]:
+def _all_thscodes(db_path: Path, asof_date: str | None = None) -> list[str]:
+    """返回 v_daily 中所有 distinct thscode。
+
+    asof_date: 若给定,只返回 asof_date 当日仍活跃的代码 (PIT 过滤);
+              即排除 asof_date 之后才上市 / asof_date 之前已退市的票。
+              若 None, 返回 post-hoc 全集 (兼容老接口)。
+    """
     con = duckdb.connect(str(db_path), read_only=True)
     try:
-        rows = con.execute(
-            "SELECT DISTINCT thscode FROM v_daily ORDER BY thscode"
-        ).fetchall()
+        if asof_date is None:
+            rows = con.execute(
+                "SELECT DISTINCT thscode FROM v_daily ORDER BY thscode"
+            ).fetchall()
+        else:
+            # §3 PIT Mandate: 排除 (a) asof_date 之后才上市的票
+            # (无 date <= asof_date 数据) AND (b) asof_date 之前已退市的票
+            # (MAX(date) < asof_date)
+            rows = con.execute(
+                "SELECT thscode FROM v_daily "
+                "WHERE date <= ? "
+                "GROUP BY thscode "
+                "HAVING MAX(date) >= ? "
+                "ORDER BY thscode",
+                [asof_date, asof_date],
+            ).fetchall()
     finally:
         con.close()
     return [r[0] for r in rows]
@@ -62,15 +81,20 @@ def load_universe(
     mode: str,
     db_path: Path,
     exclude_path: Path | None = None,
+    asof_date: str | None = None,
 ) -> list[str]:
-    """返回符合 mode 的 thscode 列表（已剔除黑名单）。"""
+    """返回符合 mode 的 thscode 列表（已剔除黑名单）。
+
+    asof_date: 若给定, 只返回 asof_date 当日仍活跃的代码 (§3 PIT Mandate);
+              若 None, 返回 post-hoc 全集 (兼容老调用)。
+    """
     if mode not in VALID_MODES:
         raise ValueError(
             f"Unknown universe mode: {mode!r}. Available: {', '.join(VALID_MODES)}"
         )
 
     try:
-        all_codes = _all_thscodes(db_path)
+        all_codes = _all_thscodes(db_path, asof_date=asof_date)
     except duckdb.Error as e:
         raise UptrendPullbackError(f"DuckDB read failed: {e}") from e
 

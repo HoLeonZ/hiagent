@@ -30,6 +30,7 @@ import sys
 import time
 from pathlib import Path
 
+import duckdb
 import numpy as np
 import pandas as pd
 
@@ -123,7 +124,7 @@ def score_windows(
     """跑一组窗口，返回聚合指标 + 每窗明细。"""
     try:
         df = run_windows(cfg, windows, db_path, engine=engine)
-    except Exception as e:
+    except (duckdb.Error, ValueError, KeyError) as e:
         return {"error": str(e)[:120], "windows": []}
     if df.empty:
         return {"error": "no result", "windows": []}

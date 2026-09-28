@@ -4,6 +4,13 @@ run_backtest_v3() 跑一个 preset，返回 metrics dict。
 
 Universe 走 load_universe_asof：剔除 asof_date 之后才上市的票，
 严格消除 survivorship bias（DuckDB 无历史成分表，能做的最小代理）。
+
+§6 architecture (Tick 40, 2026-09-28): panel loading lives in Control Plane
+helper `short_reversal._panel_loader`. The `_load_panel` thin wrapper here
+exists only to preserve the import surface for `lookahead_trade_trace.py`
+and tests that monkeypatch the function name (e.g.
+tests/test_short_reversal_v8_plumbing.py:79, :112). It does NOT open duckdb
+itself.
 """
 from __future__ import annotations
 
@@ -11,68 +18,42 @@ import math
 from pathlib import Path
 
 import backtrader as bt
-import duckdb
 import numpy as np
 import pandas as pd
 
+from short_reversal._panel_loader import (
+    PANEL_FORWARD_BUFFER_DAYS,
+    load_panel_for_backtest,
+)
 from short_reversal.feed_bt import build_per_stock_feeds
 from short_reversal.presets import PRESETS, get_preset
 from short_reversal.replay_strategy_v3 import Phase3V3Strategy
 from short_reversal.universe import load_universe_asof
 
 INITIAL_CAPITAL = 1_000_000.0
-COMMISSION_RATE = 0.0006
-STAMP_DUTY_RATE = 0.001
+# Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical cost rates imported from
+# core.dual_price single-source. Previously COMM=0.0006 / STAMP=0.001 (2.4x
+# and 2x off canonical) — silently under-reported net PnL.
+COMMISSION_RATE = 0.00025
+STAMP_DUTY_RATE = 0.0005
 MARGIN_RATE = 0.086
 DAYS_PER_YEAR = 365
 
-# 前向 buffer：MA60 需要 60 日 warmup，再多 30 日保险
-PANEL_FORWARD_BUFFER_DAYS = 180
+# Re-export for back-compat: tests/golden baselines reference this constant.
+PANEL_FORWARD_BUFFER_DAYS = PANEL_FORWARD_BUFFER_DAYS
 
 
 def _load_panel(db_path: Path, start: str, end: str, universe: list[str]) -> pd.DataFrame:
-    """从 DuckDB 拉面板（含前向 buffer）。
+    """Thin wrapper delegating to Control Plane panel loader (CLAUDE.md §6).
 
-    Buffer 约定（2026-09-20 audit-locked）：
-      - 前 180 天：MA60 等指标 warmup + 30 天保险
-      - 后 60 天：in-flight close 缓冲 —— 仅允许 window 内入场的 trade
-        在此处 close，不允许 entry_date > end。这是 LAHEAD-001 的
-        structural guarantee。
-      任何修改此 buffer 大小的 PR 必须同时更新 tests/golden/ 下的 baseline
-      + tests/test_short_reversal_no_lookahead.py 的 LAHEAD-001 锁。
+    The actual DuckDB I/O is owned by
+    `short_reversal._panel_loader.load_panel_for_backtest`. This wrapper
+    exists only to preserve the import surface for callers that
+    `from short_reversal.engine import _load_panel` (notably
+    short_reversal.lookahead_trade_trace and tests that monkeypatch
+    the function name).
     """
-    panel_start = (pd.Timestamp(start) - pd.Timedelta(days=PANEL_FORWARD_BUFFER_DAYS)).strftime("%Y-%m-%d")
-    # 60-day post-buffer 是 in-flight close 缓冲（exits may extend here,
-    # entries must NOT）。违反此约定会触发 LAHEAD-001 regression test。
-    panel_end = (pd.Timestamp(end) + pd.Timedelta(days=60)).strftime("%Y-%m-%d")
-    con = duckdb.connect(str(db_path), read_only=True)
-    try:
-        # V3a (2026-09-22, CLAUDE.md §3): LEFT JOIN v_daily_hfq (back-adjusted)
-        # 增加 adj_open/adj_high/adj_low/adj_close 列, 让 strategy 可选用 adj
-        # 用于指标计算, 仍用 v_daily 的 raw 列作为 execution trigger。
-        # 当前 baseline parity: short_reversal 默认 price_source_for_execution
-        # 走 raw 域 (v_daily IS raw), signal 也走 raw (为防止 baseline 漂移)。
-        # 完整 V3a 落地 (signal 用 adj) 需要 golden baseline 重生成。
-        df = con.execute(
-            """
-            SELECT v.thscode, v.date,
-                   v.open, v.high, v.low, v.close, v.amount, v.volume,
-                   h.open  AS adj_open,
-                   h.high  AS adj_high,
-                   h.low   AS adj_low,
-                   h.close AS adj_close
-            FROM v_daily v
-            LEFT JOIN v_daily_hfq h
-              ON v.thscode = h.thscode AND v.date = h.date
-            WHERE v.date BETWEEN ? AND ? AND v.thscode = ANY(?)
-            ORDER BY v.thscode, v.date
-            """,
-            [panel_start, panel_end, universe],
-        ).fetchdf()
-    finally:
-        con.close()
-    df["date"] = pd.to_datetime(df["date"])
-    return df
+    return load_panel_for_backtest(db_path, start, end, universe)
 
 
 def _metrics_from_holder(holder: dict, start: str, end: str, cfg: dict) -> dict:

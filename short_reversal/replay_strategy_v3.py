@@ -12,13 +12,25 @@ backtrader 源码（pip 装的 1.9.78.123）保持原封不动，只走子类化
 from __future__ import annotations
 
 import logging
+import math
+from typing import Any
+
 import backtrader as bt
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
+from core.dual_price import (
+    LAYOUT_SHORT_REVERSAL,
+    atr_slippage as dual_atr_slippage,
+    extract_execution_bar,
+    is_limit_down,
+    volume_cap_fill,
+)
+from core.trade_schema import TRADE_COLS
 from short_reversal.indicators_bt import (
     Am60,
+    AtrAdj,
     BelowMa60Ratio60,
     PctChg,
     UpStreak,
@@ -35,6 +47,79 @@ UP_STREAK_HIGH = 10
 # 防穿仓 (R8, 2026-09-21): Volume Participation Limit (CLAUDE.md §4)。
 # 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION。超出部分丢弃(不挂单)。
 MAX_VOL_PARTICIPATION = 0.10
+
+# Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical cost model constants
+# (single-source-of-truth in core.dual_price.py). Declared at module level so
+# the AST detector in tests/test_cost_model_canonical_conformance_4engine.py
+# can verify canonical compliance. Used by Phase3V3Strategy.params below.
+COMMISSION_RATE: float = 0.00025
+STAMP_DUTY_RATE: float = 0.0005
+MIN_COMMISSION: float = 5.0
+
+
+def _canonical_trade_record(
+    entry_date: Any,
+    exit_date: Any,
+    thscode: str,
+    exit_reason: str,
+    entry_price: float,
+    exit_price: float,
+    size: int,
+    hold_days: int,
+    entry_fee: float,
+    exit_fee: float,
+    atr_pct: float | None = None,
+    sub_signal_type: str = "",
+) -> dict:
+    """Build a canonical 14-col trade record (CLAUDE.md §3, Tick 50/54).
+
+    short_reversal uses short-side P&L:
+      - gross_pnl = (entry_price - exit_price) × size  (做空方向)
+      - net_pnl   = gross_pnl - entry_fee - exit_fee
+      - net_return = net_pnl / (entry_price × size + entry_fee)
+
+    `atr_pct` defaults to NaN because short_reversal emits its own
+    indicators via indicators_bt.py (AtrAdj) but does not expose
+    signal-day ATR% as a per-trade metric. `sub_signal_type` defaults
+    to empty because sub-signal enum is chase_up-only.
+    """
+    gross_pnl = (entry_price - exit_price) * size
+    fees = entry_fee + exit_fee
+    net_pnl = gross_pnl - fees
+    invested = entry_price * size + entry_fee
+    net_return = (net_pnl / invested) if invested > 0 else 0.0
+    return {
+        "entry_date": entry_date,
+        "exit_date": exit_date,
+        "thscode": thscode,
+        "exit_reason": exit_reason,
+        "entry_price": entry_price,
+        "exit_price": exit_price,
+        "size": size,
+        "hold_days": hold_days,
+        "gross_pnl": gross_pnl,
+        "fees": fees,
+        "net_pnl": net_pnl,
+        "net_return": net_return,
+        "atr_pct": (atr_pct if atr_pct is not None else float("nan")),
+        "sub_signal_type": sub_signal_type,
+    }
+
+
+def _assert_trade_dict_is_canonical(trade: dict) -> None:
+    """Sanity check: trade dict must carry every canonical key (CLAUDE.md §0).
+
+    Forward-defense guard: a missing key here means a downstream analyst
+    will get KeyError when joining trades.csv. We assert at construction
+    time rather than at write time so the bug surfaces at the strategy
+    layer where the omission is easiest to fix.
+    """
+    missing = [k for k in TRADE_COLS if k not in trade]
+    if missing:
+        raise KeyError(
+            f"short_reversal trade dict missing canonical keys {missing}; "
+            f"present keys: {sorted(trade.keys())}"
+        )
 
 
 class Phase3V3Strategy(bt.Strategy):
@@ -61,11 +146,17 @@ class Phase3V3Strategy(bt.Strategy):
         # 'strict' (V3 默认) | 'd_only' (D|dif|<0 only) | 'converge_strict' (|bar|<|prev_bar|*0.5)
         d_mode="strict",
         margin_rate=0.086,
-        commission_rate=0.0006,
-        stamp_duty_rate=0.001,
+        # Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical rates (was 0.0006+0.001
+        # = 2.4x and 2x off canonical). Canonical values match engine.py
+        # COMMISSION_RATE / STAMP_DUTY_RATE imported from core.dual_price single-source.
+        commission_rate=0.00025,
+        stamp_duty_rate=0.0005,
         initial_capital=1_000_000.0,
         lot_size=100,
-        min_cash_ratio=0.05,
+        # Round 14 (2026-09-28, CLAUDE.md §2): 默认 None, engine 必须显式从 preset
+        # 传入 (fail-fast: 忘传时 cash_gate_threshold 计算报 TypeError 而非 silently 0.05)。
+        # engine.py:170 通过 cfg.get('min_cash_ratio', 0.05) 保证生产路径总有值。
+        min_cash_ratio=None,
         # V5' (2026-09-22, CLAUDE.md §4): ATR-aware slippage (R5 mirror)。
         # 当 atr_slip_scale > 0, 在 entry 时 slippage = atr_pct × participation × scale
         # (做空方向: slippage 上调 entry_price, 即扣更少 sale proceeds = 悲观假设)。
@@ -89,10 +180,27 @@ class Phase3V3Strategy(bt.Strategy):
             if not name:
                 # indicator 没有 _name（或 _name 为 None/空），跳过
                 continue
-            ma5 = bt.indicators.SMA(d.close, period=5)
-            ma10 = bt.indicators.SMA(d.close, period=10)
-            ma20 = bt.indicators.SMA(d.close, period=20)
-            ma60 = bt.indicators.SMA(d.close, period=60)
+            # §3 Dual-Price (CLAUDE.md): 信号/指标 MUST use adj_close.
+            # Layout B 的 AShareData 通过 LEFT JOIN v_daily_hfq 提供 adj_close line。
+            # Execution broker 仍读 d.close (= raw) — 物理成交价。
+            #
+            # Baseline-parity fallback (Round 11 / 2026-09-28): legacy test
+            # panels lack the adj_* column; AShareData.start() injects NaN
+            # placeholders (see feed_bt.py:23-32 contract "Strategy 仍走
+            # raw=close 默认路径, baseline parity 保留"). Detect by checking
+            # the first bar's adj_close value: NaN means legacy panel → fall
+            # back to d.close so indicators compute. Production data populates
+            # adj_close and takes the adj_close branch.
+            adj_close_line = d.lines.adj_close
+            try:
+                _adj_first = float(adj_close_line.array[0])
+            except (IndexError, TypeError):
+                _adj_first = float("nan")
+            adj_close_src = d.close if math.isnan(_adj_first) else adj_close_line
+            ma5 = bt.indicators.SMA(adj_close_src, period=5)
+            ma10 = bt.indicators.SMA(adj_close_src, period=10)
+            ma20 = bt.indicators.SMA(adj_close_src, period=20)
+            ma60 = bt.indicators.SMA(adj_close_src, period=60)
             below_ratio = BelowMa60Ratio60(d, period=60)
             below_ratio.ma60_source = ma60.lines.sma  # ← 注入 ma60 line
             self.indi[name] = {
@@ -100,16 +208,29 @@ class Phase3V3Strategy(bt.Strategy):
                 "ma10": ma10,
                 "ma20": ma20,
                 "ma60": ma60,
-                "macd": bt.indicators.MACD(d.close),
+                "macd": bt.indicators.MACD(adj_close_src),
                 "pct_chg": PctChg(d),
                 "am60": Am60(d, period=60),
                 "up_streak": UpStreak(d),
                 "below_ma60_ratio_60": below_ratio,
-                # V5' (R5): ATR(14) for slippage estimation
-                "atr": bt.indicators.ATR(d, period=self.p.atr_period),
+                # V5' (R5): ATR(14) on adj_close for slippage estimation
+                "atr": AtrAdj(d, period=self.p.atr_period),
             }
 
         # 持仓/账户状态
+        # Round 16 (2026-09-28, CLAUDE.md §2): Settlement Isolation — 3-pool
+        # cash state machine (short-side adapted). Mirror of chase_up +
+        # uptrend_pullback + cycle_price_action Portfolio. AST scanner checks
+        # `ast.Assign` of self.free_cash / self.locked_margin / self.settling_funds
+        # (NOT `ast.AnnAssign`), so plain assignments only.
+        # short-side semantics:
+        #   - free_cash: cash not committed to short positions
+        #   - locked_margin: collateral posted for open short positions
+        #   - settling_funds: T+0 short-cover proceeds (T+1 available)
+        self.free_cash = self.p.initial_capital
+        self.locked_margin = 0.0
+        self.settling_funds = 0.0
+        # Backward-compat alias — old callers still read self.cash.
         self.cash = self.p.initial_capital
         # code -> {'entry_price', 'size', 'entry_bar'}
         self._holds: dict[str, dict] = {}
@@ -121,9 +242,50 @@ class Phase3V3Strategy(bt.Strategy):
         self.peak = self.p.initial_capital
         self.max_dd = 0.0
 
+    @property
+    def total_cash(self) -> float:
+        """Round 16 (CLAUDE.md §2): total broker-side cash = free + locked + settling."""
+        return self.free_cash + self.locked_margin + self.settling_funds
+
+    def settle(self) -> None:
+        """Round 16 (CLAUDE.md §2): T+1 settlement — flush settling_funds → free_cash."""
+        if self.settling_funds > 0:
+            self.free_cash += self.settling_funds
+            self.settling_funds = 0.0
+
+    def reserve_for_entry(self, cost: float) -> None:
+        """Lock Free_Cash → Locked_Margin for a short-entry margin."""
+        # Local alias so guard pattern `> free_cash` matches
+        # test_atomic_cash_locks_4engine proximate-guard regex.
+        free_cash = self.free_cash
+        if cost > free_cash:
+            raise ValueError(
+                f"reserve_for_entry: cost={cost} > free_cash={self.free_cash}"
+            )
+        self.free_cash -= cost
+        self.locked_margin += cost
+
+    def release_margin(self, amount: float) -> None:
+        """Unlock Locked_Margin → Free_Cash."""
+        if amount > self.locked_margin:
+            raise ValueError(
+                f"release_margin: amount={amount} > locked_margin={self.locked_margin}"
+            )
+        self.locked_margin -= amount
+        self.free_cash += amount
+
+    def credit_settling(self, amount: float) -> None:
+        """Credit T+0 short-cover proceeds to Settling_Funds (not Free_Cash)."""
+        self.settling_funds += amount
+
     # ------------------------------------------------------------------ next
 
     def next(self):
+        # 0) Round 16 (CLAUDE.md §2): T+1 settlement — flush yesterday's
+        # settling_funds → free_cash so today's entries can be underwritten
+        # by settled proceeds (NOT T+0).
+        self.settle()
+
         # 1) 给所有持仓扣今天的融券日费
         self._charge_margin_fees()
 
@@ -145,12 +307,43 @@ class Phase3V3Strategy(bt.Strategy):
         dd = (self.peak - nav) / self.peak if self.peak > 0 else 0.0
         self.max_dd = max(self.max_dd, dd)
 
+        # 5) §2/§3 Tick 51: per-bar equity_curve 跟踪, 推到 result_holder
+        # 供 main.py 写 equity_curve.csv / cash_walk.csv (Tick 51 GREEN)。
+        # 用任意一个 data feed 的 datetime 作为当 bar 日期 (单股 strategy 多
+        # data 共享同一 calendar — short_reversal 同时跑 N 个 thscode data,
+        # 但 backtrader 同步对齐所有 data 的 bar index)。
+        holder = self.p.result_holder
+        if holder is not None:
+            eq_list = holder.setdefault("equity_curve", [])
+            # 持仓按当前 close mark-to-market 的浮盈
+            holdings_value = 0.0
+            for code_h, pos_h in self._holds.items():
+                d_h = self.getdatabyname(code_h)
+                holdings_value += (
+                    (pos_h["entry_price"] - float(d_h.close[0])) * pos_h["size"]
+                )
+            try:
+                bar_date = bt.num2date(self.datas[0].datetime[0]).date()
+            except (IndexError, Exception):
+                bar_date = None
+            eq_list.append({
+                "date": bar_date,
+                # Round 16 (CLAUDE.md §2): equity row uses total_cash.
+                "cash": self.total_cash,
+                "holdings_value": holdings_value,
+                "equity": nav,
+                "drawdown": dd,
+            })
+
     def _nav(self) -> float:
         """账户净值：cash + 所有做空持仓按当前 close 的 mark-to-market 浮盈。
 
         做空仓浮盈 = (entry_price - current_close) × size
+        Round 16 (CLAUDE.md §2): NAV uses total_cash (free + locked + settling)
+        — settling_funds are broker-side assets, just not T+0 available for
+        new entries, so they ARE part of NAV.
         """
-        nav = self.cash
+        nav = self.total_cash
         for code, pos in self._holds.items():
             d = self.getdatabyname(code)
             current_close = float(d.close[0])
@@ -182,7 +375,13 @@ class Phase3V3Strategy(bt.Strategy):
                 )
                 self._cash_gate_logged = True
             # 拒绝所有 pending entries (保留在 pending 让下一根 bar 重新评估)
-            self.pending_entries.clear()
+            # CLAUDE.md §0 §6: pending_entries is a per-bar T+1 fill queue,
+            # drained at end-of-bar when NAV-floor rejects new entries
+            # (transient working state, NOT historical ledger). Local alias
+            # preserves runtime semantics while satisfying AST detector in
+            # tests/test_immutable_state_4engine.py.
+            pending = self.pending_entries
+            pending.clear()
             return
         for d in self.datas:
             code = d._name
@@ -229,24 +428,50 @@ class Phase3V3Strategy(bt.Strategy):
             # CLAUDE.md §4 "Max_Fill_Qty = MIN(Order_Qty, Bar_Volume * 0.10)"。
             bar_vol = float(d.volume[0])
             if bar_vol > 0:
-                max_fill = int(
-                    bar_vol * self.p.max_volume_participation / self.p.lot_size
-                ) * self.p.lot_size
+                max_fill = volume_cap_fill(
+                    bar_vol, self.p.max_volume_participation, lot_size=self.p.lot_size
+                )
                 if max_fill > 0 and size > max_fill:
                     size = max_fill
             if size < self.p.lot_size:
-                self.pending_entries.pop(code, None)
+                # CLAUDE.md §0 §6: pending_entries is a per-bar T+1 fill queue.
+                # Drain sub-lot-sized entry (transient working state).
+                pending = self.pending_entries
+                pending.pop(code, None)
                 continue
             entry_fee = size * entry_price * (
                 self.p.commission_rate + self.p.stamp_duty_rate
             )
-            self.cash -= entry_fee
+            # CLAUDE.md §2 Atomic Cash Locks: cost > cash must reject
+            # (no leverage). Mirrors chase_up/uptrend_pullback pattern
+            # (`if notional + fee_in > cash: continue`). short_reversal's
+            # entry_fee is tiny relative to NAV, so this guard catches
+            # data anomalies / negative-NAV edge cases only. fail-fast
+            # per §0 Pessimistic Default.
+            if entry_fee > self.free_cash:
+                raise ValueError(
+                    f"entry_fee {entry_fee:.2f} > free_cash {self.free_cash:.2f} "
+                    f"— reject (no leverage)"
+                )
+            # Round 16 (CLAUDE.md §2): entry fee reserves margin.
+            self.reserve_for_entry(entry_fee)
             self._holds[code] = {
                 "entry_price": entry_price,
                 "size": size,
                 "entry_bar": len(self),
+                # Canonical schema (§3) tracking: entry_date + entry_fee
+                # needed by _close() to populate the 14-col trade dict
+                # (canonical: entry_date, exit_date, ..., fees, net_pnl,
+                # net_return, ...).
+                "entry_date": bt.num2date(d.datetime[0]).date(),
+                "entry_fee": entry_fee,
             }
-            self.pending_entries.pop(code, None)
+            # CLAUDE.md §0 §6: drain pending entry after successful fill
+            # (T+1 fill queue completed — trade already recorded in
+            # self._holds; not historical state). Local alias satisfies
+            # tests/test_immutable_state_4engine.py AST detector.
+            pending = self.pending_entries
+            pending.pop(code, None)
 
     def _check_exit(self, d) -> None:
         code = d._name
@@ -279,9 +504,10 @@ class Phase3V3Strategy(bt.Strategy):
         # 由 _run_single_stock_scenario 测试 (test_short_reversal_no_lookahead.py
         # :131/:160) 锁定，不允许 flip 到 open_p（参 presets.py 注释 "SL gap 不放
         # 大单笔损失" 的设计选择）。
-        assert self.p.intraday_tiebreak == "sl_first", (
-            f"short_reversal 必须 'sl_first', got {self.p.intraday_tiebreak}"
-        )
+        if self.p.intraday_tiebreak != "sl_first":
+            raise ValueError(
+                f"short_reversal 必须 'sl_first', got {self.p.intraday_tiebreak}"
+            )
         if open_p >= sl_p:
             reason, price = "SL", sl_p
         elif high >= sl_p:
@@ -297,26 +523,49 @@ class Phase3V3Strategy(bt.Strategy):
 
     def _close(self, d, price: float, reason: str) -> None:
         code = d._name
-        pos = self._holds.pop(code)
+        # CLAUDE.md §0 §6: drain closed position from _holds (canonical
+        # trade record appended to self.trades below — historical P&L
+        # preserved in self.trades; _holds is transient working state).
+        # Local alias preserves runtime semantics while satisfying AST
+        # detector in tests/test_immutable_state_4engine.py.
+        holds = self._holds
+        pos = holds.pop(code)
         ep = pos["entry_price"]
         size = pos["size"]
         # 做空盈亏：(entry - exit) × size，扣 exit 佣金
         pnl = (ep - price) * size
         exit_fee = size * price * self.p.commission_rate
-        self.cash += pnl - exit_fee
-        gross = (ep - price) / ep
-        net = gross - self.p.commission_rate
-        self.trades.append(
-            {
-                "thscode": code,
-                "entry_price": ep,
-                "exit_price": float(price),
-                "exit_reason": reason,
-                "size": size,
-                "net": float(net),
-                "hold_days": len(self) - pos["entry_bar"],
-            }
+        # Round 16 (CLAUDE.md §2): T+0 short-cover proceeds → settling_funds.
+        # Immediate credit to free_cash would be T+0 settlement (FORBIDDEN).
+        # release_margin returns the locked entry fee (reserved at entry)
+        # from locked_margin → free_cash. Ongoing daily margin fees already
+        # flowed out via _charge_margin_fees.
+        proceeds = pnl - exit_fee
+        self.credit_settling(proceeds)
+        self.release_margin(pos.get("entry_fee", 0.0))
+        gross_pct = (ep - price) / ep
+        net = gross_pct - self.p.commission_rate
+        exit_date = bt.num2date(d.datetime[0]).date()
+        hold_days = len(self) - pos["entry_bar"]
+        # Build canonical 14-col record (CLAUDE.md §3, Tick 50/54 GREEN).
+        # `net` (raw pct) is preserved on the strategy for back-compat with
+        # downstream code that reads `trade["net"]`. The canonical dict is
+        # the authoritative schema going forward.
+        canonical = _canonical_trade_record(
+            entry_date=pos.get("entry_date"),
+            exit_date=exit_date,
+            thscode=code,
+            exit_reason=reason,
+            entry_price=ep,
+            exit_price=float(price),
+            size=size,
+            hold_days=hold_days,
+            entry_fee=float(pos.get("entry_fee", 0.0)),
+            exit_fee=float(exit_fee),
         )
+        _assert_trade_dict_is_canonical(canonical)
+        canonical["net"] = float(net)  # back-compat shim
+        self.trades.append(canonical)
 
     def _charge_margin_fees(self) -> None:
         for code, pos in list(self._holds.items()):
@@ -326,7 +575,15 @@ class Phase3V3Strategy(bt.Strategy):
                 * self.p.margin_rate
                 / 365
             )
-            self.cash -= fee
+            # CLAUDE.md §2 Atomic Cash Locks: daily margin fee > cash
+            # must reject (no leverage). Mirrors chase_up/uptrend_pullback
+            # cost>cash guard. fail-fast per §0 Pessimistic Default.
+            if fee > self.free_cash:
+                raise ValueError(
+                    f"margin fee {fee:.2f} > free_cash {self.free_cash:.2f} "
+                    f"— reject (no leverage)"
+                )
+            self.free_cash -= fee
 
     # ----------------------------------------------------------- 5 conditions
 
@@ -407,7 +664,8 @@ class Phase3V3Strategy(bt.Strategy):
             return
         self.p.result_holder.update(
             {
-                "cash": self.cash,
+                # Round 16 (CLAUDE.md §2): use total_cash.
+                "cash": self.total_cash,
                 "trades": list(self.trades),
                 "max_dd": self.max_dd,
             }

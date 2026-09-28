@@ -1071,12 +1071,14 @@ def test_simulate_portfolio_never_lets_cash_go_negative_in_phase1():
 
 
 def test_simulate_portfolio_nav_gate_rejects_entries_when_nav_below_threshold():
-    """NAV < initial_capital × NAV_GATE_RATIO 时,simulate_portfolio 必须拒绝新开仓。
+    """NAV < initial_capital × nav_gate_ratio (默认 0.05) 时,simulate_portfolio 必须拒绝新开仓。
 
     复刻真实穿仓场景: 一次大亏把 cash 打到接近 0, 持仓 mark-to-market 浮盈也低,
     NAV 跌穿 5% 阈值。新信号出现时,模拟器必须拒开仓, 不能继续 all-in 累积亏损。
     """
-    from chase_up.portfolio import NAV_GATE_RATIO
+    # Round 14 (2026-09-28, CLAUDE.md §2): NAV gate 阈值从 module-level 改为
+    # simulate_portfolio 参数 (默认 0.05)。 此处直接 inline 与默认一致。
+    nav_gate_ratio = 0.05
     # 用 minimal initial_capital=10k + sl_pct=0.96 让单笔击穿 5% × initial
     # 票 A: day 1 signal → day 2 open @ 10 入场 → day 3 open=0.4 跳空破止损 (sl_p=10*0.04=0.4)
     # 票 B: day 3 signal → 应被 NAV gate 拒绝 (cash < 10k × 5% = 500)
@@ -1117,8 +1119,8 @@ def test_simulate_portfolio_nav_gate_rejects_entries_when_nav_below_threshold():
     assert len(a_trades) == 1, f"票 A 应入场并被 SL 击穿, 实际 {len(a_trades)} 笔"
     # 验证 cash 确实大跌
     final_cash = equity["cash"].iloc[-1]
-    assert final_cash < 9_000.0 * NAV_GATE_RATIO, (
-        f"测试 fixture 不足: cash={final_cash}, 需 < {9_000.0 * NAV_GATE_RATIO} 才触发 NAV gate"
+    assert final_cash < 9_000.0 * nav_gate_ratio, (
+        f"测试 fixture 不足: cash={final_cash}, 需 < {9_000.0 * nav_gate_ratio} 才触发 NAV gate"
     )
     # 票 B 必须被 NAV gate 拒绝 (day 4 是 day 3 signal 的执行日, 此时 NAV 已 < 5% × 9k = 450)
     b_trades = trades[trades["thscode"] == "BBB.SZ"]

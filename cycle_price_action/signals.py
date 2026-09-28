@@ -81,7 +81,10 @@ def k_line_score(df: pd.DataFrame, patterns: pd.Series) -> pd.Series:
     out = pd.Series(0.0, index=df.index)
     out[patterns.notna()] += 1.0
 
-    cl = df["close"]
+    # §3 Dual-Price (CLAUDE.md): 信号/指标 MUST use adj_close when present.
+    # Layout C (cycle) data_feed.py 现在 LEFT JOIN v_daily_hfq 提供 adj_close 列。
+    # 若 panel 缺 adj_close 列（legacy Layout C 兼容路径）→ fallback 到 close。
+    cl = df["adj_close"] if "adj_close" in df.columns else df["close"]
     ma5 = cl.rolling(5).mean()
     ma10 = cl.rolling(10).mean()
     ma20 = cl.rolling(20).mean()

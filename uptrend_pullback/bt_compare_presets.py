@@ -14,6 +14,7 @@ import argparse
 import logging
 from pathlib import Path
 
+import duckdb
 import pandas as pd
 
 from hiagent_config import DB_PATH
@@ -135,7 +136,7 @@ def main():
 
     # 一次加载 panel + indicators,所有 preset 复用
     base_universe = PRESETS["v33_long_reverse_v3"]["universe"]
-    universe = set(load_universe(base_universe, Path(args.db_path)))
+    universe = set(load_universe(base_universe, Path(args.db_path), asof_date=args.start))
     panel = load_panel(Path(args.db_path), args.start, args.end, universe=universe)
     panel_ind = compute_indicators(panel)
     print(f"[load] {len(panel)} 行, {panel['thscode'].nunique()} 只股票")
@@ -146,7 +147,7 @@ def main():
             row = run_one(name, args.start, args.end, Path(args.db_path),
                           panel_ind, panel)
             rows.append(row)
-        except Exception as e:
+        except (duckdb.Error, ValueError, KeyError) as e:
             print(f"  ❌ {name} 失败: {e}")
             rows.append({"preset": name, "error": str(e)})
 

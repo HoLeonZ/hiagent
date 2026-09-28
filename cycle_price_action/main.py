@@ -9,6 +9,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from hiagent_config import get_db_path
+from core.trade_schema import TRADE_COLS
 from cycle_price_action.backtest import run_backtest
 from cycle_price_action.metrics import TradeRecord
 from cycle_price_action.walkforward import walkforward_windows
@@ -28,14 +29,107 @@ def _resolve_window(start: str | None, end: str | None) -> tuple[date, date]:
 
 
 def _write_trades_csv(path: Path, trades: list[TradeRecord]) -> None:
-    cols = ["thscode", "entry_date", "exit_date", "entry_price",
-            "exit_price", "shares", "pnl", "hold_days",
-            "k_line_score", "phase_score", "calendar_score"]
+    """Write trades.csv with canonical 14-col schema (CLAUDE.md §3).
+
+    Engine-specific columns (k_line_score, phase_score, calendar_score)
+    are dropped from this output but remain available on the TradeRecord
+    object and are NOT lost — they live in metrics.json or downstream
+    decision_meta if needed. The single source of truth for the 14-col
+    header is `core.trade_schema.TRADE_COLS`.
+
+    cycle_price_action doesn't track `atr_pct` (NaN) or `sub_signal_type`
+    (empty) per-trade; these are populated as defaults.
+    """
     with path.open("w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=cols)
+        w = csv.DictWriter(f, fieldnames=list(TRADE_COLS))
         w.writeheader()
         for t in trades:
-            w.writerow({c: getattr(t, c) for c in cols})
+            gross_pnl = (t.exit_price - t.entry_price) * t.shares
+            net_pnl = t.pnl
+            fees = gross_pnl - net_pnl
+            invested = t.entry_price * t.shares
+            net_return = (net_pnl / invested) if invested > 0 else 0.0
+            w.writerow({
+                "entry_date": t.entry_date.isoformat(),
+                "exit_date": t.exit_date.isoformat(),
+                "thscode": t.thscode,
+                "exit_reason": "",  # cycle_price_action doesn't tag exit reason
+                "entry_price": t.entry_price,
+                "exit_price": t.exit_price,
+                "size": t.shares,
+                "hold_days": t.hold_days,
+                "gross_pnl": gross_pnl,
+                "fees": fees,
+                "net_pnl": net_pnl,
+                "net_return": net_return,
+                "atr_pct": "",  # engine-specific; not tracked per-trade
+                "sub_signal_type": "",  # chase_up-only enum
+            })
+
+
+def _write_per_preset_metrics(out_dir: Path, metrics: dict, preset: str) -> None:
+    """Write `results/<preset>_metrics.json` (Tick 58 fix).
+
+    Engine-specific metrics from cycle_price_action/metrics.py:
+      n_trades, n_wins, n_stocks, total_pnl, avg_hold_days, win_rate,
+      cagr (None), sharpe (None), max_dd (None).
+
+    Single-overwrite `metrics.json` is preserved for back-compat (last
+    run only); per-preset file gives audit trail across preset runs.
+    """
+    safe_metrics = dict(metrics)
+    out = out_dir / f"{preset}_metrics.json"
+    out.write_text(json.dumps(safe_metrics, indent=2, default=str))
+
+
+def _write_equity_curve(
+    equity_path: Path,
+    cash_walk_path: Path,
+    equity_rows: list[dict],
+) -> None:
+    """Write `equity_curve.csv` + `cash_walk.csv` (Tick 51 fix).
+
+    cycle_price_action runs per-stock independent accounts. The caller
+    is expected to aggregate per-stock cash/holdings curves (e.g., by
+    summing across stocks per calendar day). Until H5.1 implements
+    proper 3-pool settlement, `free_cash` mirrors the single cash pool
+    and `locked_margin` + `settling_funds` default to 0.
+    """
+    EQUITY_CURVE_COLS = ("date", "cash", "position_value",
+                         "total_equity", "drawdown")
+    CASH_WALK_COLS = ("date", "free_cash", "locked_margin",
+                      "settling_funds", "nav", "total_equity")
+    with equity_path.open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(EQUITY_CURVE_COLS))
+        w.writeheader()
+        for row in equity_rows:
+            holdings_value = float(row.get("holdings_value", 0.0)
+                                   or row.get("holdings", 0.0))
+            cash = float(row.get("cash", 0.0))
+            total_equity = float(row.get("equity", cash + holdings_value))
+            w.writerow({
+                "date": row.get("date"),
+                "cash": cash,
+                "position_value": holdings_value,
+                "total_equity": total_equity,
+                "drawdown": float(row.get("drawdown", 0.0)),
+            })
+    with cash_walk_path.open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(CASH_WALK_COLS))
+        w.writeheader()
+        for row in equity_rows:
+            holdings_value = float(row.get("holdings_value", 0.0)
+                                   or row.get("holdings", 0.0))
+            cash = float(row.get("cash", 0.0))
+            total_equity = float(row.get("equity", cash + holdings_value))
+            w.writerow({
+                "date": row.get("date"),
+                "free_cash": cash,
+                "locked_margin": 0.0,
+                "settling_funds": 0.0,
+                "nav": cash + holdings_value,
+                "total_equity": total_equity,
+            })
 
 
 def _run_backtest(args) -> int:
@@ -47,6 +141,10 @@ def _run_backtest(args) -> int:
     result = run_backtest(db_path=db_path, start=start, end=end, cash=args.cash)
 
     _write_trades_csv(out_dir / "trades.csv", result.trades)
+    # Per-preset metrics audit trail (Tick 58 fix); single-overwrite
+    # metrics.json below is preserved for back-compat (last run only).
+    preset = getattr(args, "preset", "v1")
+    _write_per_preset_metrics(out_dir, result.metrics, preset=preset)
     (out_dir / "metrics.json").write_text(json.dumps(result.metrics, indent=2))
     m = result.metrics
     print(f"wrote {out_dir}: n_trades={m['n_trades']}, "

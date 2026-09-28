@@ -84,7 +84,7 @@ class TraceStrategy(Phase3V3Strategy):
             # trace: 记录 entry
             try:
                 entry_date = pd.Timestamp(d.datetime.date(0)).date()
-            except Exception:
+            except (ValueError, TypeError, AttributeError):
                 entry_date = None
             self._entry_meta: dict = getattr(self, "_entry_meta", {})
             self._entry_meta[code] = {
@@ -120,7 +120,7 @@ class TraceStrategy(Phase3V3Strategy):
         # trace: 拿 entry 元数据,合并 exit 元数据
         try:
             exit_date = pd.Timestamp(d.datetime.date(0)).date()
-        except Exception:
+        except (ValueError, TypeError, AttributeError):
             exit_date = None
         meta = getattr(self, "_entry_meta", {}).pop(code, {})
         self.traces.append(
@@ -200,7 +200,7 @@ def run() -> dict:
             return None
         try:
             return date.fromisoformat(s)
-        except Exception:
+        except (ValueError, TypeError):
             return None
 
     pre_window: list[dict] = []  # entry_date < start

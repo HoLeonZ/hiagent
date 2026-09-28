@@ -120,3 +120,42 @@ class BelowMa60Ratio60(bt.Indicator):
             if not (np.isnan(cc) or np.isnan(mm))
         ]
         self.lines.ratio[0] = (sum(valid) / len(valid)) if valid else 0.0
+
+
+class AtrAdj(bt.Indicator):
+    """ATR(period) on adj_close domain for slippage estimation (V5').
+
+    Returns True Range averaged over `period` bars. Uses True Range =
+    max(high-low, |high-prev_close|, |low-prev_close|) — standard ATR
+    definition. On period-1 first bar, prev_close is NaN → return NaN.
+
+    The `adj_close` semantic mirrors `chase_up` V3a dual-price: signal
+    indicators operate on the FORWARD-ADJUSTED price domain (mathematical
+    cleanliness), while execution broker uses the raw price domain.
+    """
+
+    lines = ("atr",)
+    params = (("period", 14),)
+
+    def __init__(self):
+        self._tr_buf: list[float] = []
+
+    def next(self):
+        if len(self) == 1:
+            self.lines.atr[0] = float("nan")
+            return
+        h = float(self.data.high[0])
+        lo = float(self.data.low[0])
+        prev_close = float(self.data.close[-1])
+        if any(np.isnan(v) for v in (h, lo, prev_close)):
+            self._tr_buf.append(float("nan"))
+        else:
+            tr = max(h - lo, abs(h - prev_close), abs(lo - prev_close))
+            self._tr_buf.append(tr)
+        if len(self._tr_buf) > self.p.period:
+            self._tr_buf.pop(0)
+        valid = [v for v in self._tr_buf if not np.isnan(v)]
+        if len(valid) < self.p.period:
+            self.lines.atr[0] = float("nan")
+        else:
+            self.lines.atr[0] = sum(valid) / len(valid)

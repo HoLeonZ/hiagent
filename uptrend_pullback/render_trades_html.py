@@ -986,7 +986,7 @@ def render_html(trades: list[dict], con: duckdb.DuckDBPyConnection,
                         cached_regimes[rkey] = compute_regime(full_ind, **preset["regime"])
                     else:
                         cached_regimes[rkey] = pd.DataFrame()
-                except Exception:
+                except (duckdb.Error, ValueError, KeyError, OSError):
                     cached_regimes[rkey] = pd.DataFrame()
             reg_df = cached_regimes[rkey]
             if not reg_df.empty:

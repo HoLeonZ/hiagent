@@ -83,50 +83,85 @@ def test_chase_up_volume_cap_low_bar_silently_bypassed() -> None:
         return
 
     size = int(trades_low.iloc[0]["size"])
-    # GREEN expectation: size <= 99 (cancel or cap to < 1 lot)
-    # RED actual: size may be 10000 (unlimited — cap bypassed)
-    assert size <= 99, (
+    # GREEN expectation (N6 fix): volume_cap_fill returns at least 1 lot (100)
+    # when bar has volume. RED bug was unbounded fill (size=10000 from all-in).
+    # Acceptable GREEN: order cancelled (size N/A above) OR size = 100 (1 lot).
+    assert size in (100, 200, 300), (
         f"BUG (§4): bar_vol=999, max_vol={MAX_VOL_PARTICIPATION} → "
-        f"rounded max_fill = 0, cap guard skipped, "
-        f"size={size} accepted (all-in unbounded). "
-        f"Expected: cancel order or cap size < 100."
+        f"size={size} accepted (likely unbounded — cap bypassed). "
+        f"Expected: cancel order (no trade) OR size == 100..300 (1-3 lots "
+        f"from volume_cap_fill minimum-1-lot helper)."
     )
 
 
 def test_volume_cap_rounding_constant_pin() -> None:
-    """Pin: chase_up portfolio uses `// 100 * 100` rounding → low-bar bypass."""
+    """Pin (GREEN, 2026-09-28): chase_up portfolio uses volume_cap_fill helper.
+
+    N6 fix: replaced `int(bar_vol * X // 100) * 100` round-to-0 formula with
+    `volume_cap_fill(bar_vol, max_volume_participation, lot_size=100)` from
+    core.dual_price. Pin to GREEN to detect future regression.
+    """
     src = Path("chase_up/portfolio.py").read_text(encoding="utf-8")
-    assert "int(bar_vol * max_volume_participation // 100) * 100" in src, (
-        "Pattern mismatch — chase_up cap formula changed"
+    has_helper = "volume_cap_fill" in src
+    has_buggy = "int(bar_vol * max_volume_participation // 100) * 100" in src
+    assert has_helper, (
+        "N6 regression: chase_up/portfolio.py does NOT use volume_cap_fill helper."
     )
-    # Confirm the buggy guard is present
-    assert "if max_fill > 0 and size > max_fill:" in src, (
-        "Cap guard missing or restructured — re-evaluate"
+    assert not has_buggy, (
+        "N6 regression: chase_up/portfolio.py reintroduced `// 100 * 100` bug."
     )
 
 
 def test_volume_cap_rounding_constant_pin_uptrend() -> None:
-    """Pin: uptrend_pullback portfolio uses identical formula."""
+    """Pin (GREEN, 2026-09-28): uptrend_pullback portfolio uses volume_cap_fill."""
     src = Path("uptrend_pullback/portfolio.py").read_text(encoding="utf-8")
-    assert "int(bar_vol * max_volume_participation // 100) * 100" in src, (
-        "Pattern mismatch — uptrend_pullback cap formula changed"
+    has_helper = "volume_cap_fill" in src
+    has_buggy = "int(bar_vol * max_volume_participation // 100) * 100" in src
+    assert has_helper, (
+        "N6 regression: uptrend_pullback/portfolio.py does NOT use volume_cap_fill."
     )
-    assert "if max_fill > 0 and size > max_fill:" in src, (
-        "uptrend_pullback cap guard missing"
+    assert not has_buggy, (
+        "N6 regression: uptrend_pullback/portfolio.py reintroduced `// 100 * 100` bug."
     )
 
 
 def test_volume_cap_rounding_constant_pin_short_reversal() -> None:
-    """Pin: short_reversal uses / lot_size * lot_size (same edge case)."""
+    """Pin (GREEN, 2026-09-28): short_reversal uses volume_cap_fill helper.
+
+    N6 fix: replaced `bar_vol * X / lot_size * lot_size` round-to-0 pattern
+    with `volume_cap_fill(bar_vol, max_volume_participation, lot_size=lot_size)`.
+    """
     src = Path("short_reversal/replay_strategy_v3.py").read_text(encoding="utf-8")
-    assert (
+    has_helper = (
+        "from core.dual_price import" in src
+        and "volume_cap_fill" in src
+    )
+    has_buggy = (
         "bar_vol * self.p.max_volume_participation / self.p.lot_size" in src
-    ), "Pattern mismatch — short_reversal cap formula changed"
+    )
+    assert has_helper, (
+        "N6 regression: short_reversal/replay_strategy_v3.py no longer imports "
+        "volume_cap_fill helper from core.dual_price."
+    )
+    assert not has_buggy, (
+        "N6 regression: short_reversal reintroduced `bar_vol * X / lot * lot` bug."
+    )
 
 
 def test_volume_cap_rounding_constant_pin_cycle() -> None:
-    """Pin: cycle_price_action uses identical `// 100 * 100` formula."""
+    """Pin (out-of-scope): cycle_price_action still uses `// 100 * 100`.
+
+    Per scope note (2026-09-28): cycle_price_action/portfolio.py 的 volume cap
+    fix 不在本 agent 任务范围内。PIN 仅用于 forward-defense, 检测后续 cycle
+    修复时不要引入 round-to-0 模式。若 cycle 已修复, 翻转此断言即可。
+    """
     src = Path("cycle_price_action/portfolio.py").read_text(encoding="utf-8")
-    assert (
+    has_buggy = (
         "int(bar_volume * self.MAX_VOL_PARTICIPATION // 100) * 100" in src
-    ), "Pattern mismatch — cycle cap formula changed"
+    )
+    # 当前 cycle 仍未修复 round-to-0 模式 — 此 pin 仍处于 RED→GREEN 中间状态。
+    # 若 cycle 已 wire 到 volume_cap_fill, 翻转此断言为 has_helper 模式。
+    assert has_buggy, (
+        "cycle_price_action/portfolio.py 不再使用 `// 100 * 100` 公式 — "
+        "若已 wire 到 volume_cap_fill, 请更新此 pin 测试以匹配 GREEN 状态。"
+    )

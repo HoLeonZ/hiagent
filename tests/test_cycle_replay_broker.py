@@ -6,6 +6,7 @@ import duckdb
 import pandas as pd
 import pytest
 
+from cycle_price_action.data_feed import ReplayDataProvider
 from cycle_price_action.replay_broker import ReplayBroker
 
 
@@ -30,7 +31,9 @@ def broker_db(tmp_path):
 
 
 def test_buy_fills_on_next_open(broker_db):
-    b = ReplayBroker(str(broker_db))
+    # Tick 49 (CLAUDE.md §6): Broker receives data_provider, not db_path.
+    provider = ReplayDataProvider(str(broker_db))
+    b = ReplayBroker(provider)
     fill = b.submit_buy("600000.SH", 100, decision_date=date(2024, 6, 3))
     assert fill is not None
     assert fill.date == date(2024, 6, 4)
@@ -38,7 +41,9 @@ def test_buy_fills_on_next_open(broker_db):
 
 
 def test_sell_fills_on_next_open(broker_db):
-    b = ReplayBroker(str(broker_db))
+    # Tick 49 (CLAUDE.md §6): Broker receives data_provider, not db_path.
+    provider = ReplayDataProvider(str(broker_db))
+    b = ReplayBroker(provider)
     f1 = b.submit_buy("600000.SH", 100, decision_date=date(2024, 6, 3))
     b.record_fill(f1)
     f2 = b.submit_sell("600000.SH", 100, decision_date=date(2024, 6, 5))

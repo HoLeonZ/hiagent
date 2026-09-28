@@ -13,6 +13,7 @@ import logging
 from copy import deepcopy
 from pathlib import Path
 
+import duckdb
 import pandas as pd
 
 from chase_up.backtest import run_backtest
@@ -53,7 +54,7 @@ def main() -> None:
 
     from chase_up.presets import get_preset
     base = get_preset(args.preset)
-    universe = set(load_universe(base["universe"], Path(args.db_path)))
+    universe = set(load_universe(base["universe"], Path(args.db_path), asof_date=args.start))
     panel = load_panel(Path(args.db_path), args.start, args.end, universe=universe)
     panel_ind = compute_indicators(panel)
     print(f"[sweep] universe={len(universe)} panel={len(panel)} 行, "
@@ -97,7 +98,11 @@ def main() -> None:
                     print(f"  [{done}/{total}] tp={tp_m} sl={sl_m} mh={mh}: "
                           f"CAGR={m['cagr']*100:+.1f}% DD={m['max_dd']*100:.1f}% "
                           f"trades={m['trades']} WR={m['win_rate']*100:.1f}%")
-                except Exception as e:
+                except (duckdb.Error, ValueError, KeyError) as e:
+                    # §0 Fail-Fast narrowed: sweep is exploratory so we
+                    # keep warn-log + continue + failure row, but only
+                    # catch known-bad-data/lookup exceptions. KeyboardInterrupt,
+                    # MemoryError, programming errors propagate.
                     print(f"  [{done}/{total}] tp={tp_m} sl={sl_m} mh={mh}: FAILED {e}")
                     rows.append({
                         "preset": args.preset,

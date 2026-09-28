@@ -24,9 +24,9 @@ import argparse
 from pathlib import Path
 
 import backtrader as bt
-import duckdb
 import pandas as pd
 
+from short_reversal._panel_loader import load_panel_for_signal
 from short_reversal.engine import (
     COMMISSION_RATE,
     INITIAL_CAPITAL,
@@ -42,34 +42,31 @@ from hiagent_config import DB_PATH as DEFAULT_DB
 
 
 def _latest_trade_date(db_path: Path) -> str:
-    con = duckdb.connect(str(db_path), read_only=True)
-    try:
-        row = con.execute("SELECT MAX(date) FROM v_daily").fetchone()
-    finally:
-        con.close()
-    return str(row[0])
+    # §6 (Tick 40, 2026-09-28): avoid `import duckdb` at module level.
+    # Derive latest trade date from the same Control Plane panel loader
+    # used by `_load_panel_for_codes` (single source of truth).
+    panel = load_panel_for_signal(db_path, pd.Timestamp.now().strftime("%Y-%m-%d"),
+                                  lookback_days=400)
+    if panel.empty:
+        raise RuntimeError(f"empty panel for {db_path}")
+    return panel["date"].max().strftime("%Y-%m-%d")
 
 
 def _load_panel_for_codes(
     db_path: Path, codes: list[str], end_date: str, lookback_days: int = 250
 ) -> pd.DataFrame:
-    """按代码拉面板,留 250 日 lookback 让 MA60/Am60/ratio 都充分 warmup."""
-    start = (pd.Timestamp(end_date) - pd.Timedelta(days=lookback_days)).strftime("%Y-%m-%d")
-    con = duckdb.connect(str(db_path), read_only=True)
-    try:
-        df = con.execute(
-            "SELECT thscode, date, open, high, low, close, amount, volume "
-            "FROM v_daily "
-            "WHERE date BETWEEN ? AND ? AND thscode = ANY(?) "
-            "ORDER BY thscode, date",
-            [start, end_date, codes],
-        ).fetchdf()
-    finally:
-        con.close()
-    if df.empty:
-        return df
-    df["date"] = pd.to_datetime(df["date"])
-    return df
+    """§6 (Tick 40, 2026-09-28): thin wrapper over Control Plane loader.
+
+    The actual DuckDB I/O is owned by
+    `short_reversal._panel_loader.load_panel_for_signal`. This wrapper
+    exists only to preserve the existing call site shape
+    `_load_panel_for_codes(db_path, codes, end_date)` and to slice the
+    loaded panel by `codes` (the universe constituents).
+    """
+    panel = load_panel_for_signal(db_path, end_date, lookback_days=lookback_days)
+    if panel.empty:
+        return panel
+    return panel[panel["thscode"].isin(codes)].reset_index(drop=True)
 
 
 def _scan_preset(
@@ -124,10 +121,17 @@ def _scan_preset(
         )
         try:
             strategies = cerebro.run()
-        except Exception as e:
-            # 单只票失败不影响其他 — 跳过,日志稍后聚合
-            print(f"WARN {code}: cerebro.run failed: {e}")
-            continue
+        except (ValueError, KeyError, OSError) as e:
+            # §0 Fail-Fast: scan_signals is the worst offender — per-stock
+            # failure silently skipped means the signal set loses crashed
+            # stocks (cherry-picking stable ones). Narrow to specific
+            # exception types; let KeyboardInterrupt/MemoryError/programming
+            # errors propagate naturally.
+            # (Round 11 / Tick 40: duckdb import removed; drop duckdb.Error
+            # from the except tuple.)
+            raise RuntimeError(
+                f"scan_signals cerebro.run failed for {code}: {e}"
+            ) from e
         strategy = strategies[0]
         if code in strategy.pending_entries:
             results.append({

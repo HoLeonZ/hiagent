@@ -150,6 +150,26 @@ def is_limit_up(
     return (open_price / prev_close - 1.0) >= threshold
 
 
+def is_limit_down(
+    prev_close: float | None,
+    open_price: float,
+    threshold: float = -0.095,
+) -> bool:
+    """Symmetric to ``is_limit_up``: detect limit-down (跌停) for short entries.
+
+    short_reversal makes the SYMMETRIC check: a stock that just hit
+    limit-down cannot be sold short (the short side would not be able
+    to close by buying back — buyer pool is gone).
+
+    Parameters mirror ``is_limit_up``: prev_close missing → False (allow
+    entry, best-effort). Threshold default -0.095 (A-share main board
+    -10% limit-down tolerance).
+    """
+    if prev_close is None or prev_close <= 0:
+        return False
+    return (open_price / prev_close - 1.0) <= threshold
+
+
 def atr_slippage(
     atr_pct: float,
     participation: float,
@@ -184,6 +204,44 @@ def _safe(v: float | None) -> float:
     return f if f == f else 0.0  # NaN check
 
 
+def volume_cap_fill(bar_vol: float, max_pct: float, lot_size: int) -> int:
+    """§4 Volume Participation Limit (CLAUDE.md).
+
+    Computes max fill quantity for a single order such that
+    `Max_Fill_Qty = MIN(Order_Qty, Bar_Volume × max_pct)`, then rounds
+    DOWN to the nearest `lot_size` (A股 100-share lots).
+
+    Returns 0 only when there is nothing to participate in (bar_vol ≤ 0,
+    max_pct ≤ 0, or lot_size ≤ 0). Otherwise returns at least 1 lot —
+    this is the GREEN fix for the round-to-0 silent bypass
+    ([[volume-cap-low-bar-bypass]]): when raw cap rounds to zero but
+    bar has volume, return 1 lot rather than 0. This causes the caller
+    to either fill 1 lot or reject the order (caller decides).
+
+    Parameters
+    ----------
+    bar_vol : float
+        Bar volume in shares. Negative → no fill.
+    max_pct : float
+        Maximum participation rate ∈ (0, 1]. 0 → no fill.
+    lot_size : int
+        A-share lot size (typically 100).
+
+    Returns
+    -------
+    int
+        Rounded-down fill quantity in shares. 0 iff no participation.
+    """
+    if bar_vol <= 0 or max_pct <= 0 or lot_size <= 0:
+        return 0
+    raw = bar_vol * max_pct
+    # Floor to integer lots: at least 1 lot when raw is non-zero but
+    # smaller than lot_size (was the round-to-0 bug).
+    if raw < lot_size:
+        return int(lot_size)
+    return int(raw // lot_size) * int(lot_size)
+
+
 # ----------------------------------------------------------- price-source contract
 
 # 用于 strategy / portfolio 显式声明 price_source_for_execution。
@@ -201,6 +259,41 @@ def validate_price_source(value: str) -> None:
         )
 
 
+# ----------------------------------------------------------- cost model constants
+# CLAUDE.md §0 (Pessimistic Default) + §3 (Data Integrity): canonical cost
+# rates for A-share backtests. POST-Aug2023 market structure (current).
+#
+# Single source of truth (Round 9, 2026-09-28). Previously each engine
+# maintained its own copy → drift observed:
+#   - short_reversal engine.py:24  COMMISSION_RATE = 0.0006 (2.4x off)
+#   - cycle_price_action portfolio.py:62 STAMP_TAX_SELL = 0.001 (2x off)
+# All 4 engines now import canonical constants from this module.
+
+COMMISSION_RATE: float = 0.00025  # 万 2.5 (commission on both buy + sell)
+STAMP_DUTY_RATE: float = 0.0005   # 万 5 (sell-side only, post-Aug2023)
+MIN_COMMISSION: float = 5.0       # ¥5 floor per fill
+STAMP_DUTY_SIDE: str = "sell"     # stamp duty applies only on sell side
+
+
+def calc_commission(
+    notional: float,
+    min_commission: float = MIN_COMMISSION,
+) -> float:
+    """Canonical commission = max(min_commission, notional × COMMISSION_RATE).
+
+    Both buy and sell sides pay commission (A-share market convention).
+    """
+    return max(min_commission, notional * COMMISSION_RATE)
+
+
+def calc_stamp_duty(notional: float, side: str) -> float:
+    """Canonical stamp duty = notional × STAMP_DUTY_RATE if side == SELL.
+
+    Buy side pays zero (A-share market convention).
+    """
+    return notional * STAMP_DUTY_RATE if side == STAMP_DUTY_SIDE else 0.0
+
+
 __all__ = [
     "LIMIT_UP_THRESHOLD",
     "LAYOUT_CHASE_UPTREND",
@@ -213,4 +306,11 @@ __all__ = [
     "PRICE_SOURCE_RAW",
     "PRICE_SOURCE_ADJ",
     "validate_price_source",
+    # Round 9 (2026-09-28): cost model canonical single-source
+    "COMMISSION_RATE",
+    "STAMP_DUTY_RATE",
+    "MIN_COMMISSION",
+    "STAMP_DUTY_SIDE",
+    "calc_commission",
+    "calc_stamp_duty",
 ]

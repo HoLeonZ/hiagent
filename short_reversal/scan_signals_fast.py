@@ -11,6 +11,10 @@
 回测引擎 (run_backtest_v3) 是 per-stock cerebro 单跑,这里向量化版本
 只对 T 日 close 这一行做 5 条件,所以不重复 warmup 逻辑、也不进出场。
 结果与策略 100% 等价(LAHEAD-001 信号层 vs 执行层已经解耦)。
+
+§6 architecture (Tick 40, 2026-09-28): panel loading moved to Control Plane
+helper `short_reversal._panel_loader`. _scan_preset / _filter_signals are
+pure functions — they receive pd.DataFrame, not db_path.
 """
 from __future__ import annotations
 
@@ -18,32 +22,16 @@ import argparse
 import logging
 from pathlib import Path
 
-import duckdb
 import numpy as np
 import pandas as pd
 
 from hiagent_config import DB_PATH
 
+from short_reversal._panel_loader import load_panel_for_signal
 from short_reversal.presets import get_preset
+from short_reversal.universe import load_universe_asof
 
 logger = logging.getLogger(__name__)
-
-
-def _load_panel(db_path: Path, signal_date: str, lookback_days: int = 400) -> pd.DataFrame:
-    start = (pd.Timestamp(signal_date) - pd.Timedelta(days=lookback_days)).strftime("%Y-%m-%d")
-    con = duckdb.connect(str(db_path), read_only=True)
-    try:
-        df = con.execute(
-            "SELECT thscode, date, open, high, low, close, amount, volume "
-            "FROM v_daily "
-            "WHERE date BETWEEN ? AND ? "
-            "ORDER BY thscode, date",
-            [start, signal_date],
-        ).fetchdf()
-    finally:
-        con.close()
-    df["date"] = pd.to_datetime(df["date"])
-    return df
 
 
 def _compute_indicators(panel: pd.DataFrame) -> pd.DataFrame:
@@ -148,18 +136,19 @@ def _filter_signals(df: pd.DataFrame, preset: dict, signal_date: str) -> pd.Data
 def _scan_preset(
     preset_name: str,
     signal_date: str,
-    db_path: Path,
+    panel: pd.DataFrame,
     exclude_st: bool = True,
 ) -> tuple[pd.DataFrame, list[dict]]:
-    """返回 (signals, st_excluded) — 第二个元素是被 ST 过滤掉的票,供报告用。"""
+    """返回 (signals, st_excluded) — 第二个元素是被 ST 过滤掉的票,供报告用。
+
+    §6 (Tick 40, 2026-09-28): pure Strategy function. The orchestrator
+    (main loop) loads the panel via the Control Plane helper
+    `short_reversal._panel_loader.load_panel_for_signal` and passes the
+    pd.DataFrame in. This function performs only compute + filter, no IO.
+    """
     cfg = get_preset(preset_name)
-    # 必须先按 preset 自己的 universe 过滤,否则会把科创板/创业板/北交所塞进结果。
-    from short_reversal.universe import load_universe_asof
-    universe = set(load_universe_asof(cfg["universe"], signal_date, db_path))
-    panel = _load_panel(db_path, signal_date)
     if panel.empty:
         return pd.DataFrame(), []
-    panel = panel[panel["thscode"].isin(universe)].reset_index(drop=True)
 
     df = _compute_indicators(panel)
     sig = _filter_signals(df, cfg, signal_date)
@@ -194,6 +183,7 @@ def main() -> int:
     signal_date = args.signal_date or pd.Timestamp.now().strftime("%Y-%m-%d")
     if signal_date == pd.Timestamp.now().strftime("%Y-%m-%d"):
         # fallback to DB latest
+        import duckdb
         con = duckdb.connect(str(db_path), read_only=True)
         try:
             row = con.execute("SELECT MAX(date) FROM v_daily").fetchone()
@@ -206,6 +196,12 @@ def main() -> int:
         "v33_mainboard_tp6_sl005_mh5_realistic",
         "v33_mainboard_tp2_sl05_dneg",
     ]
+
+    # §6 (Tick 40, 2026-09-28): orchestrator loads panel ONCE via Control Plane
+    # helper, then dispatches pre-filtered panel to pure-compute `_scan_preset`.
+    # Loading the panel per-preset would waste DB calls (presets usually share
+    # the same signal_date / universe); instead we slice per-preset at dispatch.
+    raw_panel = load_panel_for_signal(db_path, signal_date)
 
     print(f"=== short_reversal 向量化信号扫描 ===")
     print(f"信号日 (T)    : {signal_date}  (close 时满足 A/B/C/D/E 5 条件)")
@@ -221,8 +217,12 @@ def main() -> int:
               f"(tp={cfg['tp_pct']*100:.2f}% sl={cfg['sl_pct']*100:.4f}% "
               f"mh={cfg['max_hold']} pc=[{cfg.get('pct_chg_low', 0.02)*100:.1f}%, "
               f"{cfg.get('pct_chg_high', 0.06)*100:.1f}%]) universe={cfg['universe']}")
+        # 必须先按 preset 自己的 universe 过滤,否则会把科创板/创业板/北交所塞进结果。
+        universe = set(load_universe_asof(cfg["universe"], signal_date, db_path))
+        preset_panel = raw_panel[raw_panel["thscode"].isin(universe)].reset_index(drop=True)
         sig, st_excl = _scan_preset(
-            preset_name, signal_date, db_path, exclude_st=not args.include_st,
+            preset_name, signal_date, preset_panel,
+            exclude_st=not args.include_st,
         )
         by_preset[preset_name] = sig
         for r in st_excl:

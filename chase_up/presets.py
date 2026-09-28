@@ -20,6 +20,13 @@ PRESETS: dict[str, dict] = {
     #   breakout_a=True  vol_min=1.5
     #   momentum_b=True  ret1 ∈ [3%, 8%]  vol_min=1.3
     #   macross_c=True   vol_min=1.2
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: atr_based
+    # sl_pct: atr × 1.0  (fallback 0.05)
+    # tp_pct: atr × 4.0  (fallback 0.30)
+    # max_hold: 15
+    # atr_period: 14
+    # Note: ATR-adaptive with sl_pct=0.05 / tp_pct=0.30 fallback. v1 baseline.
     "chase_v1_atr_tp4_sl1": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
@@ -66,6 +73,13 @@ PRESETS: dict[str, dict] = {
         },
     },
     # ----- v1a: TP 收紧到 mult=3 (期望更高 TP 命中率) -----
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: atr_based
+    # sl_pct: atr × 1.0  (fallback 0.05)
+    # tp_pct: atr × 3.0  (fallback 0.30)
+    # max_hold: 15
+    # atr_period: 14
+    # Note: ATR-adaptive with sl_pct=0.05 / tp_pct=0.30 fallback. TP tightened from 4.0 to 3.0.
     "chase_v1a_atr_tp3_sl1": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
@@ -99,6 +113,13 @@ PRESETS: dict[str, dict] = {
         },
     },
     # ----- v1b: SL 放宽到 mult=1.5 (覆盖更大 gap) -----
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: atr_based
+    # sl_pct: atr × 1.5  (fallback 0.08)
+    # tp_pct: atr × 4.0  (fallback 0.30)
+    # max_hold: 15
+    # atr_period: 14
+    # Note: ATR-adaptive with widened SL fallback 0.08. SL mult 1.0→1.5 covers larger gaps.
     "chase_v1b_atr_tp4_sl15": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
@@ -132,6 +153,13 @@ PRESETS: dict[str, dict] = {
         },
     },
     # ----- v1c: max_hold 拉长到 18 (给突破留时间) -----
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: atr_based
+    # sl_pct: atr × 1.0  (fallback 0.05)
+    # tp_pct: atr × 4.0  (fallback 0.30)
+    # max_hold: 18
+    # atr_period: 14
+    # Note: ATR-adaptive. max_hold 15→18 to give breakouts more runway.
     "chase_v1c_atr_tp4_sl1_hold18": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
@@ -169,6 +197,13 @@ PRESETS: dict[str, dict] = {
     # 历史 v2 walk-forward 在 max_positions=3 + equal 1/3 each 下扫描;
     # 此次仅修字段,mh / atr / tp / sl / 信号参数保留以兼容旧报告。
     # Walk-forward 应在 single-slot 下重新校核 (新 §2 语义)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: atr_based
+    # sl_pct: atr × 1.0  (fallback 0.05)
+    # tp_pct: atr × 4.0  (fallback 0.30)
+    # max_hold: 15
+    # atr_period: 14
+    # Note: ATR-adaptive. Historical 3-slot equal sizing; §2 forces single-slot all_in.
     "chase_v2_atr_tp4_sl1_pos3": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
@@ -202,6 +237,13 @@ PRESETS: dict[str, dict] = {
         },
     },
     # ----- v3: mom120 收紧到 0.15 (更强中期趋势要求) -----
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: atr_based
+    # sl_pct: atr × 1.0  (fallback 0.05)
+    # tp_pct: atr × 4.0  (fallback 0.30)
+    # max_hold: 15
+    # atr_period: 14
+    # Note: ATR-adaptive. mom120 0.05→0.15 — stronger mid-term trend requirement.
     "chase_v3_atr_tp4_sl1_mom15": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
@@ -243,6 +285,13 @@ PRESETS: dict[str, dict] = {
     #   trades 107 / profit_factor 2.30
     # 多仓分散 (max_pos=2 equal) 把单仓位集中度风险摊薄,
     # equal sizing 比 all_in 在多仓场景下更能平滑净值。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: atr_based
+    # sl_pct: atr × 1.5  (fallback 0.05)
+    # tp_pct: atr × 6.0  (fallback 0.30)
+    # max_hold: 10
+    # atr_period: 14
+    # Note: ATR-adaptive. Historical 2-slot equal; §2 forces single-slot all_in.
     "chase_v5_pos2_equal_atr_tp6_sl15_mh10": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
@@ -280,6 +329,13 @@ PRESETS: dict[str, dict] = {
     # Engine `portfolio.py:332` `if len(positions) >= max_positions: break` 已天然
     # 将 N-slot all_in 串行化为 first-slot-wins (无隐式杠杆),但 preset 显式声明
     # max_positions=1 更忠实于 §2 政策。MH / ATR / TP / SL / 信号参数保留。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: atr_based
+    # sl_pct: atr × 1.5  (fallback 0.05)
+    # tp_pct: atr × 6.0  (fallback 0.30)
+    # max_hold: 15
+    # atr_period: 14
+    # Note: ATR-adaptive. Historical 3-slot all_in; §2 forces max_positions=1.
     "chase_v6_pos3_all_in_atr_tp6_sl15_mh15": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
@@ -313,6 +369,13 @@ PRESETS: dict[str, dict] = {
         },
     },
     # ----- v4: 子信号只保留 A + B (去掉金叉,更高频) -----
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: atr_based
+    # sl_pct: atr × 1.0  (fallback 0.05)
+    # tp_pct: atr × 4.0  (fallback 0.30)
+    # max_hold: 15
+    # atr_period: 14
+    # Note: ATR-adaptive. Sub-signals A+B only (no MACD golden cross) — higher frequency.
     "chase_v4_atr_tp4_sl1_ABonly": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
@@ -350,6 +413,13 @@ PRESETS: dict[str, dict] = {
     # 是 2 仓 equal, 强制转为单仓 all_in (max_positions=1)。直击 2017-09 /
     # 2022-09 / 2024-09 这类熊市窗口大量亏损: 那些窗口里大部分"突破"实际
     # 上发生在 MA60 < MA120 的下降通道里, 加入趋势过滤后这些假突破直接被拦掉。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: atr_based
+    # sl_pct: atr × 1.5  (fallback 0.05)
+    # tp_pct: atr × 6.0  (fallback 0.30)
+    # max_hold: 10
+    # atr_period: 14
+    # Note: ATR-adaptive. v5 + MA60>MA120 trend filter to block bear-market fake breakouts.
     "chase_v7_pos2_equal_atr_tp6_sl15_mh10_regime": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
@@ -398,6 +468,13 @@ PRESETS: dict[str, dict] = {
     #   最差 -91.26% (v5 是 -94.29%)
     # 优化核心:max_hold 拉长让 TP 触发的赢家跑更久(time exit 占比从 21 笔降到 5 笔),
     # 同时不影响 SL 退出逻辑(SL-TP 比例不变)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: atr_based
+    # sl_pct: atr × 1.5  (fallback 0.05)
+    # tp_pct: atr × 6.0  (fallback 0.30)
+    # max_hold: 18
+    # atr_period: 14
+    # Note: ATR-adaptive. v5 + max_hold 10→18 to let winners run longer.
     "chase_v8_pos2_equal_atr_tp6_sl15_mh18": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
@@ -448,6 +525,13 @@ PRESETS: dict[str, dict] = {
     #   最差 -90.45%       (v8 是 -91.26%)
     #   2019-09 → 2020-09 翻正:+17.21% (v8: +17.21%, 一致)
     #   2021-09 → 2022-09 +85.93% (v8 一致)
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: atr_based
+    # sl_pct: atr × 1.5  (fallback 0.05)
+    # tp_pct: atr × 6.0  (fallback 0.30)
+    # max_hold: 18
+    # atr_period: 14
+    # Note: ATR-adaptive. v8 + min_score 1.2 filter for stronger sub-signal.
     "chase_v9_pos2_equal_atr_tp6_sl15_mh18_score12": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
@@ -481,6 +565,13 @@ PRESETS: dict[str, dict] = {
     # 核心优化:更严格的 score 阈值 = 更高胜率 + 更小回撤 + 更稳的 worst window。
     # 注意 mh=20 会闪崩到 +186%(non-monotonic,signal-day score 与 mh 的耦合效应),
     # 所以 max_hold 仍保持 18 这个 sweet spot。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: atr_based
+    # sl_pct: atr × 1.5  (fallback 0.05)
+    # tp_pct: atr × 6.0  (fallback 0.30)
+    # max_hold: 18
+    # atr_period: 14
+    # Note: ATR-adaptive. v9 + min_score 1.2→1.6 — even stronger sub-signal filter.
     "chase_v10_pos2_equal_atr_tp6_sl15_mh18_score16": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
@@ -520,6 +611,13 @@ PRESETS: dict[str, dict] = {
     # 关键洞察:score 1.7 是一个意外的非线性甜点 — 1.65 / 1.75 / 1.8 都不如它。
     # 这种 isolated peak 说明 score 分布与 hit rate 在 1.6-1.8 之间存在
     # 密集但离散的 regime 切换点。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: atr_based
+    # sl_pct: atr × 1.5  (fallback 0.05)
+    # tp_pct: atr × 6.0  (fallback 0.30)
+    # max_hold: 18
+    # atr_period: 14
+    # Note: ATR-adaptive. v10 + min_score 1.6→1.7 — nonlinear sweet spot.
     "chase_v11_pos2_equal_atr_tp6_sl15_mh18_score17": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
@@ -560,6 +658,14 @@ PRESETS: dict[str, dict] = {
     # 关键洞察:atr_pct ∈ [0.030, 0.035) 区间的信号是噪音 — 把它们剔除后
     # CAGR 几乎翻倍。说明波动率太低的"安静突破"反而是低质信号,
     # 而波动率稍高(>= 0.035)的突破才携带真实的动量信息。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: atr_based
+    # sl_pct: atr × 1.5  (fallback 0.05)
+    # tp_pct: atr × 6.0  (fallback 0.30)
+    # max_hold: 18
+    # atr_period: 14
+    # atr_min: 0.035 (signal-level volatility floor)
+    # Note: ATR-adaptive with signal-level atr_pct floor; rejects low-vol breakouts (<0.035).
     "chase_v12_pos2_equal_atr_tp6_sl15_mh18_score17_atr035": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
@@ -604,6 +710,15 @@ PRESETS: dict[str, dict] = {
     #       这部分信号容易在跳空中被打到 SL。
     # 两个收紧同时作用产生 isolated peak — 单独收紧任一项都有收益,但同时
     # 收紧 Pareto 改善 5 项指标。max_hold 仍保持 18。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: atr_based
+    # sl_pct: atr × 1.5  (fallback 0.05)
+    # tp_pct: atr × 6.0  (fallback 0.30)
+    # max_hold: 18
+    # atr_period: 14
+    # atr_min: 0.035 (signal-level volatility floor)
+    # atr_max: 0.085 (signal-level volatility ceiling)
+    # Note: ATR-adaptive + signal-level atr_pct range [0.035, 0.085]; mom120 ≥ 0.10 filter.
     "chase_v13_pos2_equal_atr_tp6_sl15_mh18_score17_atr035_mom10": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
@@ -643,6 +758,14 @@ PRESETS: dict[str, dict] = {
     #   目标窗口 +1013.28% (v13 一致)
     # 关键洞察:mom120 0.10 → 0.11 是 isolated peak(0.12 略弱) —
     # mom120 ≥ 0.11 过滤掉 6 个月涨幅 < 11% 的弱势股,要求更强的中长期动量。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: atr_based
+    # sl_pct: atr × 1.5  (fallback 0.05)
+    # tp_pct: atr × 6.0  (fallback 0.30)
+    # max_hold: 18
+    # atr_period: 14
+    # atr_min: 0.035 / atr_max: 0.085 (signal-level volatility band)
+    # Note: ATR-adaptive + signal-level atr_pct band; mom120 ≥ 0.11 sweet spot.
     "chase_v14_pos2_equal_atr_tp6_sl15_mh18_score17_atr035_mom11": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
@@ -675,6 +798,15 @@ PRESETS: dict[str, dict] = {
     # 锁定 CAGR +1285.01% (73 trades 不变,所有 trades 已通过 8% buffer)。
     # 通过负窗口研究得出:负窗口 49% 信号是 A-only,
     # 49% 都是 sub-signal_type='A' 的弱势突破,close < MA60 不足。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: atr_based
+    # sl_pct: atr × 1.5  (fallback 0.05)
+    # tp_pct: atr × 6.0  (fallback 0.30)
+    # max_hold: 18
+    # atr_period: 14
+    # atr_min: 0.035 / atr_max: 0.085
+    # ma60_buffer: 0.08 (close > MA60 × 1.08 — trend persistence filter)
+    # Note: ATR-adaptive + close > MA60 × 1.08 trend persistence filter.
     "chase_v15_pos2_equal_atr_tp6_sl15_mh18_score17_atr035_mom11_ma60buf08": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
@@ -708,6 +840,15 @@ PRESETS: dict[str, dict] = {
     # worst -79.08% (持平),
     # 锁定 CAGR / Sharpe / DD / WR / PF 完全不变(73 trades 全部已通过 11.5% mom120)。
     # trades.csv SHA256 与 v15 相同。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: atr_based
+    # sl_pct: atr × 1.5  (fallback 0.05)
+    # tp_pct: atr × 6.0  (fallback 0.30)
+    # max_hold: 18
+    # atr_period: 14
+    # atr_min: 0.035 / atr_max: 0.085
+    # ma60_buffer: 0.08
+    # Note: ATR-adaptive + mom120 ≥ 0.115 (fine-tuned sweet spot, byte-identical trades.csv vs v15).
     "chase_v16_pos2_equal_atr_tp6_sl15_mh18_score17_atr035_mom115_ma60buf08": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
@@ -741,6 +882,15 @@ PRESETS: dict[str, dict] = {
     # walkforward mean +106.70% → +116.94% (+10.24pp),
     # worst -79.08% (持平),
     # 锁定 CAGR / Sharpe / DD / WR / PF 完全不变(73 trades 全部 atr_pct < 8.2%)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: atr_based
+    # sl_pct: atr × 1.5  (fallback 0.05)
+    # tp_pct: atr × 6.0  (fallback 0.30)
+    # max_hold: 18
+    # atr_period: 14
+    # atr_min: 0.035 / atr_max: 0.082 (tighter vol ceiling; rejects gap-down garbage)
+    # ma60_buffer: 0.08
+    # Note: ATR-adaptive + atr_pct ceiling 8.2% rejects gap-down cluster; +10.24pp WF mean.
     "chase_v17_pos2_equal_atr_tp6_sl15_mh18_score17_atr035_mom115_ma60buf08_atr082": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
@@ -776,6 +926,15 @@ PRESETS: dict[str, dict] = {
     # atr_sl_mult ≥ 1.55 都会破坏 locked(73→68 trades CAGR +705%);
     # atr_sl_mult ≤ 1.55 locked CAGR 不变(1.5 与 1.55 都因 SL 触发收紧而损失
     # 大幅收益);仅 1.6 处于"够宽给收益 + 不够宽给无谓损失"的甜区。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: atr_based
+    # sl_pct: atr × 1.6  (fallback 0.05)
+    # tp_pct: atr × 6.0  (fallback 0.30)
+    # max_hold: 18
+    # atr_period: 14
+    # atr_min: 0.035 / atr_max: 0.082
+    # ma60_buffer: 0.08
+    # Note: ATR-adaptive; atr_sl_mult 1.5→1.6 widens SL to give one extra day's breathing room.
     "chase_v18_pos2_equal_atr_tp6_sl16_mh18_score17_atr035_mom115_ma60buf08_atr082": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
@@ -811,6 +970,15 @@ PRESETS: dict[str, dict] = {
     # 非严格 Pareto,但 locked CAGR/Sharpe/WR/PF 全维度大幅改善,适合长期持有、
     # 风险承受高的策略;保守场景仍推荐 v18 (sl=1.6)。
     # 注意 sl=1.65/1.72/1.74/1.76/1.78 都因特定 intraday wicks 触发 SL 异常回归。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: atr_based
+    # sl_pct: atr × 1.75  (fallback 0.05)
+    # tp_pct: atr × 6.0  (fallback 0.30)
+    # max_hold: 18
+    # atr_period: 14
+    # atr_min: 0.035 / atr_max: 0.082
+    # ma60_buffer: 0.08
+    # Note: ATR-adaptive; atr_sl_mult 1.6→1.75 = aggressive locked peak (CAGR +1750%, WF worst -85.82%).
     "chase_v19_pos2_equal_atr_tp6_sl175_mh18_score17_atr035_mom115_ma60buf08_atr082": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地

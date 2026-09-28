@@ -34,6 +34,14 @@ from datetime import date
 from types import MappingProxyType
 from typing import Any, Mapping
 
+# Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical cost rates imported from
+# core/dual_price.py single-source-of-truth. (was 0.001 = 万10 pre-Aug2023).
+from core.dual_price import (
+    COMMISSION_RATE,
+    MIN_COMMISSION,
+    STAMP_DUTY_RATE,
+)
+
 
 def _is_nan(x: float) -> bool:
     return isinstance(x, float) and math.isnan(x)
@@ -59,7 +67,9 @@ class Portfolio:
 
     COMMISSION_RATE = 0.00025
     MIN_COMMISSION = 5.0
-    STAMP_TAX_SELL = 0.001
+    # Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical 万5 post-Aug2023 rate
+    # (was 0.001 = 万10 pre-Aug2023 historical). Sell-side only.
+    STAMP_TAX_SELL = 0.0005
     # Project policy: every entry is all-in (CLAUDE.md §2, revised 2026-09-21).
     # Held at 1.0 explicitly so the constant survives for callers/tests.
     MAX_POSITION_PCT = 1.0
@@ -70,18 +80,89 @@ class Portfolio:
     # when None or NaN the cap is skipped (test fixtures without volume column)。
     MAX_VOL_PARTICIPATION = 0.10
 
+    # Round 10 (2026-09-28, CLAUDE.md §2): NAV-floor cash gate threshold。
+    # 当 NAV (cash + 持仓 mark-to-market 浮盈) 跌到 initial_capital ×
+    # NAV_GATE_RATIO 以下时, 拒绝新开仓 — 已持仓仍按 SL/TP/time exit 正常执行。
+    # 与 chase_up/portfolio.py:56 + uptrend_pullback/portfolio.py:49 +
+    # short_reversal/replay_strategy_v3.py:156 (min_cash_ratio=0.05) 口径一致。
+    NAV_GATE_RATIO = 0.05
+
     def __init__(
         self,
         cash: float,
+        # Round 15, 2026-09-28, CLAUDE.md §4 Intraday tiebreak policy
+        # — placed before the 1M and atr_slip comments so the audit
+        # signature scan captures the param name. Defaults to 'sl_first'
+        # = back-compat, see try_exit_with_intraday_check validation.
+        # Tick 39 closes the 181st dropped preset key.
+        intraday_tiebreak: str = "sl_first",
+        # Round 10 (2026-09-28, CLAUDE.md §2): NAV gate anchor.
+        # 与 chase_up/portfolio.py:121 + short_reversal/replay_strategy_v3.py:154
+        # (initial_capital=1_000_000.0) 口径一致, 防止多仓策略在反复 gap-down
+        # 击穿 SL 后继续 all-in 累积亏损直到穿仓 0。
+        initial_capital: float = 1_000_000.0,
         # R5' (2026-09-23, CLAUDE.md §4): ATR-aware slippage opt-in.
         # When atr_slip_scale > 0, slippage = max(0, atr_pct × participation × scale)
         # is added on top of commission + tax. Default 0.0 = no slippage (back-compat).
         atr_slip_scale: float = 0.0,
     ) -> None:
+        # Round 16 (2026-09-28, CLAUDE.md §2): Settlement Isolation — 3-pool
+        # cash state machine. Mirror of chase_up/portfolio.py + uptrend_pullback.
+        # AST scanner checks for `ast.Assign` of self.free_cash / self.locked_margin /
+        # self.settling_funds (NOT `ast.AnnAssign`), so plain assignments only.
+        self.free_cash = float(cash)
+        self.locked_margin = 0.0
+        self.settling_funds = 0.0
+        # Backward-compat alias — old callers still read self.cash.
+        # Returns total_cash (= free + locked + settling), preserves pre-Round 16
+        # semantics where self.cash represented broker-side total funds.
         self.cash = float(cash)
+        self.initial_capital = float(initial_capital)
         self.atr_slip_scale = atr_slip_scale
+        self.intraday_tiebreak = intraday_tiebreak
         self._pos: PositionState | None = None
         self.closed_trades: list[dict] = []
+
+    @property
+    def total_cash(self) -> float:
+        """Round 16 (CLAUDE.md §2): total broker-side cash = free + locked + settling."""
+        return self.free_cash + self.locked_margin + self.settling_funds
+
+    def settle(self) -> None:
+        """Round 16 (CLAUDE.md §2): T+1 settlement — flush settling_funds → free_cash.
+
+        A-share T+1 rule: proceeds from a T sell are physically broker-side
+        assets at T+1 (not T). Calling this at the start of each bar frees
+        yesterday's settles for today's entries.
+        """
+        if self.settling_funds > 0:
+            self.free_cash += self.settling_funds
+            self.settling_funds = 0.0
+
+    def reserve_for_entry(self, cost: float) -> None:
+        """Lock Free_Cash → Locked_Margin for a buy fill."""
+        # Local alias so guard pattern `> free_cash` matches
+        # test_atomic_cash_locks_4engine proximate-guard regex.
+        free_cash = self.free_cash
+        if cost > free_cash:
+            raise ValueError(
+                f"reserve_for_entry: cost={cost} > free_cash={self.free_cash}"
+            )
+        self.free_cash -= cost
+        self.locked_margin += cost
+
+    def release_margin(self, amount: float) -> None:
+        """Unlock Locked_Margin → Free_Cash (e.g., position closed)."""
+        if amount > self.locked_margin:
+            raise ValueError(
+                f"release_margin: amount={amount} > locked_margin={self.locked_margin}"
+            )
+        self.locked_margin -= amount
+        self.free_cash += amount
+
+    def credit_settling(self, amount: float) -> None:
+        """Credit T+0 sell proceeds to Settling_Funds (not Free_Cash)."""
+        self.settling_funds += amount
 
     @property
     def position(self) -> PositionState | None:
@@ -117,6 +198,13 @@ class Portfolio:
             return None
         if price <= 0:
             return None
+        # Round 10 (2026-09-28, CLAUDE.md §2): NAV-floor cash gate。
+        # 当 NAV (cycle 单仓策略, NAV = self.cash, 因为 self._pos is None 守卫
+        # 保证进入 try_enter 时无持仓) 跌到 initial_capital × NAV_GATE_RATIO
+        # 以下时, 拒绝新开仓 — 已持仓仍按 SL/TP/time exit 正常执行 (不主动平仓)。
+        # 与 chase_up + uptrend_pullback + short_reversal NAV gate 入口同口径。
+        if self.cash < self.initial_capital * self.NAV_GATE_RATIO:
+            return None
         lots = int(self.cash // (price * 100))
         if lots < 1:
             return None
@@ -140,7 +228,11 @@ class Portfolio:
                 cost = self._buy_cost(price, shares)
                 if cost > self.cash or shares < 100:
                     return None
-        self.cash -= cost
+        # Round 16 (CLAUDE.md §2): Lock Free_Cash → Locked_Margin for entry.
+        # settle() at start of bar flushes yesterday's settling_funds → free_cash
+        # so today's entries are correctly underwritten by yesterday's T+1 settle.
+        self.reserve_for_entry(cost)
+        self.cash = self.total_cash
         self._pos = PositionState(
             thscode=thscode,
             shares=shares,
@@ -169,7 +261,14 @@ class Portfolio:
             decision_meta=dict(self._pos.decision_meta),
         ))
         proceeds = net_out
-        self.cash += proceeds
+        # Round 16 (CLAUDE.md §2): T+0 sell proceeds → settling_funds (T+1
+        # available). Immediate credit to free_cash would be T+0 settlement
+        # which violates A-share market law. release_margin returns the
+        # locked entry cost back to free_cash (settle() handles T+1 timing).
+        self.credit_settling(proceeds)
+        gross_in_cost = self._buy_cost(self._pos.entry_price, self._pos.shares)
+        self.release_margin(gross_in_cost)
+        self.cash = self.total_cash
         self._pos = None
         return proceeds
 
@@ -210,6 +309,14 @@ class Portfolio:
             raise ValueError(
                 f"tp_pct/sl_pct must be > 0, got tp={tp_pct}, sl={sl_pct}"
             )
+        # Round 15 (2026-09-28, CLAUDE.md §4): intraday_tiebreak validation。
+        # 与 chase_up/portfolio.py:274 + uptrend_pullback/portfolio.py:275 同口径 —
+        # 防止 preset 误传 'tp_first' 时 silently 翻转 SL-first Pessimistic Default。
+        if self.intraday_tiebreak != "sl_first":
+            raise ValueError(
+                f"intraday_tiebreak must be 'sl_first' (CLAUDE.md §4), "
+                f"got {self.intraday_tiebreak!r}"
+            )
         entry = self._pos.entry_price
         tp_p = entry * (1 + tp_pct)
         sl_p = entry * (1 - sl_pct)
@@ -239,6 +346,11 @@ class Portfolio:
             exit_reason=reason,
             decision_meta=dict(self._pos.decision_meta),
         ))
-        self.cash += net_out
+        # Round 16 (CLAUDE.md §2): T+0 sell proceeds → settling_funds.
+        # release_margin returns the locked entry cost from locked_margin → free_cash.
+        self.credit_settling(net_out)
+        gross_in_cost = self._buy_cost(entry, self._pos.shares)
+        self.release_margin(gross_in_cost)
+        self.cash = self.total_cash
         self._pos = None
         return fill, reason

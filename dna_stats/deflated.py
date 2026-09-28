@@ -152,7 +152,7 @@ def deflated_sharpe_ratio(
             z1 = _norm_ppf(1 - 1.0 / n_trials)
             z2 = _norm_ppf(1 - 1.0 / (n_trials * math.e))
             expected_max = (1 - euler_gamma) * z1 + euler_gamma * z2
-        except Exception:
+        except (ValueError, ZeroDivisionError, OverflowError):
             expected_max = float("nan")
 
     # 2) PSR (Probabilistic Sharpe Ratio) — Bailey & López de Prado eq. (4)

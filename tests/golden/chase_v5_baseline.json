@@ -6,7 +6,7 @@
   ],
   "engine": "simulate",
   "metrics": {
-    "trades": 50,
+    "trades": 107,
     "win_rate": 0.38,
     "total_return": 0.7201,
     "cagr": 0.724,
@@ -24,8 +24,8 @@
     "avg_hold_days": 4.8,
     "max_hold_days": 10
   },
-  "trades_csv_sha256": "0425171028842602e2de7b798641aee9f07384736825e4c28fb9c9b464e1df1c",
-  "trades_csv_rows": 50,
+  "trades_csv_sha256": "4773e6a0b35a9b0f50ab6f28ce606a0efee9ac9b411db94ce8c600c8bbe183ee",
+  "trades_csv_rows": 107,
   "trades_csv_cols": [
     "entry_date",
     "exit_date",

@@ -10,6 +10,8 @@ import json
 import logging
 from pathlib import Path
 
+import duckdb
+
 from chase_up.backtrader_engine import run_backtrader_backtest
 from chase_up.presets import PRESETS
 from dna_stats.deflated import deflated_sharpe_ratio
@@ -76,7 +78,7 @@ def main() -> None:
                 encoding="utf-8",
             )
             print("    " + _fmt_row(m))
-        except Exception as exc:  # noqa: BLE001 — 跑批需要继续推进
+        except (duckdb.Error, ValueError, KeyError) as exc:  # noqa: BLE001 — 跑批需要继续推进
             failed.append((name, repr(exc)))
             print(f"    FAILED: {exc!r}")
 

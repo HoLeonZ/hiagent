@@ -40,7 +40,7 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 def _load_panel_for(preset: str) -> pd.DataFrame:
     p = PRESETS[preset]
-    universe = set(load_universe(p["universe"], DB_PATH))
+    universe = set(load_universe(p["universe"], DB_PATH, asof_date=START))
     panel = load_panel(DB_PATH, START, END, universe=universe)
     return compute_indicators(panel)
 
