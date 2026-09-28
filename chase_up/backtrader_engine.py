@@ -269,11 +269,24 @@ def run_backtrader_backtest(
             price_source_for_execution=p.get("price_source_for_execution", "adj_close"),
         )
         phase1_pnl = float(t.net_pnl)
-        if exit_date_bt is None and exit_px_bt == entry_price:
+        # Round 29c (2026-09-28, CLAUDE.md §0): sentinel `exit_px_bt ==
+        # entry_price` replaced with abs(...) < epsilon. Sub-epsilon drift
+        # on broker fill price would misclassify unfilled orders as
+        # filled, generating phantom PnL = phase1_pnl (wrong branch).
+        if exit_date_bt is None and abs(exit_px_bt - entry_price) < 1e-9:
             net_pnl_bt = phase1_pnl
         gross_pnl = (exit_px_bt - entry_price) * size
         fees = gross_pnl - net_pnl_bt
-        invested = entry_price * size
+        # Round 20 (2026-09-28, CLAUDE.md §0/§3 data integrity):
+        # Phase 2 trades.csv 必须遵守 core/trade_schema.py:19 canonical invariant
+        #   net_return == net_pnl / (entry_price × size + buy_commission)
+        # buy_commission = max(notional × commission_rate, min_commission)
+        notional_in = entry_price * size
+        buy_commission = max(
+            notional_in * p.get("commission_rate", 0.00025),
+            p.get("min_commission", 5.0),
+        )
+        invested = notional_in + buy_commission
         net_return = net_pnl_bt / invested if invested > 0 else 0.0
         if exit_date_bt is not None:
             actual_exit_date = exit_date_bt
@@ -307,7 +320,17 @@ def run_backtrader_backtest(
     # 并把 peak 拉低,让 max_dd 虚高。
     # 正确做法:把每笔 phase-2 修正 (p2_pnl - p1_pnl) 在该笔实际 exit_date
     # 起向前填充。day0 cash = initial_capital 不变。
-    if equity is not None and equity_delta != 0.0 and len(equity_p1) > 0 and len(trades_p2) > 0:
+    # Round 29c (2026-09-28, CLAUDE.md §0): gate strict-equality replaced with
+    # abs(...) > epsilon. equity_delta accumulates
+    # `+= net_pnl_bt - float(t.net_pnl)` across many trades; sub-epsilon
+    # cancellation can make the sum exactly zero even when per-bar corrections
+    # are non-zero, silently dropping Phase-2 correction.
+    if (
+        equity is not None
+        and abs(equity_delta) > 1e-9
+        and len(equity_p1) > 0
+        and len(trades_p2) > 0
+    ):
         equity_p2 = equity_p1.copy()
         # 收集每笔 (exit_date, cumulative_delta),按日期累计
         deltas_by_exit: dict[pd.Timestamp, float] = {}

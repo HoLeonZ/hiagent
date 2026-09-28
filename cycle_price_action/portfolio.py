@@ -140,25 +140,43 @@ class Portfolio:
             self.settling_funds = 0.0
 
     def reserve_for_entry(self, cost: float) -> None:
-        """Lock Free_Cash → Locked_Margin for a buy fill."""
+        """Lock Free_Cash → Locked_Margin for a buy fill.
+
+        Round 28 (2026-09-28, CLAUDE.md §0 Pessimistic Default):
+        Tolerate sub-epsilon IEEE 754 drift on free_cash (sibling fix
+        to Round 26 release_margin for short_reversal and Round 27
+        for short_reversal reserve). Clamp the actual debit to
+        `min(cost, free_cash)` so the cash walk stays consistent.
+        """
+        epsilon = 1e-9
         # Local alias so guard pattern `> free_cash` matches
         # test_atomic_cash_locks_4engine proximate-guard regex.
         free_cash = self.free_cash
-        if cost > free_cash:
+        if cost > free_cash + epsilon:
             raise ValueError(
                 f"reserve_for_entry: cost={cost} > free_cash={self.free_cash}"
             )
-        self.free_cash -= cost
-        self.locked_margin += cost
+        actual_debit = min(cost, free_cash)
+        self.free_cash -= actual_debit
+        self.locked_margin += actual_debit
 
     def release_margin(self, amount: float) -> None:
-        """Unlock Locked_Margin → Free_Cash (e.g., position closed)."""
-        if amount > self.locked_margin:
+        """Unlock Locked_Margin → Free_Cash (e.g., position closed).
+
+        Round 28 (2026-09-28, CLAUDE.md §0 Pessimistic Default):
+        Tolerate sub-epsilon IEEE 754 drift on locked_margin
+        (sibling fix to Round 26 release_margin for short_reversal).
+        Clamp the actual release to `min(amount, locked_margin)`
+        so cash walk stays consistent.
+        """
+        epsilon = 1e-9
+        if amount > self.locked_margin + epsilon:
             raise ValueError(
                 f"release_margin: amount={amount} > locked_margin={self.locked_margin}"
             )
-        self.locked_margin -= amount
-        self.free_cash += amount
+        actual_release = min(amount, self.locked_margin)
+        self.locked_margin -= actual_release
+        self.free_cash += actual_release
 
     def credit_settling(self, amount: float) -> None:
         """Credit T+0 sell proceeds to Settling_Funds (not Free_Cash)."""
@@ -210,12 +228,17 @@ class Portfolio:
             return None
         shares = lots * 100
         cost = self._buy_cost(price, shares)
-        if cost > self.cash:        # commission would push over cash — round down 1 lot
+        # Round 29b (2026-09-28, CLAUDE.md §0): pre-check tolerates sub-epsilon
+        # IEEE 754 drift on cash before falling through to the
+        # tolerance-aware reserve_for_entry (Round 28). Without + epsilon,
+        # drift makes this pre-check shrink shares unnecessarily and
+        # eventually `return None` on legitimate trades.
+        if cost > self.cash + 1e-9:        # commission would push over cash — round down 1 lot
             shares -= 100
             if shares < 100:
                 return None
             cost = self._buy_cost(price, shares)
-            if cost > self.cash:    # still over after rounding down (e.g. min commission floor)
+            if cost > self.cash + 1e-9:    # still over after rounding down (e.g. min commission floor)
                 return None
         # R8 (2026-09-21): Volume Participation Limit (CLAUDE.md §4)。
         # 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION, 超出丢弃 (不挂单)。
@@ -226,7 +249,7 @@ class Portfolio:
             if max_fill > 0 and shares > max_fill:
                 shares = max_fill
                 cost = self._buy_cost(price, shares)
-                if cost > self.cash or shares < 100:
+                if cost > self.cash + 1e-9 or shares < 100:
                     return None
         # Round 16 (CLAUDE.md §2): Lock Free_Cash → Locked_Margin for entry.
         # settle() at start of bar flushes yesterday's settling_funds → free_cash

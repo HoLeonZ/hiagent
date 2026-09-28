@@ -325,11 +325,23 @@ def run_backtrader_backtest(
         # 没真正成交，net_pnl_bt 已被函数兜底为 0；但 equity_delta 不能因此把
         # Phase 1 的真实盈亏从曲线里扣掉，否则 equity_p2 会突然塌陷。用 Phase 1
         # 的 net_pnl 兜底，gross/fees 全部按 Phase 1 的口径重算，保持自洽。
-        if exit_date_bt is None and exit_px_bt == entry_price:
+        # Round 29c (2026-09-28, CLAUDE.md §0): sentinel `exit_px_bt ==
+        # entry_price` replaced with abs(...) < epsilon. Sub-epsilon drift
+        # on broker fill price misclassifies unfilled orders.
+        if exit_date_bt is None and abs(exit_px_bt - entry_price) < 1e-9:
             net_pnl_bt = phase1_pnl
         gross_pnl = (exit_px_bt - entry_price) * size
         fees = gross_pnl - net_pnl_bt
-        invested = entry_price * size
+        # Round 20 (2026-09-28, CLAUDE.md §0/§3 data integrity):
+        # Phase 2 trades.csv 必须遵守 core/trade_schema.py:19 canonical invariant
+        #   net_return == net_pnl / (entry_price × size + buy_commission)
+        # buy_commission = max(notional × commission_rate, min_commission)
+        notional_in = entry_price * size
+        buy_commission = max(
+            notional_in * p.get("commission_rate", 0.00025),
+            p.get("min_commission", 5.0),
+        )
+        invested = notional_in + buy_commission
         net_return = net_pnl_bt / invested if invested > 0 else 0.0
         # 用 backtrader 实际成交日回填 exit_date (消除 "决策日 vs 成交日" 1 天口径差),
         # 若 verify 退回 entry_price (即 actual_exit_price is None) 则保留 Phase 1 的 exit_date。
@@ -360,7 +372,10 @@ def run_backtrader_backtest(
         equity_delta += net_pnl_bt - float(t.net_pnl)
 
     trades_p2 = pd.DataFrame(new_rows, columns=TRADE_COLS) if new_rows else trades_p1.iloc[:0].copy()
-    if equity is not None and equity_delta != 0.0:
+    # Round 29c (2026-09-28, CLAUDE.md §0): gate strict-equality replaced with
+    # abs(...) > epsilon. Same root cause as chase_up Phase-2 gate —
+    # cumulative sum can cancel sub-epsilon and silently drop correction.
+    if equity is not None and abs(equity_delta) > 1e-9:
         equity_p2 = equity_p1.copy()
         equity_p2["equity"] = equity_p2["equity"] + equity_delta
         equity_p2["cash"] = equity_p2["cash"] + equity_delta

@@ -87,17 +87,45 @@ class Portfolio:
         )
 
     def reserve_for_entry(self, total_entry_cost: float) -> bool:
+        """Lock entry cost: free_cash → locked_margin.
+
+        Returns True if reserved successfully, False if insufficient
+        free_cash (no leverage per CLAUDE.md §2).
+
+        Round 28 (2026-09-28, CLAUDE.md §0 Pessimistic Default):
+        Tolerate sub-epsilon IEEE 754 drift on free_cash (sibling fix
+        to Round 26 release_margin). Clamp the actual debit to
+        `min(total_entry_cost, free_cash)` so the cash walk stays
+        consistent (no over-debit).
+        """
+        epsilon = 1e-9
         # Local alias so guard pattern `> free_cash` matches
         # test_atomic_cash_locks_4engine proximate-guard regex.
         free_cash = self.free_cash
-        if total_entry_cost > free_cash:
+        if total_entry_cost > free_cash + epsilon:
             return False
-        self.free_cash -= total_entry_cost
-        self.locked_margin += total_entry_cost
+        actual_debit = min(total_entry_cost, free_cash)
+        self.free_cash -= actual_debit
+        self.locked_margin += actual_debit
         return True
 
     def release_margin(self, entry_cost_total: float) -> None:
-        self.locked_margin -= entry_cost_total
+        """Release locked margin on exit (entry_cost_total = price × size + entry_fee).
+
+        Round 28 (2026-09-28, CLAUDE.md §0 Pessimistic Default):
+        Originally had no guard, which meant sub-epsilon drift on
+        locked_margin would silently produce NEGATIVE locked_margin
+        (invariant violation: NAV = free_cash + locked_margin +
+        settling_funds was corrupted silently). Add tolerance + clamp.
+        """
+        epsilon = 1e-9
+        if entry_cost_total > self.locked_margin + epsilon:
+            raise ValueError(
+                f"release_margin: entry_cost_total={entry_cost_total} "
+                f"> locked_margin={self.locked_margin}"
+            )
+        actual_release = min(entry_cost_total, self.locked_margin)
+        self.locked_margin -= actual_release
 
     def credit_settling(self, net_proceeds: float) -> None:
         self.settling_funds += net_proceeds
@@ -492,13 +520,13 @@ def simulate_portfolio(
                     fee_in = _buy_fees(notional)
                     # Round 16 (CLAUDE.md §2): cost > free_cash must reject
                     # (no leverage). Free_Cash only — settling_funds not yet T+0.
-                    if notional + fee_in > pf.free_cash:
+                    if notional + fee_in > pf.free_cash + 1e-9:
                         size -= 100
                         if size < 100:
                             continue
                         notional = size * entry_px
                         fee_in = _buy_fees(notional)
-                        if notional + fee_in > pf.free_cash:
+                        if notional + fee_in > pf.free_cash + 1e-9:
                             continue
 
                     # Lock capital: free_cash → locked_margin

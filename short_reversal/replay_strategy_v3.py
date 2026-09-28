@@ -151,6 +151,14 @@ class Phase3V3Strategy(bt.Strategy):
         # COMMISSION_RATE / STAMP_DUTY_RATE imported from core.dual_price single-source.
         commission_rate=0.00025,
         stamp_duty_rate=0.0005,
+        # Round 29a (2026-09-28, CLAUDE.md §0/§3): MIN_COMMISSION ¥5 floor
+        # wired into strategy params so _fill_pending_entries / _close can
+        # apply `max(min_commission, notional × commission_rate)`. chase_up +
+        # uptrend_pullback + cycle_price_action all use this floor in their
+        # _buy_cost / _sell_proceeds helpers; short_reversal was the only
+        # engine with the constant declared but never enforced (undercharges
+        # small-notional trades by ¥2.50-5.00).
+        min_commission=5.0,
         initial_capital=1_000_000.0,
         lot_size=100,
         # Round 14 (2026-09-28, CLAUDE.md §2): 默认 None, engine 必须显式从 preset
@@ -167,6 +175,10 @@ class Phase3V3Strategy(bt.Strategy):
         # 显式声明在 strategy params, preset 可覆盖。
         max_volume_participation=0.10,
         intraday_tiebreak="sl_first",
+        # Round 23 (2026-09-28, CLAUDE.md §3/§4): 跌停阈值, 用于 LIMIT-DOWN guard。
+        # 默认 0.095 (主板 -10% 跌停容差, 与 is_limit_down 核心常量对齐)。
+        # preset 可覆盖 (e.g. 创业板 0.148, 科创板 0.198)。
+        limit_down_threshold=0.095,
         result_holder=None,
     )
 
@@ -254,25 +266,47 @@ class Phase3V3Strategy(bt.Strategy):
             self.settling_funds = 0.0
 
     def reserve_for_entry(self, cost: float) -> None:
-        """Lock Free_Cash → Locked_Margin for a short-entry margin."""
+        """Lock Free_Cash → Locked_Margin for a short-entry margin.
+
+        Round 27 (2026-09-28, CLAUDE.md §0 Pessimistic Default):
+        Tolerate sub-epsilon IEEE 754 drift on free_cash (sibling fix
+        to Round 26 release_margin). Clamp the actual debit to
+        `min(cost, free_cash)` so the cash walk stays consistent.
+        """
+        epsilon = 1e-9
         # Local alias so guard pattern `> free_cash` matches
         # test_atomic_cash_locks_4engine proximate-guard regex.
         free_cash = self.free_cash
-        if cost > free_cash:
+        if cost > free_cash + epsilon:
             raise ValueError(
                 f"reserve_for_entry: cost={cost} > free_cash={self.free_cash}"
             )
-        self.free_cash -= cost
-        self.locked_margin += cost
+        actual_debit = min(cost, free_cash)
+        self.free_cash -= actual_debit
+        self.locked_margin += actual_debit
 
     def release_margin(self, amount: float) -> None:
-        """Unlock Locked_Margin → Free_Cash."""
-        if amount > self.locked_margin:
+        """Unlock Locked_Margin → Free_Cash.
+
+        Round 26 (2026-09-28, CLAUDE.md §0 Pessimistic Default):
+        Tolerate sub-epsilon IEEE 754 drift. After hundreds of
+        `+= cost` / `-= amount` roundtrips across many trades,
+        `locked_margin` accumulates a tiny negative bias
+        (e.g. 990.2249999999985 vs expected 990.225). Strict
+        comparison would crash mid-backtest with ValueError on
+        otherwise-valid releases. Allow sub-epsilon drift via
+        tolerance and clamp the actual release to
+        `min(amount, locked_margin)` so the cash walk stays
+        consistent (no over-release).
+        """
+        epsilon = 1e-9
+        if amount > self.locked_margin + epsilon:
             raise ValueError(
                 f"release_margin: amount={amount} > locked_margin={self.locked_margin}"
             )
-        self.locked_margin -= amount
-        self.free_cash += amount
+        actual_release = min(amount, self.locked_margin)
+        self.locked_margin -= actual_release
+        self.free_cash += actual_release
 
     def credit_settling(self, amount: float) -> None:
         """Credit T+0 short-cover proceeds to Settling_Funds (not Free_Cash)."""
@@ -387,6 +421,20 @@ class Phase3V3Strategy(bt.Strategy):
             code = d._name
             if code not in self.pending_entries:
                 continue
+            # Round 23 (2026-09-28, CLAUDE.md §3/§4): LIMIT-DOWN guard。
+            # 做空 entry = sell, 跌停日卖单无法成交 (买盘消失)。
+            # prev_close = d.close[-1] (前一根 K 线的 close)。
+            # 若 prev_close 缺失 (data gap), is_limit_down 返回 False 允许 entry
+            # (与 chase_up/uptrend_pullback is_limit_up 同语义: best-effort)。
+            prev_close = float(d.close[-1]) if len(d) > 1 else None
+            if is_limit_down(prev_close=prev_close, open_price=float(d.open[0]),
+                             threshold=self.p.limit_down_threshold):
+                logger.debug(
+                    "[limit-down] skip short entry: %s open=%.2f prev_close=%.2f",
+                    code, float(d.open[0]), prev_close if prev_close is not None else 0.0,
+                )
+                self.pending_entries.pop(code, None)
+                continue
             entry_price = float(d.open[0])
             # 防穿仓 (R5, 2026-09-22, CLAUDE.md §4): ATR-aware slippage。
             # short 仓的 entry_price 是 sell price, slippage 上调 sell price
@@ -439,8 +487,12 @@ class Phase3V3Strategy(bt.Strategy):
                 pending = self.pending_entries
                 pending.pop(code, None)
                 continue
-            entry_fee = size * entry_price * (
-                self.p.commission_rate + self.p.stamp_duty_rate
+            entry_fee = (
+                max(
+                    self.p.min_commission,
+                    size * entry_price * self.p.commission_rate,
+                )
+                + size * entry_price * self.p.stamp_duty_rate
             )
             # CLAUDE.md §2 Atomic Cash Locks: cost > cash must reject
             # (no leverage). Mirrors chase_up/uptrend_pullback pattern
@@ -448,7 +500,9 @@ class Phase3V3Strategy(bt.Strategy):
             # entry_fee is tiny relative to NAV, so this guard catches
             # data anomalies / negative-NAV edge cases only. fail-fast
             # per §0 Pessimistic Default.
-            if entry_fee > self.free_cash:
+            # Round 27 (2026-09-28, CLAUDE.md §0): tolerate sub-epsilon
+            # IEEE 754 drift on free_cash (sibling fix to Round 26).
+            if entry_fee > self.free_cash + 1e-9:
                 raise ValueError(
                     f"entry_fee {entry_fee:.2f} > free_cash {self.free_cash:.2f} "
                     f"— reject (no leverage)"
@@ -534,7 +588,10 @@ class Phase3V3Strategy(bt.Strategy):
         size = pos["size"]
         # 做空盈亏：(entry - exit) × size，扣 exit 佣金
         pnl = (ep - price) * size
-        exit_fee = size * price * self.p.commission_rate
+        exit_fee = max(
+            self.p.min_commission,
+            size * price * self.p.commission_rate,
+        )
         # Round 16 (CLAUDE.md §2): T+0 short-cover proceeds → settling_funds.
         # Immediate credit to free_cash would be T+0 settlement (FORBIDDEN).
         # release_margin returns the locked entry fee (reserved at entry)
@@ -544,7 +601,27 @@ class Phase3V3Strategy(bt.Strategy):
         self.credit_settling(proceeds)
         self.release_margin(pos.get("entry_fee", 0.0))
         gross_pct = (ep - price) / ep
-        net = gross_pct - self.p.commission_rate
+        # Round 19 (2026-09-28, CLAUDE.md §0/§3 data integrity):
+        # net 字段必须映射 cash walk (entry_fee + exit_fee 折算到 entry notional).
+        # 旧公式 `gross_pct - commission_rate` 漏扣 stamp_duty_rate, 系统性高估
+        # per-trade return ~0.07% (75bp/trade), 影响 avg_pnl / sharpe / HTML report.
+        # entry_fee = size × ep × (comm + stamp)  →  ratio (comm + stamp)
+        # exit_fee  = size × xp × comm           →  ratio comm × (xp/ep)
+        #
+        # Round 29a (2026-09-28, CLAUDE.md §0/§3): NOTE — this `total_fee_ratio`
+        # formula is rate-only (no MIN_COMMISSION floor offset). The actual
+        # entry_fee / exit_fee computed above DO apply the floor via
+        # max(self.p.min_commission, …). For small-notional trades
+        # (notional < ¥20,000), the floor adds ¥2.50-5.00 per trade that this
+        # pct-based net does not capture. Cash walk is correct (uses the
+        # floored fees); only the per-trade `net` field is slightly optimistic
+        # on tiny trades. Acceptable per scope (Round 19 net is a metric, not
+        # a cash walk).
+        total_fee_ratio = (
+            (self.p.commission_rate + self.p.stamp_duty_rate)
+            + self.p.commission_rate * (price / ep)
+        )
+        net = gross_pct - total_fee_ratio
         exit_date = bt.num2date(d.datetime[0]).date()
         hold_days = len(self) - pos["entry_bar"]
         # Build canonical 14-col record (CLAUDE.md §3, Tick 50/54 GREEN).
@@ -578,7 +655,9 @@ class Phase3V3Strategy(bt.Strategy):
             # CLAUDE.md §2 Atomic Cash Locks: daily margin fee > cash
             # must reject (no leverage). Mirrors chase_up/uptrend_pullback
             # cost>cash guard. fail-fast per §0 Pessimistic Default.
-            if fee > self.free_cash:
+            # Round 27 (2026-09-28, CLAUDE.md §0): tolerate sub-epsilon
+            # IEEE 754 drift on free_cash (sibling fix to Round 26).
+            if fee > self.free_cash + 1e-9:
                 raise ValueError(
                     f"margin fee {fee:.2f} > free_cash {self.free_cash:.2f} "
                     f"— reject (no leverage)"

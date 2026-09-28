@@ -72,8 +72,12 @@ class TraceStrategy(Phase3V3Strategy):
             if size < self.p.lot_size:
                 self.pending_entries.pop(code, None)
                 continue
-            entry_fee = size * entry_price * (
-                self.p.commission_rate + self.p.stamp_duty_rate
+            entry_fee = (
+                max(
+                    self.p.min_commission,
+                    size * entry_price * self.p.commission_rate,
+                )
+                + size * entry_price * self.p.stamp_duty_rate
             )
             self.cash -= entry_fee
             self._holds[code] = {
@@ -100,11 +104,33 @@ class TraceStrategy(Phase3V3Strategy):
         pos = self._holds.pop(code)
         ep = pos["entry_price"]
         size = pos["size"]
+        # 做空盈亏：(entry - exit) × size
         pnl = (ep - price) * size
-        exit_fee = size * price * self.p.commission_rate
+        exit_fee = max(
+            self.p.min_commission,
+            size * price * self.p.commission_rate,
+        )
+        # Round 24 (2026-09-28, CLAUDE.md §0/§3 truthfulness, propagate Round 19 fix):
+        # TraceStrategy 是 replay_strategy_v3 的子类,但 _close 被 override,
+        # Round 19 修复的总费率公式没传到这里。Trace report 之前用
+        # `net = gross - commission_rate`, 漏扣 stamp_duty_rate (5bp) 和 exit
+        # commission (2.5bp), 系统性高估每笔 net ~0.07%。修后与 canonical
+        # replay_strategy_v3._close 的 total_fee_ratio 公式一致。
+        entry_fee = pos.get(
+            "entry_fee",
+            max(self.p.min_commission, size * ep * self.p.commission_rate)
+            + size * ep * self.p.stamp_duty_rate,
+        )
+        gross_pct = (ep - price) / ep
+        total_fee_ratio = (
+            (self.p.commission_rate + self.p.stamp_duty_rate)
+            + self.p.commission_rate * (price / ep)
+        )
+        net = gross_pct - total_fee_ratio
+        # 现金账: entry_fee 在 entry 时已经 self.cash -= entry_fee 扣过,
+        # 这里不能再扣。TraceStrategy 不是 Round 16 settlement 状态机,
+        # 是单 cash pool 模型: 入场扣 entry_fee + 出场净收 pnl − exit_fee。
         self.cash += pnl - exit_fee
-        gross = (ep - price) / ep
-        net = gross - self.p.commission_rate
         # trade dict (与原 strategy 一致)
         self.trades.append(
             {
@@ -123,6 +149,11 @@ class TraceStrategy(Phase3V3Strategy):
         except (ValueError, TypeError, AttributeError):
             exit_date = None
         meta = getattr(self, "_entry_meta", {}).pop(code, {})
+        # Round 24: notional_pnl 必须扣 entry_fee (Round 19 canonical 同款),
+        # 否则 trace report 的 pre_window_pnl 系统性多算 5bp/trade。
+        # 注意: 这是 metric 字段, 不是 cash walk。cash 已经在入场扣过 entry_fee,
+        # 这里只是把 round-trip 全成本摊到 trade record 让 trace 报告真实。
+        notional_pnl = float(pnl - exit_fee - entry_fee)
         self.traces.append(
             {
                 "thscode": code,
@@ -140,7 +171,7 @@ class TraceStrategy(Phase3V3Strategy):
                 "size": size,
                 "hold_days": len(self) - pos["entry_bar"],
                 "net_per_share": float(net),
-                "notional_pnl": float(pnl - exit_fee),
+                "notional_pnl": notional_pnl,
             }
         )
 
