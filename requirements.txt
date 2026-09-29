@@ -1,0 +1,22 @@
+# hiagent 运行时依赖 (基于实测 import + 版本)
+#
+# 安装: pip install -r requirements.txt
+# 注意:本仓库依赖 DuckDB 中的真实 A 股行情数据(本机维护,不在 git 中)。
+#       若要跑回测/策略,需先准备好数据库 (见 README.md)。
+
+# --- 数据层 ---
+duckdb>=1.5,<2.0            # 列式数据库;v_daily / v_daily_hfq / raw_kline_daily / v_daily_dual
+pandas>=2.0,<4.0            # panel DataFrame 处理
+numpy>=1.26,<3.0            # 数值计算
+
+# --- 回测引擎 ---
+backtrader>=1.9.78.123      # chase_up / uptrend_pullback 使用其框架做对账
+
+# --- 测试 ---
+pytest>=8.0,<10.0           # tests/ 目录下 136 个测试文件
+pytest-asyncio>=0.23        # async fixture 支持(若后续加入)
+
+# --- 工具脚本(可选) ---
+# tools/update_db.py 需要外部 `marketdb` 包的 RestProvider。
+# marketdb 不在 PyPI,来源:私有仓库 Financial-API(路径在 FINANCIAL_API_PATH 环境变量)。
+# 安装方式:pip install -e $FINANCIAL_API_PATH/python
