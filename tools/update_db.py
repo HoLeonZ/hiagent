@@ -13,12 +13,22 @@ REST 返回字段（实测）：
 DB raw_kline_daily 字段：
   (thscode, date, open, high, low, close, prev_close, volume, amount, batch_id)
 
-用法：
+环境变量:
+  FINANCIAL_API_PATH     marketdb 包路径(原硬编码 /Users/zhl/code/Financial-API/python)
+  FINANCIAL_API_BASE_URL REST base URL(原硬编码 https://fuyao.aicubes.cn)
+  FINANCIAL_API_KEY      REST API key(原硬编码在源码,已迁出)
+  任一未设置则启动时报错并退出(避免静默走默认值)。
+
+用法:
+  export FINANCIAL_API_PATH=/path/to/Financial-API
+  export FINANCIAL_API_BASE_URL=https://fuyao.aicubes.cn
+  export FINANCIAL_API_KEY=sk-...
   python3 -m tools.update_db --db <DB_PATH> --target 2026-09-19 [--days 30]
 """
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from datetime import datetime, timedelta
@@ -26,8 +36,21 @@ from pathlib import Path
 
 import duckdb
 
-# 让 marketdb 可被 import（即使 schema drift）
-sys.path.insert(0, str(Path("/Users/zhl/code/Financial-API/python").resolve()))
+
+def _require_env(name: str) -> str:
+    """Strict env var lookup — fail-fast if missing (CLAUDE.md §0 Pessimistic Default)."""
+    value = os.environ.get(name)
+    if not value:
+        raise SystemExit(
+            f"ERROR: 环境变量 {name} 未设置。请在执行前 export 该变量。\n"
+            f"  export {name}=..."
+        )
+    return value
+
+
+# 让 marketdb 可被 import(路径由 FINANCIAL_API_PATH 控制,不再硬编码)
+_marketdb_root = Path(_require_env("FINANCIAL_API_PATH")).resolve()
+sys.path.insert(0, str(_marketdb_root / "python"))
 from marketdb.providers.rest import RestProvider  # noqa: E402
 
 
@@ -72,10 +95,10 @@ def main() -> int:
         symbols = symbols[:args.limit_stocks]
     print(f"[update_db] 待更新 {len(symbols)} 只股票")
 
-    # 启动 REST provider
+    # 启动 REST provider(凭据来自环境变量,不再硬编码在源码中)
     provider = RestProvider(
-        base_url="https://fuyao.aicubes.cn",
-        api_key="sk-fuyao-kKJYxyw-6i9o5BN_RM31e2H5vimgvlSK",
+        base_url=_require_env("FINANCIAL_API_BASE_URL"),
+        api_key=_require_env("FINANCIAL_API_KEY"),
         min_interval_seconds=1.0 / max(args.qps, 0.1),
     )
 
