@@ -1,5 +1,9 @@
 """Dual-Price System 共享逻辑 (CLAUDE.md §3, 2026-09-22).
 
+数据加载请走 ``dna_data.dual_price_loader.load_dual_price_panel()``
+(独立 I/O 模块,避免本文件引入 duckdb/pandas 依赖)。本模块是领域层,
+纯函数 + 零外部依赖。
+
 Background
 ==========
 CLAUDE.md §3 铁律:

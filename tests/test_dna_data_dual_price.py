@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from dna_data.dual_price import load_dual_price_panel
+from dna_data.dual_price_loader import load_dual_price_panel
 
 
 def test_dual_price_panel_returns_all_columns():

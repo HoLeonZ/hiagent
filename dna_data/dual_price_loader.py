@@ -1,5 +1,12 @@
 """V3a (2026-09-22, CLAUDE.md §3): Dual-Price System loader.
 
+Module renamed from ``dual_price.py`` → ``dual_price_loader.py`` to
+disambiguate from ``core.dual_price`` (domain layer, pure functions).
+This module is the **data access layer**: DuckDB I/O for ``v_daily_dual``
+view. The companion domain-layer module ``core.dual_price`` defines
+``ExecutionBar`` / ``extract_execution_bar`` / ``is_limit_up`` /
+``volume_cap_fill`` / cost-model constants (zero I/O).
+
 Loads v_daily_dual view (adj + raw prices joined) for strategies that need
 both adjusted prices (for indicators) and raw prices (for SL/TP triggers
 and portfolio mark-to-market). See sql/migrate_v_daily_dual.sql.

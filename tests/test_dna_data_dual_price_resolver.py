@@ -159,7 +159,7 @@ def test_real_dual_panel_adj_raw_divergence_enforced():
     from hiagent_config import DB_PATH
     if not DB_PATH.exists():
         pytest.skip("需要 hiagent_config.DB_PATH (real DuckDB)")
-    from dna_data.dual_price import load_dual_price_panel
+    from dna_data.dual_price_loader import load_dual_price_panel
     panel = load_dual_price_panel("2025-09-01", "2025-09-05")
     if panel.empty:
         pytest.skip("v_daily_dual 返回空")
