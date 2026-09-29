@@ -2,6 +2,9 @@
 
 用途：识别短期 preset 的稳定性，跨最近 N 个月切成等长窗口分别回测。
 窗口之间不重叠（步长 = 窗口长度），每窗独立拉取 universe 与指标 warmup。
+
+CLAUDE.md §5 合规：4-engine 共用 core.walkforward 窗口生成 API。
+末尾按 preset 报告 DSR (Deflated Sharpe Ratio) 校正多 window 的 selection bias。
 """
 from __future__ import annotations
 
@@ -12,6 +15,8 @@ from pathlib import Path
 import pandas as pd
 
 from hiagent_config import DB_PATH
+from core.walkforward import walkforward_windows as core_walkforward_windows  # noqa: F401
+from dna_stats.deflated import deflated_sharpe_ratio
 
 from short_reversal.engine import run_backtest_v3
 
@@ -160,6 +165,23 @@ def main() -> None:
 
     combined = pd.concat(all_dfs, ignore_index=True)
     print("\n" + summarize(combined))
+
+    # CLAUDE.md §5 Penalty Metrics: 多 window sweep 必须报告 DSR
+    for preset, sub in combined.groupby("preset"):
+        sharpes = sub["sharpe"].dropna().astype(float).tolist()
+        if not sharpes:
+            continue
+        observed = max(sharpes)
+        dsr = deflated_sharpe_ratio(
+            observed_sharpe=observed, n_trials=len(sharpes), n_returns=252,
+        )
+        print(
+            f"\n§5 DSR for {preset} | observed_sharpe={observed:.3f} | "
+            f"n_windows={len(sharpes)} | "
+            f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
+            f"expected_max={dsr['expected_max_sharpe']:.3f} | "
+            f"p_value={dsr['dsr_p_value']:.4f}"
+        )
 
     if args.out:
         out_path = Path(args.out)

@@ -31,7 +31,11 @@ from cycle_price_action.portfolio import Portfolio
 from cycle_price_action.replay_broker import ReplayBroker
 from cycle_price_action.data_feed import ReplayDataProvider
 from cycle_price_action.no_lookahead import bars_up_to
-from core.dual_price import LAYOUT_CYCLE_PRICE, extract_execution_bar
+from core.dual_price import (
+    LAYOUT_CYCLE_PRICE,
+    extract_execution_bar,
+    is_limit_up,
+)
 
 
 class CyclePriceActionStrategy(bt.Strategy):
@@ -58,6 +62,13 @@ class CyclePriceActionStrategy(bt.Strategy):
         # Round 15 (2026-09-28, CLAUDE.md §4): preset→strategy plumbing for
         # intraday_tiebreak. Default 'sl_first' preserves pre-R15 behavior。
         intraday_tiebreak="sl_first",
+        # Round 30 (2026-09-28, CLAUDE.md §3): limit-up entry guard,
+        # mirroring chase_up + uptrend_pullback + short_reversal conventions.
+        # cycle_price_action was the ONLY engine without this guard — entering
+        # at limit-up close would generate phantom PnL (no shares actually
+        # available at limit-up open). Default 0.095 = 9.5% tolerance for
+        # 10% A-share main-board limit-up; preset-overridable.
+        limit_up_threshold=0.095,
     )
 
     def __init__(self):
@@ -144,6 +155,22 @@ class CyclePriceActionStrategy(bt.Strategy):
         ).iloc[0]
 
         if self._portfolio.position is None and sig:
+            # Round 30 (2026-09-28, CLAUDE.md §3): limit-up entry guard.
+            # cycle_price_action was the ONLY engine without this guard.
+            # Mirrors chase_up + uptrend_pullback (Portfolio-level) and
+            # short_reversal (engine-level for LIMIT_DOWN). prev_close from
+            # previous bar's close via backtrader feed; if feed too short,
+            # close[-1] is None → is_limit_up returns False (best-effort).
+            try:
+                prev_close = float(self.datas[0].close[-1])
+            except (IndexError, TypeError):
+                prev_close = None
+            if is_limit_up(
+                prev_close=prev_close,
+                open_price=bar["open"],
+                threshold=self.p.limit_up_threshold,
+            ):
+                return  # skip entry: limit-up open, no shares available
             state = self._portfolio.try_enter(
                 self.datas[0]._name,
                 bar["close"],

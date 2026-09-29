@@ -3,6 +3,10 @@
 用途：在 P3+P5 修复后的 v3 引擎上做参数 grid，对比 n / win% / CAGR / Sharpe / DD。
 NOT 用于 production — 仅作为探索性研究脚本。lock-by-file-location 即可,
 不污染 PRESETS。
+
+CLAUDE.md §5 合规：sweep 末尾报告 DSR 校正多 trial selection bias。
+对于生产环境的 walk-forward 验证 (OOS 训练/测试切分), 见
+short_reversal.walkforward 或 core.walkforward.walkforward_windows。
 """
 from __future__ import annotations
 
@@ -18,6 +22,7 @@ sys.path.insert(0, str(ROOT))
 
 from short_reversal.engine import run_backtest_v3  # noqa: E402
 from hiagent_config import DB_PATH as DEFAULT_DB  # noqa: E402
+from dna_stats.deflated import deflated_sharpe_ratio  # noqa: E402
 
 START = "2025-09-12"
 END = "2026-09-12"
@@ -137,6 +142,22 @@ def main():
         for r in all_rows:
             w.writerow(r)
     print(f"\n→ 落盘 {csv_path}")
+
+    # CLAUDE.md §5 Penalty Metrics: 多 trial grid 必须报告 DSR
+    sharpes = [float(r["Sharpe"]) for r in all_rows
+               if "Sharpe" in r and r.get("error") is None]
+    if sharpes:
+        observed = max(sharpes)
+        dsr = deflated_sharpe_ratio(
+            observed_sharpe=observed, n_trials=len(sharpes), n_returns=252,
+        )
+        print(
+            f"\n§5 DSR | observed_sharpe={observed:.3f} | "
+            f"n_trials={len(sharpes)} | "
+            f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
+            f"expected_max={dsr['expected_max_sharpe']:.3f} | "
+            f"p_value={dsr['dsr_p_value']:.4f}"
+        )
 
 
 if __name__ == "__main__":

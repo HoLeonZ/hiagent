@@ -158,15 +158,22 @@ def test_short_reversal_skips_limit_down_open(monkeypatch: pytest.MonkeyPatch) -
     feed = AShareData(dataname=panel, plot=False)
     cerebro.adddata(feed, name="600000.SH")
     holder: dict = {"cash": 100_000.0, "trades": [], "max_dd": 0.0}
-    cerebro.addstrategy(Phase3V3Strategy, result_holder=holder)
+    # Round 14 (2026-09-28): min_cash_ratio 默认 None (fail-fast)。测试直接调用
+    # strategy 时必须显式传 0.05 才能跑过 cash gate (line 369) 进入 limit-down 守卫。
+    cerebro.addstrategy(
+        Phase3V3Strategy, result_holder=holder, min_cash_ratio=0.05,
+    )
     results = cerebro.run()
     strat = results[0]
 
-    assert strat._holds == {}, (
+    # 必须检查 holder["trades"] 而非 strat._holds: 后者会在 max_hold=5
+    # (默认) 后于 bar 65 被清空, 与"是否开仓"无关。Round 23 (2026-09-28)
+    # 修复: 把此 test 改用 trade ledger 断言。
+    assert holder["trades"] == [], (
         f"§4 LIMIT-DOWN VIOLATION: short_reversal opened position on "
         f"-10% open (prev_close=10.0, open=9.0). Stock is locked at "
         f"limit-down — cannot sell (CLAUDE.md §3 Reality Mapping). "
-        f"_holds={strat._holds}"
+        f"trades={holder['trades']}"
     )
 
 
@@ -203,7 +210,11 @@ def test_short_reversal_accepts_normal_open(monkeypatch: pytest.MonkeyPatch) -> 
     feed = AShareData(dataname=panel, plot=False)
     cerebro.adddata(feed, name="600000.SH")
     holder: dict = {"cash": 100_000.0, "trades": [], "max_dd": 0.0}
-    cerebro.addstrategy(Phase3V3Strategy, result_holder=holder)
+    # Round 14 (2026-09-28): min_cash_ratio 默认 None (fail-fast)。测试直接调用
+    # strategy 时必须显式传 0.05 才能跑过 cash gate (line 369) 进入 limit-down 守卫。
+    cerebro.addstrategy(
+        Phase3V3Strategy, result_holder=holder, min_cash_ratio=0.05,
+    )
     results = cerebro.run()
     strat = results[0]
 

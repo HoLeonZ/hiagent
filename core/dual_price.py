@@ -112,14 +112,23 @@ def extract_execution_bar(
 
     Raises:
         KeyError: 缺核心列 (open / high / low / close / raw_open for A)。
+
+    Round 30 (2026-09-28, CLAUDE.md §3): NaN-aware fallback chain.
+    Previous `dict.get(key, default)` only fell through when key was MISSING.
+    When key EXISTS with value None or NaN (LEFT JOIN miss leaves key
+    present with NULL), the None/NaN was returned → silent 0.0 bar (when
+    all raw_* NULL) or ValueError (when raw_close=NaN but raw_open>0).
+    Now: ``_present(v)`` treats both missing keys and None/NaN values as
+    fallthrough triggers — the documented contract "raw_* 是 ground
+    truth; 缺失时回退到 adj_*" actually holds for partial-NaN rows.
     """
     if layout == LAYOUT_CHASE_UPTREND:
         # raw_* 列是 ground truth; 缺失时回退到 adj_* 列。
-        o = row.get("raw_open", row.get("adj_open", row.get("open")))
-        h = row.get("raw_high", row.get("adj_high", row.get("high")))
-        lo = row.get("raw_low", row.get("adj_low", row.get("low")))
-        c = row.get("raw_close", row.get("adj_close", row.get("close")))
-        pc = row.get("raw_prev_close", row.get("prev_close"))
+        o = _chain_get(row, "raw_open", "adj_open", "open")
+        h = _chain_get(row, "raw_high", "adj_high", "high")
+        lo = _chain_get(row, "raw_low", "adj_low", "low")
+        c = _chain_get(row, "raw_close", "adj_close", "close")
+        pc = _chain_get(row, "raw_prev_close", "prev_close")
     elif layout in (LAYOUT_SHORT_REVERSAL, LAYOUT_CYCLE_PRICE):
         o = row["open"]; h = row["high"]; lo = row["low"]; c = row["close"]
         pc = row.get("prev_close")
@@ -130,6 +139,37 @@ def extract_execution_bar(
         open=_safe(o), high=_safe(h), low=_safe(lo), close=_safe(c),
         prev_close=_safe(pc) if pc is not None else None,
     )
+
+
+def _present(v: object) -> bool:
+    """Round 30 (CLAUDE.md §3): is value present (not None, not NaN)?
+
+    dict.get(key, default) returns the VALUE when key exists, even if value
+    is None or NaN. For LEFT JOIN miss rows, raw_* keys exist but values
+    are None/NaN — naive dict.get returns None/NaN, defeating the fallback
+    chain contract. _present() is the NaN-aware gate.
+    """
+    if v is None:
+        return False
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return False
+    # NaN check: NaN is the only float that is not equal to itself
+    return f == f
+
+
+def _chain_get(row: Mapping[str, object], *keys: str) -> object | None:
+    """Round 30 (CLAUDE.md §3): walk a key chain, return first PRESENT value.
+
+    Differs from chained ``dict.get(k1, dict.get(k2, ...))``:
+      - dict.get returns the value when key exists (even if None/NaN)
+      - _chain_get treats None/NaN as "missing" and continues to next key
+    """
+    for k in keys:
+        if k in row and _present(row[k]):
+            return row[k]
+    return None
 
 
 def is_limit_up(
@@ -153,7 +193,7 @@ def is_limit_up(
 def is_limit_down(
     prev_close: float | None,
     open_price: float,
-    threshold: float = -0.095,
+    threshold: float = 0.095,
 ) -> bool:
     """Symmetric to ``is_limit_up``: detect limit-down (跌停) for short entries.
 
@@ -161,13 +201,15 @@ def is_limit_down(
     limit-down cannot be sold short (the short side would not be able
     to close by buying back — buyer pool is gone).
 
-    Parameters mirror ``is_limit_up``: prev_close missing → False (allow
-    entry, best-effort). Threshold default -0.095 (A-share main board
-    -10% limit-down tolerance).
+    Threshold convention matches ``is_limit_up``: positive value 0.095
+    means "trip if drop >= 9.5%". Caller passes positive threshold;
+    function compares (open/prev - 1) <= -threshold.
+
+    prev_close missing → False (allow entry, best-effort).
     """
     if prev_close is None or prev_close <= 0:
         return False
-    return (open_price / prev_close - 1.0) <= threshold
+    return (open_price / prev_close - 1.0) <= -threshold
 
 
 def atr_slippage(

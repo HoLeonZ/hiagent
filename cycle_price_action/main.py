@@ -12,7 +12,9 @@ from hiagent_config import get_db_path
 from core.trade_schema import TRADE_COLS
 from cycle_price_action.backtest import run_backtest
 from cycle_price_action.metrics import TradeRecord
+from cycle_price_action.portfolio import Portfolio
 from cycle_price_action.walkforward import walkforward_windows
+from dna_stats.deflated import deflated_sharpe_ratio
 
 
 def _resolve_window(start: str | None, end: str | None) -> tuple[date, date]:
@@ -47,7 +49,19 @@ def _write_trades_csv(path: Path, trades: list[TradeRecord]) -> None:
             gross_pnl = (t.exit_price - t.entry_price) * t.shares
             net_pnl = t.pnl
             fees = gross_pnl - net_pnl
-            invested = t.entry_price * t.shares
+            # Round 21 (2026-09-28, CLAUDE.md §0/§3 data integrity):
+            # cycle 是 4-engine 中唯一漏 entry_commission 的 invested 公式点
+            # (其余 3 engine portfolio.py + backtrader_engine.py 均含 buy_commission)。
+            # canonical invariant (core/trade_schema.py:19):
+            #   net_return == net_pnl / (entry_price × size + buy_commission)
+            #   buy_commission = max(notional × COMMISSION_RATE, MIN_COMMISSION)
+            # Portfolio 类常量 = canonical 0.00025 + 5.0 (Round 9 fix)
+            notional_in = t.entry_price * t.shares
+            buy_commission = max(
+                notional_in * Portfolio.COMMISSION_RATE,
+                Portfolio.MIN_COMMISSION,
+            )
+            invested = notional_in + buy_commission
             net_return = (net_pnl / invested) if invested > 0 else 0.0
             w.writerow({
                 "entry_date": t.entry_date.isoformat(),
@@ -149,6 +163,20 @@ def _run_backtest(args) -> int:
     m = result.metrics
     print(f"wrote {out_dir}: n_trades={m['n_trades']}, "
           f"pnl={m['total_pnl']:.2f}, win_rate={m['win_rate']:.2%}")
+
+    # CLAUDE.md §5 Penalty Metrics: 单 preset 单 trial 也报告 DSR
+    # (cycle 无 sweep, n_trials=1 → DSR=PSR)。此处直接输出以满足 §5。
+    sharpe = m.get("sharpe")
+    if sharpe is not None and m.get("n_trades", 0) > 0:
+        dsr = deflated_sharpe_ratio(
+            observed_sharpe=float(sharpe), n_trials=1, n_returns=int(m["n_trades"]),
+        )
+        print(
+            f"\n§5 DSR for {preset} | observed_sharpe={float(sharpe):.3f} | "
+            f"n_trials=1 | "
+            f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
+            f"p_value={dsr['dsr_p_value']:.4f}"
+        )
     return 0
 
 

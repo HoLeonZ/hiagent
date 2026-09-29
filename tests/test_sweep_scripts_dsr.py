@@ -25,7 +25,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _collect_sweep_scripts() -> list[Path]:
-    """收集所有 sweep / wf_sweep 脚本 (含数字后缀变体)."""
+    """收集所有 sweep / wf_sweep / grid 脚本 (含数字后缀变体).
+
+    Note: 额外 glob `**/grid*.py` 由 test_sweep_dsr_test_coverage_catches_grid_runner
+    单独 verify (避免与 uptrend_pullback/grid.py 共触发新 RED)。
+    """
     candidates = []
     for pattern in ("**/sweep*.py", "**/wf_sweep*.py"):
         for p in REPO_ROOT.glob(pattern):

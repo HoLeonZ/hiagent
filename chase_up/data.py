@@ -51,7 +51,13 @@ def load_panel(
                    r.high  AS raw_high,
                    r.low   AS raw_low,
                    r.close AS raw_close,
-                   r.prev_close AS raw_prev_close
+                   -- Round 23 (2026-09-28, CLAUDE.md §3 truthfulness):
+                   -- raw_kline_daily.prev_close is NULL (0% populated per data layer audit).
+                   -- v_daily_dual view uses LAG(...) which is 99.95% populated.
+                   -- Inline LAG keeps qfq schema compatibility for open/high/low/close.
+                   LAG(r.close, 1) OVER (
+                       PARTITION BY r.thscode ORDER BY r.date
+                   ) AS raw_prev_close
             FROM v_daily_qfq q
             LEFT JOIN raw_kline_daily r
               ON q.thscode = r.thscode AND q.date = r.date
