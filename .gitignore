@@ -32,7 +32,12 @@ __pycache__/
 uptrend_pullback/results/
 short_reversal/results/
 chase_up/results/
+cycle_price_action/results/
+results/
 data/exports/
+data/*.duckdb
+data/*.db
+data/hiagent.db
 figures/
 
 # MCP / browser tool scratch output
