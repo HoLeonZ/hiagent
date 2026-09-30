@@ -406,16 +406,28 @@ footer { text-align: center; color: var(--muted); font-size: 12px;
 
 
 def _fmt_pct(x: float) -> str:
+    # Pessimistic default (§0): 任何 nan / inf / None 都显示为 —, 防止
+    # 引擎 regression 把 "nan%" / "inf%" 写入 HTML (影响阅读, 触发跨策略
+    # 排名 NaN sort 异常)
+    import math
+    if x is None or not math.isfinite(x):
+        return "—"
     return f"{x * 100:+.2f}%"
 
 
 def _fmt_num(x: float, d: int = 2) -> str:
-    if x is None:
+    import math
+    if x is None or not math.isfinite(x):
         return "—"
     return f"{x:,.{d}f}"
 
 
-def _cls(v: float, good_if_pos=True) -> str:
+def _cls(v: float, good_if_pos: bool = True) -> str:
+    # Pessimistic default: nan / inf 视作 neutral (避免 nan 在 css good/bad 中
+    # 静默触发 ok 信号)
+    import math
+    if v is None or not math.isfinite(v):
+        return "neutral"
     if good_if_pos:
         return "good" if v > 0 else ("bad" if v < 0 else "neutral")
     return "good" if v < 0 else ("bad" if v > 0 else "neutral")
