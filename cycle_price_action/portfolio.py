@@ -223,23 +223,32 @@ class Portfolio:
         # 与 chase_up + uptrend_pullback + short_reversal NAV gate 入口同口径。
         if self.cash < self.initial_capital * self.NAV_GATE_RATIO:
             return None
-        lots = int(self.cash // (price * 100))
+        # R527 (2026-10-08, CLAUDE.md §2): sizing basis MUST be free_cash,
+        # NOT self.cash. self.cash is a stale alias initialized to initial
+        # capital at __init__ L117-119, only re-synced to total_cash
+        # AFTER reserve_for_entry at L259. Reading self.cash here is a
+        # sibling of R249/R387.1 P0: between entries, free_cash shrinks
+        # (locked_margin grows) but self.cash stays at initial value →
+        # sizing over-allocates → reserve_for_entry fail-fast "cost >
+        # free_cash". Fix: gate against free_cash directly.
+        lots = int(self.free_cash // (price * 100))
         if lots < 1:
             return None
         shares = lots * 100
         cost = self._buy_cost(price, shares)
-        # Round 29b (2026-09-28, CLAUDE.md §0): pre-check tolerates sub-epsilon
-        # IEEE 754 drift on cash before falling through to the
-        # tolerance-aware reserve_for_entry (Round 28). Without + epsilon,
-        # drift makes this pre-check shrink shares unnecessarily and
-        # eventually `return None` on legitimate trades.
-        if cost > self.cash + 1e-9:        # commission would push over cash — round down 1 lot
+        # R527 (2026-10-08, CLAUDE.md §2): iterative downsize to fit free_cash.
+        # 旧版只 decrement 1 lot,在 cycle 高价股场景下 gap 远大于 1 lot
+        # (e.g. cost=1.987M vs free_cash=1.0M → gap ≈ 50 lots),导致
+        # `return None` 过早放弃合法交易 + reserve_for_entry fail-fast 兜底
+        # (cost > free_cash → raise,引擎直接挂掉)。改为 while-loop 一直
+        # decrement 到 cost ≤ free_cash + ε,符合 §2 Margin Gatekeeper
+        # (不超 free_cash, 物理按 lot 粒度调整) + 保守悲观 (final pass 仍
+        # 越界则放弃, 不 silently bypass)。
+        while cost > self.free_cash + 1e-9:
             shares -= 100
             if shares < 100:
                 return None
             cost = self._buy_cost(price, shares)
-            if cost > self.cash + 1e-9:    # still over after rounding down (e.g. min commission floor)
-                return None
         # R8 (2026-09-21): Volume Participation Limit (CLAUDE.md §4)。
         # 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION, 超出丢弃 (不挂单)。
         # 这是 CLAUDE.md §4 "Max_Fill_Qty = MIN(Order_Qty, Bar_Volume * 0.10)"
@@ -249,7 +258,7 @@ class Portfolio:
             if max_fill > 0 and shares > max_fill:
                 shares = max_fill
                 cost = self._buy_cost(price, shares)
-                if cost > self.cash + 1e-9 or shares < 100:
+                if cost > self.free_cash + 1e-9 or shares < 100:
                     return None
         # Round 16 (CLAUDE.md §2): Lock Free_Cash → Locked_Margin for entry.
         # settle() at start of bar flushes yesterday's settling_funds → free_cash
