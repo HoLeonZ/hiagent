@@ -25,7 +25,6 @@ PRESETS: dict[str, dict] = {
     # sl_pct: atr × 1.0  (fallback 0.05)
     # tp_pct: atr × 4.0  (fallback 0.30)
     # max_hold: 15
-    # atr_period: 14
     # Note: ATR-adaptive with sl_pct=0.05 / tp_pct=0.30 fallback. v1 baseline.
     "chase_v1_atr_tp4_sl1": {
         "universe": "mainboard_only",
@@ -78,7 +77,6 @@ PRESETS: dict[str, dict] = {
     # sl_pct: atr × 1.0  (fallback 0.05)
     # tp_pct: atr × 3.0  (fallback 0.30)
     # max_hold: 15
-    # atr_period: 14
     # Note: ATR-adaptive with sl_pct=0.05 / tp_pct=0.30 fallback. TP tightened from 4.0 to 3.0.
     "chase_v1a_atr_tp3_sl1": {
         "universe": "mainboard_only",
@@ -118,7 +116,6 @@ PRESETS: dict[str, dict] = {
     # sl_pct: atr × 1.5  (fallback 0.08)
     # tp_pct: atr × 4.0  (fallback 0.30)
     # max_hold: 15
-    # atr_period: 14
     # Note: ATR-adaptive with widened SL fallback 0.08. SL mult 1.0→1.5 covers larger gaps.
     "chase_v1b_atr_tp4_sl15": {
         "universe": "mainboard_only",
@@ -158,7 +155,6 @@ PRESETS: dict[str, dict] = {
     # sl_pct: atr × 1.0  (fallback 0.05)
     # tp_pct: atr × 4.0  (fallback 0.30)
     # max_hold: 18
-    # atr_period: 14
     # Note: ATR-adaptive. max_hold 15→18 to give breakouts more runway.
     "chase_v1c_atr_tp4_sl1_hold18": {
         "universe": "mainboard_only",
@@ -202,7 +198,6 @@ PRESETS: dict[str, dict] = {
     # sl_pct: atr × 1.0  (fallback 0.05)
     # tp_pct: atr × 4.0  (fallback 0.30)
     # max_hold: 15
-    # atr_period: 14
     # Note: ATR-adaptive. Historical 3-slot equal sizing; §2 forces single-slot all_in.
     "chase_v2_atr_tp4_sl1_pos3": {
         "universe": "mainboard_only",
@@ -242,7 +237,6 @@ PRESETS: dict[str, dict] = {
     # sl_pct: atr × 1.0  (fallback 0.05)
     # tp_pct: atr × 4.0  (fallback 0.30)
     # max_hold: 15
-    # atr_period: 14
     # Note: ATR-adaptive. mom120 0.05→0.15 — stronger mid-term trend requirement.
     "chase_v3_atr_tp4_sl1_mom15": {
         "universe": "mainboard_only",
@@ -290,7 +284,6 @@ PRESETS: dict[str, dict] = {
     # sl_pct: atr × 1.5  (fallback 0.05)
     # tp_pct: atr × 6.0  (fallback 0.30)
     # max_hold: 10
-    # atr_period: 14
     # Note: ATR-adaptive. Historical 2-slot equal; §2 forces single-slot all_in.
     "chase_v5_pos2_equal_atr_tp6_sl15_mh10": {
         "universe": "mainboard_only",
@@ -334,7 +327,6 @@ PRESETS: dict[str, dict] = {
     # sl_pct: atr × 1.5  (fallback 0.05)
     # tp_pct: atr × 6.0  (fallback 0.30)
     # max_hold: 15
-    # atr_period: 14
     # Note: ATR-adaptive. Historical 3-slot all_in; §2 forces max_positions=1.
     "chase_v6_pos3_all_in_atr_tp6_sl15_mh15": {
         "universe": "mainboard_only",
@@ -374,7 +366,6 @@ PRESETS: dict[str, dict] = {
     # sl_pct: atr × 1.0  (fallback 0.05)
     # tp_pct: atr × 4.0  (fallback 0.30)
     # max_hold: 15
-    # atr_period: 14
     # Note: ATR-adaptive. Sub-signals A+B only (no MACD golden cross) — higher frequency.
     "chase_v4_atr_tp4_sl1_ABonly": {
         "universe": "mainboard_only",
@@ -418,7 +409,6 @@ PRESETS: dict[str, dict] = {
     # sl_pct: atr × 1.5  (fallback 0.05)
     # tp_pct: atr × 6.0  (fallback 0.30)
     # max_hold: 10
-    # atr_period: 14
     # Note: ATR-adaptive. v5 + MA60>MA120 trend filter to block bear-market fake breakouts.
     "chase_v7_pos2_equal_atr_tp6_sl15_mh10_regime": {
         "universe": "mainboard_only",
@@ -473,7 +463,6 @@ PRESETS: dict[str, dict] = {
     # sl_pct: atr × 1.5  (fallback 0.05)
     # tp_pct: atr × 6.0  (fallback 0.30)
     # max_hold: 18
-    # atr_period: 14
     # Note: ATR-adaptive. v5 + max_hold 10→18 to let winners run longer.
     "chase_v8_pos2_equal_atr_tp6_sl15_mh18": {
         "universe": "mainboard_only",
@@ -530,7 +519,6 @@ PRESETS: dict[str, dict] = {
     # sl_pct: atr × 1.5  (fallback 0.05)
     # tp_pct: atr × 6.0  (fallback 0.30)
     # max_hold: 18
-    # atr_period: 14
     # Note: ATR-adaptive. v8 + min_score 1.2 filter for stronger sub-signal.
     "chase_v9_pos2_equal_atr_tp6_sl15_mh18_score12": {
         "universe": "mainboard_only",
@@ -570,7 +558,6 @@ PRESETS: dict[str, dict] = {
     # sl_pct: atr × 1.5  (fallback 0.05)
     # tp_pct: atr × 6.0  (fallback 0.30)
     # max_hold: 18
-    # atr_period: 14
     # Note: ATR-adaptive. v9 + min_score 1.2→1.6 — even stronger sub-signal filter.
     "chase_v10_pos2_equal_atr_tp6_sl15_mh18_score16": {
         "universe": "mainboard_only",
@@ -616,7 +603,6 @@ PRESETS: dict[str, dict] = {
     # sl_pct: atr × 1.5  (fallback 0.05)
     # tp_pct: atr × 6.0  (fallback 0.30)
     # max_hold: 18
-    # atr_period: 14
     # Note: ATR-adaptive. v10 + min_score 1.6→1.7 — nonlinear sweet spot.
     "chase_v11_pos2_equal_atr_tp6_sl15_mh18_score17": {
         "universe": "mainboard_only",
@@ -663,8 +649,7 @@ PRESETS: dict[str, dict] = {
     # sl_pct: atr × 1.5  (fallback 0.05)
     # tp_pct: atr × 6.0  (fallback 0.30)
     # max_hold: 18
-    # atr_period: 14
-    # atr_min: 0.035 (signal-level volatility floor)
+    # atr_pct_low: 0.035 (signal-level volatility floor)
     # Note: ATR-adaptive with signal-level atr_pct floor; rejects low-vol breakouts (<0.035).
     "chase_v12_pos2_equal_atr_tp6_sl15_mh18_score17_atr035": {
         "universe": "mainboard_only",
@@ -715,9 +700,8 @@ PRESETS: dict[str, dict] = {
     # sl_pct: atr × 1.5  (fallback 0.05)
     # tp_pct: atr × 6.0  (fallback 0.30)
     # max_hold: 18
-    # atr_period: 14
-    # atr_min: 0.035 (signal-level volatility floor)
-    # atr_max: 0.085 (signal-level volatility ceiling)
+    # atr_pct_low: 0.035 (signal-level volatility floor)
+    # atr_pct_high: 0.085 (signal-level volatility ceiling)
     # Note: ATR-adaptive + signal-level atr_pct range [0.035, 0.085]; mom120 ≥ 0.10 filter.
     "chase_v13_pos2_equal_atr_tp6_sl15_mh18_score17_atr035_mom10": {
         "universe": "mainboard_only",
@@ -763,8 +747,7 @@ PRESETS: dict[str, dict] = {
     # sl_pct: atr × 1.5  (fallback 0.05)
     # tp_pct: atr × 6.0  (fallback 0.30)
     # max_hold: 18
-    # atr_period: 14
-    # atr_min: 0.035 / atr_max: 0.085 (signal-level volatility band)
+    # atr_pct_low: 0.035 / atr_max: 0.085 (signal-level volatility band)
     # Note: ATR-adaptive + signal-level atr_pct band; mom120 ≥ 0.11 sweet spot.
     "chase_v14_pos2_equal_atr_tp6_sl15_mh18_score17_atr035_mom11": {
         "universe": "mainboard_only",
@@ -803,8 +786,7 @@ PRESETS: dict[str, dict] = {
     # sl_pct: atr × 1.5  (fallback 0.05)
     # tp_pct: atr × 6.0  (fallback 0.30)
     # max_hold: 18
-    # atr_period: 14
-    # atr_min: 0.035 / atr_max: 0.085
+    # atr_pct_low: 0.035 / atr_max: 0.085
     # ma60_buffer: 0.08 (close > MA60 × 1.08 — trend persistence filter)
     # Note: ATR-adaptive + close > MA60 × 1.08 trend persistence filter.
     "chase_v15_pos2_equal_atr_tp6_sl15_mh18_score17_atr035_mom11_ma60buf08": {
@@ -845,8 +827,7 @@ PRESETS: dict[str, dict] = {
     # sl_pct: atr × 1.5  (fallback 0.05)
     # tp_pct: atr × 6.0  (fallback 0.30)
     # max_hold: 18
-    # atr_period: 14
-    # atr_min: 0.035 / atr_max: 0.085
+    # atr_pct_low: 0.035 / atr_max: 0.085
     # ma60_buffer: 0.08
     # Note: ATR-adaptive + mom120 ≥ 0.115 (fine-tuned sweet spot, byte-identical trades.csv vs v15).
     "chase_v16_pos2_equal_atr_tp6_sl15_mh18_score17_atr035_mom115_ma60buf08": {
@@ -887,8 +868,7 @@ PRESETS: dict[str, dict] = {
     # sl_pct: atr × 1.5  (fallback 0.05)
     # tp_pct: atr × 6.0  (fallback 0.30)
     # max_hold: 18
-    # atr_period: 14
-    # atr_min: 0.035 / atr_max: 0.082 (tighter vol ceiling; rejects gap-down garbage)
+    # atr_pct_low: 0.035 / atr_max: 0.082 (tighter vol ceiling; rejects gap-down garbage)
     # ma60_buffer: 0.08
     # Note: ATR-adaptive + atr_pct ceiling 8.2% rejects gap-down cluster; +10.24pp WF mean.
     "chase_v17_pos2_equal_atr_tp6_sl15_mh18_score17_atr035_mom115_ma60buf08_atr082": {
@@ -931,8 +911,7 @@ PRESETS: dict[str, dict] = {
     # sl_pct: atr × 1.6  (fallback 0.05)
     # tp_pct: atr × 6.0  (fallback 0.30)
     # max_hold: 18
-    # atr_period: 14
-    # atr_min: 0.035 / atr_max: 0.082
+    # atr_pct_low: 0.035 / atr_max: 0.082
     # ma60_buffer: 0.08
     # Note: ATR-adaptive; atr_sl_mult 1.5→1.6 widens SL to give one extra day's breathing room.
     "chase_v18_pos2_equal_atr_tp6_sl16_mh18_score17_atr035_mom115_ma60buf08_atr082": {
@@ -975,8 +954,7 @@ PRESETS: dict[str, dict] = {
     # sl_pct: atr × 1.75  (fallback 0.05)
     # tp_pct: atr × 6.0  (fallback 0.30)
     # max_hold: 18
-    # atr_period: 14
-    # atr_min: 0.035 / atr_max: 0.082
+    # atr_pct_low: 0.035 / atr_max: 0.082
     # ma60_buffer: 0.08
     # Note: ATR-adaptive; atr_sl_mult 1.6→1.75 = aggressive locked peak (CAGR +1750%, WF worst -85.82%).
     "chase_v19_pos2_equal_atr_tp6_sl175_mh18_score17_atr035_mom115_ma60buf08_atr082": {
