@@ -70,6 +70,11 @@ PRESETS: dict[str, dict] = {
         "max_hold": 5,
         "pct_chg_low": 0.04,
         "pct_chg_high": 0.09,
+        # v35 是 v3 体系中唯一保留 baseline D-mode 的 preset:
+        # 设计权衡 = 较弱 D (|bar| <= |prev|, 引擎默认 'strict') + 更紧 pct_chg [0.04, 0.09],
+        # 对照 v36+ 的较强 D (converge_strict, |bar| < |prev|*0.5) + 较宽 pct_chg [0.03, 0.10]。
+        # 显式声明以避免 engine 默认值变更时静默漂移 (engine.py:164)。
+        "d_mode": "strict",
     },
     # === 2026-09-21 微调发现（v36）— B/E/D 信号轴参数化 ===
     # 模块常量 UP_STREAK/LIQ/MACD 提升为 strategy params (Task #15-17),
