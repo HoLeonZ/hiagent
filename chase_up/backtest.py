@@ -135,6 +135,15 @@ def run_backtest(
         # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate, 与 backtrader_engine.py:223 保持一致。
         # portfolio.py:175-189 文档化 Round 14 (2026-09-28) 引入,默认 0.05。
         nav_gate_ratio=p.get("nav_gate_ratio", 0.05),
+        # R6 (2026-10-09, CLAUDE.md §0/§4): cost model plumbing, 与 backtrader_engine.py:212-216 保持一致。
+        # Round 15 (2026-09-28) 在 portfolio.py:247-254 引入 ATR-aware slippage 与成本参数。
+        # 当前 0/22 preset 声明这些 key, 函数默认 0.00025/0.0005/5.0/0.0/0.0 与 backtrader_engine.py p.get 默认完全一致 (R5 nav_gate_ratio 同模式)。
+        # 显式 plumb 防止未来 preset override 时两引擎 drift。
+        commission_rate=p.get("commission_rate", 0.00025),
+        stamp_duty_rate=p.get("stamp_duty_rate", 0.0005),
+        min_commission=p.get("min_commission", 5.0),
+        slippage=p.get("slippage", 0.0),
+        atr_slip_scale=p.get("atr_slip_scale", 0.0),
     )
 
     metrics = compute_metrics(
