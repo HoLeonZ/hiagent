@@ -460,14 +460,15 @@ class Phase3V3Strategy(bt.Strategy):
                     atr_slip = atr_pct * participation * self.p.atr_slip_scale
                     if atr_slip > 0:
                         entry_price = entry_price * (1.0 + atr_slip)
-            # 防穿仓 (R4, 2026-09-21): budget base 用 NAV (cash + 持仓浮盈) 而非
-            # 仅 self.cash。前一笔大亏会让 cash 跌至初始资金一小部分, 若仍按
-            # self.cash all-in, 后续每笔名义资金随 cash 缩水 — 这等同于"现金自适应"
-            # sizing, 会让 cash gate 在 cash-only 维度上失守 (NAV 含浮盈可能仍 > 5%
-            # initial)。改用 NAV 后, cash gate 与 sizing 同口径, 防止 NAV 触底 0
-            # 路径上的盲区。
-            nav_for_budget = self._nav()
-            target_value = nav_for_budget * self.p.position_fraction
+            # CLAUDE.md §2 Margin Gatekeeper: budget base MUST be Free_Cash
+            # (T+0 可用), 绝不用 NAV (含未实现浮盈) / settling_funds (T+1 才到)。
+            # 旧 R4 (2026-09-21) 用 NAV 作 sizing basis 是 §2 violation 的根因:
+            # NAV 含未实现浮盈 → target_value 虚高 → size 巨大; 而 cash gate
+            # 只检查 entry_fee (几十~几百元) 不检查 notional (几百万~千万元),
+            # 下一笔 PnL 进 settling 后 settle() flush 到 free_cash, free_cash
+            # 翻倍 → 仓位指数膨胀, CAGR +4688% (R249/R387.1 P0 已知)。
+            # 对齐 chase_up/portfolio.py:521/562-573 模板。
+            target_value = self.free_cash * self.p.position_fraction
             size = (
                 int(target_value / entry_price / self.p.lot_size) * self.p.lot_size
             )
@@ -487,28 +488,45 @@ class Phase3V3Strategy(bt.Strategy):
                 pending = self.pending_entries
                 pending.pop(code, None)
                 continue
+            # CLAUDE.md §2 Atomic Cash Locks: notional + entry_cost > free_cash
+            # must reject (no leverage). Mirrors chase_up/portfolio.py:562-573
+            # 模板 — downsize by 1 lot then recheck; 仍超则 reject。
+            # 旧实现只检查 entry_fee (R505 错), notional 完全无 gate → phantom leverage。
+            notional = size * entry_price
+            # entry_fee = 纯手续费部分 (commission + stamp duty), 写入 trade
+            # record 用于 net_pnl / net_return 计算 (Round 19 契约)。
+            # entry_cost = notional + entry_fee, 用于 reserve/release 锁定资金。
             entry_fee = (
                 max(
                     self.p.min_commission,
-                    size * entry_price * self.p.commission_rate,
+                    notional * self.p.commission_rate,
                 )
-                + size * entry_price * self.p.stamp_duty_rate
+                + notional * self.p.stamp_duty_rate
             )
-            # CLAUDE.md §2 Atomic Cash Locks: cost > cash must reject
-            # (no leverage). Mirrors chase_up/uptrend_pullback pattern
-            # (`if notional + fee_in > cash: continue`). short_reversal's
-            # entry_fee is tiny relative to NAV, so this guard catches
-            # data anomalies / negative-NAV edge cases only. fail-fast
-            # per §0 Pessimistic Default.
-            # Round 27 (2026-09-28, CLAUDE.md §0): tolerate sub-epsilon
-            # IEEE 754 drift on free_cash (sibling fix to Round 26).
-            if entry_fee > self.free_cash + 1e-9:
-                raise ValueError(
-                    f"entry_fee {entry_fee:.2f} > free_cash {self.free_cash:.2f} "
-                    f"— reject (no leverage)"
+            entry_cost = notional + entry_fee
+            if entry_cost > self.free_cash + 1e-9:
+                # downsize by 1 lot
+                size -= self.p.lot_size
+                if size < self.p.lot_size:
+                    pending = self.pending_entries
+                    pending.pop(code, None)
+                    continue
+                notional = size * entry_price
+                entry_fee = (
+                    max(
+                        self.p.min_commission,
+                        notional * self.p.commission_rate,
+                    )
+                    + notional * self.p.stamp_duty_rate
                 )
-            # Round 16 (CLAUDE.md §2): entry fee reserves margin.
-            self.reserve_for_entry(entry_fee)
+                entry_cost = notional + entry_fee
+                if entry_cost > self.free_cash + 1e-9:
+                    pending = self.pending_entries
+                    pending.pop(code, None)
+                    continue
+            # Round 16 (CLAUDE.md §2): entry cost (notional + fee) reserves margin.
+            # 旧实现只锁 entry_fee, notional 完全没锁 → phantom leverage 通道打开。
+            self.reserve_for_entry(entry_cost)
             self._holds[code] = {
                 "entry_price": entry_price,
                 "size": size,
@@ -519,6 +537,9 @@ class Phase3V3Strategy(bt.Strategy):
                 # net_return, ...).
                 "entry_date": bt.num2date(d.datetime[0]).date(),
                 "entry_fee": entry_fee,
+                # Round 27+ (§2 Atomic Cash Locks): entry_cost = notional + fee,
+                # 是 _close() release_margin 应释放的实际锁定金额。
+                "entry_cost": entry_cost,
             }
             # CLAUDE.md §0 §6: drain pending entry after successful fill
             # (T+1 fill queue completed — trade already recorded in
@@ -594,12 +615,25 @@ class Phase3V3Strategy(bt.Strategy):
         )
         # Round 16 (CLAUDE.md §2): T+0 short-cover proceeds → settling_funds.
         # Immediate credit to free_cash would be T+0 settlement (FORBIDDEN).
-        # release_margin returns the locked entry fee (reserved at entry)
-        # from locked_margin → free_cash. Ongoing daily margin fees already
-        # flowed out via _charge_margin_fees.
+        # release_margin returns the locked entry cost (notional + fee,
+        # reserved at entry per §2 Atomic Cash Locks) from locked_margin
+        # → free_cash. Ongoing daily margin fees already flowed out via
+        # _charge_margin_fees.
+        # Fallback to entry_fee for legacy positions (pre-Round 27b schemas
+        # stored only entry_fee; the missing notional was the §2 violation
+        # fixed in this same round).
         proceeds = pnl - exit_fee
         self.credit_settling(proceeds)
-        self.release_margin(pos.get("entry_fee", 0.0))
+        # Round 27b (CLAUDE.md §2): 释放 entry_cost - 累计 margin_fees_paid。
+        # locked_margin 在 hold 期间被 margin fee 扣走,退仓时只退剩余,
+        # 净 cash 流出 = 累计 margin fee (与 §0 物理现金守恒一致)。
+        # 容差 clamp:long-hold (max_hold≥5) 累积的浮点误差可能让 released
+        # 略大于 locked_margin (1e-9 量级),提前 clamp 防止 release_margin
+        # 误触发 §0 fail-fast。
+        released = pos.get("entry_cost", pos.get("entry_fee", 0.0)) - pos.get("margin_fees_paid", 0.0)
+        released = min(released, self.locked_margin)
+        if released > 0:
+            self.release_margin(released)
         gross_pct = (ep - price) / ep
         # Round 19 (2026-09-28, CLAUDE.md §0/§3 data integrity):
         # net 字段必须映射 cash walk (entry_fee + exit_fee 折算到 entry notional).
@@ -652,17 +686,19 @@ class Phase3V3Strategy(bt.Strategy):
                 * self.p.margin_rate
                 / 365
             )
-            # CLAUDE.md §2 Atomic Cash Locks: daily margin fee > cash
-            # must reject (no leverage). Mirrors chase_up/uptrend_pullback
-            # cost>cash guard. fail-fast per §0 Pessimistic Default.
-            # Round 27 (2026-09-28, CLAUDE.md §0): tolerate sub-epsilon
-            # IEEE 754 drift on free_cash (sibling fix to Round 26).
-            if fee > self.free_cash + 1e-9:
+            # CLAUDE.md §2 Atomic Cash Locks: 做空 locked_margin = 卖股款冻结池
+            # (size × ep 物理上已收 cash 但被锁住),融券利息应从中扣出。Round 27b
+            # 修复:旧实现从 free_cash 扣,但 reserve_for_entry(entry_cost) 把 free_cash
+            # 归零 → 任何小数额 margin fee 都会 fail-fast。新模型:locked_margin 既
+            # 是 entry 锁仓池,也是 margin fee 资金源,_close() 释放时再扣回累计 margin fee
+            # (pos["margin_fees_paid"])。fail-fast 仅在 locked_margin 真的不够时触发。
+            if fee > self.locked_margin + 1e-9:
                 raise ValueError(
-                    f"margin fee {fee:.2f} > free_cash {self.free_cash:.2f} "
+                    f"margin fee {fee:.2f} > locked_margin {self.locked_margin:.2f} "
                     f"— reject (no leverage)"
                 )
-            self.free_cash -= fee
+            self.locked_margin -= fee
+            pos["margin_fees_paid"] = pos.get("margin_fees_paid", 0.0) + fee
 
     # ----------------------------------------------------------- 5 conditions
 
