@@ -103,24 +103,23 @@ pytest tests/ -v
 
 ## 工具脚本
 
-### tools/update_db.py —— DB 增量更新
+### tools/update_db_direct.py —— DB 增量更新
 
-绕过 `marketdb update-daily` 的 schema drift 问题,直接调 REST API 拉数据:
+绕开 `marketdb` Python 包(来自外部私有仓库 `Financial-API`,本机无),用 `requests + duckdb` 直接调 REST API 拉数据并 `INSERT OR IGNORE` 进 `raw_kline_daily`。仅依赖环境变量:
 
 ```bash
-# 需要先设置 Financial-API 路径(原硬编码 /Users/zhl/code/Financial-API/python 已改为环境变量)
-export FINANCIAL_API_PATH=/path/to/Financial-API
-python3 -m tools.update_db --db $DNA_STRAT_DB --target 2026-09-19 --days 30
+export FINANCIAL_API_BASE_URL=https://fuyao.aicubes.cn
+export FINANCIAL_API_KEY=sk-...
+python3 -m tools.update_db_direct --db "$DNA_STRAT_DB" --target 2026-09-30 --days 14
 ```
 
-> `marketdb` 包来自外部私有仓库 `Financial-API`,不在本仓库也不在 PyPI。pip 安装:`pip install -e $FINANCIAL_API_PATH/python`
+> 替代 2026-09 之前基于 `marketdb` 的 `tools/update_db.py`(已删除;该脚本在本机因 `ModuleNotFoundError: No module named 'marketdb'` 无法运行)。
 
 ## 已知缺口(本仓库不提供)
 
 | 缺口 | 解决方向 |
 |---|---|
 | 行情数据本体(DB 13 GB+) | 不进 git;用户自行 ETL 或 `git-lfs` 单独管理 |
-| `marketdb` Python 包 | 私有仓库 `Financial-API`,环境变量 `FINANCIAL_API_PATH` |
 | 测试数据 fixture | 当前测试依赖真实 DuckDB;离线 mock 在 TODO |
 
 ## 项目元信息
