@@ -52,6 +52,10 @@ PRESETS: dict[str, dict] = {
         "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
+        # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate threshold。
+        # Round 14 (2026-09-28) 在 portfolio.py:175-189, 271-272 引入,默认 0.05。
+        # backtrader_engine.py:223 + backtest.py (R5 修) 均显式读取此 key。
+        "nav_gate_ratio": 0.05,
         "atr_tp_mult": 4.0,
         "atr_sl_mult": 1.0,
         "signal": {
@@ -101,6 +105,10 @@ PRESETS: dict[str, dict] = {
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
+        # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate threshold。
+        # Round 14 (2026-09-28) 在 portfolio.py:175-189, 271-272 引入,默认 0.05。
+        # backtrader_engine.py:223 + backtest.py (R5 修) 均显式读取此 key。
+        "nav_gate_ratio": 0.05,
         "atr_tp_mult": 3.0, "atr_sl_mult": 1.0,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -140,6 +148,10 @@ PRESETS: dict[str, dict] = {
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
+        # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate threshold。
+        # Round 14 (2026-09-28) 在 portfolio.py:175-189, 271-272 引入,默认 0.05。
+        # backtrader_engine.py:223 + backtest.py (R5 修) 均显式读取此 key。
+        "nav_gate_ratio": 0.05,
         "atr_tp_mult": 4.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -179,6 +191,10 @@ PRESETS: dict[str, dict] = {
         "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
+        # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate threshold。
+        # Round 14 (2026-09-28) 在 portfolio.py:175-189, 271-272 引入,默认 0.05。
+        # backtrader_engine.py:223 + backtest.py (R5 修) 均显式读取此 key。
+        "nav_gate_ratio": 0.05,
         "atr_tp_mult": 4.0, "atr_sl_mult": 1.0,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -222,6 +238,10 @@ PRESETS: dict[str, dict] = {
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
+        # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate threshold。
+        # Round 14 (2026-09-28) 在 portfolio.py:175-189, 271-272 引入,默认 0.05。
+        # backtrader_engine.py:223 + backtest.py (R5 修) 均显式读取此 key。
+        "nav_gate_ratio": 0.05,
         "atr_tp_mult": 4.0, "atr_sl_mult": 1.0,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -261,6 +281,10 @@ PRESETS: dict[str, dict] = {
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
+        # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate threshold。
+        # Round 14 (2026-09-28) 在 portfolio.py:175-189, 271-272 引入,默认 0.05。
+        # backtrader_engine.py:223 + backtest.py (R5 修) 均显式读取此 key。
+        "nav_gate_ratio": 0.05,
         "atr_tp_mult": 4.0, "atr_sl_mult": 1.0,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -308,6 +332,10 @@ PRESETS: dict[str, dict] = {
         "max_hold": 10, "max_positions": 1, "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
+        # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate threshold。
+        # Round 14 (2026-09-28) 在 portfolio.py:175-189, 271-272 引入,默认 0.05。
+        # backtrader_engine.py:223 + backtest.py (R5 修) 均显式读取此 key。
+        "nav_gate_ratio": 0.05,
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -351,6 +379,10 @@ PRESETS: dict[str, dict] = {
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
+        # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate threshold。
+        # Round 14 (2026-09-28) 在 portfolio.py:175-189, 271-272 引入,默认 0.05。
+        # backtrader_engine.py:223 + backtest.py (R5 修) 均显式读取此 key。
+        "nav_gate_ratio": 0.05,
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -390,6 +422,10 @@ PRESETS: dict[str, dict] = {
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
+        # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate threshold。
+        # Round 14 (2026-09-28) 在 portfolio.py:175-189, 271-272 引入,默认 0.05。
+        # backtrader_engine.py:223 + backtest.py (R5 修) 均显式读取此 key。
+        "nav_gate_ratio": 0.05,
         "atr_tp_mult": 4.0, "atr_sl_mult": 1.0,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -433,6 +469,10 @@ PRESETS: dict[str, dict] = {
         "max_hold": 10, "max_positions": 1, "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
+        # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate threshold。
+        # Round 14 (2026-09-28) 在 portfolio.py:175-189, 271-272 引入,默认 0.05。
+        # backtrader_engine.py:223 + backtest.py (R5 修) 均显式读取此 key。
+        "nav_gate_ratio": 0.05,
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -487,6 +527,10 @@ PRESETS: dict[str, dict] = {
         "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
+        # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate threshold。
+        # Round 14 (2026-09-28) 在 portfolio.py:175-189, 271-272 引入,默认 0.05。
+        # backtrader_engine.py:223 + backtest.py (R5 修) 均显式读取此 key。
+        "nav_gate_ratio": 0.05,
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -535,6 +579,10 @@ PRESETS: dict[str, dict] = {
         "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
+        # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate threshold。
+        # Round 14 (2026-09-28) 在 portfolio.py:175-189, 271-272 引入,默认 0.05。
+        # backtrader_engine.py:223 + backtest.py (R5 修) 均显式读取此 key。
+        "nav_gate_ratio": 0.05,
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -574,6 +622,10 @@ PRESETS: dict[str, dict] = {
         "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
+        # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate threshold。
+        # Round 14 (2026-09-28) 在 portfolio.py:175-189, 271-272 引入,默认 0.05。
+        # backtrader_engine.py:223 + backtest.py (R5 修) 均显式读取此 key。
+        "nav_gate_ratio": 0.05,
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -619,6 +671,10 @@ PRESETS: dict[str, dict] = {
         "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
+        # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate threshold。
+        # Round 14 (2026-09-28) 在 portfolio.py:175-189, 271-272 引入,默认 0.05。
+        # backtrader_engine.py:223 + backtest.py (R5 修) 均显式读取此 key。
+        "nav_gate_ratio": 0.05,
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -666,6 +722,10 @@ PRESETS: dict[str, dict] = {
         "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
+        # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate threshold。
+        # Round 14 (2026-09-28) 在 portfolio.py:175-189, 271-272 引入,默认 0.05。
+        # backtrader_engine.py:223 + backtest.py (R5 修) 均显式读取此 key。
+        "nav_gate_ratio": 0.05,
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -718,6 +778,10 @@ PRESETS: dict[str, dict] = {
         "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
+        # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate threshold。
+        # Round 14 (2026-09-28) 在 portfolio.py:175-189, 271-272 引入,默认 0.05。
+        # backtrader_engine.py:223 + backtest.py (R5 修) 均显式读取此 key。
+        "nav_gate_ratio": 0.05,
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -764,6 +828,10 @@ PRESETS: dict[str, dict] = {
         "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
+        # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate threshold。
+        # Round 14 (2026-09-28) 在 portfolio.py:175-189, 271-272 引入,默认 0.05。
+        # backtrader_engine.py:223 + backtest.py (R5 修) 均显式读取此 key。
+        "nav_gate_ratio": 0.05,
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -804,6 +872,10 @@ PRESETS: dict[str, dict] = {
         "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
+        # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate threshold。
+        # Round 14 (2026-09-28) 在 portfolio.py:175-189, 271-272 引入,默认 0.05。
+        # backtrader_engine.py:223 + backtest.py (R5 修) 均显式读取此 key。
+        "nav_gate_ratio": 0.05,
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -845,6 +917,10 @@ PRESETS: dict[str, dict] = {
         "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
+        # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate threshold。
+        # Round 14 (2026-09-28) 在 portfolio.py:175-189, 271-272 引入,默认 0.05。
+        # backtrader_engine.py:223 + backtest.py (R5 修) 均显式读取此 key。
+        "nav_gate_ratio": 0.05,
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -886,6 +962,10 @@ PRESETS: dict[str, dict] = {
         "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
+        # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate threshold。
+        # Round 14 (2026-09-28) 在 portfolio.py:175-189, 271-272 引入,默认 0.05。
+        # backtrader_engine.py:223 + backtest.py (R5 修) 均显式读取此 key。
+        "nav_gate_ratio": 0.05,
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.5,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -929,6 +1009,10 @@ PRESETS: dict[str, dict] = {
         "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
+        # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate threshold。
+        # Round 14 (2026-09-28) 在 portfolio.py:175-189, 271-272 引入,默认 0.05。
+        # backtrader_engine.py:223 + backtest.py (R5 修) 均显式读取此 key。
+        "nav_gate_ratio": 0.05,
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.6,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,
@@ -972,6 +1056,10 @@ PRESETS: dict[str, dict] = {
         "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
+        # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate threshold。
+        # Round 14 (2026-09-28) 在 portfolio.py:175-189, 271-272 引入,默认 0.05。
+        # backtrader_engine.py:223 + backtest.py (R5 修) 均显式读取此 key。
+        "nav_gate_ratio": 0.05,
         "atr_tp_mult": 6.0, "atr_sl_mult": 1.75,
         "signal": {
             "breakout_a": True, "breakout_vol_min": 1.5,

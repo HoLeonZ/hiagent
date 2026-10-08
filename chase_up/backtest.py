@@ -132,6 +132,9 @@ def run_backtest(
         # V8 (2026-09-22, CLAUDE.md §4): preset→strategy explicit plumbing。
         intraday_tiebreak=p.get("intraday_tiebreak", "sl_first"),
         max_volume_participation=p.get("max_volume_participation", 0.10),
+        # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate, 与 backtrader_engine.py:223 保持一致。
+        # portfolio.py:175-189 文档化 Round 14 (2026-09-28) 引入,默认 0.05。
+        nav_gate_ratio=p.get("nav_gate_ratio", 0.05),
     )
 
     metrics = compute_metrics(
