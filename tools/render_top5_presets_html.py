@@ -11,12 +11,12 @@ For each of 5 hand-picked top presets (from results/all_strategies_report.json
 Library: plotly.js via CDN (https://cdn.plot.ly/plotly-2.x.x.min.js).
 Window: entry − WINDOW_BEFORE days … exit + WINDOW_AFTER days.
 
-The 5 presets:
-  1. chase_up / chase_v11_pos2_equal_atr_tp6_sl15_mh18_score17
-  2. short_reversal / v40_tp_08
-  3. short_reversal / v42_buf05
-  4. short_reversal / v43_ratio03
-  5. short_reversal / v44_ratio02_buf07
+The 5 presets (2026-10-09 re-backtest, chase_up+uptrend fresh, short_reversal reused):
+  1. short_reversal / v36_d_converge
+  2. short_reversal / v44_ratio02_buf07
+  3. short_reversal / v45_ratio01_buf10
+  4. short_reversal / v40_tp_07
+  5. short_reversal / v38_a_relaxed
 
 Per-engine indicator coverage (all preset-required indicators visualized):
   chase_up (v11):
@@ -27,7 +27,7 @@ Per-engine indicator coverage (all preset-required indicators visualized):
     row 4 — mom120 (120-day momentum) + atr_pct (volatility %)
     row 5 — amount60 (60-day mean turnover, ¥)
 
-  short_reversal (v40-v44, d_mode='converge_strict'):
+  short_reversal (v36-v45, d_mode='converge_strict'):
     row 1 — K-line + MA5/MA10/MA20/MA60 + entry/exit markers (short entry ↓,
             cover ↑) + horizontal/vertical entry/exit lines
     row 2 — Volume bars
@@ -68,11 +68,11 @@ from short_reversal.render_html_report import (  # noqa: E402
 # ---------------------------------------------------------------- top-5 presets
 
 TOP5: list[tuple[str, str]] = [
-    ("chase_up", "chase_v11_pos2_equal_atr_tp6_sl15_mh18_score17"),
-    ("short_reversal", "v40_tp_08"),
-    ("short_reversal", "v42_buf05"),
-    ("short_reversal", "v43_ratio03"),
+    ("short_reversal", "v36_d_converge"),
     ("short_reversal", "v44_ratio02_buf07"),
+    ("short_reversal", "v45_ratio01_buf10"),
+    ("short_reversal", "v40_tp_07"),
+    ("short_reversal", "v38_a_relaxed"),
 ]
 
 WINDOW_BEFORE = 20
