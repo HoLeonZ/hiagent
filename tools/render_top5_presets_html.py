@@ -542,7 +542,7 @@ def _render_per_trade_chart_chase(
 
     dates = [d.strftime("%Y-%m-%d") for d in window["date"]]
     kline = [
-        [float(r.open), float(r.close), float(r.low), float(r.high)]
+        [float(r.open), float(r.high), float(r.low), float(r.close)]
         for r in window.itertuples()
     ]
     ma5 = _series(window, "ma5")
@@ -692,7 +692,7 @@ def _render_per_trade_chart_short(
 
     dates = [d.strftime("%Y-%m-%d") for d in window["date"]]
     kline = [
-        [float(r.open), float(r.close), float(r.low), float(r.high)]
+        [float(r.open), float(r.high), float(r.low), float(r.close)]
         for r in window.itertuples()
     ]
     ma5 = _series(window, "ma5")
