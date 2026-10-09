@@ -19,6 +19,11 @@ PRESET_V1 = dict(
     max_hold=5,
     atr_period=14,
     atr_sl_mult=1.5,
+    # V3a (2026-09-22, CLAUDE.md §3): PIT universe declaration.
+    # data_feed.py:140-225 load_universe_data hardcodes P8 + main-board
+    # + liquidity filter. Declared here for compliance consistency with
+    # chase_up / short_reversal / uptrend_pullback presets.
+    universe="mainboard_only",
     tp_pct=0.06,
     # V6'' (2026-09-22, CLAUDE.md §4): SL fraction for intraday tiebreak.
     # Used by backtrader_engine to compute sl_p = entry × (1 - sl_pct)。

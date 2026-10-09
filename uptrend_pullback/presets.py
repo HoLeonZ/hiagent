@@ -80,9 +80,6 @@ PRESETS: dict[str, dict] = {
         "intraday_tiebreak": "sl_first",
         # V5 (R8, 2026-09-21, CLAUDE.md §4): 单笔成交量 ≤ Bar_Volume × 0.10
         "max_volume_participation": 0.10,
-        # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System 声明。
-        "price_source_for_signal": "adj_close",
-        "price_source_for_execution": "raw_close",
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # v33_long_reverse_v19 是 v3→v19 顺序 sweep (每版扩展前一版邻域),
         # 总比较数 ≈ 19 版本 × 邻域 ≈ n_comparisons。
