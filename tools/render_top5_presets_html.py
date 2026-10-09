@@ -571,10 +571,10 @@ def _render_per_trade_chart_chase(
             {"type": "candlestick", "x": dates,
              "open": [k[0] for k in kline], "high": [k[1] for k in kline],
              "low": [k[2] for k in kline], "close": [k[3] for k in kline],
-             "name": "K线",
+             "name": "K线 (红涨绿跌)",
              "increasing": {"line": {"color": "#ef232a"}, "fillcolor": "#ef232a"},
              "decreasing": {"line": {"color": "#14b143"}, "fillcolor": "#14b143"},
-             "xaxis": "x", "yaxis": "y", "showlegend": False},
+             "xaxis": "x", "yaxis": "y", "showlegend": True},
             {"type": "scatter", "mode": "lines", "x": dates, "y": ma5,
              "name": "MA5", "line": {"color": "#d9d9d9", "width": 1},
              "xaxis": "x", "yaxis": "y"},
@@ -719,10 +719,10 @@ def _render_per_trade_chart_short(
             {"type": "candlestick", "x": dates,
              "open": [k[0] for k in kline], "high": [k[1] for k in kline],
              "low": [k[2] for k in kline], "close": [k[3] for k in kline],
-             "name": "K线",
+             "name": "K线 (红涨绿跌)",
              "increasing": {"line": {"color": "#ef232a"}, "fillcolor": "#ef232a"},
              "decreasing": {"line": {"color": "#14b143"}, "fillcolor": "#14b143"},
-             "xaxis": "x", "yaxis": "y", "showlegend": False},
+             "xaxis": "x", "yaxis": "y", "showlegend": True},
             {"type": "scatter", "mode": "lines", "x": dates, "y": ma5,
              "name": "MA5", "line": {"color": "#d9d9d9", "width": 1},
              "xaxis": "x", "yaxis": "y"},
@@ -944,6 +944,8 @@ def _render_html(
         legend = (
             "<div class='legend-box'>"
             "<b>chase_up v11 chart indicators (all preset-required):</b><br>"
+            "<b>K线配色 (A 股惯例):</b> 红色 = 收涨 (close &gt; open), "
+            "绿色 = 收跌 (close &lt; open)<br>"
             "Row 1 (Price): K线 + MA5/MA10/MA20/MA60/MA120 + high20_prev (突破参考线) "
             "+ Entry ▲ (橙) / Exit ▼ (紫)<br>"
             "Row 2: Volume bars + vol_ratio (vol/MA20)<br>"
@@ -955,7 +957,9 @@ def _render_html(
     else:
         legend = (
             "<div class='legend-box'>"
-            "<b>short_reversal v40-v44 chart indicators (all preset-required):</b><br>"
+            "<b>short_reversal v36-v45 chart indicators (all preset-required):</b><br>"
+            "<b>K线配色 (A 股惯例):</b> 红色 = 收涨 (close &gt; open), "
+            "绿色 = 收跌 (close &lt; open)<br>"
             "Row 1 (Price): K线 + MA5/MA10/MA20/MA60 + Short Entry ▼ (橙) / Cover ▲ (紫)<br>"
             "Row 2: Volume bars<br>"
             "Row 3: MACD (DIF 橙 + DEA 蓝 + histogram)<br>"
