@@ -68,11 +68,13 @@ from short_reversal.render_html_report import (  # noqa: E402
 # ---------------------------------------------------------------- top-5 presets
 
 TOP5: list[tuple[str, str]] = [
+    # AND 化后 (2026-10-10) 新增 chase_up v11 — 展示 OR→AND 后效果:
+    # 73 trades (OR) → 14 trades (AND),sub_signal_type 全是 "ABC",CAGR +318% → +124%
+    ("chase_up", "chase_v11_pos2_equal_atr_tp6_sl15_mh18_score17"),
     ("short_reversal", "v36_d_converge"),
     ("short_reversal", "v44_ratio02_buf07"),
     ("short_reversal", "v45_ratio01_buf10"),
     ("short_reversal", "v40_tp_07"),
-    ("short_reversal", "v38_a_relaxed"),
 ]
 
 WINDOW_BEFORE = 20

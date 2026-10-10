@@ -143,6 +143,9 @@ def _safe_signal_score(
     # 用法:过滤掉"刚站上 MA20 一天"的假突破,要求 trend 已经持续 N 日。
     # no-lookahead 安全:T 日用的 streak 数到 T-1 收盘为止。
     close_above_ma20_streak: int = 0,
+    # 全部子信号都必须满足才入选(默认 False = OR 模式)
+    # True = AND 模式:每个 ENABLED 子信号都需通过,disabled 视作 trivially true
+    require_all_sub_signals: bool = False,
 ) -> pd.DataFrame:
     """3 子信号 OR 融合 + 信号级硬过滤,返回 hits DataFrame。"""
     # 信号级硬过滤(P0/P7/P8 不变量)
@@ -216,8 +219,23 @@ def _safe_signal_score(
         & (df["vol_ratio"] >= macross_vol_min)
     )
 
-    # 任一子信号触发即入选
-    mask = sig_a | sig_b | sig_c
+    # 安全兜底:没有任何子信号启用 → 不入选(OR/AND 一致)
+    if not any([breakout_a, momentum_b, macross_c]):
+        return pd.DataFrame(columns=ENTRY_COLS)
+
+    # 入选逻辑:
+    #   默认 OR 模式      — 任一子信号触发即入选
+    #   require_all=True — AND 模式:每个 ENABLED 子信号都必须通过
+    #                       disabled 子信号视作 trivially true (不参与 AND 判定)
+    #   例:v4 (macross_c=False) + AND 模式 → A AND B 即可 (C 关闭,不要求)
+    if require_all_sub_signals:
+        mask = (
+            (sig_a | (not breakout_a))
+            & (sig_b | (not momentum_b))
+            & (sig_c | (not macross_c))
+        )
+    else:
+        mask = sig_a | sig_b | sig_c
 
     if not mask.any():
         return pd.DataFrame(columns=ENTRY_COLS)
@@ -310,10 +328,17 @@ def select_entries(
     ma60_slope_window: int = 20,
     min_score: float = 0.0,
     close_above_ma20_streak: int = 0,
+    # 全部子信号都必须满足才入选(默认 False = OR 模式)
+    # True = AND 模式:每个 ENABLED 子信号都需通过
+    require_all_sub_signals: bool = False,
 ) -> pd.DataFrame:
     """追涨 OR 融合信号 (3 子信号 + 信号级硬过滤)。
 
     排序分 score = max(子信号强度),portfolio 按分数降序抢占仓位。
+
+    require_all_sub_signals=True 时切换为 AND 模式:
+    所有 ENABLED 子信号 (A/B/C) 都必须通过,disabled 子信号视作 trivially true。
+    例:v4 (macross_c=False) + AND → A AND B 即可 (C 关闭不参与判定)。
     """
     return _safe_signal_score(
         panel_ind,
@@ -339,4 +364,5 @@ def select_entries(
         ma60_slope_window=ma60_slope_window,
         min_score=min_score,
         close_above_ma20_streak=close_above_ma20_streak,
+        require_all_sub_signals=require_all_sub_signals,
     )

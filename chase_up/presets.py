@@ -73,6 +73,7 @@ PRESETS: dict[str, dict] = {
             "atr_pct_low": 0.03,
             "atr_pct_high": 0.10,
             "close_ma60_buffer": 0.0,
+            "require_all_sub_signals": True,
         },
     },
     # ----- v1a: TP 收紧到 mult=3 (期望更高 TP 命中率) -----
@@ -116,6 +117,7 @@ PRESETS: dict[str, dict] = {
             "macross_c": True, "macross_vol_min": 1.2,
             "min_mom120": 0.05, "min_amount": 3e7, "max_amount": 3e8,
             "atr_pct_low": 0.03, "atr_pct_high": 0.10,
+            "require_all_sub_signals": True,
         },
     },
     # ----- v1b: SL 放宽到 mult=1.5 (覆盖更大 gap) -----
@@ -159,6 +161,7 @@ PRESETS: dict[str, dict] = {
             "macross_c": True, "macross_vol_min": 1.2,
             "min_mom120": 0.05, "min_amount": 3e7, "max_amount": 3e8,
             "atr_pct_low": 0.03, "atr_pct_high": 0.10,
+            "require_all_sub_signals": True,
         },
     },
     # ----- v1c: max_hold 拉长到 18 (给突破留时间) -----
@@ -202,6 +205,7 @@ PRESETS: dict[str, dict] = {
             "macross_c": True, "macross_vol_min": 1.2,
             "min_mom120": 0.05, "min_amount": 3e7, "max_amount": 3e8,
             "atr_pct_low": 0.03, "atr_pct_high": 0.10,
+            "require_all_sub_signals": True,
         },
     },
     # ----- v2: 历史=多仓分散 (max_positions=3 + equal sizing)
@@ -249,6 +253,7 @@ PRESETS: dict[str, dict] = {
             "macross_c": True, "macross_vol_min": 1.2,
             "min_mom120": 0.05, "min_amount": 3e7, "max_amount": 3e8,
             "atr_pct_low": 0.03, "atr_pct_high": 0.10,
+            "require_all_sub_signals": True,
         },
     },
     # ----- v3: mom120 收紧到 0.15 (更强中期趋势要求) -----
@@ -292,6 +297,7 @@ PRESETS: dict[str, dict] = {
             "macross_c": True, "macross_vol_min": 1.2,
             "min_mom120": 0.15, "min_amount": 3e7, "max_amount": 3e8,
             "atr_pct_low": 0.03, "atr_pct_high": 0.10,
+            "require_all_sub_signals": True,
         },
     },
     # ----- v5: 历史=2 仓分散 (max_positions=2 + equal sizing)
@@ -343,6 +349,7 @@ PRESETS: dict[str, dict] = {
             "macross_c": True, "macross_vol_min": 1.2,
             "min_mom120": 0.05, "min_amount": 3e7, "max_amount": 3e8,
             "atr_pct_low": 0.03, "atr_pct_high": 0.10,
+            "require_all_sub_signals": True,
         },
     },
     # ----- v6: 历史=3 槽 all_in (max_positions=3)
@@ -390,6 +397,7 @@ PRESETS: dict[str, dict] = {
             "macross_c": True, "macross_vol_min": 1.2,
             "min_mom120": 0.05, "min_amount": 3e7, "max_amount": 3e8,
             "atr_pct_low": 0.03, "atr_pct_high": 0.10,
+            "require_all_sub_signals": True,
         },
     },
     # ----- v4: 子信号只保留 A + B (去掉金叉,更高频) -----
@@ -433,6 +441,7 @@ PRESETS: dict[str, dict] = {
             "macross_c": False, "macross_vol_min": 1.2,
             "min_mom120": 0.05, "min_amount": 3e7, "max_amount": 3e8,
             "atr_pct_low": 0.03, "atr_pct_high": 0.10,
+            "require_all_sub_signals": True,
         },
     },
     # ----- v7: 历史=v5 + 中长期趋势过滤(MA60>MA120 + MA60 上行 20 日)
@@ -483,6 +492,7 @@ PRESETS: dict[str, dict] = {
             "require_ma60_gt_ma120": True,
             "require_ma60_rising": True,
             "ma60_slope_window": 20,
+            "require_all_sub_signals": True,
         },
     },
     # ----- v8: 历史=v5 + max_hold 10 → 18(给赢家更长时间奔跑)
@@ -538,6 +548,7 @@ PRESETS: dict[str, dict] = {
             "macross_c": True, "macross_vol_min": 1.2,
             "min_mom120": 0.05, "min_amount": 3e7, "max_amount": 3e8,
             "atr_pct_low": 0.03, "atr_pct_high": 0.10,
+            "require_all_sub_signals": True,
         },
     },
     # ----- v9: v8 + 信号强度阈值(score >= 1.2)-----
@@ -591,6 +602,7 @@ PRESETS: dict[str, dict] = {
             "min_mom120": 0.05, "min_amount": 3e7, "max_amount": 3e8,
             "atr_pct_low": 0.03, "atr_pct_high": 0.10,
             "min_score": 1.2,
+            "require_all_sub_signals": True,
         },
     },
     # ----- v10: v9 + min_score 1.2 → 1.6(过滤更强信号)-----
@@ -634,6 +646,7 @@ PRESETS: dict[str, dict] = {
             "min_mom120": 0.05, "min_amount": 3e7, "max_amount": 3e8,
             "atr_pct_low": 0.03, "atr_pct_high": 0.10,
             "min_score": 1.6,
+            "require_all_sub_signals": True,
         },
     },
     # ----- v11: v10 + min_score 1.6 → 1.7(进一步收紧信号强度门槛)-----
@@ -683,6 +696,7 @@ PRESETS: dict[str, dict] = {
             "min_mom120": 0.05, "min_amount": 3e7, "max_amount": 3e8,
             "atr_pct_low": 0.03, "atr_pct_high": 0.10,
             "min_score": 1.7,
+            "require_all_sub_signals": True,
         },
     },
     # ----- v12: v11 + atr_pct_low 0.03 → 0.035(剔除 atr% 偏低噪音信号)-----
@@ -734,6 +748,7 @@ PRESETS: dict[str, dict] = {
             "min_mom120": 0.05, "min_amount": 3e7, "max_amount": 3e8,
             "atr_pct_low": 0.035, "atr_pct_high": 0.10,
             "min_score": 1.7,
+            "require_all_sub_signals": True,
         },
     },
     # ----- v13: v12 + min_mom120 0.05 → 0.10 + atr_pct_high 0.10 → 0.085-----
@@ -790,6 +805,7 @@ PRESETS: dict[str, dict] = {
             "min_mom120": 0.10, "min_amount": 3e7, "max_amount": 3e8,
             "atr_pct_low": 0.035, "atr_pct_high": 0.085,
             "min_score": 1.7,
+            "require_all_sub_signals": True,
         },
     },
     # ----- v14: v13 + min_mom120 0.10 → 0.11(mom120 进一步收紧)-----
@@ -840,6 +856,7 @@ PRESETS: dict[str, dict] = {
             "min_mom120": 0.11, "min_amount": 3e7, "max_amount": 3e8,
             "atr_pct_low": 0.035, "atr_pct_high": 0.085,
             "min_score": 1.7,
+            "require_all_sub_signals": True,
         },
     },
     # ----- v15: v14 + close_ma60_buffer=0.08 (Pareto WF improvement) -----
@@ -885,6 +902,7 @@ PRESETS: dict[str, dict] = {
             "atr_pct_low": 0.035, "atr_pct_high": 0.085,
             "min_score": 1.7,
             "close_ma60_buffer": 0.08,
+            "require_all_sub_signals": True,
         },
     },
     # ----- v16: v15 + min_mom120 0.11 → 0.115 (再 Pareto WF mean) -----
@@ -930,6 +948,7 @@ PRESETS: dict[str, dict] = {
             "atr_pct_low": 0.035, "atr_pct_high": 0.085,
             "min_score": 1.7,
             "close_ma60_buffer": 0.08,
+            "require_all_sub_signals": True,
         },
     },
     # ----- v17: v16 + atr_pct_high 0.085 → 0.082 (Pareto WF mean 突破) -----
@@ -975,6 +994,7 @@ PRESETS: dict[str, dict] = {
             "atr_pct_low": 0.035, "atr_pct_high": 0.082,
             "min_score": 1.7,
             "close_ma60_buffer": 0.08,
+            "require_all_sub_signals": True,
         },
     },
     # ----- v18: v17 + atr_sl_mult 1.5 → 1.6 (Pareto 双改善:locked CAGR↑+WF mean↑) -----
@@ -1022,6 +1042,7 @@ PRESETS: dict[str, dict] = {
             "atr_pct_low": 0.035, "atr_pct_high": 0.082,
             "min_score": 1.7,
             "close_ma60_buffer": 0.08,
+            "require_all_sub_signals": True,
         },
     },
     # ----- v19: v18 + atr_sl_mult 1.6 → 1.75 (激进型,locked 增益最大但 WF worst 退化) -----
@@ -1069,6 +1090,7 @@ PRESETS: dict[str, dict] = {
             "atr_pct_low": 0.035, "atr_pct_high": 0.082,
             "min_score": 1.7,
             "close_ma60_buffer": 0.08,
+            "require_all_sub_signals": True,
         },
     },
 }
