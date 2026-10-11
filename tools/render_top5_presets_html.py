@@ -68,11 +68,13 @@ from short_reversal.render_html_report import (  # noqa: E402
 # ---------------------------------------------------------------- top-5 presets
 
 TOP5: list[tuple[str, str]] = [
+    # AND 化后 (2026-10-10) 新增 chase_up v11 — 展示 OR→AND 后效果:
+    # 73 trades (OR) → 14 trades (AND),sub_signal_type 全是 "ABC",CAGR +318% → +124%
+    ("chase_up", "chase_v11_pos2_equal_atr_tp6_sl15_mh18_score17"),
     ("short_reversal", "v36_d_converge"),
     ("short_reversal", "v44_ratio02_buf07"),
     ("short_reversal", "v45_ratio01_buf10"),
     ("short_reversal", "v40_tp_07"),
-    ("short_reversal", "v38_a_relaxed"),
 ]
 
 WINDOW_BEFORE = 20
@@ -542,7 +544,7 @@ def _render_per_trade_chart_chase(
 
     dates = [d.strftime("%Y-%m-%d") for d in window["date"]]
     kline = [
-        [float(r.open), float(r.close), float(r.low), float(r.high)]
+        [float(r.open), float(r.high), float(r.low), float(r.close)]
         for r in window.itertuples()
     ]
     ma5 = _series(window, "ma5")
@@ -571,10 +573,10 @@ def _render_per_trade_chart_chase(
             {"type": "candlestick", "x": dates,
              "open": [k[0] for k in kline], "high": [k[1] for k in kline],
              "low": [k[2] for k in kline], "close": [k[3] for k in kline],
-             "name": "K线",
+             "name": "K线 (红涨绿跌)",
              "increasing": {"line": {"color": "#ef232a"}, "fillcolor": "#ef232a"},
              "decreasing": {"line": {"color": "#14b143"}, "fillcolor": "#14b143"},
-             "xaxis": "x", "yaxis": "y", "showlegend": False},
+             "xaxis": "x", "yaxis": "y", "showlegend": True},
             {"type": "scatter", "mode": "lines", "x": dates, "y": ma5,
              "name": "MA5", "line": {"color": "#d9d9d9", "width": 1},
              "xaxis": "x", "yaxis": "y"},
@@ -605,28 +607,28 @@ def _render_per_trade_chart_chase(
              "name": f"Exit ¥{xp:.2f}", "xaxis": "x", "yaxis": "y"},
             {"type": "bar", "x": dates, "y": volumes, "name": "Volume",
              "marker": {"color": "#bfbfbf"}, "xaxis": "x2", "yaxis": "y2",
-             "showlegend": True},
+             "showlegend": False},
             {"type": "scatter", "mode": "lines", "x": dates, "y": vol_ratio,
              "name": "vol_ratio (vol/MA20)", "line": {"color": "#fa541c", "width": 1},
-             "xaxis": "x2", "yaxis": "y2"},
+             "xaxis": "x2", "yaxis": "y2", "showlegend": False},
             {"type": "scatter", "mode": "lines", "x": dates, "y": dif,
              "name": "MACD DIF", "line": {"color": "#fa8c16", "width": 1.5},
-             "xaxis": "x3", "yaxis": "y3"},
+             "xaxis": "x3", "yaxis": "y3", "showlegend": False},
             {"type": "scatter", "mode": "lines", "x": dates, "y": dea,
              "name": "MACD DEA", "line": {"color": "#1890ff", "width": 1.5},
-             "xaxis": "x3", "yaxis": "y3"},
+             "xaxis": "x3", "yaxis": "y3", "showlegend": False},
             {"type": "bar", "x": dates, "y": macd_b, "name": "MACD bar",
              "marker": {"color": "#999"}, "xaxis": "x3", "yaxis": "y3",
              "showlegend": False},
             {"type": "scatter", "mode": "lines", "x": dates, "y": mom120,
              "name": "mom120 (中长动量)", "line": {"color": "#722ed1", "width": 1.5},
-             "xaxis": "x4", "yaxis": "y4"},
+             "xaxis": "x4", "yaxis": "y4", "showlegend": False},
             {"type": "scatter", "mode": "lines", "x": dates, "y": atr_pct,
              "name": "atr_pct (波动率)", "line": {"color": "#eb2f96", "width": 1.5},
-             "xaxis": "x4", "yaxis": "y4"},
+             "xaxis": "x4", "yaxis": "y4", "showlegend": False},
             {"type": "scatter", "mode": "lines", "x": dates, "y": amount60,
              "name": "amount60 (60日均成交额)", "line": {"color": "#2f54eb", "width": 1.5},
-             "xaxis": "x5", "yaxis": "y5"},
+             "xaxis": "x5", "yaxis": "y5", "showlegend": False},
         ],
         "layout": {
             "title": {
@@ -636,6 +638,7 @@ def _render_per_trade_chart_chase(
                     f"net=¥{trade['net_pnl']:+,.0f} ({trade['net_return']*100:+.2f}%)"
                 ),
                 "font": {"size": 13},
+                "y": 0.995, "x": 0.5, "xanchor": "center",
             },
             "xaxis": {"rangeslider": {"visible": False}, "type": "category",
                        "tickangle": -30, "nticks": 10},
@@ -656,9 +659,10 @@ def _render_per_trade_chart_chase(
                  "x0": ed_str, "x1": xd_str, "y0": xp, "y1": xp,
                  "line": {"color": "#722ed1", "width": 1, "dash": "dash"}},
             ],
-            "legend": {"orientation": "h", "y": 1.10, "x": 0,
-                       "font": {"size": 10}},
-            "margin": {"l": 60, "r": 20, "t": 70, "b": 30},
+            "legend": {"orientation": "h", "y": 1.06, "x": 0,
+                       "xanchor": "left", "font": {"size": 10},
+                       "groupclick": "toggleitem"},
+            "margin": {"l": 60, "r": 20, "t": 100, "b": 30},
             "height": 800,
         },
     }
@@ -692,7 +696,7 @@ def _render_per_trade_chart_short(
 
     dates = [d.strftime("%Y-%m-%d") for d in window["date"]]
     kline = [
-        [float(r.open), float(r.close), float(r.low), float(r.high)]
+        [float(r.open), float(r.high), float(r.low), float(r.close)]
         for r in window.itertuples()
     ]
     ma5 = _series(window, "ma5")
@@ -719,10 +723,10 @@ def _render_per_trade_chart_short(
             {"type": "candlestick", "x": dates,
              "open": [k[0] for k in kline], "high": [k[1] for k in kline],
              "low": [k[2] for k in kline], "close": [k[3] for k in kline],
-             "name": "K线",
+             "name": "K线 (红涨绿跌)",
              "increasing": {"line": {"color": "#ef232a"}, "fillcolor": "#ef232a"},
              "decreasing": {"line": {"color": "#14b143"}, "fillcolor": "#14b143"},
-             "xaxis": "x", "yaxis": "y", "showlegend": False},
+             "xaxis": "x", "yaxis": "y", "showlegend": True},
             {"type": "scatter", "mode": "lines", "x": dates, "y": ma5,
              "name": "MA5", "line": {"color": "#d9d9d9", "width": 1},
              "xaxis": "x", "yaxis": "y"},
@@ -748,27 +752,29 @@ def _render_per_trade_chart_short(
                         "line": {"color": "#000", "width": 1}},
              "name": f"Cover ¥{xp:.2f}", "xaxis": "x", "yaxis": "y"},
             {"type": "bar", "x": dates, "y": volumes, "name": "Volume",
-             "marker": {"color": "#bfbfbf"}, "xaxis": "x2", "yaxis": "y2"},
+             "marker": {"color": "#bfbfbf"}, "xaxis": "x2", "yaxis": "y2",
+             "showlegend": False},
             {"type": "scatter", "mode": "lines", "x": dates, "y": dif,
              "name": "MACD DIF", "line": {"color": "#fa8c16", "width": 1.5},
-             "xaxis": "x3", "yaxis": "y3"},
+             "xaxis": "x3", "yaxis": "y3", "showlegend": False},
             {"type": "scatter", "mode": "lines", "x": dates, "y": dea,
              "name": "MACD DEA", "line": {"color": "#1890ff", "width": 1.5},
-             "xaxis": "x3", "yaxis": "y3"},
+             "xaxis": "x3", "yaxis": "y3", "showlegend": False},
             {"type": "bar", "x": dates, "y": macd_b, "name": "MACD bar",
              "marker": {"color": "#999"}, "xaxis": "x3", "yaxis": "y3",
              "showlegend": False},
             {"type": "scatter", "mode": "lines", "x": dates, "y": am60,
              "name": "am60 (60日均成交额)", "line": {"color": "#2f54eb", "width": 1.5},
-             "xaxis": "x4", "yaxis": "y4"},
+             "xaxis": "x4", "yaxis": "y4", "showlegend": False},
             {"type": "scatter", "mode": "lines", "x": dates, "y": below,
              "name": "below_ma60_ratio_60", "line": {"color": "#722ed1", "width": 1.5},
-             "xaxis": "x5", "yaxis": "y5"},
+             "xaxis": "x5", "yaxis": "y5", "showlegend": False},
             {"type": "bar", "x": dates, "y": up_streak, "name": "up_streak",
              "marker": {"color": "#52c41a"}, "xaxis": "x5", "yaxis": "y5",
-             "showlegend": True},
+             "showlegend": False},
             {"type": "bar", "x": dates, "y": pct_chg, "name": "pct_chg",
-             "marker": {"color": "#fa8c16"}, "xaxis": "x6", "yaxis": "y6"},
+             "marker": {"color": "#fa8c16"}, "xaxis": "x6", "yaxis": "y6",
+             "showlegend": False},
         ],
         "layout": {
             "title": {
@@ -778,6 +784,7 @@ def _render_per_trade_chart_short(
                     f"net=¥{trade['net_pnl']:+,.0f} ({trade['net_return']*100:+.2f}%)"
                 ),
                 "font": {"size": 13},
+                "y": 0.995, "x": 0.5, "xanchor": "center",
             },
             "xaxis": {"rangeslider": {"visible": False}, "type": "category",
                        "tickangle": -30, "nticks": 10},
@@ -800,9 +807,10 @@ def _render_per_trade_chart_short(
                  "x0": ed_str, "x1": xd_str, "y0": xp, "y1": xp,
                  "line": {"color": "#722ed1", "width": 1, "dash": "dash"}},
             ],
-            "legend": {"orientation": "h", "y": 1.10, "x": 0,
-                       "font": {"size": 10}},
-            "margin": {"l": 60, "r": 20, "t": 70, "b": 30},
+            "legend": {"orientation": "h", "y": 1.06, "x": 0,
+                       "xanchor": "left", "font": {"size": 10},
+                       "groupclick": "toggleitem"},
+            "margin": {"l": 60, "r": 20, "t": 100, "b": 30},
             "height": 850,
         },
     }
@@ -944,6 +952,8 @@ def _render_html(
         legend = (
             "<div class='legend-box'>"
             "<b>chase_up v11 chart indicators (all preset-required):</b><br>"
+            "<b>K线配色 (A 股惯例):</b> 红色 = 收涨 (close &gt; open), "
+            "绿色 = 收跌 (close &lt; open)<br>"
             "Row 1 (Price): K线 + MA5/MA10/MA20/MA60/MA120 + high20_prev (突破参考线) "
             "+ Entry ▲ (橙) / Exit ▼ (紫)<br>"
             "Row 2: Volume bars + vol_ratio (vol/MA20)<br>"
@@ -955,7 +965,9 @@ def _render_html(
     else:
         legend = (
             "<div class='legend-box'>"
-            "<b>short_reversal v40-v44 chart indicators (all preset-required):</b><br>"
+            "<b>short_reversal v36-v45 chart indicators (all preset-required):</b><br>"
+            "<b>K线配色 (A 股惯例):</b> 红色 = 收涨 (close &gt; open), "
+            "绿色 = 收跌 (close &lt; open)<br>"
             "Row 1 (Price): K线 + MA5/MA10/MA20/MA60 + Short Entry ▼ (橙) / Cover ▲ (紫)<br>"
             "Row 2: Volume bars<br>"
             "Row 3: MACD (DIF 橙 + DEA 蓝 + histogram)<br>"
