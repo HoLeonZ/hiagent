@@ -128,10 +128,9 @@ python3 -m tools.update_db_direct --db "$DNA_STRAT_DB" --target 2026-09-30 --day
 - **Python**:3.10+ (实测 3.14.6)
 - **关键依赖**:duckdb / pandas / numpy / backtrader / pytest
 - **测试**:136 文件,部分 pre-existing 失败(见 git log)
-- **审计历史**:R1-R171 累计,见 `docs/` 目录及 commit log
+- **审计历史**:R1-R171 累计,见 commit log(历史审计报告已从 `docs/` 移除)
 
 ## 详细文档
 
 - [`CLAUDE.md`](./CLAUDE.md) —— 核心哲学与设计约束(必读)
-- [`docs/`](./docs/) —— 历次审计报告(claudemd_full_audit_2026_09_22 等)
 - 各策略目录下的 `README.md` —— 策略特定说明
