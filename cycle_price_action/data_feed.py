@@ -225,3 +225,34 @@ def load_universe_data(
         return universe
     finally:
         con.close()
+
+
+def load_bars_by_code(
+    db_path: str,
+    codes: list[str],
+    start: date,
+    end: date,
+) -> dict[str, pd.DataFrame]:
+    """拉取指定代码 [start, end] 的 v_daily 原始日线(供统一交易报告渲染)。
+
+    SQL 含 ORDER BY(Tick 68 纪律); 与 load_universe_data 相同的 .format 模板风格。
+    """
+    if not codes:
+        return {}
+    con = duckdb.connect(db_path, read_only=True)
+    try:
+        codes_sql = ", ".join(f"'{c}'" for c in codes)
+        panel = con.execute(
+            (
+                "SELECT thscode, date, open, high, low, close, volume, amount "
+                "FROM v_daily WHERE thscode IN ({codes_sql}) "
+                "AND date BETWEEN '{start}' AND '{end}' "
+                "ORDER BY thscode, date"
+            ).format(codes_sql=codes_sql, start=start, end=end)
+        ).fetchdf()
+    finally:
+        con.close()
+    if panel.empty:
+        return {}
+    panel["date"] = pd.to_datetime(panel["date"])
+    return {c: g.reset_index(drop=True) for c, g in panel.groupby("thscode")}
