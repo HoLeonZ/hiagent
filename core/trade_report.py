@@ -58,6 +58,8 @@ def _pct(v, digits: int = 2) -> str:
 
 
 def _slice_bars(bars: pd.DataFrame, entry_date, exit_date) -> pd.DataFrame:
+    bars = bars.copy()
+    bars["date"] = pd.to_datetime(bars["date"])
     lo = pd.Timestamp(entry_date) - pd.Timedelta(days=BAR_PAD_BEFORE_DAYS)
     hi = pd.Timestamp(exit_date) + pd.Timedelta(days=BAR_PAD_AFTER_DAYS)
     return bars[(bars["date"] >= lo) & (bars["date"] <= hi)].reset_index(drop=True)
@@ -137,7 +139,7 @@ def _fmt_cell(col: str, v) -> str:
         return _num(v, 0)
     if col in ("net_return", "atr_pct"):
         return _pct(v)
-    if v is None or (isinstance(v, float) and np.isnan(v)):
+    if v is None or pd.isna(v):
         return ""
     return _esc(v)
 
@@ -170,8 +172,10 @@ def _card_html(
         for c in extra_cols
         if c in trade.index and pd.notna(trade[c])
     )
+    entry_d = str(pd.Timestamp(trade['entry_date']).date())
+    exit_d = str(pd.Timestamp(trade['exit_date']).date())
     head = (
-        f"#{i + 1} {code} ｜ {_esc(trade['entry_date'])} → {_esc(trade['exit_date'])} ｜ "
+        f"#{i + 1} {code} ｜ {_esc(entry_d)} → {_esc(exit_d)} ｜ "
         f"{_esc(trade.get('exit_reason', '') or '—')} ｜ "
         f"入场 {_num(trade['entry_price'])} / 出场 {_num(trade['exit_price'])} ｜ "
         f"净收益率 {_pct(trade['net_return'])}"
@@ -324,7 +328,8 @@ def render_trade_report(
             .replace("__TABLE__", _trades_table_html(trades, trade_extra_cols))
             .replace("__CARDS__", "\n".join(cards))
             .replace("__CHARTS_JSON__", json.dumps({"charts": charts},
-                                                   ensure_ascii=False))
+                                                   ensure_ascii=False)
+                                          .replace("</", "<\\/"))
             .replace("__JS__", _JS))
     out_path.write_text(page, encoding="utf-8")
     return out_path
