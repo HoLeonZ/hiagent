@@ -50,24 +50,14 @@ MAX_HOLD_LIMIT = 20
 
 PRESETS: dict[str, dict] = {
     # v33_long_reverse_v19 — v18 + tp_pct 0.303→0.305 + min_mom120 0.16→0.18
-    # (workflow v18-neighborhood 联合搜索发现的 Pareto strict improvement)。
-    # 关键 insight: 之前所有 mom search 都在 0.125~0.16 范围(认为 plateau),但 ma60=0.65 的
-    #   新 sweet spot 出现后,mom 上限可推到 0.18 进一步改善 Sharpe。TP 也从 0.303→0.305
-    #   与新信号集协同。
-    # 关键参数:
+    # (workflow v18-neighborhood 联合搜索发现)。
+    # 关键参数变更:
     #   - sl_pct 0.0293: v15 精扫得到的 SL 单峰,保留。
-    #   - tp_pct 0.305: v18 邻域 TP 精扫发现 (v18 0.303→0.305 +0.86% simulate, backtrader +0.65%)。
-    #   - min_mom120 0.18: 0.16 时 sharpe 2.90;0.18 + ma=0.65 协同提升 Sharpe 2.96。
+    #   - tp_pct 0.303→0.305: v18 邻域 TP 精扫发现。
+    #   - min_mom120 0.16→0.18: 与 min_above_ma60_ratio=0.65 协同。
     #   - min_above_ma60_ratio 0.65: v18 关键维度,保留。
-    #   - close_ma60_buffer 0.02: 与 ma=0.65 协同,buf∈[0.01,0.02] 等价。
-    # 12 月窗口 (2024-09..2026-09) backtrader 引擎实测 (相对 v18):
-    #   median     +21.72%   (v18: +21.61%, +0.11pp) ✓
-    #   mean       +32.22%   (v18: +31.39%, +0.83pp) ✓
-    #   Sharpe     2.96      (v18: 2.90, +0.06) ✓
-    #   avg_dd     21.0%     (v18: 21.2%, -0.2pp) ✓
-    #   worst_dd   48.1%     (v18: 48.1%, tied) ✓
-    #   trades     8.30      (v18: 8.40, -0.1) ~
-    #   composite  0.9550    (v18: 0.9117, +4.75%) ✓
+    #   - close_ma60_buffer 0.02: buf∈[0.01,0.02] 等价。
+    # 注: 历史实测数字不入注释 (CLAUDE.md §7), 重跑验证见 commit log。
     # CLAUDE.md §4 TP/SL compliance header
     # exit_policy: fixed
     # sl_pct: 0.0293
@@ -112,15 +102,7 @@ PRESETS: dict[str, dict] = {
         },
     },
     # v33_long_reverse_v20 — Monte-Carlo reverse iter (100 perturbations) v19 邻域新最优。
-    # iter=97 / seed=42,23 个 2m walk-forward 窗口 (2024-09..2026-09) simulate 引擎实测:
-    #   median    +158.95%   (v19: +21.72%, +137 pp)
-    #   mean      +175.56%   (v19: +32.22%, +143 pp)
-    #   Sharpe    3.64       (v19: 2.96, +0.68)
-    #   avg_dd    20.86%     (v19: 21.0%, tied)
-    #   worst_dd  35.93%     (v19: 48.1%, -12.2 pp) ✓
-    #   n_pos     20/23
-    #   avg_tr    12.78      (v19: 8.30, +4.5)
-    #   composite 1.7449     (v19: 0.9550, +82.7%) ✓
+    # iter=97 / seed=42 (Monte-Carlo reverse iter 产出; 历史实测数字不入注释, 见 §7)。
     # 关键 insight (vs v19):
     #   - pct_chg_low -0.065 → -0.088: 要求更深回调才入场 (过滤掉浅回调假突破)
     #   - sl_pct 0.0293 → 0.021: 更紧 SL,坏单更早止损

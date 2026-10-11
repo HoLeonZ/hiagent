@@ -5,6 +5,17 @@ from typing import Literal
 
 UniverseMode = Literal["mainboard_only", "exclude_hs300_zhongtou_finance"]
 
+# CLAUDE.md §4 Short-Side Feasibility (mandatory declaration for short legs):
+# 本模块所有 preset 的做空回测共用以下融券假设:
+#   - availability: 假设任意主板标的任意交易日均可融到券 (引擎不做券源检查)
+#   - borrow_cost:  当前引擎未在 P&L 中扣减借券成本 (已知缺口)
+# ⚠️ 现实差距: A 股个股融券券源稀缺、2024 年监管收紧后多数标的实际不可融;
+#    回测数字是"可融券且零借券成本世界"的上界, 不构成可执行预期。
+BORROW_ASSUMPTION: dict = {
+    "availability": "assumed_unlimited",
+    "borrow_cost_model": "none",  # engine does not deduct borrow cost (known gap)
+}
+
 PRESETS: dict[str, dict] = {
     # ⚠️ 2026-09-22 preset 库重组 ⚠️
     # 7 个破产/失败 preset 已删除 (v33×2 / v34 / v37 / v39_pctchg_04_09 / v41 / v47):
