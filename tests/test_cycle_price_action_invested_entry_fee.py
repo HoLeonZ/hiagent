@@ -35,7 +35,10 @@ def test_cycle_price_action_main_invested_formula_unit():
     """
     from cycle_price_action import main
 
-    src = inspect.getsource(main._write_trades_csv)
+    # 行构造逻辑已抽取为 _trade_to_row (feat/unified-trade-report); 两者合并审计
+    src = inspect.getsource(main._write_trades_csv) + inspect.getsource(
+        main._trade_to_row
+    )
     # Bare ep × sz (without buy_commission) — banned
     assert "invested = t.entry_price * t.shares" not in src, (
         "cycle_price_action/main.py:_write_trades_csv still uses bare "
@@ -57,7 +60,9 @@ def test_cycle_price_action_invested_matches_portfolio_buy_cost():
     """
     from cycle_price_action import main, portfolio
 
-    src_main = inspect.getsource(main._write_trades_csv)
+    src_main = inspect.getsource(main._write_trades_csv) + inspect.getsource(
+        main._trade_to_row
+    )
     src_portfolio = inspect.getsource(portfolio.Portfolio._buy_cost)
 
     # 确认 Portfolio._buy_cost 仍然含 canonical 算法
