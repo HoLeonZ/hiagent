@@ -15,6 +15,11 @@ import pandas as pd
 
 from chase_up.backtest import INITIAL_CAPITAL, run_backtest
 from chase_up.backtrader_engine import run_backtrader_backtest
+from core.trade_report import render_trade_report, report_filename
+from chase_up.data import load_panel
+from chase_up.presets import get_preset
+from chase_up.signals import compute_indicators
+from chase_up.universe import load_universe
 
 from hiagent_config import DB_PATH as DEFAULT_DB
 
@@ -132,12 +137,20 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
+    # 统一交易报告: Control Plane 加载 panel_ind 并传入引擎(与回测零偏差)
+    _p = get_preset(args.preset)
+    _universe = set(load_universe(_p["universe"], Path(args.db_path), asof_date=args.start))
+    _panel_ind = compute_indicators(
+        load_panel(Path(args.db_path), args.start, args.end, universe=_universe)
+    )
+
     if args.engine == "simulate":
-        res = run_backtest(args.preset, args.start, args.end, Path(args.db_path))
+        res = run_backtest(args.preset, args.start, args.end, Path(args.db_path),
+                           panel_ind=_panel_ind)
     else:
         res = run_backtrader_backtest(
             args.preset, args.start, args.end, Path(args.db_path),
-            verify=not args.no_verify,
+            verify=not args.no_verify, panel_ind=_panel_ind,
         )
     metrics, trades = res["metrics"], res["trades"]
     metrics["engine"] = args.engine + (
@@ -172,6 +185,22 @@ def main() -> None:
             exit_date=lambda d: d["exit_date"].astype(str),
         ).to_csv(tp, index=False)
         print(f"逐笔交易已保存: {tp}")
+
+    # 统一交易 HTML 报告(每个 preset 回测结束自动生成; results/ 已 gitignored §7)
+    _traded = sorted(set(trades["thscode"])) if len(trades) else []
+    _bars = {
+        c: g.reset_index(drop=True)
+        for c, g in _panel_ind[_panel_ind["thscode"].isin(_traded)].groupby("thscode")
+    }
+    _report = render_trade_report(
+        trades=trades, bars_by_code=_bars, preset=args.preset,
+        window=(args.start, args.end),
+        out_path=out.parent / report_filename(args.preset),
+        ma_cols=("ma20", "ma60", "ma120"),
+        macd_cols=("macd_dif", "macd_dea", "macd_bar"),
+        line_cols=("atr_pct",),
+    )
+    print(f"HTML 报告: {_report}")
 
     print(_fmt(metrics))
     print(f"\n指标已保存: {out}")

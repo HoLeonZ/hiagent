@@ -8,9 +8,13 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 
+import pandas as pd
+
 from hiagent_config import get_db_path
+from core.trade_report import render_trade_report, report_filename
 from core.trade_schema import TRADE_COLS
 from cycle_price_action.backtest import run_backtest
+from cycle_price_action.data_feed import load_bars_by_code
 from cycle_price_action.metrics import TradeRecord
 from cycle_price_action.portfolio import Portfolio
 from cycle_price_action.walkforward import walkforward_windows
@@ -30,6 +34,48 @@ def _resolve_window(start: str | None, end: str | None) -> tuple[date, date]:
     return s, e
 
 
+def _trade_to_row(t: TradeRecord) -> dict:
+    """TradeRecord → canonical 14-col dict(TRADE_COLS 顺序)。
+
+    cycle_price_action 不打 exit_reason / atr_pct / sub_signal_type(置空)。
+    net_return 不变量: net_pnl / (entry_price × size + buy_commission)
+    (core/trade_schema.py:19; buy_commission 用 Portfolio 常量)。
+    """
+    gross_pnl = (t.exit_price - t.entry_price) * t.shares
+    net_pnl = t.pnl
+    fees = gross_pnl - net_pnl
+    # Round 21 (2026-09-28, CLAUDE.md §0/§3 data integrity):
+    # cycle 是 4-engine 中唯一漏 entry_commission 的 invested 公式点
+    # (其余 3 engine portfolio.py + backtrader_engine.py 均含 buy_commission)。
+    # canonical invariant (core/trade_schema.py:19):
+    #   net_return == net_pnl / (entry_price × size + buy_commission)
+    #   buy_commission = max(notional × COMMISSION_RATE, MIN_COMMISSION)
+    # Portfolio 类常量 = canonical 0.00025 + 5.0 (Round 9 fix)
+    notional_in = t.entry_price * t.shares
+    buy_commission = max(
+        notional_in * Portfolio.COMMISSION_RATE,
+        Portfolio.MIN_COMMISSION,
+    )
+    invested = notional_in + buy_commission
+    net_return = (net_pnl / invested) if invested > 0 else 0.0
+    return {
+        "entry_date": t.entry_date.isoformat(),
+        "exit_date": t.exit_date.isoformat(),
+        "thscode": t.thscode,
+        "exit_reason": "",  # cycle_price_action doesn't tag exit reason
+        "entry_price": t.entry_price,
+        "exit_price": t.exit_price,
+        "size": t.shares,
+        "hold_days": t.hold_days,
+        "gross_pnl": gross_pnl,
+        "fees": fees,
+        "net_pnl": net_pnl,
+        "net_return": net_return,
+        "atr_pct": "",  # engine-specific; not tracked per-trade
+        "sub_signal_type": "",  # chase_up-only enum
+    }
+
+
 def _write_trades_csv(path: Path, trades: list[TradeRecord]) -> None:
     """Write trades.csv with canonical 14-col schema (CLAUDE.md §3).
 
@@ -46,39 +92,7 @@ def _write_trades_csv(path: Path, trades: list[TradeRecord]) -> None:
         w = csv.DictWriter(f, fieldnames=list(TRADE_COLS))
         w.writeheader()
         for t in trades:
-            gross_pnl = (t.exit_price - t.entry_price) * t.shares
-            net_pnl = t.pnl
-            fees = gross_pnl - net_pnl
-            # Round 21 (2026-09-28, CLAUDE.md §0/§3 data integrity):
-            # cycle 是 4-engine 中唯一漏 entry_commission 的 invested 公式点
-            # (其余 3 engine portfolio.py + backtrader_engine.py 均含 buy_commission)。
-            # canonical invariant (core/trade_schema.py:19):
-            #   net_return == net_pnl / (entry_price × size + buy_commission)
-            #   buy_commission = max(notional × COMMISSION_RATE, MIN_COMMISSION)
-            # Portfolio 类常量 = canonical 0.00025 + 5.0 (Round 9 fix)
-            notional_in = t.entry_price * t.shares
-            buy_commission = max(
-                notional_in * Portfolio.COMMISSION_RATE,
-                Portfolio.MIN_COMMISSION,
-            )
-            invested = notional_in + buy_commission
-            net_return = (net_pnl / invested) if invested > 0 else 0.0
-            w.writerow({
-                "entry_date": t.entry_date.isoformat(),
-                "exit_date": t.exit_date.isoformat(),
-                "thscode": t.thscode,
-                "exit_reason": "",  # cycle_price_action doesn't tag exit reason
-                "entry_price": t.entry_price,
-                "exit_price": t.exit_price,
-                "size": t.shares,
-                "hold_days": t.hold_days,
-                "gross_pnl": gross_pnl,
-                "fees": fees,
-                "net_pnl": net_pnl,
-                "net_return": net_return,
-                "atr_pct": "",  # engine-specific; not tracked per-trade
-                "sub_signal_type": "",  # chase_up-only enum
-            })
+            w.writerow(_trade_to_row(t))
 
 
 def _write_per_preset_metrics(out_dir: Path, metrics: dict, preset: str) -> None:
@@ -160,6 +174,25 @@ def _run_backtest(args) -> int:
     preset = getattr(args, "preset", "v1")
     _write_per_preset_metrics(out_dir, result.metrics, preset=preset)
     (out_dir / "metrics.json").write_text(json.dumps(result.metrics, indent=2))
+
+    # 统一交易 HTML 报告(每个 preset 回测结束自动生成; results/ 已 gitignored §7)
+    # cycle 三维分数为信号日标量 → trade_extra_cols 展示(引擎不存时序, 无副图)
+    _rows = [_trade_to_row(t) for t in result.trades]
+    _trades = pd.DataFrame(_rows, columns=list(TRADE_COLS))
+    if len(_trades):
+        _trades["k_line_score"] = [t.k_line_score for t in result.trades]
+        _trades["phase_score"] = [t.phase_score for t in result.trades]
+        _trades["calendar_score"] = [t.calendar_score for t in result.trades]
+    _bars = load_bars_by_code(
+        db_path, sorted({t.thscode for t in result.trades}), start, end,
+    )
+    _report = render_trade_report(
+        trades=_trades, bars_by_code=_bars, preset=preset,
+        window=(start.isoformat(), end.isoformat()),
+        out_path=out_dir / report_filename(preset),
+        trade_extra_cols=("k_line_score", "phase_score", "calendar_score"),
+    )
+    print(f"HTML 报告: {_report}")
     m = result.metrics
     print(f"wrote {out_dir}: n_trades={m['n_trades']}, "
           f"pnl={m['total_pnl']:.2f}, win_rate={m['win_rate']:.2%}")

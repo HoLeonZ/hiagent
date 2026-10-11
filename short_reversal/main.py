@@ -10,7 +10,13 @@ import json
 import logging
 from pathlib import Path
 
+import pandas as pd
+
+from core.trade_report import render_trade_report, report_filename
+from core.trade_schema import TRADE_COLS
 from short_reversal.engine import run_backtest_v3
+from short_reversal.render_trade_detail import compute_indicators
+from short_reversal.report_data import load_bars_by_code
 
 from hiagent_config import DB_PATH as DEFAULT_DB
 
@@ -139,6 +145,22 @@ def main() -> int:
 
     # §2/§3 Tick 58 GREEN: per-preset metrics audit trail.
     _write_per_preset_metrics(out_path.parent, m, preset=args.preset)
+
+    # 统一交易 HTML 报告(每个 preset 回测结束自动生成; results/ 已 gitignored §7)
+    _trades = pd.DataFrame(m.get("trades") or [], columns=list(TRADE_COLS))
+    _codes = sorted(set(_trades["thscode"])) if len(_trades) else []
+    _bars = {
+        c: compute_indicators(df)
+        for c, df in load_bars_by_code(db_path, _codes, args.start, args.end).items()
+    }
+    _report = render_trade_report(
+        trades=_trades, bars_by_code=_bars, preset=args.preset,
+        window=(args.start, args.end),
+        out_path=out_path.parent / report_filename(args.preset),
+        ma_cols=("ma5", "ma10", "ma20", "ma60"),
+        macd_cols=("macd_dif", "macd_dea", "macd_bar"),
+    )
+    print(f"HTML 报告: {_report}")
 
     # §2/§3 Tick 51 GREEN: equity_curve.csv + cash_walk.csv (driven by
     # the per-bar equity_curve list that Phase3V3Strategy populates
