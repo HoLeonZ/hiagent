@@ -122,6 +122,49 @@ python3 -m tools.update_db_direct --db "$DNA_STRAT_DB" --target 2026-09-30 --day
 | 行情数据本体(DB 13 GB+) | 不进 git;用户自行 ETL 或 `git-lfs` 单独管理 |
 | 测试数据 fixture | 当前测试依赖真实 DuckDB;离线 mock 在 TODO |
 
+## 工作目录迁移 (git bundle)
+
+本仓库支持**完全不接触 `origin`** 即可迁移整个工作目录到另一台机器(换电脑 / 离线分发 / 沙盒环境)。此路径满足 [CLAUDE.md §7] —— `origin` 历史零污染,远程仓库全程不被修改。
+
+### 在旧机器:生产 bundle
+
+```bash
+cd /path/to/hiagent
+git bundle create /tmp/hiagent_migration.bundle --all
+git bundle verify /tmp/hiagent_migration.bundle   # 期望 "...is okay · The bundle records a complete history."
+```
+
+bundle 是单文件、自包含的 git 历史快照,iCloud / AirDrop / U 盘 / 飞书云盘均可传输。本地任何运行产物(per-preset HTML / 指标 JSON / summary)单独 `tar czf` 一起传。
+
+### 在新机器:4 步恢复
+
+```bash
+git clone /path/to/hiagent_migration.bundle hiagent
+tar xzf /tmp/hiagent_local_artifacts.tar.gz -C /tmp
+git -C hiagent remote add origin git@github.com:HoLeonZ/hiagent.git
+# (可选) cd hiagent && python3 tests/_run_all_presets_2yr.py   ← 字节级复现验证 CLAUDE.md §0
+```
+
+操作完成后:
+
+- `git -C hiagent log --oneline -5` 显示完整 main 历史
+- `/tmp/hiagent_all_presets_2yr/` 含 per-preset HTML + summary
+- bundle 与 `git push` **互不干扰**:bundle 走文件通道,`origin` 不受影响
+
+### 为什么用 bundle 而不是直接 push 到 origin
+
+- `git push` 把任何历史回测数字永久写入 remote history —— 即便后续 `git rm` 也无法清除,`git log -p` 永远可翻
+- bundle 是**只读快照**,只在你和新机器之间流动,不污染协作面
+
+### 配套回测协调脚本(本仓库已包含)
+
+- `tests/_run_all_presets_2yr.py` —— 一键跑所有 preset(短策略串行);支持 2 年窗口
+- `tests/_run_all_presets_2yr_continue.py` —— 中断后续跑(skip-if-done);含 schema 归一化
+
+输出落 `/tmp/hiagent_all_presets_2yr/`(gitignored,符合 §7)。
+
+[CLAUDE.md §7]: ./CLAUDE.md
+
 ## 项目元信息
 
 - **远程仓库**:`git@github.com:HoLeonZ/hiagent.git`
