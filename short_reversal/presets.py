@@ -803,6 +803,113 @@ PRESETS: dict[str, dict] = {
         "require_weak_6m": True,
         "weak_6m_threshold": -0.15,
     },
+    # === 2026-10-12 v52 系列 — H 条件: 无成交下跌过滤 (5d/20d 成交金额比率) ===
+    # v51 G 条件 (cumret) 失败 — 测绝对跌幅错把"中段下跌"当入场点。
+    # 用户提示"探索新方向": 改测「资金流衰减」— 卖压枯竭 (selling exhaustion)。
+    # 物理直觉: amount_5d_avg / amount_20d_avg ≤ 阈值 = 近期成交显著萎缩
+    #   → 该股已被市场"放弃" → 任何反弹都缺乏资金跟进 → 死猫跳。
+    #   → 对 short_reversal 最有利 (空头最佳博弈标的)。
+    # 4 个候选, 在 v44_ratio02_buf07 基础上叠加 H 条件:
+    #   v52_dryup_07:  5d/20d ≤ 0.70  (中等萎缩 30%+, 起点)
+    #   v52_dryup_05:  5d/20d ≤ 0.50  (严重萎缩 50%+, 极端弱势)
+    #   v52_dryup_085: 5d/20d ≤ 0.85  (轻微萎缩 15%+, 宽松)
+    #   v52_dryup_strict: 组合 (0.5 + 3M cumret ≤ -10%, 卖压枯竭 + 中期弱势)
+    # v52_dryup_07 (2026-10-12): 5d/20d 成交额比率 ≤ 0.70 (起点假设)。
+    "v52_dryup_07": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 18,  # v52 sweep 起点 (v50:14 + v51:14 + v52:4)
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        # === v52 H 条件 (新维度) ===
+        "require_amount_dryup": True,
+        "amount_dryup_threshold": 0.70,
+    },
+    # v52_dryup_05 (2026-10-12): 5d/20d 成交额比率 ≤ 0.50 (严重萎缩)。
+    "v52_dryup_05": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 18,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_amount_dryup": True,
+        "amount_dryup_threshold": 0.50,
+    },
+    # v52_dryup_085 (2026-10-12): 5d/20d 成交额比率 ≤ 0.85 (轻微萎缩, 宽松)。
+    "v52_dryup_085": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 18,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_amount_dryup": True,
+        "amount_dryup_threshold": 0.85,
+    },
+    # v52_dryup_combo (2026-10-12): H (严重萎缩 0.5) + G (3M 累计 ≤ -10%)。
+    # 假设: 同时满足"近期资金枯竭"和"中期已下跌"是最纯粹的 dead-cat bounce。
+    "v52_dryup_combo": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 18,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_amount_dryup": True,
+        "amount_dryup_threshold": 0.50,
+        "require_weak_3m": True,
+        "weak_3m_threshold": -0.10,
+    },
     # === 2026-09-21 微调发现（v46）— SL 收紧 / max_hold 调整（新方向） ===
     # 14 次迭代后, "放宽入场" 主线已工程上限 (v45 触底 DD 临界).
     # 切换到风险控制方向: SL 收紧 / max_hold 调整.

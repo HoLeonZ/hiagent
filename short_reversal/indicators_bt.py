@@ -161,6 +161,47 @@ class AtrAdj(bt.Indicator):
             self.lines.atr[0] = sum(valid) / len(valid)
 
 
+class AmountRatio(bt.Indicator):
+    """成交金额 5d/20d 比率。纯 causal, 无 banned functions。
+
+    v52 (2026-10-12, 用户提示"探索新方向"):
+    测「资金流衰减」, 不测绝对跌幅。
+    H 条件: 5d_avg < 20d_avg × 0.7 = 近期成交显著萎缩
+    → 「无成交下跌」(selling exhaustion) = 卖压枯竭
+    → 后续「死猫跳」对 short_reversal 最有利 (空头押注反弹失败)。
+
+    使用 amount 域 (元), 不是 volume (股), 因为金额 = 实际资金流,
+    不受拆股/分红等 corporate actions 干扰 (V3a dual-price spirit)。
+    """
+
+    lines = ("ratio",)
+    params = (
+        ("short_period", 5),
+        ("long_period", 20),
+    )
+
+    def __init__(self):
+        self._buf: list[float] = []
+
+    def next(self):
+        a = self.data.amount[0]
+        if np.isnan(a):
+            self.lines.ratio[0] = float("nan")
+            return
+        self._buf.append(float(a))
+        if len(self._buf) > self.p.long_period:
+            self._buf.pop(0)
+        if len(self._buf) < self.p.long_period:
+            self.lines.ratio[0] = float("nan")
+        else:
+            short_avg = sum(self._buf[-self.p.short_period:]) / self.p.short_period
+            long_avg = sum(self._buf) / self.p.long_period
+            if long_avg <= 0:
+                self.lines.ratio[0] = float("nan")
+            else:
+                self.lines.ratio[0] = short_avg / long_avg
+
+
 class ReturnN(bt.Indicator):
     """N 日累计回报: (price[0] - price[-N]) / price[-N]。纯 causal, 无 banned functions。
 

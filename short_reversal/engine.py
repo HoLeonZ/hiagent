@@ -187,6 +187,12 @@ def run_backtest_v3(
         weak_3m_threshold=cfg.get("weak_3m_threshold", -0.10),
         require_weak_6m=cfg.get("require_weak_6m", False),
         weak_6m_threshold=cfg.get("weak_6m_threshold", -0.15),
+        # v52 (2026-10-12): H 条件 — 无成交下跌过滤 (5d/20d 成交金额比率, opt-in)。
+        # v51 测绝对跌幅 (cumret) 失败, 改测资金流衰减: 卖压枯竭 = 死猫跳最佳入场。
+        require_amount_dryup=cfg.get("require_amount_dryup", False),
+        amount_dryup_threshold=cfg.get("amount_dryup_threshold", 0.70),
+        amount_dryup_short=cfg.get("amount_dryup_short", 5),
+        amount_dryup_long=cfg.get("amount_dryup_long", 20),
         result_holder=holder,
     )
     cerebro.run()

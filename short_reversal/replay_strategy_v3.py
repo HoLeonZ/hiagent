@@ -30,6 +30,7 @@ from core.dual_price import (
 from core.trade_schema import TRADE_COLS
 from short_reversal.indicators_bt import (
     Am60,
+    AmountRatio,
     AtrAdj,
     BelowMa60Ratio60,
     Ma20SlopeN,
@@ -200,6 +201,16 @@ class Phase3V3Strategy(bt.Strategy):
         weak_3m_threshold=-0.10,  # 3M = 63 trading days, 累计跌幅 ≥ 10%
         require_weak_6m=False,
         weak_6m_threshold=-0.15,  # 6M = 126 trading days, 累计跌幅 ≥ 15%
+        # v52 (2026-10-12): H 条件 — 无成交下跌过滤 (5d/20d 成交额比率)。
+        # 用户重新定义"新方向": 不再测跌幅 (v51 失败), 改测「资金流衰减」。
+        # amount_5d_avg / amount_20d_avg ≤ 阈值 = 近期成交显著萎缩
+        # = 卖压枯竭 (selling exhaustion) = 反弹"死猫跳"
+        # → 对 short_reversal 最有利 (空头押注反弹失败)。
+        # 与 G 互补: G 测「价格水平」(cumret), H 测「资金流强度」(amount ratio)。
+        require_amount_dryup=False,
+        amount_dryup_threshold=0.70,  # 5d/20d ≤ 0.7 = 萎缩 30%+
+        amount_dryup_short=5,         # 短窗口 5 日
+        amount_dryup_long=20,         # 长窗口 20 日
         result_holder=None,
     )
 
@@ -247,6 +258,13 @@ class Phase3V3Strategy(bt.Strategy):
             return_3m.price_source = adj_close_src
             return_6m = ReturnN(d, period=126)
             return_6m.price_source = adj_close_src
+            # v52 (2026-10-12): 5d/20d 成交金额比率, H 条件用 (无成交下跌过滤)。
+            # 用 amount (元) 不用 volume (股) — 避免拆股干扰, 纯资金流度量。
+            amount_ratio = AmountRatio(
+                d,
+                short_period=self.p.amount_dryup_short,
+                long_period=self.p.amount_dryup_long,
+            )
             self.indi[name] = {
                 "ma5": ma5,
                 "ma10": ma10,
@@ -261,6 +279,7 @@ class Phase3V3Strategy(bt.Strategy):
                 "return_1m": return_1m,  # v51 G 条件
                 "return_3m": return_3m,  # v51 G 条件
                 "return_6m": return_6m,  # v51 G 条件
+                "amount_ratio": amount_ratio,  # v52 H 条件
                 # V5' (R5): ATR(14) on adj_close for slippage estimation
                 "atr": AtrAdj(d, period=self.p.atr_period),
             }
@@ -833,6 +852,17 @@ class Phase3V3Strategy(bt.Strategy):
         if self.p.require_weak_6m:
             ret = indi["return_6m"][0]
             if np.isnan(ret) or ret > self.p.weak_6m_threshold:
+                return False
+
+        # H 条件 (v52, 2026-10-12): 无成交下跌过滤 (5d/20d 成交额比率)。
+        # 设计动机: v51 (G 条件 cumret) 失败 — 测绝对跌幅错把"中段下跌"当入场点,
+        # 实际需要的是"卖压枯竭"的弱势股, 反弹更可能是死猫跳 (空头最佳博弈)。
+        # amount_5d_avg / amount_20d_avg ≤ 阈值 = 资金流衰减 30%+
+        # → 该股的最近 5 日成交显著低于其 20 日平均 → 卖方已放弃 → 反弹无以为继。
+        # opt-in: require_amount_dryup=True 才启用, 默认 False 保 v50 baseline 兼容。
+        if self.p.require_amount_dryup:
+            ar = indi["amount_ratio"][0]
+            if np.isnan(ar) or ar > self.p.amount_dryup_threshold:
                 return False
 
         return True
