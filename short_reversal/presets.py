@@ -697,6 +697,112 @@ PRESETS: dict[str, dict] = {
         "ma20_slope_period": 5,
         "ma20_slope_threshold": -0.003,  # ← 严格化 (要求每天 -0.3%)
     },
+    # === 2026-10-12 v51 系列 — G 条件: 弱势股过滤 (1M/3M/6M 累计跌幅) ===
+    # v50_slope (Calmar 9.76) 是当前 F 维度最佳; 用户提示从「斜率」切到「弱势水平」:
+    # 重新定义"下降趋势"为"弱势股" — 过去 N 日累计跌幅超阈值。
+    # 4 个候选, 在 v44_ratio02_buf07 基础上叠加 G 条件:
+    #   v51_weak_1m:   1M ≤ -5%   (近期弱势, 21 trading days)
+    #   v51_weak_3m:   3M ≤ -10%  (中期弱势, 63 trading days)
+    #   v51_weak_6m:   6M ≤ -15%  (长期弱势, 126 trading days)
+    #   v51_weak_combo: 三窗口叠加 (持续弱势, 防止只是短期回调)
+    # 与 F 互补: F 测短期动量 (rate of change), G 测中期水平 (cumulative loss)。
+    # v51_weak_1m (2026-10-12): 1M 累计跌幅 ≥ 5%。
+    "v51_weak_1m": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 14,  # v51 sweep 起点
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        # === v51 G 条件 (新维度) ===
+        "require_weak_1m": True,
+        "weak_1m_threshold": -0.05,
+    },
+    # v51_weak_3m (2026-10-12): 3M 累计跌幅 ≥ 10%。
+    "v51_weak_3m": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 14,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_weak_3m": True,
+        "weak_3m_threshold": -0.10,
+    },
+    # v51_weak_6m (2026-10-12): 6M 累计跌幅 ≥ 15%。
+    "v51_weak_6m": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 14,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_weak_6m": True,
+        "weak_6m_threshold": -0.15,
+    },
+    # v51_weak_combo (2026-10-12): 三窗口叠加 (持续弱势, 最严过滤)。
+    "v51_weak_combo": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 14,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_weak_1m": True,
+        "weak_1m_threshold": -0.03,  # 略放宽 (-5%→-3%), 否则太严无信号
+        "require_weak_3m": True,
+        "weak_3m_threshold": -0.10,
+        "require_weak_6m": True,
+        "weak_6m_threshold": -0.15,
+    },
     # === 2026-09-21 微调发现（v46）— SL 收紧 / max_hold 调整（新方向） ===
     # 14 次迭代后, "放宽入场" 主线已工程上限 (v45 触底 DD 临界).
     # 切换到风险控制方向: SL 收紧 / max_hold 调整.
