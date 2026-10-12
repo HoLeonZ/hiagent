@@ -1015,6 +1015,80 @@ PRESETS: dict[str, dict] = {
         "rsi_oversold_threshold": 30,
         "require_ma20_slope_neg": True,  # v50 F 条件
     },
+    # === 2026-10-12 v54 系列 — TP/SL 调参 (出场维度新方向) ===
+    # v51 (G cumret) + v52 (H dry-up) + v53 (I RSI) 三个入场维度连续失败 —
+    # A/B/C/D/E 五条件已 selective 到顶, 加任何过滤都把 universe 砍到 0-3 笔。
+    # 切换到「出场维度」: v50_slope 93 SL vs 33 TP = 74% SL 退出率,
+    # SL=0.0005 (5 bp) 太紧被 noise 反复打。3 个候选, 在 v50_slope 基础上调 TP/SL:
+    #   v54_sl_01:    SL 0.0005→0.01 (20x 放宽, 测 noise-driven SL 假说)
+    #   v54_sl_005:   SL 0.0005→0.005 (10x 放宽, 中位)
+    #   v54_tp10_sl01: TP 0.08→0.10 + SL 0.01 (TP/SL 都放宽, 10:1 风险比)
+    # v54_sl_01 (2026-10-12): 仅 SL 放宽 20x, TP 不变。
+    "v54_sl_01": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 25,  # v54 sweep 起点 (v50:14 + v51:14 + v52:18 + v53:22 + v54:3)
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,           # 不变
+        "sl_pct": 0.01,           # 0.0005 → 0.01 (20x 放宽)
+        "max_hold": 5,            # 不变
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,  # v50 F 条件
+    },
+    # v54_sl_005 (2026-10-12): SL 放宽 10x (中位)。
+    "v54_sl_005": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 25,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.005,          # 0.0005 → 0.005 (10x 放宽)
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+    },
+    # v54_tp10_sl01 (2026-10-12): TP+SL 都放宽 (10:1 风险比)。
+    "v54_tp10_sl01": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 25,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.10,           # 0.08 → 0.10 (25% 大)
+        "sl_pct": 0.01,           # 0.0005 → 0.01 (20x 放宽)
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+    },
     # === 2026-09-21 微调发现（v46）— SL 收紧 / max_hold 调整（新方向） ===
     # 14 次迭代后, "放宽入场" 主线已工程上限 (v45 触底 DD 临界).
     # 切换到风险控制方向: SL 收紧 / max_hold 调整.
