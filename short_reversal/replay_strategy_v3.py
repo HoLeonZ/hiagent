@@ -276,7 +276,15 @@ class Phase3V3Strategy(bt.Strategy):
             )
             # v53 (2026-10-12): RSI(14) on adj_close, I 条件用 (价格超卖过滤)。
             # 用 backtrader 内置 RSI 即可, 经典 Wilder 平滑 (14 日标准周期)。
-            rsi = bt.indicators.RSI(adj_close_src, period=self.p.rsi_period)
+            # Round 17 (2026-10-12): 改为 opt-in 构建。backtrader RSI 内部
+            # avg_loss==0 时触发 ZeroDivisionError, 影响非 v53 preset 的 WFV
+            # (v50/v55/v56 等不需要 RSI 也不读 indi["rsi"], 但 _once 预热仍执行)。
+            # gate 与消费者一致 (line 887 if require_rsi_oversold), 零行为变化。
+            rsi = (
+                bt.indicators.RSI(adj_close_src, period=self.p.rsi_period)
+                if self.p.require_rsi_oversold
+                else None
+            )
             self.indi[name] = {
                 "ma5": ma5,
                 "ma10": ma10,
