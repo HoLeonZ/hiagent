@@ -227,6 +227,13 @@ class Phase3V3Strategy(bt.Strategy):
         # 同一时间只持 1 笔, 冷却窗口对所有候选 stock 都生效。
         # opt-in: sl_cooldown_days > 0 才启用, 默认 0 保 v50 baseline 兼容。
         sl_cooldown_days=0,
+        # v58 (2026-10-13): 多仓并行 (max_positions > 1)。
+        # 假设: 1→2 把单点风险分散到 2 个独立信号, 降低 DD 而不显著损失收益。
+        # 同时调整每笔 sizing 为 free_cash / max_positions, 保持 all-in 总仓位。
+        # opt-in: max_positions > 1 才启用, 默认 1 保 v50 baseline 兼容。
+        # 注意: 此改动会改变 _fill_pending_entries 的 sizing 公式,
+        # 通过 self.p.max_positions 路由, 其它模块不变。
+        max_positions=1,
         result_holder=None,
     )
 
@@ -413,6 +420,12 @@ class Phase3V3Strategy(bt.Strategy):
         self._fill_pending_entries()
 
         # 3) 遍历所有 data：持仓检查出场；空仓且不在 pending 中则评估入场
+        # v58.1 (2026-10-13): 移除 "cap on signal-add" — 它阻止了「持仓期间」的新信号
+        # 进入 pending,导致原版 v50 (n=138) 在 v58 下退化为 n=52。原版是「所有信号入
+        # pending,_fill_pending_entries 用 cash 锁只填 1 笔」,这才是 single-bullet 的
+        # 正确位置。max_positions > 1 时,_fill_pending_entries 用 size 公式强制 N
+        # 等分 (free_cash / max_positions) — 单笔 size 减少,N 笔并行总和 = free_cash。
+        # Round 17 (2026-09-28, CLAUDE.md §1): 保持 v50 行为兼容。
         for d in self.datas:
             code = d._name
             if code in self._holds:
@@ -554,7 +567,13 @@ class Phase3V3Strategy(bt.Strategy):
             # 下一笔 PnL 进 settling 后 settle() flush 到 free_cash, free_cash
             # 翻倍 → 仓位指数膨胀, CAGR +4688% (R249/R387.1 P0 已知)。
             # 对齐 chase_up/portfolio.py:521/562-573 模板。
-            target_value = self.free_cash * self.p.position_fraction
+            # v58 (2026-10-13): max_positions > 1 时, 每笔 sizing = free_cash
+            # / max_positions (而不是 free_cash * position_fraction=1.0)。
+            # 维持 all-in 总仓位, 但分散到 N 个并行仓 (各 1/N)。
+            if self.p.max_positions > 1:
+                target_value = self.free_cash / self.p.max_positions
+            else:
+                target_value = self.free_cash * self.p.position_fraction
             size = (
                 int(target_value / entry_price / self.p.lot_size) * self.p.lot_size
             )

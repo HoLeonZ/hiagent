@@ -1459,6 +1459,33 @@ PRESETS: dict[str, dict] = {
         "require_ma20_slope_neg": True,
         "sl_cooldown_days": 7,
     },
+    # v58 (2026-10-13): 多仓并行 (max_positions 1→2)。
+    # 假设: 1→2 把单点风险分散到 2 个独立信号, 降低 DD 而不显著损失收益。
+    # 同时调整每笔 sizing 为 free_cash / max_positions, 维持 all-in 总仓位。
+    # 数据顺序作为隐式 ranking — 第一个满足 A-I 的 stock 优先, 无显式 score 排序。
+    # 风险: data 顺序的随机性会引入选股噪声。
+    # v58_mp_2 (2026-10-13): max_positions=2, 单笔 sizing 50% free_cash。
+    "v58_mp_2": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 37,  # v58 sweep 起点 (v57:34 + v58:3)
+        "position_sizing": "all_in",
+        "max_positions": 2,      # 1 → 2
+        "position_fraction": 1.0, # 仍 all-in 总仓位, 引擎除以 max_positions
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+    },
 }
 
 
