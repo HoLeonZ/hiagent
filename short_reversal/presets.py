@@ -618,6 +618,85 @@ PRESETS: dict[str, dict] = {
         "below_ratio_60": 0.1,
         "close_ma60_buffer": 0.10,
     },
+    # === 2026-10-12 v50 系列 — 出场点 + 入场质量 微调探索 ===
+    # v44 24m baseline: trades=148 win=31.1% CAGR=+110.17% Sharpe=6.91 DD=12.12% TP/SL/T=35/101/12
+    # SL 占比 68% 是 v44 体系痛点。探索"给 TP 多一点时间"是否降低 SL 占比。
+    # v46_mh4/mh7 单点 sweep 在 12m 上 v44 vs v46_mh4 同 n=425 win% +1.6pp CAGR -8% DD 持平;
+    # 24m 行为可能不同(震荡段 yield 不同分布)。
+    # 实验设计:每次只改 1 个参数, 跑 24m 对比 v44。
+    "v50_mh6": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 12,  # v50 sweep 起点
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 6,  # ← v44 的 5→6 (给 TP 多 1 天机会)
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # v50_slope (2026-10-12): 在 v44 基础上加 F 条件 — MA20 5 日回归斜率 ≤ 0。
+    # 用户提示"下降趋势的斜率"维度: 5 条件 (A/B/C/D/E) 全部区间/布尔,
+    # 无显式「趋势斜率」度量。MA20 在 5 日内若 slope > 0, 标的可能处于
+    # 反弹中段而非下降趋势, 与 short_reversal 哲学不符, 应排除。
+    # 预期: 减少横盘假信号, 提高胜率; n 略减, CAGR 持平或上升。
+    "v50_slope": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 12,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,  # 同 v44
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        # === v50 F 条件 (新维度) ===
+        "require_ma20_slope_neg": True,  # 开启
+        "ma20_slope_period": 5,
+    },
+    # v50_slope_strict (2026-10-12): v50_slope 加强版, slope ≤ -0.003/day。
+    # 要求更严格的下降趋势 (5 日累计 -1.5% 以上), 进一步过滤反弹中段。
+    "v50_slope_strict": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 13,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "ma20_slope_period": 5,
+        "ma20_slope_threshold": -0.003,  # ← 严格化 (要求每天 -0.3%)
+    },
     # === 2026-09-21 微调发现（v46）— SL 收紧 / max_hold 调整（新方向） ===
     # 14 次迭代后, "放宽入场" 主线已工程上限 (v45 触底 DD 临界).
     # 切换到风险控制方向: SL 收紧 / max_hold 调整.
