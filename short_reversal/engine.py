@@ -180,6 +180,13 @@ def run_backtest_v3(
         require_ma20_slope_neg=cfg.get("require_ma20_slope_neg", False),
         ma20_slope_period=cfg.get("ma20_slope_period", 5),
         ma20_slope_threshold=cfg.get("ma20_slope_threshold", 0.0),
+        # v51 (2026-10-12): G 条件 — 弱势股过滤 (1M/3M/6M 累计跌幅, opt-in)。
+        require_weak_1m=cfg.get("require_weak_1m", False),
+        weak_1m_threshold=cfg.get("weak_1m_threshold", -0.05),
+        require_weak_3m=cfg.get("require_weak_3m", False),
+        weak_3m_threshold=cfg.get("weak_3m_threshold", -0.10),
+        require_weak_6m=cfg.get("require_weak_6m", False),
+        weak_6m_threshold=cfg.get("weak_6m_threshold", -0.15),
         result_holder=holder,
     )
     cerebro.run()

@@ -161,6 +161,39 @@ class AtrAdj(bt.Indicator):
             self.lines.atr[0] = sum(valid) / len(valid)
 
 
+class ReturnN(bt.Indicator):
+    """N 日累计回报: (price[0] - price[-N]) / price[-N]。纯 causal, 无 banned functions。
+
+    v51 (2026-10-12, 用户提示"弱势股"维度):
+    short_reversal 哲学 = 「在持续下跌的弱势股中, 捕捉短期超涨反转」。
+    F 条件 (v50 MA20 slope) 测「短期动量」, 但无法回答「过去 N 个月跌了多少」。
+    G 条件 (本指标) 直接度量「弱势水平」: 1M 累计跌幅 ≥ 5%、3M ≥ 10%、6M ≥ 15%。
+    数学上等价于 cumret/N 日起点 → 0, 但实现上不调用 cumsum (无未来函数)。
+
+    `price_source` 由 strategy __init__ 注入 adj_close line, 保持 v3a dual-price:
+    信号/指标 MUST use adj_close (V3a); execution 仍走 raw_close。
+    """
+
+    lines = ("ret",)
+    params = (("period", 21),)  # 默认 1M (21 trading days)
+
+    def __init__(self):
+        self.price_source = None  # 由调用方在 strategy __init__ 后赋值
+
+    def next(self):
+        src = self.price_source if self.price_source is not None else self.data
+        if len(self) <= self.p.period:
+            # 需要 period+1 根 bar 才能算 period 日前的 close
+            self.lines.ret[0] = float("nan")
+            return
+        cur = float(src[0])
+        past = float(src[-self.p.period])
+        if np.isnan(cur) or np.isnan(past) or past == 0:
+            self.lines.ret[0] = float("nan")
+        else:
+            self.lines.ret[0] = (cur - past) / past
+
+
 class Ma20SlopeN(bt.Indicator):
     """MA20 (or any injected line) over last N bars 的线性回归斜率。
 

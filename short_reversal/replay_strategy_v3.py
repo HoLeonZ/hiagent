@@ -34,6 +34,7 @@ from short_reversal.indicators_bt import (
     BelowMa60Ratio60,
     Ma20SlopeN,
     PctChg,
+    ReturnN,
     UpStreak,
 )
 
@@ -188,6 +189,17 @@ class Phase3V3Strategy(bt.Strategy):
         # 配套: 斜率阈值 (price/day), 默认 0.0 (只要下降就过);
         # 严格化可设 -0.003 / -0.005 (要求每天至少下降 0.3%/0.5%)。
         ma20_slope_threshold=0.0,
+        # v51 (2026-10-12): G 条件 — 弱势股过滤 (1M/3M/6M 累计跌幅)。
+        # 用户重新定义"下降趋势"为"弱势股": 用过去 N 日累计回报 ≤ 阈值
+        # (e.g. 1M ≤ -5% 意为最近 1 个月累计跌了 5% 以上) 替代"斜率"度量。
+        # 与 F 互补: F 测短期动量 (rate), G 测中期水平 (level)。
+        # 全部 opt-in, 默认 False → v50/v44 baseline 行为完全不变。
+        require_weak_1m=False,
+        weak_1m_threshold=-0.05,  # 1M = 21 trading days, 累计跌幅 ≥ 5%
+        require_weak_3m=False,
+        weak_3m_threshold=-0.10,  # 3M = 63 trading days, 累计跌幅 ≥ 10%
+        require_weak_6m=False,
+        weak_6m_threshold=-0.15,  # 6M = 126 trading days, 累计跌幅 ≥ 15%
         result_holder=None,
     )
 
@@ -227,6 +239,14 @@ class Phase3V3Strategy(bt.Strategy):
             # v50 (2026-10-12): MA20 5 日回归斜率指标, F 条件用
             ma20_slope = Ma20SlopeN(d, period=self.p.ma20_slope_period)
             ma20_slope.ma_source = ma20.lines.sma  # ← 注入 ma20 line
+            # v51 (2026-10-12): 1M/3M/6M 累计回报指标, G 条件用 (弱势股过滤)。
+            # 注入 adj_close_src 保持 v3a dual-price (指标域, 不污染执行)。
+            return_1m = ReturnN(d, period=21)
+            return_1m.price_source = adj_close_src
+            return_3m = ReturnN(d, period=63)
+            return_3m.price_source = adj_close_src
+            return_6m = ReturnN(d, period=126)
+            return_6m.price_source = adj_close_src
             self.indi[name] = {
                 "ma5": ma5,
                 "ma10": ma10,
@@ -238,6 +258,9 @@ class Phase3V3Strategy(bt.Strategy):
                 "up_streak": UpStreak(d),
                 "below_ma60_ratio_60": below_ratio,
                 "ma20_slope_5d": ma20_slope,  # v50 F 条件
+                "return_1m": return_1m,  # v51 G 条件
+                "return_3m": return_3m,  # v51 G 条件
+                "return_6m": return_6m,  # v51 G 条件
                 # V5' (R5): ATR(14) on adj_close for slippage estimation
                 "atr": AtrAdj(d, period=self.p.atr_period),
             }
@@ -791,6 +814,25 @@ class Phase3V3Strategy(bt.Strategy):
         if self.p.require_ma20_slope_neg:
             slope = indi["ma20_slope_5d"][0]
             if np.isnan(slope) or slope > self.p.ma20_slope_threshold:
+                return False
+
+        # G 条件 (v51, 2026-10-12): 弱势股过滤 (1M/3M/6M 累计跌幅)。
+        # 用户重新定义"下降趋势"为"弱势股": 用过去 N 日累计回报 ≤ 阈值
+        # (e.g. 1M ≤ -5% 意为最近 21 个交易日累计跌了 5% 以上)。
+        # 与 F 互补: F 测「短期动量」(rate), G 测「中期水平」(level)。
+        # 任一启用窗口的 return 必须 ≤ 阈值 (即"过去 N 日累计跌幅超阈值")。
+        # 多个窗口可叠加 (combo) 锁定"持续弱势"。
+        if self.p.require_weak_1m:
+            ret = indi["return_1m"][0]
+            if np.isnan(ret) or ret > self.p.weak_1m_threshold:
+                return False
+        if self.p.require_weak_3m:
+            ret = indi["return_3m"][0]
+            if np.isnan(ret) or ret > self.p.weak_3m_threshold:
+                return False
+        if self.p.require_weak_6m:
+            ret = indi["return_6m"][0]
+            if np.isnan(ret) or ret > self.p.weak_6m_threshold:
                 return False
 
         return True
