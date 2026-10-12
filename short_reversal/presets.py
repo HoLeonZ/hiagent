@@ -1195,6 +1195,120 @@ PRESETS: dict[str, dict] = {
     # 备选: v46_sl_0002 (震荡段略优), v40_tp_08 (TP 拉宽基线)
     # 慎: v45_ratio01_buf10 (DD 临界 67-95%)
     # 已确认失败/破产案例 (6 个): v34/v47_d_strict (破产), v37/v41 (单点过拟合跨周期崩), v35/v36_us5_12 (信号过少)
+    # === 2026-10-12 v55 系列 — 重新定义"下降趋势"为"弱势股" (替代 F=MA20 slope) ===
+    # v50_slope (Calmar 9.76) 用 F=MA20 5d slope ≤ 0 定义 downtrend (测「短期动量」).
+    # v51 (G cumret) 在 F 之上叠加 1M/3M/6M 累计跌幅 → Calmar 5.89/3.91/3.26, 假说被证伪
+    #   (越过滤越差, 因 v50 已是 selective 顶峰, 再加过滤只能砍数量).
+    # v55 是 G 替代 F 的"二选一"实验: 用户提示「把下降趋势改为弱势股」.
+    # 设计: 关闭 F=MA20 slope, 单独开 G=1M/3M/6M cumret, 测 G 是否比 F 更好
+    #   单独定义 downtrend (而非叠加). 4 个候选, 2-yr 验证:
+    #   v55_swap_1m:    F=off, G_1m≤-5%   (1M 累计跌 5%)
+    #   v55_swap_3m:    F=off, G_3m≤-10%  (3M 累计跌 10%)
+    #   v55_swap_6m:    F=off, G_6m≤-15%  (6M 累计跌 15%)
+    #   v55_swap_combo: F=off, G_1m/3m/6m 三窗口叠加 (持续弱势最严)
+    # 验证逻辑: 若任一 Calmar ≥ 9.76 → 弱股比斜率更适合定义 downtrend;
+    #   若全部 < 9.76 → v50_slope 已达工程最优.
+    # v55_swap_1m (2026-10-12): 用 1M 累计跌幅替代 MA20 5d slope 定义 downtrend。
+    "v55_swap_1m": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 28,  # v55 sweep 起点 (v54:25 + v55:4-1=28)
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        # === v55 SWAP: 关 F, 开 G_1m ===
+        "require_ma20_slope_neg": False,  # 关掉 v50 F 条件
+        "require_weak_1m": True,         # 1M 累计跌幅 ≥ 5%
+        "weak_1m_threshold": -0.05,
+    },
+    # v55_swap_3m (2026-10-12): 用 3M 累计跌幅替代 MA20 slope。
+    "v55_swap_3m": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 28,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": False,
+        "require_weak_3m": True,         # 3M 累计跌幅 ≥ 10%
+        "weak_3m_threshold": -0.10,
+    },
+    # v55_swap_6m (2026-10-12): 用 6M 累计跌幅替代 MA20 slope。
+    "v55_swap_6m": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 28,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": False,
+        "require_weak_6m": True,         # 6M 累计跌幅 ≥ 15%
+        "weak_6m_threshold": -0.15,
+    },
+    # v55_swap_combo (2026-10-12): 三窗口叠加 (持续弱势最严), 替代 MA20 slope。
+    "v55_swap_combo": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 28,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": False,
+        "require_weak_1m": True,
+        "weak_1m_threshold": -0.05,
+        "require_weak_3m": True,
+        "weak_3m_threshold": -0.10,
+        "require_weak_6m": True,
+        "weak_6m_threshold": -0.15,
+    },
 }
 
 
