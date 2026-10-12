@@ -1309,6 +1309,81 @@ PRESETS: dict[str, dict] = {
         "require_weak_6m": True,
         "weak_6m_threshold": -0.15,
     },
+    # === 2026-10-12 v56 系列 — 持仓时间扩展 (max_hold 调参) ===
+    # v50_slope (Calmar 9.76) 5 个 entry-condition 方向连续失败 (v51-v55), 已证入场维度工程最优.
+    # 切换到「持仓时间」: v50_slope max_hold=5, avg hold 2.83d, 但 12 笔 time-exit (8.7%) 暗示
+    #   部分交易可能需要更多时间兑现. 3 个候选, 在 v50_slope 基础上:
+    #   v56_mh_07: max_hold 5→7  (温和扩展, 让 TP 兑现更多)
+    #   v56_mh_10: max_hold 5→10 (激进扩展, 测是否能捕捉罕见长 runner)
+    #   v56_mh_03: max_hold 5→3  (反向: 缩短让 SL 更早触发, 测 SL 主导假说)
+    # 验证逻辑: 若 v56_mh_07/10 Calmar ≥ 9.76 → max_hold 是新维度, 可继续调;
+    #   若全部 < 9.76 → 5 个方向全部工程上限, v50_slope 为最终 best.
+    # v56_mh_07 (2026-10-12): max_hold 5→7, 温和扩展。
+    "v56_mh_07": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 31,  # v56 sweep 起点 (v55:28 + v56:3)
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 7,             # 5 → 7
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+    },
+    # v56_mh_10 (2026-10-12): max_hold 5→10, 激进扩展。
+    "v56_mh_10": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 31,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 10,            # 5 → 10
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+    },
+    # v56_mh_03 (2026-10-12): max_hold 5→3, 反向缩短, 测 SL 主导假说。
+    "v56_mh_03": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 31,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 3,             # 5 → 3
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+    },
 }
 
 
