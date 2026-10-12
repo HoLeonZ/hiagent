@@ -211,6 +211,15 @@ class Phase3V3Strategy(bt.Strategy):
         amount_dryup_threshold=0.70,  # 5d/20d ≤ 0.7 = 萎缩 30%+
         amount_dryup_short=5,         # 短窗口 5 日
         amount_dryup_long=20,         # 长窗口 20 日
+        # v53 (2026-10-12): I 条件 — RSI(14) 超卖过滤 (经典反转指标)。
+        # 用户选 B 方向: 与 H (amount dry-up) 不同, RSI 看价格动量 (rate of change)
+        # 而非资金流。物理正交 → 测的是"价格超卖"而非"成交萎缩"。
+        # 假设: 14 日 RSI 跌到 < 阈值 = 近期卖压极强 → 反弹更可能是死猫跳。
+        # 与 F (slope) 互补: F 测趋势方向, I 测超卖程度。
+        # 全部 opt-in, 默认 False → v50/v44/v52 baseline 行为不变。
+        require_rsi_oversold=False,
+        rsi_oversold_threshold=30,  # 经典 RSI<30 超卖线
+        rsi_period=14,              # 14 日标准周期
         result_holder=None,
     )
 
@@ -265,6 +274,9 @@ class Phase3V3Strategy(bt.Strategy):
                 short_period=self.p.amount_dryup_short,
                 long_period=self.p.amount_dryup_long,
             )
+            # v53 (2026-10-12): RSI(14) on adj_close, I 条件用 (价格超卖过滤)。
+            # 用 backtrader 内置 RSI 即可, 经典 Wilder 平滑 (14 日标准周期)。
+            rsi = bt.indicators.RSI(adj_close_src, period=self.p.rsi_period)
             self.indi[name] = {
                 "ma5": ma5,
                 "ma10": ma10,
@@ -280,6 +292,7 @@ class Phase3V3Strategy(bt.Strategy):
                 "return_3m": return_3m,  # v51 G 条件
                 "return_6m": return_6m,  # v51 G 条件
                 "amount_ratio": amount_ratio,  # v52 H 条件
+                "rsi": rsi,  # v53 I 条件
                 # V5' (R5): ATR(14) on adj_close for slippage estimation
                 "atr": AtrAdj(d, period=self.p.atr_period),
             }
@@ -863,6 +876,17 @@ class Phase3V3Strategy(bt.Strategy):
         if self.p.require_amount_dryup:
             ar = indi["amount_ratio"][0]
             if np.isnan(ar) or ar > self.p.amount_dryup_threshold:
+                return False
+
+        # I 条件 (v53, 2026-10-12): RSI(14) 超卖过滤。
+        # 设计动机: v52 (H 资金流 dry-up) 失败 — 测成交萎缩错把"流动性退潮前的
+        # 平静期"当入场点, 实际应测"价格动量超卖"才是经典反转信号。
+        # RSI(14) < 阈值 = 近期 14 日动量极弱 (超卖) = 反弹更可能是死猫跳。
+        # 与 F (slope) 互补: F 测趋势方向, I 测超卖程度; 与 H 正交: H 测资金流。
+        # opt-in: require_rsi_oversold=True 才启用, 默认 False 保 v50/v44 兼容。
+        if self.p.require_rsi_oversold:
+            rsi_v = indi["rsi"][0]
+            if np.isnan(rsi_v) or rsi_v >= self.p.rsi_oversold_threshold:
                 return False
 
         return True

@@ -193,6 +193,11 @@ def run_backtest_v3(
         amount_dryup_threshold=cfg.get("amount_dryup_threshold", 0.70),
         amount_dryup_short=cfg.get("amount_dryup_short", 5),
         amount_dryup_long=cfg.get("amount_dryup_long", 20),
+        # v53 (2026-10-12): I 条件 — RSI(14) 超卖过滤 (opt-in)。
+        # v52 (H 资金流 dry-up) 失败, 用户选 B 方向: 测价格动量超卖。
+        require_rsi_oversold=cfg.get("require_rsi_oversold", False),
+        rsi_oversold_threshold=cfg.get("rsi_oversold_threshold", 30),
+        rsi_period=cfg.get("rsi_period", 14),
         result_holder=holder,
     )
     cerebro.run()

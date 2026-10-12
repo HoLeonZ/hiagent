@@ -910,6 +910,111 @@ PRESETS: dict[str, dict] = {
         "require_weak_3m": True,
         "weak_3m_threshold": -0.10,
     },
+    # === 2026-10-12 v53 系列 — I 条件: RSI(14) 超卖过滤 (经典反转指标) ===
+    # v51 (G cumret) + v52 (H amount dry-up) 连续失败 — 测"水平"(跌幅)
+    # 和"资金流"(amount) 都不对。用户选 B 方向: 改测"价格动量超卖"。
+    # RSI(14) < 阈值 = 14 日 Wilder 平滑动量极弱 = 卖方力度耗尽前的最后一击。
+    # 与 F (slope) 互补: F 测趋势方向, I 测超卖程度; 与 H 正交: H 测资金流。
+    # 4 个候选, 在 v44_ratio02_buf07 基础上叠加 I 条件:
+    #   v53_rsi_30:  RSI(14) < 30  (经典超卖, 起点假设)
+    #   v53_rsi_25:  RSI(14) < 25  (极端超卖, 更严)
+    #   v53_rsi_35:  RSI(14) < 35  (轻微超卖, 宽松)
+    #   v53_rsi_30_slope: I 30 + F (MA20 5d slope ≤ 0, 组合双确认)
+    # v53_rsi_30 (2026-10-12): 经典 RSI<30 超卖。
+    "v53_rsi_30": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 22,  # v53 sweep 起点 (v50:14 + v51:14 + v52:18 + v53:4)
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        # === v53 I 条件 (新维度) ===
+        "require_rsi_oversold": True,
+        "rsi_oversold_threshold": 30,
+    },
+    # v53_rsi_25 (2026-10-12): 极端超卖 RSI<25。
+    "v53_rsi_25": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 22,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_rsi_oversold": True,
+        "rsi_oversold_threshold": 25,
+    },
+    # v53_rsi_35 (2026-10-12): 轻微超卖 RSI<35 (宽松, 起点对照)。
+    "v53_rsi_35": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 22,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_rsi_oversold": True,
+        "rsi_oversold_threshold": 35,
+    },
+    # v53_rsi_30_slope (2026-10-12): I 30 + F (MA20 slope ≤ 0) 组合双确认。
+    # 假设: 同时满足"超卖"+"下降趋势未结束"是最强 dead-cat bounce setup。
+    "v53_rsi_30_slope": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 22,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_rsi_oversold": True,
+        "rsi_oversold_threshold": 30,
+        "require_ma20_slope_neg": True,  # v50 F 条件
+    },
     # === 2026-09-21 微调发现（v46）— SL 收紧 / max_hold 调整（新方向） ===
     # 14 次迭代后, "放宽入场" 主线已工程上限 (v45 触底 DD 临界).
     # 切换到风险控制方向: SL 收紧 / max_hold 调整.
