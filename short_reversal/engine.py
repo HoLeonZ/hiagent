@@ -198,6 +198,10 @@ def run_backtest_v3(
         require_rsi_oversold=cfg.get("require_rsi_oversold", False),
         rsi_oversold_threshold=cfg.get("rsi_oversold_threshold", 30),
         rsi_period=cfg.get("rsi_period", 14),
+        # v57 (2026-10-12): J 条件 — SL 之后冷静期 (opt-in)。
+        # 若上一笔以 SL 出场, 强制 N 日全局冷却, 跳过最强信号。
+        # max_positions=1 时 J 是「全局」冷却, 因为单仓策略同一时间只持 1 笔。
+        sl_cooldown_days=cfg.get("sl_cooldown_days", 0),
         result_holder=holder,
     )
     cerebro.run()

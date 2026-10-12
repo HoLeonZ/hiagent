@@ -1384,6 +1384,81 @@ PRESETS: dict[str, dict] = {
         "close_ma60_buffer": 0.07,
         "require_ma20_slope_neg": True,
     },
+    # v57 (2026-10-12): SL 之后冷静期 (J 条件) preset 变体。
+    # 假设: SL 出场后立即再入场容易「报复交易」, 同一波亏势尚未结束,
+    # 下一笔也很可能输。强制 N 个交易日的全局冷却, 跳过最强信号。
+    # max_positions=1 时 J 是「全局」冷却, 因为单仓策略同一时间只持 1 笔,
+    # 冷却窗口对所有候选 stock 都生效 (与 per-symbol 冷却不同)。
+    # 三档: 3 / 5 / 7 个交易日, 与 v50_slope baseline 平行测试。
+    # v57_cd_03 (2026-10-12): 冷却 3 日, 保守档。
+    "v57_cd_03": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 34,  # v57 sweep 起点 (v56:31 + v57:3)
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,             # 与 v50_slope 相同
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "sl_cooldown_days": 3,     # J 条件
+    },
+    # v57_cd_05 (2026-10-12): 冷却 5 日, 中档。
+    "v57_cd_05": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 34,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "sl_cooldown_days": 5,
+    },
+    # v57_cd_07 (2026-10-12): 冷却 7 日, 激进档。
+    "v57_cd_07": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 34,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "sl_cooldown_days": 7,
+    },
 }
 
 

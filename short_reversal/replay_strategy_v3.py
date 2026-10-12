@@ -220,12 +220,22 @@ class Phase3V3Strategy(bt.Strategy):
         require_rsi_oversold=False,
         rsi_oversold_threshold=30,  # 经典 RSI<30 超卖线
         rsi_period=14,              # 14 日标准周期
+        # v57 (2026-10-12): J 条件 — SL 之后冷静期。
+        # 假设: 止损后立即重新入场容易"报复交易" — 同一波亏势尚未结束,
+        # 下一笔也很可能输。强制 N 个交易日的全局冷却,跳过最强信号。
+        # max_positions=1 时 J 是「全局」冷却 (不是 per-symbol),因为单仓策略
+        # 同一时间只持 1 笔, 冷却窗口对所有候选 stock 都生效。
+        # opt-in: sl_cooldown_days > 0 才启用, 默认 0 保 v50 baseline 兼容。
+        sl_cooldown_days=0,
         result_holder=None,
     )
 
     def __init__(self):
         # per-data 指标字典（避免多 data 共享 indicator）
         self.indi: dict[str, dict] = {}
+        # v57 J 条件状态: 最近一次 SL 出场的 exit_date, 用于冷却检查。
+        # 全局 (per-strategy, not per-symbol) — 因为 max_positions=1。
+        self._last_sl_date: "datetime.date | None" = None
         # 关键：只迭代 data feed，不迭代后续 __init__ 期间被加进来的 indicator
         # backtrader 的 Lines_LineSeries __slots__ 不允许任意属性注入
         for d in self.datas:
@@ -698,6 +708,10 @@ class Phase3V3Strategy(bt.Strategy):
         # Fallback to entry_fee for legacy positions (pre-Round 27b schemas
         # stored only entry_fee; the missing notional was the §2 violation
         # fixed in this same round).
+        # v57 (2026-10-12) J 条件: 记录 SL 出场日期, 用于 _all_conditions 冷却检查。
+        # 只在 reason=='SL' 时更新, 避免 TP/time 退出被错误地视为「亏势延续」标记。
+        if reason == "SL":
+            self._last_sl_date = bt.num2date(d.datetime[0]).date()
         proceeds = pnl - exit_fee
         self.credit_settling(proceeds)
         # Round 27b (CLAUDE.md §2): 释放 entry_cost - 累计 margin_fees_paid。
@@ -780,6 +794,15 @@ class Phase3V3Strategy(bt.Strategy):
 
     def _all_conditions(self, d) -> bool:
         indi = self.indi[d._name]
+
+        # J 条件 (v57, 2026-10-12): SL 之后冷静期。
+        # 若 self.p.sl_cooldown_days > 0 且最近一次 SL exit 距今 < 冷却天数,
+        # 拒绝所有入场 (即使 A-I 全过)。最快最便宜, 先做。
+        if self.p.sl_cooldown_days > 0 and self._last_sl_date is not None:
+            today = bt.num2date(d.datetime[0]).date()
+            days_since = (today - self._last_sl_date).days
+            if days_since < self.p.sl_cooldown_days:
+                return False
 
         # E 流动性（最便宜的先过滤）
         am60 = indi["am60"][0]
