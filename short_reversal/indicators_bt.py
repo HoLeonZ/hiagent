@@ -159,3 +159,48 @@ class AtrAdj(bt.Indicator):
             self.lines.atr[0] = float("nan")
         else:
             self.lines.atr[0] = sum(valid) / len(valid)
+
+
+class Ma20SlopeN(bt.Indicator):
+    """MA20 (or any injected line) over last N bars 的线性回归斜率。
+
+    v50 系列 (2026-10-12, 用户提示"下降趋势的斜率"维度):
+    short_reversal 5 条件 (A/B/C/D/E) 全部是「区间/布尔」判断,
+    无显式「趋势斜率」度量。MA20 在 5 日窗口上若 slope > 0,
+    说明短期 MA 在上升 → 标的可能处于反弹中段而非下降趋势,
+    与 short_reversal "捕捉下降趋势中的超涨反转" 哲学不符,
+    应作为入场过滤器排除。
+
+    计算方式: 取最近 N 个 ma20 值, numpy polyfit deg=1 算斜率 (per day)。
+    单位: (price / day) — 9 元/天斜率 ≈ 显著下跌; 0 表示横盘。
+    NaN 兼容: 任一窗口内含 NaN → 输出 NaN → 条件自然 fail。
+    """
+
+    lines = ("slope",)
+    params = (("period", 5),)
+
+    def __init__(self):
+        self._buf: list[float] = []
+        self.ma_source = None  # 由调用方在 strategy __init__ 后赋值
+
+    def next(self):
+        m = float("nan")
+        if self.ma_source is not None:
+            bar_idx = len(self.data) - 1
+            try:
+                m = float(self.ma_source.array[bar_idx])
+            except (IndexError, TypeError):
+                m = float("nan")
+        self._buf.append(m if not np.isnan(m) else float("nan"))
+        if len(self._buf) > self.p.period:
+            self._buf.pop(0)
+        valid = [v for v in self._buf if not np.isnan(v)]
+        if len(valid) < self.p.period:
+            self.lines.slope[0] = float("nan")
+            return
+        # x 用 0..period-1 等距, y 是 valid 中的 ma20 值
+        y = np.array(valid, dtype=float)
+        x = np.arange(len(y), dtype=float)
+        # numpy.polyfit 在 N=5 时数值稳定, 无未来函数 (只用 [0] 当期 + 过去)
+        coef = np.polyfit(x, y, 1)
+        self.lines.slope[0] = float(coef[0])

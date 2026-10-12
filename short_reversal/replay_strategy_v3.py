@@ -32,6 +32,7 @@ from short_reversal.indicators_bt import (
     Am60,
     AtrAdj,
     BelowMa60Ratio60,
+    Ma20SlopeN,
     PctChg,
     UpStreak,
 )
@@ -179,6 +180,14 @@ class Phase3V3Strategy(bt.Strategy):
         # 默认 0.095 (主板 -10% 跌停容差, 与 is_limit_down 核心常量对齐)。
         # preset 可覆盖 (e.g. 创业板 0.148, 科创板 0.198)。
         limit_down_threshold=0.095,
+        # v50 (2026-10-12): F 条件 — MA20 5 日回归斜率 ≤ 0 (下降趋势过滤)。
+        # 默认 False → v44 baseline 行为完全不变, v50 preset 显式开启。
+        require_ma20_slope_neg=False,
+        # 配套: 斜率回看窗口, 默认 5 日, 邻域可调 (3/5/7/10)。
+        ma20_slope_period=5,
+        # 配套: 斜率阈值 (price/day), 默认 0.0 (只要下降就过);
+        # 严格化可设 -0.003 / -0.005 (要求每天至少下降 0.3%/0.5%)。
+        ma20_slope_threshold=0.0,
         result_holder=None,
     )
 
@@ -215,6 +224,9 @@ class Phase3V3Strategy(bt.Strategy):
             ma60 = bt.indicators.SMA(adj_close_src, period=60)
             below_ratio = BelowMa60Ratio60(d, period=60)
             below_ratio.ma60_source = ma60.lines.sma  # ← 注入 ma60 line
+            # v50 (2026-10-12): MA20 5 日回归斜率指标, F 条件用
+            ma20_slope = Ma20SlopeN(d, period=self.p.ma20_slope_period)
+            ma20_slope.ma_source = ma20.lines.sma  # ← 注入 ma20 line
             self.indi[name] = {
                 "ma5": ma5,
                 "ma10": ma10,
@@ -225,6 +237,7 @@ class Phase3V3Strategy(bt.Strategy):
                 "am60": Am60(d, period=60),
                 "up_streak": UpStreak(d),
                 "below_ma60_ratio_60": below_ratio,
+                "ma20_slope_5d": ma20_slope,  # v50 F 条件
                 # V5' (R5): ATR(14) on adj_close for slippage estimation
                 "atr": AtrAdj(d, period=self.p.atr_period),
             }
@@ -768,6 +781,16 @@ class Phase3V3Strategy(bt.Strategy):
                 return False
         else:  # 'strict' (默认)
             if not (dif < 0 and dea < 0 and abs(bar) < abs(prev_bar)):
+                return False
+
+        # F 条件 (v50, 2026-10-12): MA20 N 日回归斜率 ≤ 0 (下降趋势过滤)。
+        # 设计动机: short_reversal 5 条件 (A/B/C/D/E) 全部是「区间/布尔」,
+        # 无显式「趋势斜率」度量。当 MA20 在 N 日内仍在上升,
+        # 标的可能处于反弹中段而非下降趋势, 与 short_reversal 哲学不符。
+        # opt-in: require_ma20_slope_neg=True 才启用, 默认 False 保 v44 兼容。
+        if self.p.require_ma20_slope_neg:
+            slope = indi["ma20_slope_5d"][0]
+            if np.isnan(slope) or slope > self.p.ma20_slope_threshold:
                 return False
 
         return True

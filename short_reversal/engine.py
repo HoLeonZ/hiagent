@@ -176,6 +176,10 @@ def run_backtest_v3(
         # 当前 preset 默认 0.10 / 'sl_first', 完整覆盖 11/11 preset。
         max_volume_participation=cfg.get("max_volume_participation", 0.10),
         intraday_tiebreak=cfg.get("intraday_tiebreak", "sl_first"),
+        # v50 (2026-10-12): F 条件 — MA20 下降趋势斜率过滤 (opt-in)。
+        require_ma20_slope_neg=cfg.get("require_ma20_slope_neg", False),
+        ma20_slope_period=cfg.get("ma20_slope_period", 5),
+        ma20_slope_threshold=cfg.get("ma20_slope_threshold", 0.0),
         result_holder=holder,
     )
     cerebro.run()
