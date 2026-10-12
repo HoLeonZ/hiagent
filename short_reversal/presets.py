@@ -1486,6 +1486,29 @@ PRESETS: dict[str, dict] = {
         "close_ma60_buffer": 0.07,
         "require_ma20_slope_neg": True,
     },
+    # v58_mp_3 (2026-10-13): max_positions=3, 单笔 sizing 33% free_cash。
+    # 多仓 sweep 的「极端点」,看 N 进一步增大时 curve 是否仍下降。
+    "v58_mp_3": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 37,
+        "position_sizing": "all_in",
+        "max_positions": 3,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+    },
 }
 
 
