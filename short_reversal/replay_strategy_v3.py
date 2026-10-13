@@ -290,6 +290,11 @@ class Phase3V3Strategy(bt.Strategy):
         # opt-in: require_market_breadth_bear=True 才启用。
         require_market_breadth_bear=False,
         market_breadth_max=0.5,  # close>MA20 比例超过此值则不入场
+        # v68 (2026-10-13): §2 conviction-based 填充选择 (opt-in)。
+        # CLAUDE.md §2: 并发信号 MUST 按统计信心排序后依次填充 (single-bullet)。
+        # 'first' (默认) = datas 顺序 (thscode 字母序, v50 兼容的任意 tie-breaker)。
+        # 'steepest_slope' = 按 MA20 斜率升序 (最负 = 最陡下降 = 最高空头信心)。
+        entry_selection="first",
         result_holder=None,
     )
 
@@ -529,6 +534,21 @@ class Phase3V3Strategy(bt.Strategy):
                 "drawdown": dd,
             })
 
+    def _conviction_key(self, code: str) -> float:
+        """v68 (§2): 空头信心度量 — MA20 斜率, 越负 = 下降越陡 = 信心越高。
+
+        排序用升序 → 最陡下降排最前。缺失/NaN 返回 0.0 (排中间)。
+        """
+        indi = self.indi.get(code, {})
+        sl = indi.get("ma20_slope_5d")
+        if sl is None:
+            return 0.0
+        try:
+            v = float(sl[0])
+        except (IndexError, TypeError, ValueError):
+            return 0.0
+        return v if not math.isnan(v) else 0.0
+
     def _market_breadth(self) -> float:
         """v66 (2026-10-13): 市场宽度 = universe 中 close > MA20 的股票比例。
 
@@ -604,8 +624,19 @@ class Phase3V3Strategy(bt.Strategy):
             pending = self.pending_entries
             pending.clear()
             return
-        for d in self.datas:
-            code = d._name
+        # v68 (§2): 并发信号按统计信心排序后依次填充 (single-bullet)。
+        # 'steepest_slope' 按 MA20 斜率升序 (最陡下降优先); 'first' 保留 datas 顺序。
+        if self.p.entry_selection == "steepest_slope":
+            codes_to_fill = sorted(
+                (d._name for d in self.datas if d._name in self.pending_entries),
+                key=self._conviction_key,
+            )
+        else:
+            codes_to_fill = [
+                d._name for d in self.datas if d._name in self.pending_entries
+            ]
+        for code in codes_to_fill:
+            d = self.getdatabyname(code)
             if code not in self.pending_entries:
                 continue
             # Round 23 (2026-09-28, CLAUDE.md §3/§4): LIMIT-DOWN guard。

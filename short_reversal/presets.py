@@ -1707,6 +1707,35 @@ PRESETS: dict[str, dict] = {
         "require_ma20_slope_neg": True,
         "ma20_slope_period": 5,
     },
+    # v68_conviction (2026-10-13): §2 合规 — 并发信号按统计信心排序填充。
+    # 当前实现按 datas 顺序 (thscode 字母序) 填充 = 任意 tie-breaker。
+    # CLAUDE.md §2 要求: "sort them by statistical conviction ... fill strictly
+    # in that order"。v68 按 MA20 斜率升序 (最陡下降 = 最高空头信心) 排序。
+    # 策略与 v50_slope 完全相同, 仅改 fill 选择顺序。
+    # n_trials=18 (per §5)。
+    "v68_conviction": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 18,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "ma20_slope_period": 5,
+        "entry_selection": "steepest_slope",
+    },
 }
 
 

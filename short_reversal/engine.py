@@ -309,6 +309,8 @@ def run_backtest_v3(
         # v66 (2026-10-13): 市场宽度 regime gate (opt-in)。
         require_market_breadth_bear=cfg.get("require_market_breadth_bear", False),
         market_breadth_max=cfg.get("market_breadth_max", 0.5),
+        # v68 (2026-10-13, §2): conviction-based 填充选择 (opt-in)。
+        entry_selection=cfg.get("entry_selection", "first"),
         result_holder=holder,
     )
     cerebro.run()
