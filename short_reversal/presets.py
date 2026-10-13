@@ -1983,6 +1983,51 @@ PRESETS: dict[str, dict] = {
         "below_ratio_60": 0.2,
         "close_ma60_buffer": 0.07,
     },
+    # v73_nosl (2026-10-14): v44 + SL 消融 (sl_pct 0.0005 → 1.0, 实质无止损)。
+    # 4 窗口 mean Calmar 0.81 vs v44 16.50 (-15.69) → 0.05% 极紧 SL 是策略核心
+    # 风控, 移除灾难性。SL 不可或缺。
+    "v73_nosl": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 28,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 1.0,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # v73_mh10 (2026-10-14): v44 + max_hold 5 → 10。
+    # 4 窗口 mean Calmar 14.14 vs v44 16.50 (-2.36) → max_hold=5 正确。FAIL。
+    "v73_mh10": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 29,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 10,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
 }
 
 
