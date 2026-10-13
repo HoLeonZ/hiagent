@@ -774,3 +774,46 @@ def test_simulate_portfolio_atr_aware_slippage_when_scale_positive():
     assert abs(actual_entry - expected_entry) < 1e-6, (
         f"uptrend_pullback ATR-aware slip: entry={actual_entry}, 应 = {expected_entry}"
     )
+
+
+def test_phase2_does_not_silently_degrade_to_sentinel():
+    """§3/§4: Phase 2 不得把 Phase 1 已正常平仓的 trade 静默退化成
+    `exit_price == entry_price` 哨兵值。
+
+    raw_close 域下 backtrader 的 cash check 用「下单 bar」的价, 该价可高于 Phase 1
+    的 T+1 入场价; 若 initial_cash 只按 entry_price 缓冲, 入场单会被 Margin 拒单,
+    该笔 trade 就退化成哨兵值 (exit_date 回填 Phase 1 的, exit_price = entry_price)。
+    test_v3_e2e_exit_price_is_fill_bar_open 会跳过哨兵值, 因此该缺陷不会被它发现。
+    """
+    from hiagent_config import DB_PATH as _DB
+    from pathlib import Path as _P
+    from uptrend_pullback.backtrader_engine import run_backtrader_backtest
+    from uptrend_pullback.data import load_panel as _lp
+    from uptrend_pullback.signals import compute_indicators as _ci
+    from uptrend_pullback.universe import load_universe as _lu
+
+    db, start, end = _P(_DB), "2025-07-01", "2026-07-01"
+    universe = set(_lu("mainboard_only", db))
+    panel_ind = _ci(_lp(db, start, end, universe=universe))
+
+    p1 = run_backtrader_backtest("v33_long_reverse_v19", start, end, db,
+                                 panel_ind=panel_ind, verify=False)["trades"]
+    p2 = run_backtrader_backtest("v33_long_reverse_v19", start, end, db,
+                                 panel_ind=panel_ind, verify=True)["trades"]
+    p1_by_key = {(t["thscode"], t["entry_date"]): t for _, t in p1.iterrows()}
+
+    degraded = []
+    for _, t2 in p2.iterrows():
+        if t2["exit_reason"] == "eod":
+            continue  # eod 是期末 mark-to-market, 不是 Phase 2 退化
+        t1 = p1_by_key.get((t2["thscode"], t2["entry_date"]))
+        if t1 is None or float(t1["exit_price"]) == float(t1["entry_price"]):
+            continue  # Phase 1 自身即哨兵, 不要求 Phase 2 改善
+        if float(t2["exit_price"]) == float(t2["entry_price"]):
+            degraded.append((t2["thscode"], t2["entry_date"], float(t2["exit_price"])))
+
+    assert not degraded, (
+        f"{len(degraded)} 笔 trade 在 Phase 2 退化成哨兵值 "
+        f"(exit_price == entry_price, 非 eod):\n{degraded[:5]}\n"
+        f"通常意味着 backtrader 入场单被 Margin 拒单 (initial_cash 未覆盖 raw 价域)。"
+    )
