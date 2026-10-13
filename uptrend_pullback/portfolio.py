@@ -571,16 +571,25 @@ def simulate_portfolio(
 
         # ---------- 4) 记录净值 ----------
         holdings_val = 0.0
+        unrealized = 0.0
         for code, pos in positions.items():
             j = _row_at(pidx[code], day)
             px = pidx[code]["close"][j] if j is not None else pos["entry_price"]
             holdings_val += pos["size"] * px
+            # total_cash 是「已实现盈亏账本」, 建仓时并不扣减现金 (只有平仓时把
+            # net_pnl 计入)。因此持仓期内 NAV 只能加**未实现盈亏**; 若加持仓市值
+            # (size × px), 建仓名义金额就被计入两次 —— equity 会在建仓那根 bar 凭空
+            # 跳增约一个名义金额、平仓时再跳回, 单日权益收益出现 ±50%~+110% 这种
+            # 物理上不可能的跳变 (长仓 + max_positions=1 + A 股 ±10% 涨跌停 ⇒ 单日
+            # 对权益影响上限约 ±10%)。compute_metrics 的 sharpe/max_dd/exposure 全部
+            # 由这条曲线算出, 于是 §5 依赖的 DSR 输入不可信。
+            unrealized += (px - pos["entry_price"]) * pos["size"]
         # Round 16 (CLAUDE.md §2): equity row uses total_cash.
         equity_rows.append({
             "date": pd.Timestamp(day),
             "cash": pf.total_cash,
             "holdings": holdings_val,
-            "equity": pf.total_cash + holdings_val,
+            "equity": pf.total_cash + unrealized,
         })
 
     trades_df = (
