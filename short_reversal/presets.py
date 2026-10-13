@@ -1788,6 +1788,54 @@ PRESETS: dict[str, dict] = {
         "ma20_slope_period": 5,
         "entry_selection": "steepest_slope",
     },
+    # v69_donly (2026-10-13): v44 + MACD 放松 (converge_strict → d_only)。
+    # 消融检验 v44 的 D 条件 (MACD) 是否过度限制。4 窗口 delta mean +0.37 → 中性。
+    # 结论: MACD 收敛约束不是有害过滤器; 无改进。
+    "v69_donly": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 19,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "d_only",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # v69_widec (2026-10-13): v44 + 移除 C 条件涨跌幅约束 (pct_chg 3-10% → 0-100%)。
+    # ⚠️ REGIME-DEPENDENT, FAILED: 2016-2023 强正 (6 窗口 mean +7.73), 但
+    #   2024-2026 大幅负 (2024-H2 -1.32, 2025-H2 -4.90, 2026-H2 holdout -63.31)。
+    #   全 9 窗口 mean -2.58 (5/9 wins)。方向与 v63/v67/v68 相反 (帮旧损新),
+    #   反向确认 2024-2026 是结构不同的 regime。C 条件不是可移除的有害过滤器。
+    "v69_widec": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 20,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.0,
+        "pct_chg_high": 1.0,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
 }
 
 
