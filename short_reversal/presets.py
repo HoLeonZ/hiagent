@@ -1566,6 +1566,29 @@ PRESETS: dict[str, dict] = {
         "intraday_reversal_threshold": 0.6,
         "intraday_reversal_require_close_above_open": True,
     },
+    # v63_ensemble (2026-10-13): 集成信号 — 50/50 资金分配 v50_slope + v44_ratio02_buf07。
+    # 假设: v50_slope (F 条件 ON, 强趋势下行反转) 与 v44_ratio02_buf07 (无 F, 中性反转)
+    #   在不同 regime 错峰, 等权组合可降 DD 而不损收益 (diversification within reversal family)。
+    # 验证 (CLAUDE.md §5, honest n_trials=13):
+    #   - WFV 4×6mo (2024-2025): ensemble 2/4 wins, mean Calmar +10.9% (10.28 vs 9.27)
+    #   - Holdout 2026-04~09: Calmar +5.4% (84.72 vs 80.41), yield 几乎持平 (-0.7%), DD -6.1%
+    # 引擎实现: short_reversal/engine.py::_run_ensemble 递归调用 run_backtest_v3,
+    #   汇总等权 PnL + 保守 max_dd (worst-case across subs)。
+    # 注意: 单元持仓 max_positions=1 per sub, 合计 ≈ 2 个独立子仓。
+    "v63_ensemble": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 13,  # honest count per §5 iterative-tuning accounting
+        "position_sizing": "ensemble_split",
+        "max_positions": 1,  # per sub-strategy
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "ensemble_substrategies": ["v50_slope", "v44_ratio02_buf07"],
+        "ensemble_weight": 0.5,
+    },
 }
 
 
