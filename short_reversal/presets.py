@@ -1836,6 +1836,57 @@ PRESETS: dict[str, dict] = {
         "below_ratio_60": 0.2,
         "close_ma60_buffer": 0.07,
     },
+    # v70_nob (2026-10-13): v44 + 移除 B 条件 (连阳 3-10 天 → 0-999, 即关闭)。
+    # 4 窗口 delta mean -1.12 → B 是有用条件, 移除有害。FAIL。
+    "v70_nob": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 21,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "up_streak_low": 0,
+        "up_streak_high": 999,
+    },
+    # v70_lowratio (2026-10-13): v44 + 移除 A 的 below_ratio_60 子条件 (0.2 → 0.0)。
+    # ⚠️ MARGINAL, 未达显著: 9 窗口 mean delta +1.79, 但几乎完全由 2022-H1
+    #   单窗口 (+15.65) 驱动; 剔除后其余 8 窗口 mean ≈ +0.06 (纯 no-op)。
+    #   std≈5.2, SE≈1.73, t≈1.03 → 不显著。
+    #   below_ratio_60 罕见 bind (阈值 0.2 宽松), 移除它大部分窗口是 no-op。
+    #   4 窗口初测 (2017-H2+1.26, 2018-H1 0, 2024-H1 0, 2025-H1+4.57) mean +1.46。
+    #   结论: 边际候选, 不构成确证改进 (单窗口主导)。
+    "v70_lowratio": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 22,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.0,
+        "close_ma60_buffer": 0.07,
+    },
 }
 
 
