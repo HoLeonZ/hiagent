@@ -523,6 +523,14 @@ PRESETS: dict[str, dict] = {
     # tp_pct: 0.08
     # max_hold: 5
     # Note: Fixed TP/SL; double extreme (ratio 0.2 + buf 0.07). v3 体系工程最优. No ATR multiplier.
+    # === 2026-10-13: 全周期稳健性复核 → v44_ratio02_buf07 是更优 champion ===
+    # F 消融 (v50_slope 相对本 preset 仅多 F 条件) 显示: 移除 F 后在所有时期更好。
+    #   2016-2023 mean delta Calmar +0.75 (7 windows)
+    #   2024-2025 mean delta +2.31 (4 windows)
+    #   2026-H2 holdout: Calmar 89.63 vs 80.41 (+9.22), DD 9.08% vs 10.34%
+    # → v44 > v50_slope (全周期), 且 win rate 系统性更高。
+    # 统计注: delta std≈2.9, t≈1.5 — 方向一致 (3/3 时期) 但未达常规显著性。
+    # v44 无 F 参数 → 参数更少, 过拟合面更小, 稳健性更优。
     "v44_ratio02_buf07": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
@@ -650,18 +658,36 @@ PRESETS: dict[str, dict] = {
     # 反弹中段而非下降趋势, 与 short_reversal 哲学不符, 应排除。
     # 预期: 减少横盘假信号, 提高胜率; n 略减, CAGR 持平或上升。
     #
-    # ⚠️ 稳健性复核 (2026-10-13, F 消融 vs v44_ratio02_buf07, 2016-2023):
-    #   window   v50(F on)  v44(F off)  delta
-    #   2017-H1    4.93       5.72      +0.79
-    #   2018-H1    8.10      14.59      +6.49
-    #   2019-H1   11.92       9.96      -1.96
-    #   2020-H1   16.70      16.70      -0.00
-    #   2021-H2    2.39       1.40      -0.99
-    #   2022-H1   16.65      16.88      +0.23
-    #   2023-H2    4.61       5.32      +0.71
-    #   mean delta (v44-v50) = +0.75 → F 在 2016-2023 无正贡献 (wash, t≈0.75)。
-    #   F 的价值仅在 2024-2026 — 而 F 正是在该窗口被选出 → 选择偏差。
-    #   结论: 跨周期看 F 是中性条件; v50_slope 的 champion 地位依赖 in-sample 优势。
+    # ⚠️ F 消融复核 (2026-10-13, vs v44_ratio02_buf07 — 唯一差异就是 F 条件):
+    #   F 在整个 2016-2026 上是 NEGATIVE 条件 (移除 F 反而更好)。
+    #
+    #   2016-2023 (7×6mo, Calmar):
+    #     window   v50(F on)  v44(F off)  delta
+    #     2017-H1    4.93       5.72      +0.79
+    #     2018-H1    8.10      14.59      +6.49
+    #     2019-H1   11.92       9.96      -1.96
+    #     2020-H1   16.70      16.70      -0.00
+    #     2021-H2    2.39       1.40      -0.99
+    #     2022-H1   16.65      16.88      +0.23
+    #     2023-H2    4.61       5.32      +0.71
+    #     mean delta (v44-v50) = +0.75
+    #
+    #   2024-2025 (4×6mo):
+    #     2024-H1    9.74      15.45      +5.71   (yield 63.1% vs 90.4%, DD 同)
+    #     2024-H2   11.39      10.68      -0.71
+    #     2025-H1    8.20      12.49      +4.29
+    #     2025-H2    7.74       7.70      -0.04
+    #     mean delta (v44-v50) = +2.31
+    #
+    #   2026-H2 holdout:
+    #     v50: Calmar 80.41 (yield 204.2%, DD 10.34%, win 35.6%)
+    #     v44: Calmar 89.63 (yield 201.3%, DD  9.08%, win 36.5%)  → +9.22
+    #
+    #   v44 在 3 个时期全部正向, 且 win rate 系统性更高 (25.9% vs 20.0% 等)。
+    #   结论: F (MA20 斜率) 是有害参数 — 移除盈利交易而不改善风险。
+    #   v50 系列内部 (v50-v62, 全含 F) 从未与 pre-F 基线 v44 消融 → 回归被隐藏。
+    #   → v44_ratio02_buf07 是比 v50_slope 更优且更稳健的 champion。
+    #   (统计注: delta 分布 std≈2.9, t≈1.5 — 方向一致但未达常规显著性; 见 v44 包)
     "v50_slope": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
