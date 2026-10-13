@@ -155,6 +155,14 @@ def deflated_sharpe_ratio(
         except (ValueError, ZeroDivisionError, OverflowError):
             expected_max = float("nan")
 
+    # 2026-10-13 (§5 单位一致性修复): observed_sharpe 按本函数约定是**年化**值
+    # (见 docstring: mean/std × sqrt(252)), 而下面的 σ̂ 与 expected_max 都是
+    # **逐期**量。两者必须换算到同一频率, 否则相当于拿年化 Sharpe 去比逐期阈值,
+    # 对中等 Sharpe 会系统性过度折减 (实测: 年化 Sharpe=0.84 / k=19 / T=1071 被
+    # 判成 DSR=0.000, 而正确值约 0.44 —— 把「有边际优势」误读成「毫无优势」;
+    # 年化 3.0 这种高 Sharpe 反而两法都接近 1, 所以该 bug 长期未被发现)。
+    sr = observed_sharpe / math.sqrt(trading_days_per_year)
+
     # 2) PSR (Probabilistic Sharpe Ratio) — Bailey & López de Prado eq. (4)
     #    PSR(observed) = Φ[(observed - SR*) / σ̂]
     #    where σ̂ adjusts for non-normality and autocorrelation:
@@ -166,20 +174,21 @@ def deflated_sharpe_ratio(
         se = 1.0
     else:
         # Variance from non-normality (Bailey eq. 5, simplified for SR=0)
-        nonnorm_var = (1.0 - skewness * observed_sharpe
-                       + (kurtosis - 1.0) / 4.0 * observed_sharpe ** 2) / (n_returns - 1)
+        nonnorm_var = (1.0 - skewness * sr
+                       + (kurtosis - 1.0) / 4.0 * sr ** 2) / (n_returns - 1)
         # Autocorrelation penalty: var × (1 + 2ρ/(1-ρ)) — Bailey eq. (6) lag-1 form
         autocorr_mult = (1.0 + 2.0 * autocorr_lag1 / (1.0 - autocorr_lag1)
                          if abs(autocorr_lag1) < 1.0 else 1.0)
         se = math.sqrt(max(nonnorm_var * autocorr_mult, 1e-12))
 
     # 3) PSR vs expected_max → DSR
-    #    DSR = Φ[(observed_sharpe - E[max]) / σ̂]
+    #    DSR = Φ[(SR_per - E[max]·σ̂) / σ̂] = Φ(SR_per/σ̂ - E[max])
+    #    expected_max 已是「以 σ̂ 为单位」的期望最大, 故除以 σ̂ 后直接相减。
     if not math.isfinite(expected_max) or se <= 0:
         dsr = float("nan")
         dsr_p = float("nan")
     else:
-        z = (observed_sharpe - expected_max) / se
+        z = sr / se - expected_max
         dsr = _norm_cdf(z)
         dsr_p = 1.0 - dsr
 
