@@ -595,6 +595,13 @@ PRESETS: dict[str, dict] = {
     # tp_pct: 0.08
     # max_hold: 5
     # Note: Fixed TP/SL; extreme relaxation (ratio 0.1 + buf 0.10). DD临界 67-95%. No ATR multiplier.
+    # === 2026-10-14 全周期 vs v44 比较 (13 windows, 2016-2025) ===
+    #   mean delta Calmar (v45 - v44) = +1.91, 但由 2 窗口驱动:
+    #     2022-H1 +15.65, 2025-H1 +11.62; 剔除后其余 11 窗口 mean ≈ -0.23。
+    #   std≈4.9, SE≈1.36, t≈1.40 → 不显著。
+    #   多数窗口 no-op (A 条件不 bind); 2024-H2 -0.82, 2025-H2 -1.33 (近期偏负)。
+    #   判定: 弱候选 — 未达 v44 的确证标准 (t≈2.07)。且 DD 高风险 (见上)。
+    #   → 不提升为 champion; 保留为高 yield 但高 DD 备选 (仅 DD 容忍度高时考虑)。
     "v45_ratio01_buf10": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
