@@ -1569,9 +1569,17 @@ PRESETS: dict[str, dict] = {
     # v63_ensemble (2026-10-13): 集成信号 — 50/50 资金分配 v50_slope + v44_ratio02_buf07。
     # 假设: v50_slope (F 条件 ON, 强趋势下行反转) 与 v44_ratio02_buf07 (无 F, 中性反转)
     #   在不同 regime 错峰, 等权组合可降 DD 而不损收益 (diversification within reversal family)。
-    # 验证 (CLAUDE.md §5, honest n_trials=13):
-    #   - WFV 4×6mo (2024-2025): ensemble 2/4 wins, mean Calmar +10.9% (10.28 vs 9.27)
-    #   - Holdout 2026-04~09: Calmar +5.4% (84.72 vs 80.41), yield 几乎持平 (-0.7%), DD -6.1%
+    #
+    # ⚠️ REGIME-DEPENDENT (2026-10-13 复核修正): 优势不跨周期稳健。
+    #   2024-2026 (原测窗口):
+    #     - WFV 4×6mo (2024-2025): mean Calmar +10.9% (10.28 vs 9.27)
+    #     - Holdout 2026-04~09: Calmar +5.4% (84.72 vs 80.41)
+    #   2020-2023 复核 (truly OOS, 4 regime, 非调参):
+    #     - mean Calmar delta = -0.07 (v50 10.09 vs v63 10.01) → 无差异
+    #     - per-window: {0.00, -0.75, +0.11, +0.35}, std≈0.45 → 全在噪声内
+    #   结论: v63 的 edge 很可能是 2024-2026 regime 特定, 而非稳健 alpha。
+    #   默认 champion 应保持 v50_slope; v63 仅作 regime-conditional opt-in。
+    #
     # 引擎实现: short_reversal/engine.py::_run_ensemble 递归调用 run_backtest_v3,
     #   汇总等权 PnL + 保守 max_dd (worst-case across subs)。
     # 注意: 单元持仓 max_positions=1 per sub, 合计 ≈ 2 个独立子仓。
