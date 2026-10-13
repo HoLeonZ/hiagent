@@ -1679,6 +1679,34 @@ PRESETS: dict[str, dict] = {
         "require_market_breadth_bear": True,
         "market_breadth_max": 0.5,
     },
+    # v67_broad (2026-10-13): v50_slope 策略不变, universe 扩展到
+    # 主板 + 创业板(300) + 科创板(688)。
+    # 假设: 死猫跳 reverse-momentum 在更广市场微观结构 (更多高波动/散户主导标的)
+    #   上是否有额外 alpha。§4: 300/688 涨跌停 ±20%, 由 _board_limit_threshold
+    #   按板+日期处理 (创业板 2020-08-24 起 20%)。
+    # n_trials=17 (per §5)。
+    "v67_broad": {
+        "universe": "broad_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 17,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "ma20_slope_period": 5,
+    },
 }
 
 

@@ -51,6 +51,31 @@ UP_STREAK_HIGH = 10
 # 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION。超出部分丢弃(不挂单)。
 MAX_VOL_PARTICIPATION = 0.10
 
+# v67 (2026-10-13, CLAUDE.md §4): board-and-date-aware 跌停阈值。
+# 主板 ±10% (0.095 容差); 创业板 300.SZ 2020-08-24 起 ±20% (之前 ±10%);
+# 科创板 688.SH ±20% (2019-07-22 开板)。20% 板的票用 10% 阈值会误判跌停,
+# 导致本可成交的空头 entry 被错误跳过。broad_only universe 必须走此逻辑。
+_CHINEXT_20PCT_START = (2020, 8, 24)
+_LIMIT_THRESHOLD_20PCT = 0.195
+
+
+def _board_limit_threshold(code: str, bar_date, default: float) -> float:
+    """按板 + 日期返回跌停阈值 (CLAUDE.md §4)。主板返回 default (保持兼容)。"""
+    if code.endswith(".SH"):
+        body = code.split(".", 1)[0]
+        if body.startswith("688"):
+            return _LIMIT_THRESHOLD_20PCT  # 科创板 ±20%
+    elif code.endswith(".SZ"):
+        body = code.split(".", 1)[0]
+        if body.startswith("300"):
+            if bar_date is not None and (
+                bar_date.year,
+                bar_date.month,
+                bar_date.day,
+            ) >= _CHINEXT_20PCT_START:
+                return _LIMIT_THRESHOLD_20PCT  # 创业板 2020-08-24 起 ±20%
+    return default
+
 # Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical cost model constants
 # (single-source-of-truth in core.dual_price.py). Declared at module level so
 # the AST detector in tests/test_cost_model_canonical_conformance_4engine.py
@@ -589,8 +614,14 @@ class Phase3V3Strategy(bt.Strategy):
             # 若 prev_close 缺失 (data gap), is_limit_down 返回 False 允许 entry
             # (与 chase_up/uptrend_pullback is_limit_up 同语义: best-effort)。
             prev_close = float(d.close[-1]) if len(d) > 1 else None
+            # v67 (§4): board-and-date-aware 阈值 (主板 default 保持兼容;
+            # 创业板/科创板 ±20%)。
+            bar_date = bt.num2date(d.datetime[0]).date()
+            limit_thr = _board_limit_threshold(
+                code, bar_date, self.p.limit_down_threshold
+            )
             if is_limit_down(prev_close=prev_close, open_price=float(d.open[0]),
-                             threshold=self.p.limit_down_threshold):
+                             threshold=limit_thr):
                 logger.debug(
                     "[limit-down] skip short entry: %s open=%.2f prev_close=%.2f",
                     code, float(d.open[0]), prev_close if prev_close is not None else 0.0,
