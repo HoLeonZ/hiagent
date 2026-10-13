@@ -2189,6 +2189,56 @@ PRESETS: dict[str, dict] = {
         "liq_low": 5e7,
         "liq_high": 2e8,
     },
+    # v78_weak / v78_dryup (2026-10-14): v44 + G/H 条件 (此前只在含 F 的 v50 上测过)。
+    # 4 窗口: +weak_1m mean 12.89 (-3.61, 高方差: -16.6/+20.6/-12.0),
+    # +dryup mean 6.06 (-10.44, 持续更差)。两者均失败。
+    # → 印证: 在 F-free 基线上加条件同样有害 (策略在条件更少时更好)。
+    # 注: +RSI (I 条件) 无法测 — 触发 backtrader pre-existing ZeroDivisionError
+    # (avg_loss==0, 见 replay_strategy_v3.py RSI opt-in 注释)。
+    "v78_weak": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 37,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_weak_1m": True,
+        "weak_1m_threshold": -0.05,
+    },
+    "v78_dryup": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 38,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_amount_dryup": True,
+        "amount_dryup_threshold": 0.70,
+    },
 }
 
 
