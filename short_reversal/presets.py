@@ -1577,8 +1577,14 @@ PRESETS: dict[str, dict] = {
     #   2020-2023 复核 (truly OOS, 4 regime, 非调参):
     #     - mean Calmar delta = -0.07 (v50 10.09 vs v63 10.01) → 无差异
     #     - per-window: {0.00, -0.75, +0.11, +0.35}, std≈0.45 → 全在噪声内
-    #   结论: v63 的 edge 很可能是 2024-2026 regime 特定, 而非稳健 alpha。
-    #   默认 champion 应保持 v50_slope; v63 仅作 regime-conditional opt-in。
+    #   2016-2019 复核 (3×6mo, 从未测过的最早时段):
+    #     - per-window delta {+0.39, +1.15, -1.96}, mean = -0.14 → 无差异
+    #   结论 (8 年证据): v50_slope 与 v63_ensemble 在 2024-2026 之外的
+    #   两个独立 4 年时段上统计无差异 (delta ≈ -0.1)。v63 的 edge 仅存在于
+    #   它被选出的那个时段 — 典型过拟合。
+    #   默认 champion 保持 v50_slope; v63 仅作 regime-conditional opt-in。
+    #   ⚠️ 更广义警示: 本基准的 2024-2026 评估窗口易过拟合 — 任何仅在该
+    #   窗口上出色的 preset 都应在 2016-2023 上复现后才可采信。
     #
     # 引擎实现: short_reversal/engine.py::_run_ensemble 递归调用 run_backtest_v3,
     #   汇总等权 PnL + 保守 max_dd (worst-case across subs)。
