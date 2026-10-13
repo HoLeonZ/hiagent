@@ -1589,6 +1589,88 @@ PRESETS: dict[str, dict] = {
         "ensemble_substrategies": ["v50_slope", "v44_ratio02_buf07"],
         "ensemble_weight": 0.5,
     },
+    # v64_ensemble_3leg (2026-10-13): 3-leg 集成 — 加 v50_slope_strict (slope ≤ -0.003)。
+    # 目的: 测 ensemble 容量 — 第 3 个更严格的趋势子策略能否进一步分散 DD。
+    # 假设: strict 只在最强下行趋势入场 (更少但更高质量的信号), 与 v50/v44 错峰。
+    # n_trials=14 (per §5)。
+    "v64_ensemble_3leg": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 14,
+        "position_sizing": "ensemble_split",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "ensemble_substrategies": [
+            "v50_slope",
+            "v44_ratio02_buf07",
+            "v50_slope_strict",
+        ],
+        "ensemble_weight": 0.3333333333,
+    },
+    # v65_trailing (2026-10-13): v50_slope + 浮动止损 (trailing stop, short-side)。
+    # 假设: v50 固定 SL 只锁风险不锁利润; 加 trailing (跟踪最低价) 可在
+    # 死猫跳反弹后继续下跌时锁定浮盈。
+    # 配置: trailing_stop_pct=0.02 (2% 回撤即止盈出场), activation=0.02
+    #   (浮盈 ≥ 2% 才激活 trailing, 避免过早收紧)。
+    # n_trials=15 (per §5)。
+    "v65_trailing": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 15,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "ma20_slope_period": 5,
+        "trailing_stop_pct": 0.02,
+        "trailing_activation_pct": 0.02,
+    },
+    # v66_regime (2026-10-13): v50_slope + 市场宽度 regime gate。
+    # 假设: 做空死猫跳在牛市普涨 regime 下失效 (beta 抬升)。用市场宽度
+    #   (universe 中 close > MA20 比例) 作为 regime 代理: breadth ≤ 0.5
+    #   (多数票在 MA20 之下 = 熊市) 才允许入场。
+    # 与所有个股级条件 (A-K) 正交: 这是 market-level 维度。
+    # n_trials=16 (per §5)。
+    "v66_regime": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 16,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "ma20_slope_period": 5,
+        "require_market_breadth_bear": True,
+        "market_breadth_max": 0.5,
+    },
 }
 
 

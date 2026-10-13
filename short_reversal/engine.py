@@ -303,6 +303,12 @@ def run_backtest_v3(
         intraday_reversal_require_close_above_open=cfg.get(
             "intraday_reversal_require_close_above_open", True
         ),
+        # v65 (2026-10-13): 浮动止损 (trailing stop, short-side, opt-in)。
+        trailing_stop_pct=cfg.get("trailing_stop_pct", 0.0),
+        trailing_activation_pct=cfg.get("trailing_activation_pct", 0.0),
+        # v66 (2026-10-13): 市场宽度 regime gate (opt-in)。
+        require_market_breadth_bear=cfg.get("require_market_breadth_bear", False),
+        market_breadth_max=cfg.get("market_breadth_max", 0.5),
         result_holder=holder,
     )
     cerebro.run()

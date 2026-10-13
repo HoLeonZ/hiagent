@@ -245,6 +245,26 @@ class Phase3V3Strategy(bt.Strategy):
         # 注意: 此改动会改变 _fill_pending_entries 的 sizing 公式,
         # 通过 self.p.max_positions 路由, 其它模块不变。
         max_positions=1,
+        # v65 (2026-10-13): 浮动止损 (trailing stop, short-side, opt-in)。
+        # 假设: 固定 SL 在入场时锁定风险上界, 但不锁定利润。死猫跳反弹后
+        # 继续下跌时, 若能把止损位随最低价 trailing 下移, 可锁住已获浮盈
+        # 而不牺牲趋势延续的收益。
+        # 机制: 跟踪持仓期最低价 lowest_price; 一旦浮盈 ≥ activation 阈值,
+        # 有效止损从固定 sl_p 收紧为 lowest_price × (1 + trailing_stop_pct),
+        # 取二者较紧者 (min)。
+        # opt-in: trailing_stop_pct > 0 才启用, 默认 0 保 v50/v63 兼容。
+        trailing_stop_pct=0.0,
+        trailing_activation_pct=0.0,
+        # v66 (2026-10-13): 市场宽度 regime gate (opt-in)。
+        # 假设: 做空死猫跳的系统性风险是「牛市普涨」— 市场整体向上时,
+        # 个股超买后回调的空头信号普遍失效 (beta 抬升)。用市场宽度
+        # (universe 中 close > MA20 的比例) 作为 regime 代理:
+        #   breadth 高 (多数票在 MA20 之上) = 牛市 regime → 跳过入场
+        #   breadth 低 (多数票在 MA20 之下) = 熊市 regime → 允许入场
+        # 与所有个股级条件 (A-K) 正交: 这是 market-level 维度。
+        # opt-in: require_market_breadth_bear=True 才启用。
+        require_market_breadth_bear=False,
+        market_breadth_max=0.5,  # close>MA20 比例超过此值则不入场
         result_holder=None,
     )
 
@@ -437,12 +457,17 @@ class Phase3V3Strategy(bt.Strategy):
         # 正确位置。max_positions > 1 时,_fill_pending_entries 用 size 公式强制 N
         # 等分 (free_cash / max_positions) — 单笔 size 减少,N 笔并行总和 = free_cash。
         # Round 17 (2026-09-28, CLAUDE.md §1): 保持 v50 行为兼容。
+        # v66 (2026-10-13): market breadth regime gate (opt-in)。breadth 高 = 牛市
+        # → 跳过所有入场 (但不影响持仓出场)。每 bar 只算一次。
+        regime_ok = True
+        if self.p.require_market_breadth_bear:
+            regime_ok = self._market_breadth() <= self.p.market_breadth_max
         for d in self.datas:
             code = d._name
             if code in self._holds:
                 self._check_exit(d)
             elif code not in self.pending_entries:
-                if self._all_conditions(d):
+                if regime_ok and self._all_conditions(d):
                     self.pending_entries[code] = True
 
         # 4) 更新回撤（NAV-based：cash + 持仓 mark-to-market 浮盈）
@@ -478,6 +503,33 @@ class Phase3V3Strategy(bt.Strategy):
                 "equity": nav,
                 "drawdown": dd,
             })
+
+    def _market_breadth(self) -> float:
+        """v66 (2026-10-13): 市场宽度 = universe 中 close > MA20 的股票比例。
+
+        Causal (CLAUDE.md §1): 只用当前 bar 的 close[0] 和 ma20[0], 无未来引用。
+        只在 require_market_breadth_bear 时调用 (per-bar O(N))。
+        牛市 regime (多数票在 MA20 之上) 时做空死猫跳失效 → 返回高 breadth。
+        """
+        above, total = 0, 0
+        for d in self.datas:
+            name = getattr(d, "_name", None)
+            if not name or name not in self.indi:
+                continue
+            ma20 = self.indi[name].get("ma20")
+            if ma20 is None:
+                continue
+            try:
+                m = float(ma20[0])
+                c = float(d.close[0])
+            except (IndexError, ValueError):
+                continue
+            if math.isnan(m) or math.isnan(c):
+                continue
+            total += 1
+            if c > m:
+                above += 1
+        return above / total if total > 0 else 0.0
 
     def _nav(self) -> float:
         """账户净值：cash + 所有做空持仓按当前 close 的 mark-to-market 浮盈。
@@ -647,6 +699,9 @@ class Phase3V3Strategy(bt.Strategy):
                 "entry_price": entry_price,
                 "size": size,
                 "entry_bar": len(self),
+                # v65 (2026-10-13): 跟踪持仓期最低价, 用于 trailing stop。
+                # 初始 = entry_price, 每根 bar 更新为 min(prev, low)。
+                "lowest_price": entry_price,
                 # Canonical schema (§3) tracking: entry_date + entry_fee
                 # needed by _close() to populate the 14-col trade dict
                 # (canonical: entry_date, exit_date, ..., fees, net_pnl,
@@ -687,6 +742,18 @@ class Phase3V3Strategy(bt.Strategy):
             return
         low, high, close = float(d.low[0]), float(d.high[0]), float(d.close[0])
         open_p = float(d.open[0])
+        # v65 (2026-10-13): trailing stop (short-side, opt-in)。
+        # 更新持仓期最低价 (lowest_price), 若浮盈 ≥ activation 阈值则把止损
+        # 收紧为 lowest_price × (1 + trailing_stop_pct), 取二者较紧者 (min)。
+        # 不可变更新: 重建 dict 后 rebind (CLAUDE.md coding-style immutability)。
+        if self.p.trailing_stop_pct > 0.0:
+            lowest = min(pos["lowest_price"], low)
+            pos = {**pos, "lowest_price": lowest}
+            self._holds[code] = pos
+            activation = ep * (1 - self.p.trailing_activation_pct)
+            if lowest <= activation:
+                trail_p = lowest * (1 + self.p.trailing_stop_pct)
+                sl_p = min(sl_p, trail_p)
         reason, price = None, None
         # gap-aware：short 仓 TP/SL
         # CLAUDE.md P5 要求 SL-first (self.p.intraday_tiebreak='sl_first'):
