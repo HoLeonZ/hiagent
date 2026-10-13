@@ -61,6 +61,23 @@ ENGINE_SOURCES = {
 NESTED_KEYS = {"signal", "universe", "periods", "weights"}
 
 
+# 声明型键 (declaration-only)。这几个键由 §2/§3/§5 政策钉死为固定值, 运行时引擎
+# 没有可分支的语义 —— 它们的消费方是 sweep / DSR 记账, 不是回测引擎:
+#   MAX_POSITION_PCT        §2 All-In 政策常量, 恒 1.0; 真正的运行时输入是
+#                           position_sizing + position_fraction (两者都已消费)。
+#   price_source_for_signal §3 强制 signals 用 adj_close, 无可选值。
+#   n_comparisons           §5 DSR/Bonferroni 多个比较数, 属 sweep 层元数据。
+# 把它们也要求成引擎源码里的字面量, 只会诱导写出迎合 grep 的假"消费"代码。
+# 刻意保持极窄: 任何「引擎本该读却读不到」的键必须继续 RED —— 例如
+# cycle_price_action 的 weight_calendar/weight_cycle/weight_kline、
+# short_reversal 的 ensemble_weight/position_sizing/price_source_for_execution。
+DECLARATION_ONLY_KEYS = frozenset({
+    "MAX_POSITION_PCT",
+    "price_source_for_signal",
+    "n_comparisons",
+})
+
+
 def _collect_leaf_keys(preset: dict[str, Any]) -> set[str]:
     """Return the set of leaf keys (excluding nested config blocks)."""
     leaves: set[str] = set()
@@ -111,6 +128,8 @@ def _audit_preset_to_engine(
             continue
         leaf_keys = _collect_leaf_keys(preset_cfg)
         for key in sorted(leaf_keys):
+            if key in DECLARATION_ONLY_KEYS:
+                continue
             # Search for the key as a string literal in engine source.
             # Two patterns:
             #   1. dict access: preset['key'] or preset["key"]

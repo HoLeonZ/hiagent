@@ -209,7 +209,8 @@ def run_backtrader_backtest(
     regime_df: pd.DataFrame | None = None,
     initial_capital: float = INITIAL_CAPITAL,
     verify: bool = True,
-    position_sizing: str = "equal",
+    # None = 取 preset 声明值 (与调用处其它 p.get(...) 键同一口径)。
+    position_sizing: str | None = None,
     kelly_fraction: float | None = None,
     max_positions: int | None = None,
 ) -> dict:
@@ -271,8 +272,14 @@ def run_backtrader_backtest(
         initial_capital=initial_capital,
         atr_tp_mult=p.get("atr_tp_mult"),
         atr_sl_mult=p.get("atr_sl_mult"),
-        position_sizing=position_sizing,
-        kelly_fraction=kelly_fraction,
+        # §2: preset 声明的 sizing 必须真正生效, 而不是被函数默认值静默覆盖
+        # (原本 position_sizing 默认 'equal', preset 的 'all_in' 从不被读)。
+        # 显式传参 (非 None) 仍优先, 供测试覆盖用。
+        position_sizing=(position_sizing if position_sizing is not None
+                         else p.get("position_sizing", "equal")),
+        kelly_fraction=(kelly_fraction if kelly_fraction is not None
+                        else p.get("kelly_fraction")),
+        position_fraction=p.get("position_fraction", 1.0),
         # Round 15 (2026-09-28, CLAUDE.md §0/§4): cost model plumbing
         # (commission/stamp/floor) + ATR-aware slippage from preset。
         # Defaults preserve pre-R15 behavior (legacy presets 无 key 时仍得

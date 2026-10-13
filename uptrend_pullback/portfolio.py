@@ -231,6 +231,10 @@ def simulate_portfolio(
     # "adj_close" (或 legacy 默认) → 用 adj high/low/close, 保持旧行为。
     price_source_for_execution: str = "adj_close",
     kelly_fraction: float | None = None,
+    # §2 (CLAUDE.md All-In Sizing 2026-09-21): preset 声明的 position_fraction
+    # 必须真正生效。all_in + 1.0 (当前全部 preset) 下为 no-op; 若 preset 给 0.x
+    # 表示部分建仓, 静默忽略会让半仓变全仓 (实际风险 2× 于声明值)。
+    position_fraction: float = 1.0,
     # V8 (2026-09-22, CLAUDE.md §4): preset→strategy explicit plumbing。
     # intraday_tiebreak='sl_first': 同 bar SL+TP 双触发时, 假设 SL 命中 (Pessimistic)。
     # max_volume_participation=0.10: Bar_Volume × 0.10 volume cap。
@@ -443,6 +447,8 @@ def simulate_portfolio(
                     slot_value = cash_only
                 else:  # kelly
                     slot_value = cash_only * kelly_fraction
+                # §2: preset 声明的 position_fraction 缩放该 slot 的预算。
+                slot_value *= position_fraction
 
                 for code in candidates:
                     if len(positions) >= max_positions:
