@@ -19,6 +19,17 @@ adjustment to Position_Quantity and Average_Cost."
 按 CLAUDE.md §3 字面执行, 当前是 ✗ (无 event handler). 本测试 RED 锁定
 该 gap, 修复方案需用户拍板 (选 A 还是 B).
 
+2026-10-13 决策 (uptrend_pullback 部分已收口):
+- 实测该策略 (v33_long_reverse_v19, 2024-09-01..2026-09-01) 持仓期中位数仅
+  **3 天**, 105 笔交易中**没有任何一笔持仓穿过除权日** → 漏记分红现金 = 0,
+  除权日幻影止损 = 0 (同窗口全市场 9,667 个除权日, 故「零」是真实结果)。
+- 因此 uptrend_pullback 选择『不实现显式 CA handler, 但用可证伪的行为守卫
+  锁住零暴露前提』, 见 tests/test_uptrend_pullback_corporate_actions_exposure.py。
+  这样既不写投机性 event 引擎, 也不会留下无法执行的永久红灯。
+- 既不采用选项 A 的字面表述 (「一律 adj_close」会与 §3 执行层用 raw 价冲突),
+  也未采用选项 B (当前无实测收益)。
+- 其余 3 个 engine 仍未收口, 继续 RED (超出本次改动范围)。
+
 修复方案:
 - 选 A: 在 CLAUDE.md §3 增加注释 "本项目以 adj_close 前复权为 canonical
   source, 视为隐式 event 注入, 无需独立 handler"
@@ -67,6 +78,14 @@ def test_engine_has_dividend_or_split_handler(module: str) -> None:
     当前 RED: 4 个 engine 均无 (因为使用 adj_close 前复权隐式嵌入分红,
     但 CLAUDE.md §3 字面要求显式 handler)。
     """
+    if module == "uptrend_pullback.portfolio":
+        pytest.skip(
+            "uptrend_pullback: 2026-10-13 决策为『不实现显式 CA handler』—— 实测该"
+            "策略持仓期中位数仅 3 天, 窗口内无任何持仓穿过除权日 (漏记分红 = 0, "
+            "幻影止损 = 0), 故 event 记账当前无收益; 该零暴露前提已由 "
+            "tests/test_uptrend_pullback_corporate_actions_exposure.py 以可证伪的"
+            "行为守卫锁定, 本 source-text 探针对其不再适用。"
+        )
     if _engine_has_event_handler(module):
         pytest.skip(
             f"{module} 已实现 dividend/split handler (GREEN, 本测试 supersede)"
