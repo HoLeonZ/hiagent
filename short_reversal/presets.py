@@ -1509,6 +1509,63 @@ PRESETS: dict[str, dict] = {
         "close_ma60_buffer": 0.07,
         "require_ma20_slope_neg": True,
     },
+    # v61_k (2026-10-13): K 条件 = 日内反转。
+    # 死猫跳经典微观结构: 开盘低, 收盘高, (close-low)/(high-low) > 0.6。
+    # 与 F 正交: F 测多日 slope 方向, K 测单日 intraday 形态。
+    # 假设: 当日内从低点回收 ≥ 60% 区间 + 收阳, 买盘在日内接住卖压
+    #   → 但因整体仍下降 (F 确认), 次日大概率回吐 (死猫跳)。
+    # 单独启用 (无 F), 测 K 是否独立有效。
+    "v61_k": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 15,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": False,
+        "require_intraday_reversal": True,
+        "intraday_reversal_threshold": 0.6,
+        "intraday_reversal_require_close_above_open": True,
+    },
+    # v61_kf (2026-10-13): F + K 加性堆叠。两者必须同时过。
+    # 这是「正交方向: 加性多条件堆叠」的真正测试 — 在 v50 基础上加 K,
+    # 测 K 是否能在 F 之上提供独立信息(而不只是替换 F 的子集信号)。
+    "v61_kf": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 15,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "require_intraday_reversal": True,
+        "intraday_reversal_threshold": 0.6,
+        "intraday_reversal_require_close_above_open": True,
+    },
 }
 
 

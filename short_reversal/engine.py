@@ -205,6 +205,14 @@ def run_backtest_v3(
         # 若上一笔以 SL 出场, 强制 N 日全局冷却, 跳过最强信号。
         # max_positions=1 时 J 是「全局」冷却, 因为单仓策略同一时间只持 1 笔。
         sl_cooldown_days=cfg.get("sl_cooldown_days", 0),
+        # v61 (2026-10-13): K 条件 — 日内反转 (intraday reversal, opt-in)。
+        # 与 F (多日趋势) 正交: K 测「单日 close 在 day range 中的位置 + 收阳」。
+        # 死猫跳最经典微观结构 → 多仓顺势加码,空仓博弈次日的失败回吐。
+        require_intraday_reversal=cfg.get("require_intraday_reversal", False),
+        intraday_reversal_threshold=cfg.get("intraday_reversal_threshold", 0.6),
+        intraday_reversal_require_close_above_open=cfg.get(
+            "intraday_reversal_require_close_above_open", True
+        ),
         result_holder=holder,
     )
     cerebro.run()

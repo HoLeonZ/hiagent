@@ -227,6 +227,17 @@ class Phase3V3Strategy(bt.Strategy):
         # 同一时间只持 1 笔, 冷却窗口对所有候选 stock 都生效。
         # opt-in: sl_cooldown_days > 0 才启用, 默认 0 保 v50 baseline 兼容。
         sl_cooldown_days=0,
+        # v61 (2026-10-13): K 条件 — 日内反转 (intraday reversal)。
+        # 假设: 死猫跳最经典的微观结构是「开盘低 → 收盘高」,即
+        # (close - open) / (high - low) > 阈值 (默认 0.6)。
+        # 与 F (slope) 正交: F 测「多日趋势方向」(end-of-day), K 测
+        # 「单日 intraday 形态」(day structure)。当日内回收 ≥ 60% 区间
+        # + 收阳时, 表明买盘在日内接住了卖压 → 但因为整体仍处于下降
+        # 趋势 (F 已确认), 这种"日内强反弹"很可能是死猫跳。
+        # opt-in: require_intraday_reversal=True 才启用, 默认 False 保 v50 兼容。
+        require_intraday_reversal=False,
+        intraday_reversal_threshold=0.6,  # close 在 day range 中的相对位置
+        intraday_reversal_require_close_above_open=True,  # 还要求收阳 (> open)
         # v58 (2026-10-13): 多仓并行 (max_positions > 1)。
         # 假设: 1→2 把单点风险分散到 2 个独立信号, 降低 DD 而不显著损失收益。
         # 同时调整每笔 sizing 为 free_cash / max_positions, 保持 all-in 总仓位。
@@ -937,6 +948,23 @@ class Phase3V3Strategy(bt.Strategy):
         if self.p.require_rsi_oversold:
             rsi_v = indi["rsi"][0]
             if np.isnan(rsi_v) or rsi_v >= self.p.rsi_oversold_threshold:
+                return False
+
+        # K 条件 (v61, 2026-10-13): 日内反转 (intraday reversal)。
+        # (close - low) / (high - low) > 阈值 且 close > open。
+        # close 在 day range 的相对位置, 表征买盘在日内从低点回收的强度。
+        # 与 F/I 正交: F 测多日趋势, I 测多日动量, K 测单日 intraday 形态。
+        if self.p.require_intraday_reversal:
+            open_v = float(d.open[0])
+            high_v = float(d.high[0])
+            low_v = float(d.low[0])
+            if high_v <= low_v:
+                return False
+            day_range = high_v - low_v
+            close_pos = (close_v - low_v) / day_range
+            if close_pos < self.p.intraday_reversal_threshold:
+                return False
+            if self.p.intraday_reversal_require_close_above_open and close_v <= open_v:
                 return False
 
         return True
