@@ -527,10 +527,13 @@ PRESETS: dict[str, dict] = {
     # F 消融 (v50_slope 相对本 preset 仅多 F 条件) 显示: 移除 F 后在所有时期更好。
     #   2016-2023 mean delta Calmar +0.75 (7 windows)
     #   2024-2025 mean delta +2.31 (4 windows)
+    #   扩展 (6 windows, 2016-2022) mean delta +1.14
+    #   合计 17 windows: mean delta +1.26, SE≈0.61, t≈2.07 (单侧 p≈0.028) → 5% 显著
     #   2026-H2 holdout: Calmar 89.63 vs 80.41 (+9.22), DD 9.08% vs 10.34%
-    # → v44 > v50_slope (全周期), 且 win rate 系统性更高。
-    # 统计注: delta std≈2.9, t≈1.5 — 方向一致 (3/3 时期) 但未达常规显著性。
+    # → v44 > v50_slope (全周期, 达统计显著), 且 win rate 系统性更高。
     # v44 无 F 参数 → 参数更少, 过拟合面更小, 稳健性更优。
+    # 效应由少数大胜主导 (+7.6/+6.5/+5.7/+4.3), 负项均 ≤1.96; F 约半数窗口不 bind。
+    # 推荐: v44_ratio02_buf07 取代 v50_slope 作为默认 champion。
     "v44_ratio02_buf07": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
@@ -687,7 +690,11 @@ PRESETS: dict[str, dict] = {
     #   结论: F (MA20 斜率) 是有害参数 — 移除盈利交易而不改善风险。
     #   v50 系列内部 (v50-v62, 全含 F) 从未与 pre-F 基线 v44 消融 → 回归被隐藏。
     #   → v44_ratio02_buf07 是比 v50_slope 更优且更稳健的 champion。
-    #   (统计注: delta 分布 std≈2.9, t≈1.5 — 方向一致但未达常规显著性; 见 v44 包)
+    #   扩展样本 (2026-10-13, +6 windows): 2017-H2 +7.62, 2022-H2 +1.01, 2019-H2 -0.08,
+    #     2021-H1 -1.71, 2018-H2 -0.00, 2016-H2 0 (min_bars 不足) → mean +1.14。
+    #   合计 17 windows (2016-2025) mean delta +1.26, std≈2.5, SE≈0.61, t≈2.07
+    #     (单侧 p≈0.028) → 达 5% 显著性。效应由少数大胜 (+7.6/+6.5/+5.7/+4.3) 主导,
+    #     负项均 ≤1.96。F 在约半数窗口不 bind (delta=0)。
     "v50_slope": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
