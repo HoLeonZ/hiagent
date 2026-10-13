@@ -2094,6 +2094,53 @@ PRESETS: dict[str, dict] = {
         "below_ratio_60": 0.2,
         "close_ma60_buffer": 0.07,
     },
+    # v76_cascade (2026-10-14): v44 + A 条件切换为 cascade_price 模式
+    # (MA5<MA10<MA20<MA60 级联 + close<MA20)。4 窗口 mean 4.16 vs 16.50 (-12.34)
+    # → 替代 A 模式大幅有害; default 模式 (close<MA60 + below_ratio) 是必需的。FAIL。
+    "v76_cascade": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 33,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "a_condition": "cascade_price",
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # v76_dstrict (2026-10-14): v44 + D 条件 converge_strict → strict (更宽松)。
+    # 4 窗口 mean 17.42 vs 16.50 (+0.92), 2 胜 2 负, 由 2025-H1 +5.09 驱动 →
+    # 边际, 未达确证标准。FAIL。
+    "v76_dstrict": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 34,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
 }
 
 
