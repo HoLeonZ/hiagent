@@ -2419,6 +2419,34 @@ PRESETS: dict[str, dict] = {
         "close_ma60_buffer": 0.07,
         "signal_price_domain": "adj",
     },
+    # v83_wideb (2026-10-14): v81_adj + 连阳放宽 [3,10] → [2,12] (§3-adj 语义)。
+    # 4 窗口 mean 21.39 vs 13.81 (+7.58, 3/4 胜) 看似改进。6 窗口验证 (含 holdout):
+    #   2019-H1 -14.78, 2020-H1 -8.31, 2021-H2 +7.76, 2022-H1 +2.08,
+    #   2023-H2 +30.69, 2026-H2(holdout) -14.95 → mean +0.42, 但 holdout 为负。
+    # → FAIL: 不 robust, holdout 负。§3 语义下 v81_adj 仍最优。
+    "v83_wideb": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 46,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "up_streak_low": 2,
+        "up_streak_high": 12,
+        "signal_price_domain": "adj",
+    },
 }
 
 
