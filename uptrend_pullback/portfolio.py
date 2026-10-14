@@ -231,6 +231,10 @@ def simulate_portfolio(
     # "adj_close" (或 legacy 默认) → 用 adj high/low/close, 保持旧行为。
     price_source_for_execution: str = "adj_close",
     kelly_fraction: float | None = None,
+    # §2 (CLAUDE.md All-In Sizing 2026-09-21): preset 声明的 position_fraction
+    # 必须真正生效。all_in + 1.0 (当前全部 preset) 下为 no-op; 若 preset 给 0.x
+    # 表示部分建仓, 静默忽略会让半仓变全仓 (实际风险 2× 于声明值)。
+    position_fraction: float = 1.0,
     # V8 (2026-09-22, CLAUDE.md §4): preset→strategy explicit plumbing。
     # intraday_tiebreak='sl_first': 同 bar SL+TP 双触发时, 假设 SL 命中 (Pessimistic)。
     # max_volume_participation=0.10: Bar_Volume × 0.10 volume cap。
@@ -443,6 +447,8 @@ def simulate_portfolio(
                     slot_value = cash_only
                 else:  # kelly
                     slot_value = cash_only * kelly_fraction
+                # §2: preset 声明的 position_fraction 缩放该 slot 的预算。
+                slot_value *= position_fraction
 
                 for code in candidates:
                     if len(positions) >= max_positions:
@@ -565,16 +571,25 @@ def simulate_portfolio(
 
         # ---------- 4) 记录净值 ----------
         holdings_val = 0.0
+        unrealized = 0.0
         for code, pos in positions.items():
             j = _row_at(pidx[code], day)
             px = pidx[code]["close"][j] if j is not None else pos["entry_price"]
             holdings_val += pos["size"] * px
+            # total_cash 是「已实现盈亏账本」, 建仓时并不扣减现金 (只有平仓时把
+            # net_pnl 计入)。因此持仓期内 NAV 只能加**未实现盈亏**; 若加持仓市值
+            # (size × px), 建仓名义金额就被计入两次 —— equity 会在建仓那根 bar 凭空
+            # 跳增约一个名义金额、平仓时再跳回, 单日权益收益出现 ±50%~+110% 这种
+            # 物理上不可能的跳变 (长仓 + max_positions=1 + A 股 ±10% 涨跌停 ⇒ 单日
+            # 对权益影响上限约 ±10%)。compute_metrics 的 sharpe/max_dd/exposure 全部
+            # 由这条曲线算出, 于是 §5 依赖的 DSR 输入不可信。
+            unrealized += (px - pos["entry_price"]) * pos["size"]
         # Round 16 (CLAUDE.md §2): equity row uses total_cash.
         equity_rows.append({
             "date": pd.Timestamp(day),
             "cash": pf.total_cash,
             "holdings": holdings_val,
-            "equity": pf.total_cash + holdings_val,
+            "equity": pf.total_cash + unrealized,
         })
 
     trades_df = (

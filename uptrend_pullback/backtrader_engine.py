@@ -150,7 +150,18 @@ def _verify_trade_with_backtrader(
     # 一旦 sell 在 feed 耗尽时未成交（warning 路径），broker 不会回补卖出款，
     # final_cash = initial_cash - buy_notional，导致 -notional 的虚假亏损被
     # 当作真实 PnL 上报，触发 equity_delta 累计爆炸（实测一次 -918k delta）。
-    initial_cash = max(target_size * entry_price * 1.0025, 100_000.0)
+    # V3a+ (CLAUDE.md §3): 但 backtrader 的 cash check 用「下单 bar」的价，
+    # raw_close 域下该 bar 的价可高于 Phase 1 的 T+1 入场价 → 只按 entry_price
+    # 缓冲会让入场单被 Margin 拒单, 该笔 trade 静默退化成
+    # exit_price == entry_price 哨兵值（no_lookahead 测试会跳过哨兵值, 缺陷不可见）。
+    # 故以 feed 前两根 bar 的最不利价为基准 —— 仍只覆盖本金 + 佣金, 无 ×2 冗余。
+    _cash_ref_px = max(
+        entry_price,
+        # pandas max 默认 skipna=True; 数据层存在部分 NaN 收盘价 (见
+        # test_dual_price partial_nan_close), 用 numpy max 会让 NaN 传播到 cash。
+        float(feed_df[["open", "high", "low", "close"]].iloc[:2].max().max()),
+    )
+    initial_cash = max(target_size * _cash_ref_px * 1.0025, 100_000.0)
     cerebro.broker = AStockBroker()
     cerebro.broker.set_cash(initial_cash)
     cerebro.addstrategy(
@@ -198,7 +209,8 @@ def run_backtrader_backtest(
     regime_df: pd.DataFrame | None = None,
     initial_capital: float = INITIAL_CAPITAL,
     verify: bool = True,
-    position_sizing: str = "equal",
+    # None = 取 preset 声明值 (与调用处其它 p.get(...) 键同一口径)。
+    position_sizing: str | None = None,
     kelly_fraction: float | None = None,
     max_positions: int | None = None,
 ) -> dict:
@@ -223,7 +235,14 @@ def run_backtrader_backtest(
         panel = load_panel(db_path, start, end, universe=universe)
         panel_ind = compute_indicators(panel)
     else:
-        panel = panel_ind[["thscode", "date", "open", "high", "low", "close", "volume", "amount"]]
+        # CLAUDE.md §3 双价格: raw_* 必须一并传给 Phase 2, 否则
+        # _verify_trade_with_backtrader 的 raw-feed 分支 (L126 依赖
+        # "raw_open" in span.columns) 永不进入, Phase 2 会拿复权 bar 当 raw 价
+        # 撮合, 出场价落在 fill bar 原始 OHLC 之外 (phantom SL)。
+        _cols = ["thscode", "date", "open", "high", "low", "close", "volume", "amount"]
+        _raw_cols = [c for c in ("raw_open", "raw_high", "raw_low", "raw_close",
+                                 "raw_prev_close") if c in panel_ind.columns]
+        panel = panel_ind[_cols + _raw_cols]
 
     reg = None
     if p.get("regime"):
@@ -253,8 +272,14 @@ def run_backtrader_backtest(
         initial_capital=initial_capital,
         atr_tp_mult=p.get("atr_tp_mult"),
         atr_sl_mult=p.get("atr_sl_mult"),
-        position_sizing=position_sizing,
-        kelly_fraction=kelly_fraction,
+        # §2: preset 声明的 sizing 必须真正生效, 而不是被函数默认值静默覆盖
+        # (原本 position_sizing 默认 'equal', preset 的 'all_in' 从不被读)。
+        # 显式传参 (非 None) 仍优先, 供测试覆盖用。
+        position_sizing=(position_sizing if position_sizing is not None
+                         else p.get("position_sizing", "equal")),
+        kelly_fraction=(kelly_fraction if kelly_fraction is not None
+                        else p.get("kelly_fraction")),
+        position_fraction=p.get("position_fraction", 1.0),
         # Round 15 (2026-09-28, CLAUDE.md §0/§4): cost model plumbing
         # (commission/stamp/floor) + ATR-aware slippage from preset。
         # Defaults preserve pre-R15 behavior (legacy presets 无 key 时仍得

@@ -160,3 +160,40 @@ def test_back_compat_explicit_none(asof_duckdb: Path) -> None:
     assert set(codes_none) == set(codes_default), (
         "asof_date=None 必须等于不传 asof_date,不允许静默改变后行为"
     )
+
+
+# ---------------------------------------------------------------------------
+# §3 PIT: asof 落在非交易日 (周末/节假日)
+# ---------------------------------------------------------------------------
+
+
+def test_uptrend_pullback_asof_on_non_trading_day_resolves_to_prior_trading_day(
+    asof_duckdb: Path,
+) -> None:
+    """§3 PIT: asof 落在非交易日时必须解析为「该日或之前的最后一个交易日」。
+
+    原 SQL 的 `WHERE date <= asof` + `HAVING MAX(date) >= asof` 两条并起来等价于
+    要求「asof 当日恰有数据」; asof 是周末/节假日时对每只票都不成立 → 返回空集,
+    回测随即静默产出 0 笔交易 (违反 §0 Fail-Fast: 不得静默绕过)。
+    """
+    saturday = up_load_universe("mainboard_only", asof_duckdb, asof_date="2025-04-05")
+    friday = up_load_universe("mainboard_only", asof_duckdb, asof_date="2025-04-04")
+
+    assert saturday, "asof 落在周六 (2025-04-05) 时不应返回空集"
+    assert set(saturday) == set(friday), (
+        f"非交易日 asof 应解析为前一交易日: 周六 {len(saturday)} 只 vs "
+        f"周五 {len(friday)} 只"
+    )
+
+
+def test_uptrend_pullback_empty_universe_fails_fast(asof_duckdb: Path) -> None:
+    """§0 Fail-Fast: 空 universe 必须显式失败, 不得静默返回空列表。
+
+    空列表会让 engine 静默跑出 0 笔交易的回测 —— 看起来像「策略没信号」,
+    实际是数据覆盖问题, 属于最危险的静默错误。
+    """
+    from uptrend_pullback import UptrendPullbackError
+
+    with pytest.raises(UptrendPullbackError):
+        # fixture 数据从 2024-06-01 开始; 该 asof 早于任何数据
+        up_load_universe("mainboard_only", asof_duckdb, asof_date="2020-01-01")

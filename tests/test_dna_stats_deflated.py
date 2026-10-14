@@ -36,11 +36,19 @@ def test_deflated_sharpe_zero_trials_raises():
 
 def test_deflated_sharpe_single_trial_equals_observed():
     """V7: n_trials=1 → expected_max=0, DSR ≈ PSR(observed)。
-    当 n_returns 足够大, DSR 接近 1.0 (observed > 0 高度显著)。
+
+    2026-10-13 修正: `observed_sharpe` 是**年化**值 —— 见 deflated_sharpe_ratio 的
+    docstring ("Annualized Sharpe ... mean/std × sqrt(252)") 以及实际调用方
+    walkforward_report.format_walkforward_stats(传的是 metrics 里的年化 median_sharpe)。
+
+    年化 2.0 在 T=252 下的 PSR = Φ(SR_per·√(T-1)/√(1+SR_per²/2)) ≈ Φ(1.99) ≈ 0.977。
+    原断言 >0.99 的注释写的是 `z = 2 / sqrt(252-1) ≈ 31.6` —— 那是把 2.0 当成**逐期**
+    Sharpe 才成立的算法, 与函数文档和所有调用口径都不一致 (该单位混用已由
+    tests/test_deflated_sharpe_units.py 的独立 stdlib 复算证伪)。
     """
     res = deflated_sharpe_ratio(observed_sharpe=2.0, n_trials=1, n_returns=252)
     assert res["expected_max_sharpe"] == 0.0
-    assert res["deflated_sharpe"] > 0.99    # z = 2 / sqrt(252-1) ≈ 31.6
+    assert res["deflated_sharpe"] == pytest.approx(0.977, abs=0.01)
 
 
 def test_deflated_sharpe_more_trials_lower():

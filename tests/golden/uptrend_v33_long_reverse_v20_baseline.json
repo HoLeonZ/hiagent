@@ -5,8 +5,8 @@
     "2026-09-01"
   ],
   "engine": "simulate",
-  "trades_csv_sha256": "e1f2864d4ced42cfec1e53f69745e75fe510d92b50811dbe84ff4c71f8f91cc6",
-  "trades_csv_rows": 62,
+  "trades_csv_sha256": "a5e5791b2f682584173f1fd803b31c319dcbbc3308a8a2053683025b854a22be",
+  "trades_csv_rows": 127,
   "trades_csv_cols": [
     "entry_date",
     "exit_date",
@@ -20,7 +20,19 @@
     "fees",
     "net_pnl",
     "net_return",
-    "atr_pct"
+    "atr_pct",
+    "sub_signal_type"
   ],
-  "note": "uptrend_pullback v33_long_reverse_v20 trades.csv sha256 baseline (Tick 36 / Tick 68 Round 13). v20 = v19 + sl_pct 0.0293→0.021 + tp_pct 0.305→0.2628 + max_hold 15→18 + pct_chg_low -0.065→-0.088. Multi-run reproducibility invariant."
+  "note": "uptrend_pullback v33_long_reverse_v20 trades.csv sha256 baseline. v20 = v19 + sl_pct 0.0293->0.021 + tp_pct 0.305->0.2628 + max_hold 15->18 + pct_chg_low -0.065->-0.088. Multi-run reproducibility invariant.",
+  "repinned": {
+    "date": "2026-10-13",
+    "previous": {
+      "trades_csv_sha256": "e1f2864d4ced42cfec1e53f69745e75fe510d92b50811dbe84ff4c71f8f91cc6",
+      "trades_csv_rows": 62,
+      "trades_csv_cols_count": 13
+    },
+    "why": "Same root cause as the v19 pin: uptrend_pullback.load_universe(asof_date=<non-trading day>) returned an empty universe, so this window (2024-09-01 is a Sunday) produced 0 rows rather than 62. The loader now resolves asof to the last trading day, so the window is live and the pin was regenerated.",
+    "row_delta_attribution": "Verified NOT caused by the fixes in this branch: for the trading-day-start window 2025-07-01..2026-07-01 the simulate trade list is unchanged before and after the loader fix. The 62 -> 127 delta is accumulated drift since the original capture (Tick 36 / Round 13), including the new sub_signal_type column (13 -> 14 cols).",
+    "reproducibility_check": "sha256 verified byte-identical across two independent runs before pinning."
+  }
 }

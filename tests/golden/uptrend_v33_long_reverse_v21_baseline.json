@@ -1,0 +1,35 @@
+{
+  "preset": "v33_long_reverse_v21",
+  "window": [
+    "2024-09-01",
+    "2026-09-01"
+  ],
+  "engine": "simulate",
+  "trades_csv_sha256": "f7856be7a03db2b3d0cf629be64f42545a451804e0c6dae5b3ffb283888d7df7",
+  "trades_csv_rows": 57,
+  "trades_csv_cols": [
+    "entry_date",
+    "exit_date",
+    "thscode",
+    "exit_reason",
+    "entry_price",
+    "exit_price",
+    "size",
+    "hold_days",
+    "gross_pnl",
+    "fees",
+    "net_pnl",
+    "net_return",
+    "atr_pct",
+    "sub_signal_type"
+  ],
+  "note": "uptrend_pullback v33_long_reverse_v21 (= v20 + market regime gate) trades.csv sha256 baseline. Multi-run reproducibility invariant: same preset + DB -> byte-equal trades.csv. Drift indicates signal/exit/sizing/regime logic changed.",
+  "pinned": {
+    "date": "2026-10-14",
+    "objective": "R-multiple expectancy E[R] (see uptrend_pullback/tail_objective.py); this window: E[R]=+1.182, win%=24.6%, PF=2.02, top-decile share of gross R = 103%",
+    "why_new_preset": "v21 is the only candidate whose edge direction survived out-of-sample under the corrected objective, and it was best on all three samples: train 2024-09..2026-03 (E[R] +1.164 vs v20 +0.650), holdout 2026-03..2026-09 (E[R] +2.622 vs +0.359, n=14 only), independent era 2020-01..2024-09 (E[R] -0.329 vs v20 -0.625). It also has the LOWEST tail dependence (top-decile share 111% vs v20's 191% on train).",
+    "negative_evidence": "On the independent era 2020-01..2024-09 this preset's E[R] is NEGATIVE (-0.329, t=-1.03) and v20's is significantly negative (-0.625, t=-2.73 over 681 trades). The family therefore has NO demonstrated positive alpha; the positive numbers after 2024-09 come from that period's bull regime (the strategy behaves as ~1.6x market beta). v21 should be read as 'loses least / least tail-dependent', not as 'more profitable'.",
+    "cost": "Materially lower participation: train 122 vs 176 trades; holdout 14 vs 63.",
+    "n_comparisons": "121 = v20's declared 100 + 21 trials from this search (CLAUDE.md §5 Iterative-Tuning Accounting)."
+  }
+}

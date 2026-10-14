@@ -23,6 +23,8 @@ from __future__ import annotations
 import backtrader as bt
 import pandas as pd
 
+from core.dual_price import is_limit_up
+
 
 class UpullbackTradeReplay(bt.Strategy):
     """单笔多头交易的 backtrader 重放。
@@ -74,15 +76,26 @@ class UpullbackTradeReplay(bt.Strategy):
             return
         bar_idx = len(self) - 1  # 0-based，当前已处理的 bar 数减 1
 
-        # --- bar 0: signal_date，下买单，并预检涨停 ---
+        # --- bar 0: signal_date，下买单 ---
         if bar_idx == 0:
-            # 预检：明天（bar 1）开盘是否涨停。Bar 0 收盘已知，
-            # 但 bar 1 的开盘要等运行到 bar 1 才能看到。简单做法：
-            # 若 bar 0 收盘已涨停 + 大涨幅，明日开盘几乎必涨停 → 直接 skip。
+            # bar 0 只负责下单。涨停与否要等 bar 1 的 open 才可见, 在 bar 0 无法
+            # 因果预判 (§1), 故 skip 判定放在 bar 1 (见下方 §4 涨停不成交 分支)。
             close0 = float(self.data.close[0])
-            # 这里只能做粗判（用 bar 0 自身的高涨幅），真正的 skip 校验交给
-            # orchestrator 在合并 trades 时用 bar 1 的 open 复核。
             self.buy(size=self.p.target_size)
+            return
+
+        # --- CLAUDE.md §4 涨停不成交: 复核入场 bar 是否涨停开盘 ---
+        # bar 0 下单 → bar 1 开盘成交; bar 1 的 open[0] 到此时才可见, 因果上无法
+        # 在 bar 0 预判 (§1), 故在此复核。涨停开盘 = 物理上买不进 → 置 skipped,
+        # 由 orchestrator 丢弃该 trade (backtrader_engine.py:165)。口径与 Phase 1
+        # portfolio.py:474-476 一致, 共用 core.dual_price.is_limit_up 单一来源。
+        if not self.entry_done and is_limit_up(
+            float(self.data.close[-1]),
+            float(self.data.open[0]),
+            self.p.prev_close_limit,
+        ):
+            self.skipped = True
+            self.exit_reason = "limit_up"
             return
 
         # --- 买单已成交（bar 1 起），记录入场 ---

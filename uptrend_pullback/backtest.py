@@ -156,6 +156,9 @@ def run_backtest(
         atr_sl_mult=p.get("atr_sl_mult"),
         position_sizing=p.get("position_sizing", "equal"),
         kelly_fraction=p.get("kelly_fraction"),
+        # §2 (CLAUDE.md All-In Sizing): preset 声明的 position_fraction 必须
+        # plumb 到 sizing, 否则该键被静默忽略 (0.x 会变成全仓)。
+        position_fraction=p.get("position_fraction", 1.0),
         # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System execution source。
         price_source_for_execution=p.get("price_source_for_execution", "adj_close"),
         # V8 (2026-09-22, CLAUDE.md §4): preset→strategy explicit plumbing。

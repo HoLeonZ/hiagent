@@ -235,3 +235,52 @@ def test_short_reversal_uses_position_fraction_in_sizing() -> None:
             "for partial-position sizing. If silently dropped, all "
             "positions become all-in regardless of preset intent."
         )
+
+
+# ---------------------------------------------------------------------------
+# Behavioral (not source-scan) guard: the declaration must actually scale size
+# ---------------------------------------------------------------------------
+
+
+def test_uptrend_pullback_position_fraction_scales_order_size() -> None:
+    """§2: uptrend_pullback 必须真正按 position_fraction 缩放下单规模。
+
+    上面那几个 AST 扫描只断言源码里「出现」标识符 —— 一条 fail-fast 断言也能
+    满足它。这里跑行为: 同一组输入在 position_fraction=1.0 / 0.5 下各下一次单,
+    断言规模按比例缩放 (fixture 特意把 volume cap 调高, 使预算而非成交量成为约束)。
+    """
+    import pandas as pd
+
+    from uptrend_pullback.portfolio import simulate_portfolio
+
+    def _bar(day: str) -> dict[str, object]:
+        return {"date": pd.Timestamp(day), "thscode": "SIZE.SZ", "open": 10.0,
+                "high": 10.5, "low": 9.5, "close": 10.0, "volume": 100_000.0,
+                "amount": 1e6, "atr_pct": 0.05}
+
+    panel = pd.DataFrame([_bar("2025-09-01"), _bar("2025-09-02"), _bar("2025-09-03")])
+    entries = pd.DataFrame([
+        {"date": pd.Timestamp("2025-09-01"), "thscode": "SIZE.SZ",
+         "score": 1.0, "atr_pct": 0.05},
+    ])
+
+    def _size(position_fraction: float) -> int:
+        trades, _ = simulate_portfolio(
+            entries, panel,
+            tp_pct=0.10, sl_pct=0.05, max_hold=8, max_positions=1,
+            start_date="2025-09-01", end_date="2025-09-03",
+            initial_capital=10_000.0,
+            position_sizing="all_in",
+            position_fraction=position_fraction,
+            commission_rate=0.0, stamp_duty_rate=0.0, min_commission=0.0,
+        )
+        assert len(trades) == 1, f"fixture 应产生 1 笔成交, 实际 {len(trades)}"
+        return int(trades.iloc[0]["size"])
+
+    full, half = _size(1.0), _size(0.5)
+    assert full == 1000, f"position_fraction=1.0 应为满仓 1000 股, 实际 {full}"
+    assert half == 500, (
+        f"§2 POSITION_FRACTION IGNORED: position_fraction=0.5 应下 500 股, "
+        f"实际 {half} (1.0 时为 {full})。等值说明该 preset 键被引擎静默忽略 —— "
+        f"半仓变全仓, 实际风险 2× 于 preset 声明。"
+    )
