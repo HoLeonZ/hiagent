@@ -30,12 +30,12 @@ from short_reversal.presets import PRESETS, get_preset
 from short_reversal.replay_strategy_v3 import Phase3V3Strategy
 from short_reversal.universe import load_universe_asof
 
+# §2 single-source (2026-10-14 审计修正): 规范费率从 core.dual_price 导入。
+# 此前为模块级重复定义, 且注释谎称"已从 core.dual_price 导入" (实际无 import)。
+from core.dual_price import COMMISSION_RATE, STAMP_DUTY_RATE
+
 INITIAL_CAPITAL = 1_000_000.0
-# Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical cost rates imported from
-# core.dual_price single-source. Previously COMM=0.0006 / STAMP=0.001 (2.4x
-# and 2x off canonical) — silently under-reported net PnL.
-COMMISSION_RATE = 0.00025
-STAMP_DUTY_RATE = 0.0005
+# MARGIN_RATE (融券年化费率) 无 canonical 源, 保留本地定义。
 MARGIN_RATE = 0.086
 DAYS_PER_YEAR = 365
 
