@@ -2447,6 +2447,32 @@ PRESETS: dict[str, dict] = {
         "up_streak_high": 12,
         "signal_price_domain": "adj",
     },
+    # v84_* (2026-10-14): v81_adj + 出场参数变体 (§3-adj 语义)。
+    # §3 修复改变交易总体后重测出场最优点。4 窗口 mean:
+    #   v81_adj 13.81 | tp12 12.28 (-1.53) | tp05 13.20 (-0.61) | mh10 13.78 (-0.03)
+    # → 三者均 ≤ base; §3 语义下 v81_adj 的 TP 0.08 / max_hold 5 同样最优。FAIL。
+    # (v84_tp05 作代表; v84_tp12 / v84_mh10 未单列但结果见上。)
+    "v84_tp05": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 47,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.05,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "signal_price_domain": "adj",
+    },
 }
 
 
