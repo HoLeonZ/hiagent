@@ -189,10 +189,11 @@ class Phase3V3Strategy(bt.Strategy):
         min_commission=5.0,
         initial_capital=1_000_000.0,
         lot_size=100,
-        # Round 14 (2026-09-28, CLAUDE.md §2): 默认 None, engine 必须显式从 preset
-        # 传入 (fail-fast: 忘传时 cash_gate_threshold 计算报 TypeError 而非 silently 0.05)。
-        # engine.py:170 通过 cfg.get('min_cash_ratio', 0.05) 保证生产路径总有值。
-        min_cash_ratio=None,
+        # Round 14 (2026-09-28, CLAUDE.md §2): 现金闸门阈值。
+        # v81.2 (2026-10-14 审计 S1 修复): 默认由 None 改为 0.05 (与 engine.py 对齐)。
+        # 原 None 设计意图是 fail-fast, 但 scan_signals.py / lookahead_trade_trace.py
+        # 两个生产调用方漏传 → 生产路径 TypeError 崩溃 (实测触发 10 处测试失败)。
+        min_cash_ratio=0.05,
         # V5' (2026-09-22, CLAUDE.md §4): ATR-aware slippage (R5 mirror)。
         # 当 atr_slip_scale > 0, 在 entry 时 slippage = atr_pct × participation × scale
         # (做空方向: slippage 上调 entry_price, 即扣更少 sale proceeds = 悲观假设)。
