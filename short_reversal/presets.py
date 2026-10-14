@@ -2419,6 +2419,35 @@ PRESETS: dict[str, dict] = {
         "close_ma60_buffer": 0.07,
         "signal_price_domain": "adj",
     },
+    # v45_adj (2026-10-14): v45_ratio01_buf10 + signal_price_domain='adj'。
+    # §3 修复使 A 条件真正生效后, 原 A 阈值 (below_ratio 0.2 + buffer 0.07)
+    # 是在 A 失效时标定的 → 过严; v45 放宽 (0.1 + 0.10) 方向正确。
+    # ⚠️ 边缘候选, 未达显著: 14 窗口验证 mean delta +2.20, ~9/14 wins,
+    #   但 std≈6.5 → t≈1.26 不显著 (Round1 6/6 由运气, 后续窗口含 -14.44)。
+    #   2026-H2 holdout +19.00 (单窗口正向)。
+    # 判定: 机制合理、方向偏正, 但证据弱于 v44 (t≈2.07) → 不提升为 champion。
+    # 若未来引入 §3 语义的正式 WFV, v45_adj 应在更大样本上重验。
+    "v45_adj": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 48,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.1,
+        "close_ma60_buffer": 0.10,
+        "signal_price_domain": "adj",
+    },
 }
 
 
