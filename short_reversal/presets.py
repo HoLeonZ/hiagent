@@ -2369,6 +2369,56 @@ PRESETS: dict[str, dict] = {
         "close_ma60_buffer": 0.12,
         "signal_price_domain": "adj",
     },
+    # v83_widec (2026-10-14): v81_adj + 移除 C 涨跌幅约束 (§3-adj 语义)。
+    # A 条件在 §3 语义下真正生效后, 重测 C 消融。4 窗口初测 mean 24.30 vs 13.81
+    # (+10.49, 3/4 胜) 看似大幅改进。但 6 窗口验证 (含 holdout) 揭示高波动:
+    #   delta 范围 -20.88 (2019-H1) 到 +37.61 (2018-H1), std≈16, t≈1.06 不显著;
+    #   2026-H2 holdout -12.65。合并 10 窗口 mean +5.38 但不可信。
+    # → FAIL: 移除 C 条件后波动极大, 不 robust。§3 语义下亦无稳健改进。
+    "v83_widec": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 44,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.0,
+        "pct_chg_high": 1.0,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "signal_price_domain": "adj",
+    },
+    # v83_donly (2026-10-14): v81_adj + d_mode='d_only' (§3-adj 语义)。
+    # 4 窗口 mean 18.71 vs 13.81 (+4.90, 3/4 胜)。未做 6 窗口验证。
+    "v83_donly": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 45,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "d_only",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "signal_price_domain": "adj",
+    },
 }
 
 
