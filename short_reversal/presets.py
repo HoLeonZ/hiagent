@@ -2248,6 +2248,23 @@ PRESETS: dict[str, dict] = {
         "require_amount_dryup": True,
         "amount_dryup_threshold": 0.70,
     },
+    # v79_ens44 (2026-10-14): ensemble(v44, v45) — v44 族内 2-leg 集成 (50/50)。
+    # 5 窗口 mean delta +0.40 (2 胜 2 负 1 平) → 边际, 未达确证标准。FAIL。
+    # v44/v45 高度相关 (v45 = v44 + 微 A 宽松), 集成无 diversification 收益。
+    "v79_ens44": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 39,
+        "position_sizing": "ensemble_split",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "ensemble_substrategies": ["v44_ratio02_buf07", "v45_ratio01_buf10"],
+        "ensemble_weight": 0.5,
+    },
 }
 
 
