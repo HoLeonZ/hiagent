@@ -12,18 +12,26 @@ import numpy as np
 
 
 class PctChg(bt.Indicator):
-    """单日涨跌幅：(close[0] - close[-1]) / close[-1]。"""
+    """单日涨跌幅：(close[0] - close[-1]) / close[-1]。
+
+    v81 (2026-10-14, CLAUDE.md §3): price_source 注入。信号域 MUST use adj_close,
+    否则除权日跳空被误判为「下跌日」。默认 (None) 沿用 data.close (raw, 兼容)。
+    """
 
     lines = ("pct_chg",)
 
+    def __init__(self):
+        self.price_source = None  # 由 strategy __init__ 注入 adj_close line
+
     def next(self):
+        src = self.price_source if self.price_source is not None else self.data
         # backtrader 的 data 在 __init__ 时已 preload，bar=0 时 close[-1] 不为 NaN
         # 用 len(self) 判定"第 1 根 bar" → 输出 NaN
         if len(self) == 1:
             self.lines.pct_chg[0] = float("nan")
             return
-        prev = float(self.data.close[-1])
-        cur = float(self.data.close[0])
+        prev = float(src[-1])
+        cur = float(src[0])
         if np.isnan(prev) or prev == 0 or np.isnan(cur):
             self.lines.pct_chg[0] = float("nan")
         else:
@@ -58,17 +66,24 @@ class Am60(bt.Indicator):
 
 
 class UpStreak(bt.Indicator):
-    """per-stock 连续上涨天数计数器。down_day 或 NaN 重置为 0。"""
+    """per-stock 连续上涨天数计数器。down_day 或 NaN 重置为 0。
+
+    v81 (2026-10-14, CLAUDE.md §3): price_source 注入 (同 PctChg)。默认 raw 兼容。
+    """
 
     lines = ("up_streak",)
 
+    def __init__(self):
+        self.price_source = None  # 由 strategy __init__ 注入 adj_close line
+
     def next(self):
+        src = self.price_source if self.price_source is not None else self.data
         # 第 1 根 bar → 无 prev → 0
         if len(self) == 1:
             self.lines.up_streak[0] = 0
             return
-        prev_close = float(self.data.close[-1])
-        cur_close = float(self.data.close[0])
+        prev_close = float(src[-1])
+        cur_close = float(src[0])
         if np.isnan(prev_close) or np.isnan(cur_close):
             self.lines.up_streak[0] = 0
         elif cur_close > prev_close:
@@ -97,9 +112,13 @@ class BelowMa60Ratio60(bt.Indicator):
         self._buf_close: list[float] = []
         self._buf_ma60: list[float] = []
         self.ma60_source = None  # 由调用方在 __init__ 后赋值
+        self.price_source = None  # v81 (§3): 注入 adj_close line; 默认 raw 兼容
 
     def next(self):
-        c = float(self.data.close[0])
+        # v81 (2026-10-14, CLAUDE.md §3): close 侧也走 price_source, 与 ma60
+        # (adj_close 域) 同域 —— 否则 raw close vs adj ma60 错配, ratio 恒 ~1.0。
+        csrc = self.price_source if self.price_source is not None else self.data
+        c = float(csrc[0])
         m = float("nan")
         if self.ma60_source is not None:
             # 用 data feed 的 bar idx 直接读 array —— LineBuffer.idx 在

@@ -311,6 +311,8 @@ def run_backtest_v3(
         market_breadth_max=cfg.get("market_breadth_max", 0.5),
         # v68 (2026-10-13, §2): conviction-based 填充选择 (opt-in)。
         entry_selection=cfg.get("entry_selection", "first"),
+        # v81 (2026-10-14, §3): 信号价格域 ('raw' 默认兼容 / 'adj' §3 合规)。
+        signal_price_domain=cfg.get("signal_price_domain", "raw"),
         result_holder=holder,
     )
     cerebro.run()

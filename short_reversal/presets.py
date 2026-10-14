@@ -2290,6 +2290,37 @@ PRESETS: dict[str, dict] = {
         "close_ma60_buffer": 0.07,
         "entry_selection": "steepest_slope",
     },
+    # v81_adj (2026-10-14): v44 + §3 signal_price_domain='adj' (修复 A/B/C 原始价错配)。
+    # ⚠️ §3 合规修复: v44 的信号条件 A/B/C 用 d.close (v_daily 原始价), 但 MA/MACD
+    # 用 adj_close (v_daily_hfq 复权价)。数据检查: raw 与 adj 平均偏差 55% (5277 只
+    # 中仅 349 只相同)。A 条件 (raw close < adj MA60) 因 raw 系统性更低而几乎恒真 →
+    # A 的 close<ma60 过滤实际是 no-op。v81 把 A/B/C 切到 adj_close, 与 MA 同域。
+    # 验证 (4 窗口):
+    #   v44_raw  mean Calmar 16.50 (A 失效)
+    #   v81_adj  mean 13.81 (-2.69) → §3 修复降低绝对表现 (当前表现部分依赖 bug)
+    #   v50_adj  mean 10.06 → v44_adj > v50_adj (+3.75), F 移除的有益性在 §3 语义下稳健
+    # 结论: v44 > v50 的 finding 不依赖 bug; 但绝对表现需以 v81_adj 为准 (§3 强制)。
+    "v81_adj": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 41,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "signal_price_domain": "adj",
+    },
 }
 
 

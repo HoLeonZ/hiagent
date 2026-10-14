@@ -295,6 +295,13 @@ class Phase3V3Strategy(bt.Strategy):
         # 'first' (默认) = datas 顺序 (thscode 字母序, v50 兼容的任意 tie-breaker)。
         # 'steepest_slope' = 按 MA20 斜率升序 (最负 = 最陡下降 = 最高空头信心)。
         entry_selection="first",
+        # v81 (2026-10-14, CLAUDE.md §3): 信号价格域统一开关。
+        # 'raw' (默认, 兼容): A/B/C 条件用 d.close (v_daily 原始价)。
+        # 'adj': A/B/C 条件切到 adj_close (v_daily_hfq 复权价), 与 MA/MACD 同域。
+        # ⚠️ 背景: raw close 与 adj close 平均偏差 55% (5277 只中仅 349 只相同)。
+        # 'raw' 下 A 条件 (raw close < adj MA60) 因 raw 系统性更低而几乎恒真 →
+        # A 的 close<ma60 子条件实际是 no-op。'adj' 修复此 §3 错配。
+        signal_price_domain="raw",
         result_holder=None,
     )
 
@@ -363,15 +370,23 @@ class Phase3V3Strategy(bt.Strategy):
                 if self.p.require_rsi_oversold
                 else None
             )
+            # v81 (2026-10-14, CLAUDE.md §3): 信号价格域统一。'adj' 时把
+            # A/B/C 条件的价格源切到 adj_close (与 MA/MACD 同域)。
+            pct_chg_ind = PctChg(d)
+            up_streak_ind = UpStreak(d)
+            if self.p.signal_price_domain == "adj":
+                pct_chg_ind.price_source = adj_close_src
+                up_streak_ind.price_source = adj_close_src
+                below_ratio.price_source = adj_close_src
             self.indi[name] = {
                 "ma5": ma5,
                 "ma10": ma10,
                 "ma20": ma20,
                 "ma60": ma60,
                 "macd": bt.indicators.MACD(adj_close_src),
-                "pct_chg": PctChg(d),
+                "pct_chg": pct_chg_ind,
                 "am60": Am60(d, period=60),
-                "up_streak": UpStreak(d),
+                "up_streak": up_streak_ind,
                 "below_ma60_ratio_60": below_ratio,
                 "ma20_slope_5d": ma20_slope,  # v50 F 条件
                 "return_1m": return_1m,  # v51 G 条件
@@ -381,6 +396,8 @@ class Phase3V3Strategy(bt.Strategy):
                 "rsi": rsi,  # v53 I 条件
                 # V5' (R5): ATR(14) on adj_close for slippage estimation
                 "atr": AtrAdj(d, period=self.p.atr_period),
+                # v81 (§3): A 条件 close 侧价格源 (adj 域时用)
+                "_signal_close": adj_close_src,
             }
 
         # 持仓/账户状态
@@ -972,7 +989,12 @@ class Phase3V3Strategy(bt.Strategy):
         ma60_v = indi["ma60"][0]
         if np.isnan(ma60_v):
             return False
-        close_v = float(d.close[0])
+        # v81 (§3): 'adj' 时 close 侧切到 adj_close, 与 ma60 (adj 域) 同域。
+        close_v = (
+            float(indi["_signal_close"][0])
+            if self.p.signal_price_domain == "adj"
+            else float(d.close[0])
+        )
         if self.p.a_condition == "cascade_price":
             ma5_v = indi["ma5"][0]
             ma10_v = indi["ma10"][0]
