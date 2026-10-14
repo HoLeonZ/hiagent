@@ -2,6 +2,14 @@
 
 DuckDB 无历史成分表 → as-of 代理：剔除 asof_date 之后才上市的票。
 严格的 HS300 / 中证 500 历史成分 as-of 标 P2（需新拉数据）。
+
+=== 数据受阻方向 (2026-10-14 全库/全参数探索后确认) ===
+以下 universe 细化方向在当前 DB 下不可测:
+  - ST 股过滤: v_daily 无 ST/名称列; dim_symbol.name 全为 NULL (0 行非空)。
+    ST 股 ±5% 涨跌停, 与主板 ±10% 不同, 理论上应单独处理 (参 §4 board-aware)。
+  - 指数成分 (HS300/CSI500): 无历史成分表。
+  - 黑名单: data/exclude_thscodes.txt 不存在 → 当前为空集 (no-op)。
+如未来引入 ST 标记或成分表, 可在 _is_main_board 之外增设过滤。
 """
 from __future__ import annotations
 
