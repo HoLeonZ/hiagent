@@ -301,6 +301,16 @@ class Phase3V3Strategy(bt.Strategy):
         # ⚠️ 背景: raw close 与 adj close 平均偏差 55% (5277 只中仅 349 只相同)。
         # 'raw' 下 A 条件 (raw close < adj MA60) 因 raw 系统性更低而几乎恒真 →
         # A 的 close<ma60 子条件实际是 no-op。'adj' 修复此 §3 错配。
+        # === 2026-10-14 全策略 §3 价格域审计 ===
+        # 修复 A/B/C 后审计其余价格使用: 活跃路径干净。剩余 raw/adj 混用仅存在于
+        # 已失败的 opt-in 特性, 不影响 champion:
+        #   - _market_breadth (v66 regime gate): raw close vs adj ma20 (同 A 的错配);
+        #     v66 已证 no-op (gate 不触发)。
+        #   - K 条件 (v61 intraday reversal): raw open/high/low; v61 已证 holdout 失败。
+        #   - ATR slippage (line ~690): adj ATR / raw close; atr_slip_scale=0 所有 preset
+        #     默认关闭 (inactive)。
+        # 正确使用 raw 的位置 (§3 要求 raw): entry (d.open), SL/TP trigger (d.high/low),
+        #   limit-down (prev_close), NAV mark-to-market — 均已正确。
         signal_price_domain="raw",
         result_holder=None,
     )
