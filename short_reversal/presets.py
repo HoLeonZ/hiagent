@@ -8,12 +8,15 @@ UniverseMode = Literal["mainboard_only", "exclude_hs300_zhongtou_finance"]
 # CLAUDE.md §4 Short-Side Feasibility (mandatory declaration for short legs):
 # 本模块所有 preset 的做空回测共用以下融券假设:
 #   - availability: 假设任意主板标的任意交易日均可融到券 (引擎不做券源检查)
-#   - borrow_cost:  当前引擎未在 P&L 中扣减借券成本 (已知缺口)
+#   - borrow_cost:  引擎每 bar 按 position notional × MARGIN_RATE / 365 计提融券
+#     费用 (engine.py MARGIN_RATE=0.086 = 年化 8.6%; strategy _charge_margin_fees)。
+#     ⚠️ 此前声明为 "none" 与代码矛盾 (审计 §4 发现), 已按实际行为更正。
 # ⚠️ 现实差距: A 股个股融券券源稀缺、2024 年监管收紧后多数标的实际不可融;
-#    回测数字是"可融券且零借券成本世界"的上界, 不构成可执行预期。
+#    回测数字是"可融券且仅按 8.6% 年化计费"的上界, 不构成可执行预期。
 BORROW_ASSUMPTION: dict = {
     "availability": "assumed_unlimited",
-    "borrow_cost_model": "none",  # engine does not deduct borrow cost (known gap)
+    "borrow_cost_model": "annualized_margin_rate",  # engine charges 8.6%/yr
+    "borrow_cost_rate": 0.086,
 }
 
 PRESETS: dict[str, dict] = {
