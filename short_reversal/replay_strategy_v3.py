@@ -51,6 +51,31 @@ UP_STREAK_HIGH = 10
 # 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION。超出部分丢弃(不挂单)。
 MAX_VOL_PARTICIPATION = 0.10
 
+# v67 (2026-10-13, CLAUDE.md §4): board-and-date-aware 跌停阈值。
+# 主板 ±10% (0.095 容差); 创业板 300.SZ 2020-08-24 起 ±20% (之前 ±10%);
+# 科创板 688.SH ±20% (2019-07-22 开板)。20% 板的票用 10% 阈值会误判跌停,
+# 导致本可成交的空头 entry 被错误跳过。broad_only universe 必须走此逻辑。
+_CHINEXT_20PCT_START = (2020, 8, 24)
+_LIMIT_THRESHOLD_20PCT = 0.195
+
+
+def _board_limit_threshold(code: str, bar_date, default: float) -> float:
+    """按板 + 日期返回跌停阈值 (CLAUDE.md §4)。主板返回 default (保持兼容)。"""
+    if code.endswith(".SH"):
+        body = code.split(".", 1)[0]
+        if body.startswith("688"):
+            return _LIMIT_THRESHOLD_20PCT  # 科创板 ±20%
+    elif code.endswith(".SZ"):
+        body = code.split(".", 1)[0]
+        if body.startswith("300"):
+            if bar_date is not None and (
+                bar_date.year,
+                bar_date.month,
+                bar_date.day,
+            ) >= _CHINEXT_20PCT_START:
+                return _LIMIT_THRESHOLD_20PCT  # 创业板 2020-08-24 起 ±20%
+    return default
+
 # Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical cost model constants
 # (single-source-of-truth in core.dual_price.py). Declared at module level so
 # the AST detector in tests/test_cost_model_canonical_conformance_4engine.py
@@ -164,10 +189,11 @@ class Phase3V3Strategy(bt.Strategy):
         min_commission=5.0,
         initial_capital=1_000_000.0,
         lot_size=100,
-        # Round 14 (2026-09-28, CLAUDE.md §2): 默认 None, engine 必须显式从 preset
-        # 传入 (fail-fast: 忘传时 cash_gate_threshold 计算报 TypeError 而非 silently 0.05)。
-        # engine.py:170 通过 cfg.get('min_cash_ratio', 0.05) 保证生产路径总有值。
-        min_cash_ratio=None,
+        # Round 14 (2026-09-28, CLAUDE.md §2): 现金闸门阈值。
+        # v81.2 (2026-10-14 审计 S1 修复): 默认由 None 改为 0.05 (与 engine.py 对齐)。
+        # 原 None 设计意图是 fail-fast, 但 scan_signals.py / lookahead_trade_trace.py
+        # 两个生产调用方漏传 → 生产路径 TypeError 崩溃 (实测触发 10 处测试失败)。
+        min_cash_ratio=0.05,
         # V5' (2026-09-22, CLAUDE.md §4): ATR-aware slippage (R5 mirror)。
         # 当 atr_slip_scale > 0, 在 entry 时 slippage = atr_pct × participation × scale
         # (做空方向: slippage 上调 entry_price, 即扣更少 sale proceeds = 悲观假设)。
@@ -265,6 +291,21 @@ class Phase3V3Strategy(bt.Strategy):
         # opt-in: require_market_breadth_bear=True 才启用。
         require_market_breadth_bear=False,
         market_breadth_max=0.5,  # close>MA20 比例超过此值则不入场
+        # v68 (2026-10-13): §2 conviction-based 填充选择 (opt-in)。
+        # CLAUDE.md §2: 并发信号 MUST 按统计信心排序后依次填充 (single-bullet)。
+        # 'first' (默认) = datas 顺序 (thscode 字母序, v50 兼容的任意 tie-breaker)。
+        # 'steepest_slope' = 按 MA20 斜率升序 (最负 = 最陡下降 = 最高空头信心)。
+        entry_selection="first",
+        # v81 (2026-10-14, CLAUDE.md §3): 信号价格域开关。
+        # 'adj' (默认, §3 合规): A/B/C 条件用 adj_close (v_daily_hfq 复权价),
+        #   与 MA/MACD 同域。
+        # 'raw' (旧行为, 违规): A/B/C 条件用 d.close (v_daily 原始价)。
+        # ⚠️ 背景: raw close 与 adj close 平均偏差 55% (5277 只中仅 349 只相同)。
+        # 'raw' 下 A 条件 (raw close < adj MA60) 因 raw 系统性更低而几乎恒真 →
+        # A 的 close<ma60 子条件实际是 no-op。
+        # v81.1 (审计修正): 默认值由 'raw' 改为 'adj' —— 审计指出"默认 raw 的
+        #   开关 = 默认值仍是违规值" (§3 dual-price mandate)。'adj' 为强制合规值。
+        signal_price_domain="adj",
         result_holder=None,
     )
 
@@ -333,15 +374,23 @@ class Phase3V3Strategy(bt.Strategy):
                 if self.p.require_rsi_oversold
                 else None
             )
+            # v81 (2026-10-14, CLAUDE.md §3): 信号价格域统一。'adj' 时把
+            # A/B/C 条件的价格源切到 adj_close (与 MA/MACD 同域)。
+            pct_chg_ind = PctChg(d)
+            up_streak_ind = UpStreak(d)
+            if self.p.signal_price_domain == "adj":
+                pct_chg_ind.price_source = adj_close_src
+                up_streak_ind.price_source = adj_close_src
+                below_ratio.price_source = adj_close_src
             self.indi[name] = {
                 "ma5": ma5,
                 "ma10": ma10,
                 "ma20": ma20,
                 "ma60": ma60,
                 "macd": bt.indicators.MACD(adj_close_src),
-                "pct_chg": PctChg(d),
+                "pct_chg": pct_chg_ind,
                 "am60": Am60(d, period=60),
-                "up_streak": UpStreak(d),
+                "up_streak": up_streak_ind,
                 "below_ma60_ratio_60": below_ratio,
                 "ma20_slope_5d": ma20_slope,  # v50 F 条件
                 "return_1m": return_1m,  # v51 G 条件
@@ -351,6 +400,8 @@ class Phase3V3Strategy(bt.Strategy):
                 "rsi": rsi,  # v53 I 条件
                 # V5' (R5): ATR(14) on adj_close for slippage estimation
                 "atr": AtrAdj(d, period=self.p.atr_period),
+                # v81 (§3): A 条件 close 侧价格源 (adj 域时用)
+                "_signal_close": adj_close_src,
             }
 
         # 持仓/账户状态
@@ -504,6 +555,21 @@ class Phase3V3Strategy(bt.Strategy):
                 "drawdown": dd,
             })
 
+    def _conviction_key(self, code: str) -> float:
+        """v68 (§2): 空头信心度量 — MA20 斜率, 越负 = 下降越陡 = 信心越高。
+
+        排序用升序 → 最陡下降排最前。缺失/NaN 返回 0.0 (排中间)。
+        """
+        indi = self.indi.get(code, {})
+        sl = indi.get("ma20_slope_5d")
+        if sl is None:
+            return 0.0
+        try:
+            v = float(sl[0])
+        except (IndexError, TypeError, ValueError):
+            return 0.0
+        return v if not math.isnan(v) else 0.0
+
     def _market_breadth(self) -> float:
         """v66 (2026-10-13): 市场宽度 = universe 中 close > MA20 的股票比例。
 
@@ -579,8 +645,19 @@ class Phase3V3Strategy(bt.Strategy):
             pending = self.pending_entries
             pending.clear()
             return
-        for d in self.datas:
-            code = d._name
+        # v68 (§2): 并发信号按统计信心排序后依次填充 (single-bullet)。
+        # 'steepest_slope' 按 MA20 斜率升序 (最陡下降优先); 'first' 保留 datas 顺序。
+        if self.p.entry_selection == "steepest_slope":
+            codes_to_fill = sorted(
+                (d._name for d in self.datas if d._name in self.pending_entries),
+                key=self._conviction_key,
+            )
+        else:
+            codes_to_fill = [
+                d._name for d in self.datas if d._name in self.pending_entries
+            ]
+        for code in codes_to_fill:
+            d = self.getdatabyname(code)
             if code not in self.pending_entries:
                 continue
             # Round 23 (2026-09-28, CLAUDE.md §3/§4): LIMIT-DOWN guard。
@@ -589,8 +666,14 @@ class Phase3V3Strategy(bt.Strategy):
             # 若 prev_close 缺失 (data gap), is_limit_down 返回 False 允许 entry
             # (与 chase_up/uptrend_pullback is_limit_up 同语义: best-effort)。
             prev_close = float(d.close[-1]) if len(d) > 1 else None
+            # v67 (§4): board-and-date-aware 阈值 (主板 default 保持兼容;
+            # 创业板/科创板 ±20%)。
+            bar_date = bt.num2date(d.datetime[0]).date()
+            limit_thr = _board_limit_threshold(
+                code, bar_date, self.p.limit_down_threshold
+            )
             if is_limit_down(prev_close=prev_close, open_price=float(d.open[0]),
-                             threshold=self.p.limit_down_threshold):
+                             threshold=limit_thr):
                 logger.debug(
                     "[limit-down] skip short entry: %s open=%.2f prev_close=%.2f",
                     code, float(d.open[0]), prev_close if prev_close is not None else 0.0,
@@ -910,7 +993,12 @@ class Phase3V3Strategy(bt.Strategy):
         ma60_v = indi["ma60"][0]
         if np.isnan(ma60_v):
             return False
-        close_v = float(d.close[0])
+        # v81 (§3): 'adj' 时 close 侧切到 adj_close, 与 ma60 (adj 域) 同域。
+        close_v = (
+            float(indi["_signal_close"][0])
+            if self.p.signal_price_domain == "adj"
+            else float(d.close[0])
+        )
         if self.p.a_condition == "cascade_price":
             ma5_v = indi["ma5"][0]
             ma10_v = indi["ma10"][0]

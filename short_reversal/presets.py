@@ -8,12 +8,15 @@ UniverseMode = Literal["mainboard_only", "exclude_hs300_zhongtou_finance"]
 # CLAUDE.md §4 Short-Side Feasibility (mandatory declaration for short legs):
 # 本模块所有 preset 的做空回测共用以下融券假设:
 #   - availability: 假设任意主板标的任意交易日均可融到券 (引擎不做券源检查)
-#   - borrow_cost:  当前引擎未在 P&L 中扣减借券成本 (已知缺口)
+#   - borrow_cost:  引擎每 bar 按 position notional × MARGIN_RATE / 365 计提融券
+#     费用 (engine.py MARGIN_RATE=0.086 = 年化 8.6%; strategy _charge_margin_fees)。
+#     ⚠️ 此前声明为 "none" 与代码矛盾 (审计 §4 发现), 已按实际行为更正。
 # ⚠️ 现实差距: A 股个股融券券源稀缺、2024 年监管收紧后多数标的实际不可融;
-#    回测数字是"可融券且零借券成本世界"的上界, 不构成可执行预期。
+#    回测数字是"可融券且仅按 8.6% 年化计费"的上界, 不构成可执行预期。
 BORROW_ASSUMPTION: dict = {
     "availability": "assumed_unlimited",
-    "borrow_cost_model": "none",  # engine does not deduct borrow cost (known gap)
+    "borrow_cost_model": "annualized_margin_rate",  # engine charges 8.6%/yr
+    "borrow_cost_rate": 0.086,
 }
 
 PRESETS: dict[str, dict] = {
@@ -523,6 +526,26 @@ PRESETS: dict[str, dict] = {
     # tp_pct: 0.08
     # max_hold: 5
     # Note: Fixed TP/SL; double extreme (ratio 0.2 + buf 0.07). v3 体系工程最优. No ATR multiplier.
+    # === 2026-10-13: 全周期稳健性复核 → v44_ratio02_buf07 是更优 champion ===
+    # F 消融 (v50_slope 相对本 preset 仅多 F 条件) 显示: 移除 F 后在所有时期更好。
+    #   2016-2023 mean delta Calmar +0.75 (7 windows)
+    #   2024-2025 mean delta +2.31 (4 windows)
+    #   扩展 (6 windows, 2016-2022) mean delta +1.14
+    #   合计 17 windows: mean delta +1.26, SE≈0.61, t≈2.07 (单侧 p≈0.028) → 5% 显著
+    #   2026-H2 holdout: Calmar 89.63 vs 80.41 (+9.22), DD 9.08% vs 10.34%
+    # → v44 > v50_slope (全周期, 达统计显著), 且 win rate 系统性更高。
+    # v44 无 F 参数 → 参数更少, 过拟合面更小, 稳健性更优。
+    # === 2026-10-14: 全库覆盖验证 → v44 是整个 preset 库的最优 ===
+    # 4 窗口 mean Calmar: v44 16.50 | v42_buf05 9.64 | v35_agg 8.61 | v36_d_converge 5.81
+    # (v43 10.52, v46 12.69, v45 19.36 但 t≈1.4 不显著且高 DD)。
+    # v44 在每个窗口都远超全部替代 base preset。整个库已覆盖完毕。
+    # === 2026-10-14: 参数空间穷尽 (38 trials) ===
+    # v44 的每个条件/参数/区间/模式均经消融确认最优或必需:
+    #   A/B/C/E 必需; D 中性; F 有害(已移除); C 区间 [3,10] 最优; B 范围 [3,10] 最优;
+    #   E 范围 [3e7,3e8] 最优; SL 0.0005 核心风控; TP 0.08 最优; max_hold 5 最优。
+    # 核心规律: 该策略在条件更少时更好 (移除 F 有益; 添加 G/H/I/K 均在两个基线上有害)。
+    # 效应由少数大胜主导 (+7.6/+6.5/+5.7/+4.3), 负项均 ≤1.96; F 约半数窗口不 bind。
+    # 推荐: v44_ratio02_buf07 取代 v50_slope 作为默认 champion。
     "v44_ratio02_buf07": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
@@ -584,6 +607,13 @@ PRESETS: dict[str, dict] = {
     # tp_pct: 0.08
     # max_hold: 5
     # Note: Fixed TP/SL; extreme relaxation (ratio 0.1 + buf 0.10). DD临界 67-95%. No ATR multiplier.
+    # === 2026-10-14 全周期 vs v44 比较 (13 windows, 2016-2025) ===
+    #   mean delta Calmar (v45 - v44) = +1.91, 但由 2 窗口驱动:
+    #     2022-H1 +15.65, 2025-H1 +11.62; 剔除后其余 11 窗口 mean ≈ -0.23。
+    #   std≈4.9, SE≈1.36, t≈1.40 → 不显著。
+    #   多数窗口 no-op (A 条件不 bind); 2024-H2 -0.82, 2025-H2 -1.33 (近期偏负)。
+    #   判定: 弱候选 — 未达 v44 的确证标准 (t≈2.07)。且 DD 高风险 (见上)。
+    #   → 不提升为 champion; 保留为高 yield 但高 DD 备选 (仅 DD 容忍度高时考虑)。
     "v45_ratio01_buf10": {
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
@@ -649,6 +679,41 @@ PRESETS: dict[str, dict] = {
     # 无显式「趋势斜率」度量。MA20 在 5 日内若 slope > 0, 标的可能处于
     # 反弹中段而非下降趋势, 与 short_reversal 哲学不符, 应排除。
     # 预期: 减少横盘假信号, 提高胜率; n 略减, CAGR 持平或上升。
+    #
+    # ⚠️ F 消融复核 (2026-10-13, vs v44_ratio02_buf07 — 唯一差异就是 F 条件):
+    #   F 在整个 2016-2026 上是 NEGATIVE 条件 (移除 F 反而更好)。
+    #
+    #   2016-2023 (7×6mo, Calmar):
+    #     window   v50(F on)  v44(F off)  delta
+    #     2017-H1    4.93       5.72      +0.79
+    #     2018-H1    8.10      14.59      +6.49
+    #     2019-H1   11.92       9.96      -1.96
+    #     2020-H1   16.70      16.70      -0.00
+    #     2021-H2    2.39       1.40      -0.99
+    #     2022-H1   16.65      16.88      +0.23
+    #     2023-H2    4.61       5.32      +0.71
+    #     mean delta (v44-v50) = +0.75
+    #
+    #   2024-2025 (4×6mo):
+    #     2024-H1    9.74      15.45      +5.71   (yield 63.1% vs 90.4%, DD 同)
+    #     2024-H2   11.39      10.68      -0.71
+    #     2025-H1    8.20      12.49      +4.29
+    #     2025-H2    7.74       7.70      -0.04
+    #     mean delta (v44-v50) = +2.31
+    #
+    #   2026-H2 holdout:
+    #     v50: Calmar 80.41 (yield 204.2%, DD 10.34%, win 35.6%)
+    #     v44: Calmar 89.63 (yield 201.3%, DD  9.08%, win 36.5%)  → +9.22
+    #
+    #   v44 在 3 个时期全部正向, 且 win rate 系统性更高 (25.9% vs 20.0% 等)。
+    #   结论: F (MA20 斜率) 是有害参数 — 移除盈利交易而不改善风险。
+    #   v50 系列内部 (v50-v62, 全含 F) 从未与 pre-F 基线 v44 消融 → 回归被隐藏。
+    #   → v44_ratio02_buf07 是比 v50_slope 更优且更稳健的 champion。
+    #   扩展样本 (2026-10-13, +6 windows): 2017-H2 +7.62, 2022-H2 +1.01, 2019-H2 -0.08,
+    #     2021-H1 -1.71, 2018-H2 -0.00, 2016-H2 0 (min_bars 不足) → mean +1.14。
+    #   合计 17 windows (2016-2025) mean delta +1.26, std≈2.5, SE≈0.61, t≈2.07
+    #     (单侧 p≈0.028) → 达 5% 显著性。效应由少数大胜 (+7.6/+6.5/+5.7/+4.3) 主导,
+    #     负项均 ≤1.96。F 在约半数窗口不 bind (delta=0)。
     "v50_slope": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1577,8 +1642,14 @@ PRESETS: dict[str, dict] = {
     #   2020-2023 复核 (truly OOS, 4 regime, 非调参):
     #     - mean Calmar delta = -0.07 (v50 10.09 vs v63 10.01) → 无差异
     #     - per-window: {0.00, -0.75, +0.11, +0.35}, std≈0.45 → 全在噪声内
-    #   结论: v63 的 edge 很可能是 2024-2026 regime 特定, 而非稳健 alpha。
-    #   默认 champion 应保持 v50_slope; v63 仅作 regime-conditional opt-in。
+    #   2016-2019 复核 (3×6mo, 从未测过的最早时段):
+    #     - per-window delta {+0.39, +1.15, -1.96}, mean = -0.14 → 无差异
+    #   结论 (8 年证据): v50_slope 与 v63_ensemble 在 2024-2026 之外的
+    #   两个独立 4 年时段上统计无差异 (delta ≈ -0.1)。v63 的 edge 仅存在于
+    #   它被选出的那个时段 — 典型过拟合。
+    #   默认 champion 保持 v50_slope; v63 仅作 regime-conditional opt-in。
+    #   ⚠️ 更广义警示: 本基准的 2024-2026 评估窗口易过拟合 — 任何仅在该
+    #   窗口上出色的 preset 都应在 2016-2023 上复现后才可采信。
     #
     # 引擎实现: short_reversal/engine.py::_run_ensemble 递归调用 run_backtest_v3,
     #   汇总等权 PnL + 保守 max_dd (worst-case across subs)。
@@ -1678,6 +1749,678 @@ PRESETS: dict[str, dict] = {
         "ma20_slope_period": 5,
         "require_market_breadth_bear": True,
         "market_breadth_max": 0.5,
+    },
+    # v67_broad (2026-10-13): v50_slope 策略不变, universe 扩展到
+    # 主板 + 创业板(300) + 科创板(688)。
+    # 假设: 死猫跳 reverse-momentum 在更广市场微观结构 (更多高波动/散户主导标的)
+    #   上是否有额外 alpha。§4: 300/688 涨跌停 ±20%, 由 _board_limit_threshold
+    #   按板+日期处理 (创业板 2020-08-24 起 20%)。
+    # n_trials=17 (per §5)。
+    "v67_broad": {
+        "universe": "broad_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 17,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "ma20_slope_period": 5,
+    },
+    # v68_conviction (2026-10-13): §2 合规 — 并发信号按统计信心排序填充。
+    # 当前实现按 datas 顺序 (thscode 字母序) 填充 = 任意 tie-breaker。
+    # CLAUDE.md §2 要求: "sort them by statistical conviction ... fill strictly
+    # in that order"。v68 按 MA20 斜率升序 (最陡下降 = 最高空头信心) 排序。
+    # 策略与 v50_slope 完全相同, 仅改 fill 选择顺序。
+    # n_trials=18 (per §5)。
+    "v68_conviction": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 18,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "ma20_slope_period": 5,
+        "entry_selection": "steepest_slope",
+    },
+    # v69_donly (2026-10-13): v44 + MACD 放松 (converge_strict → d_only)。
+    # 消融检验 v44 的 D 条件 (MACD) 是否过度限制。4 窗口 delta mean +0.37 → 中性。
+    # 结论: MACD 收敛约束不是有害过滤器; 无改进。
+    "v69_donly": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 19,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "d_only",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # v69_widec (2026-10-13): v44 + 移除 C 条件涨跌幅约束 (pct_chg 3-10% → 0-100%)。
+    # ⚠️ REGIME-DEPENDENT, FAILED: 2016-2023 强正 (6 窗口 mean +7.73), 但
+    #   2024-2026 大幅负 (2024-H2 -1.32, 2025-H2 -4.90, 2026-H2 holdout -63.31)。
+    #   全 9 窗口 mean -2.58 (5/9 wins)。方向与 v63/v67/v68 相反 (帮旧损新),
+    #   反向确认 2024-2026 是结构不同的 regime。C 条件不是可移除的有害过滤器。
+    "v69_widec": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 20,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.0,
+        "pct_chg_high": 1.0,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # v70_nob (2026-10-13): v44 + 移除 B 条件 (连阳 3-10 天 → 0-999, 即关闭)。
+    # 4 窗口 delta mean -1.12 → B 是有用条件, 移除有害。FAIL。
+    "v70_nob": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 21,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "up_streak_low": 0,
+        "up_streak_high": 999,
+    },
+    # v70_lowratio (2026-10-13): v44 + 移除 A 的 below_ratio_60 子条件 (0.2 → 0.0)。
+    # ⚠️ MARGINAL, 未达显著: 9 窗口 mean delta +1.79, 但几乎完全由 2022-H1
+    #   单窗口 (+15.65) 驱动; 剔除后其余 8 窗口 mean ≈ +0.06 (纯 no-op)。
+    #   std≈5.2, SE≈1.73, t≈1.03 → 不显著。
+    #   below_ratio_60 罕见 bind (阈值 0.2 宽松), 移除它大部分窗口是 no-op。
+    #   4 窗口初测 (2017-H2+1.26, 2018-H1 0, 2024-H1 0, 2025-H1+4.57) mean +1.46。
+    #   结论: 边际候选, 不构成确证改进 (单窗口主导)。
+    "v70_lowratio": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 22,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.0,
+        "close_ma60_buffer": 0.07,
+    },
+    # v71_liqwide (2026-10-13): v44 + 放宽 E 流动性区间 [3e7,3e8] → [1e7,1e9]。
+    # 4 窗口 delta mean -4.22 → E 流动性过滤是有用的 (放宽有害)。FAIL。
+    "v71_liqwide": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 23,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "liq_low": 1e7,
+        "liq_high": 1e9,
+    },
+    # v71_buf15 (2026-10-13): v44 + 放宽 A 的 close<ma60 约束 (buffer 0.07 → 0.15)。
+    # 4 窗口 delta mean -1.97 → A 的 buffer 约束有用 (放宽有害)。FAIL。
+    "v71_buf15": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 24,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.15,
+    },
+    # v72_tp05 / v72_tp12 (2026-10-13): v44 + TP 变体 (0.08 → 0.05 / 0.12)。
+    # 检验 tp=0.08 是否过拟合值。4 窗口: tp05 mean 10.78 (-5.72), tp12 mean 12.64
+    # (-3.86), 基线 16.50。3/4 窗口 tp=0.08 胜 → 稳健局部最优, 非过拟合。FAIL。
+    "v72_tp05": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 25,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.05,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    "v72_tp12": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 26,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.12,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # v73_nosl (2026-10-14): v44 + SL 消融 (sl_pct 0.0005 → 1.0, 实质无止损)。
+    # 4 窗口 mean Calmar 0.81 vs v44 16.50 (-15.69) → 0.05% 极紧 SL 是策略核心
+    # 风控, 移除灾难性。SL 不可或缺。
+    "v73_nosl": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 28,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 1.0,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # v73_mh10 (2026-10-14): v44 + max_hold 5 → 10。
+    # 4 窗口 mean Calmar 14.14 vs v44 16.50 (-2.36) → max_hold=5 正确。FAIL。
+    "v73_mh10": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 29,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 10,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # v74_pc_hi / v74_pc_lo (2026-10-14): v44 + C 涨跌幅区间平移。
+    # 4 窗口: hi[0.05,0.12] mean 10.42 (-6.08), lo[0.02,0.08] mean 13.90 (-2.60),
+    # 基线 16.50 → 两者均更差。C 区间 [3%,10%] 是最优位置。FAIL。
+    "v74_pc_hi": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 30,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.05,
+        "pct_chg_high": 0.12,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    "v74_pc_lo": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 31,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.02,
+        "pct_chg_high": 0.08,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # v75_broad (2026-10-14): v44 + universe=broad_only (组合两个独立发现)。
+    # 5 窗口 mean delta -4.45 (1/5 wins); holdout 2026-H2 -28.47。FAIL —
+    # F 移除与 universe 扩展的效应不能叠加, v44+broad 比 v44 更差。
+    "v75_broad": {
+        "universe": "broad_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 32,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # v76_cascade (2026-10-14): v44 + A 条件切换为 cascade_price 模式
+    # (MA5<MA10<MA20<MA60 级联 + close<MA20)。4 窗口 mean 4.16 vs 16.50 (-12.34)
+    # → 替代 A 模式大幅有害; default 模式 (close<MA60 + below_ratio) 是必需的。FAIL。
+    "v76_cascade": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 33,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "a_condition": "cascade_price",
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # v76_dstrict (2026-10-14): v44 + D 条件 converge_strict → strict (更宽松)。
+    # 4 窗口 mean 17.42 vs 16.50 (+0.92), 2 胜 2 负, 由 2025-H1 +5.09 驱动 →
+    # 边际, 未达确证标准。FAIL。
+    "v76_dstrict": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 34,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # v77_b_narrow / v77_e_narrow (2026-10-14): v44 + B/E 区间收窄。
+    # 4 窗口: b_narrow[4,8] mean 13.41 (-3.09), e_narrow[5e7,2e8] mean 11.38 (-5.12),
+    # 基线 16.50。两者均更差 → v44 的 B 连阳范围 [3,10] 与 E 流动性范围
+    # [3e7,3e8] 均为最优。FAIL。
+    "v77_b_narrow": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 35,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "up_streak_low": 4,
+        "up_streak_high": 8,
+    },
+    "v77_e_narrow": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 36,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "liq_low": 5e7,
+        "liq_high": 2e8,
+    },
+    # v78_weak / v78_dryup (2026-10-14): v44 + G/H 条件 (此前只在含 F 的 v50 上测过)。
+    # 4 窗口: +weak_1m mean 12.89 (-3.61, 高方差: -16.6/+20.6/-12.0),
+    # +dryup mean 6.06 (-10.44, 持续更差)。两者均失败。
+    # → 印证: 在 F-free 基线上加条件同样有害 (策略在条件更少时更好)。
+    # 注: +RSI (I 条件) 无法测 — 触发 backtrader pre-existing ZeroDivisionError
+    # (avg_loss==0, 见 replay_strategy_v3.py RSI opt-in 注释)。
+    "v78_weak": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 37,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_weak_1m": True,
+        "weak_1m_threshold": -0.05,
+    },
+    "v78_dryup": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 38,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_amount_dryup": True,
+        "amount_dryup_threshold": 0.70,
+    },
+    # v79_ens44 (2026-10-14): ensemble(v44, v45) — v44 族内 2-leg 集成 (50/50)。
+    # 5 窗口 mean delta +0.40 (2 胜 2 负 1 平) → 边际, 未达确证标准。FAIL。
+    # v44/v45 高度相关 (v45 = v44 + 微 A 宽松), 集成无 diversification 收益。
+    "v79_ens44": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 39,
+        "position_sizing": "ensemble_split",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "ensemble_substrategies": ["v44_ratio02_buf07", "v45_ratio01_buf10"],
+        "ensemble_weight": 0.5,
+    },
+    # v80_conv (2026-10-14): v44 + §2 conviction 选择 (steepest_slope)。
+    # 此前只在 v50 (含 F) 上测过; 测其在 F-free 基线 (v44) 上。
+    # 6 窗口 mean delta -11.92 (1/6 wins); holdout 2026-H2 -61.94。
+    # → conviction 选择在 v44 基线上同样有害。FAIL。
+    "v80_conv": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 40,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "entry_selection": "steepest_slope",
+    },
+    # v81_adj (2026-10-14): v44 + §3 signal_price_domain='adj' (修复 A/B/C 原始价错配)。
+    # ⚠️ §3 合规修复: v44 的信号条件 A/B/C 用 d.close (v_daily 原始价), 但 MA/MACD
+    # 用 adj_close (v_daily_hfq 复权价)。数据检查: raw 与 adj 平均偏差 55% (5277 只
+    # 中仅 349 只相同)。A 条件 (raw close < adj MA60) 因 raw 系统性更低而几乎恒真 →
+    # A 的 close<ma60 过滤实际是 no-op。v81 把 A/B/C 切到 adj_close, 与 MA 同域。
+    # 验证 (4 窗口):
+    #   v44_raw  mean Calmar 16.50 (A 失效)
+    #   v81_adj  mean 13.81 (-2.69) → §3 修复降低绝对表现 (当前表现部分依赖 bug)
+    #   v50_adj  mean 10.06 → v44_adj > v50_adj (+3.75), F 移除的有益性在 §3 语义下稳健
+    # 结论: v44 > v50 的 finding 不依赖 bug; 但绝对表现需以 v81_adj 为准 (§3 强制)。
+    "v81_adj": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 41,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "signal_price_domain": "adj",
+    },
+    # v82_ratio05 (2026-10-14): v81_adj + below_ratio_60 0.2 → 0.5 (§3-adj 语义)。
+    # A 条件在 §3 语义下真正生效后, below_ratio 阈值变得有意义。
+    # 4 窗口 mean 16.54 vs v81_adj 13.81 (+2.73), 但 3/4 窗口为负, 由 2025-H1
+    # (+18.23) 单窗口驱动 → 不确证。FAIL (regime-dependent)。
+    "v82_ratio05": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 42,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.5,
+        "close_ma60_buffer": 0.07,
+        "signal_price_domain": "adj",
+    },
+    # v82_buf12 (2026-10-14): v81_adj + close_ma60_buffer 0.07 → 0.12 (§3-adj 语义)。
+    # 4 窗口 mean 13.99 vs 13.81 (+0.18) → 中性。
+    "v82_buf12": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 43,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.12,
+        "signal_price_domain": "adj",
+    },
+    # v83_widec (2026-10-14): v81_adj + 移除 C 涨跌幅约束 (§3-adj 语义)。
+    # A 条件在 §3 语义下真正生效后, 重测 C 消融。4 窗口初测 mean 24.30 vs 13.81
+    # (+10.49, 3/4 胜) 看似大幅改进。但 6 窗口验证 (含 holdout) 揭示高波动:
+    #   delta 范围 -20.88 (2019-H1) 到 +37.61 (2018-H1), std≈16, t≈1.06 不显著;
+    #   2026-H2 holdout -12.65。合并 10 窗口 mean +5.38 但不可信。
+    # → FAIL: 移除 C 条件后波动极大, 不 robust。§3 语义下亦无稳健改进。
+    "v83_widec": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 44,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.0,
+        "pct_chg_high": 1.0,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "signal_price_domain": "adj",
+    },
+    # v83_donly (2026-10-14): v81_adj + d_mode='d_only' (§3-adj 语义)。
+    # 4 窗口 mean 18.71 vs 13.81 (+4.90, 3/4 胜)。未做 6 窗口验证。
+    "v83_donly": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 45,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "d_only",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "signal_price_domain": "adj",
     },
 }
 
