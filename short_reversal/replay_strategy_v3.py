@@ -295,13 +295,16 @@ class Phase3V3Strategy(bt.Strategy):
         # 'first' (默认) = datas 顺序 (thscode 字母序, v50 兼容的任意 tie-breaker)。
         # 'steepest_slope' = 按 MA20 斜率升序 (最负 = 最陡下降 = 最高空头信心)。
         entry_selection="first",
-        # v81 (2026-10-14, CLAUDE.md §3): 信号价格域统一开关。
-        # 'raw' (默认, 兼容): A/B/C 条件用 d.close (v_daily 原始价)。
-        # 'adj': A/B/C 条件切到 adj_close (v_daily_hfq 复权价), 与 MA/MACD 同域。
+        # v81 (2026-10-14, CLAUDE.md §3): 信号价格域开关。
+        # 'adj' (默认, §3 合规): A/B/C 条件用 adj_close (v_daily_hfq 复权价),
+        #   与 MA/MACD 同域。
+        # 'raw' (旧行为, 违规): A/B/C 条件用 d.close (v_daily 原始价)。
         # ⚠️ 背景: raw close 与 adj close 平均偏差 55% (5277 只中仅 349 只相同)。
         # 'raw' 下 A 条件 (raw close < adj MA60) 因 raw 系统性更低而几乎恒真 →
-        # A 的 close<ma60 子条件实际是 no-op。'adj' 修复此 §3 错配。
-        signal_price_domain="raw",
+        # A 的 close<ma60 子条件实际是 no-op。
+        # v81.1 (审计修正): 默认值由 'raw' 改为 'adj' —— 审计指出"默认 raw 的
+        #   开关 = 默认值仍是违规值" (§3 dual-price mandate)。'adj' 为强制合规值。
+        signal_price_domain="adj",
         result_holder=None,
     )
 
