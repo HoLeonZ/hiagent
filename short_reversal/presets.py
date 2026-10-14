@@ -2321,6 +2321,54 @@ PRESETS: dict[str, dict] = {
         "close_ma60_buffer": 0.07,
         "signal_price_domain": "adj",
     },
+    # v82_ratio05 (2026-10-14): v81_adj + below_ratio_60 0.2 → 0.5 (§3-adj 语义)。
+    # A 条件在 §3 语义下真正生效后, below_ratio 阈值变得有意义。
+    # 4 窗口 mean 16.54 vs v81_adj 13.81 (+2.73), 但 3/4 窗口为负, 由 2025-H1
+    # (+18.23) 单窗口驱动 → 不确证。FAIL (regime-dependent)。
+    "v82_ratio05": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 42,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.5,
+        "close_ma60_buffer": 0.07,
+        "signal_price_domain": "adj",
+    },
+    # v82_buf12 (2026-10-14): v81_adj + close_ma60_buffer 0.07 → 0.12 (§3-adj 语义)。
+    # 4 窗口 mean 13.99 vs 13.81 (+0.18) → 中性。
+    "v82_buf12": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 43,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.12,
+        "signal_price_domain": "adj",
+    },
 }
 
 
