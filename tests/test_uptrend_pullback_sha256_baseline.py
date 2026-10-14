@@ -101,3 +101,13 @@ def test_uptrend_v33_long_reverse_v19_trades_csv_sha256() -> None:
 def test_uptrend_v33_long_reverse_v20_trades_csv_sha256() -> None:
     """§0 PASS baseline: uptrend_pullback v33_long_reverse_v20 trades.csv hash."""
     _check_one("v33_long_reverse_v20")
+
+
+def test_uptrend_v33_long_reverse_v21_trades_csv_sha256() -> None:
+    """§0 PASS baseline: uptrend_pullback v33_long_reverse_v21 trades.csv hash.
+
+    v21 = v20 + 市场级 regime gate(2026-10-14 用修正后的评估链选出;见该 golden 文件
+    的 `pinned` 块 —— 其中同时记录了反面证据:该 preset 在独立时期 2020-2024 上
+    E[R] 仍为负, 本族没有可证实的正 alpha)。
+    """
+    _check_one("v33_long_reverse_v21")

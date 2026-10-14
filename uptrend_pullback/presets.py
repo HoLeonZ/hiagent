@@ -143,6 +143,73 @@ PRESETS: dict[str, dict] = {
             "min_mom120": 0.18,
         },
     },
+    # v33_long_reverse_v21 — v20 + 市场级 regime gate (2026-10-14, 修正评估链后重估)
+    #
+    # 由来: 用修正后的评估链重估全部候选(见 uptrend_pullback/results/PRESET_SEARCH.md §14)。
+    # 当时修正了三把尺子:
+    #   ① equity 曲线把建仓名义额计入两次 -> sharpe/max_dd/exposure 全部失真
+    #   ② DSR 拿年化 Sharpe 比逐期阈值 -> 中等 Sharpe 被系统性折减到 0
+    #   ③ 目标函数: 该策略盈亏由**右尾**驱动(79% 止损、盈亏比 5.42、前 10% 交易
+    #      贡献 297% 净盈亏),而 Sharpe 会用波动率惩罚这条尾巴
+    #      => 改用 R-multiple 期望 E[R] (R_trade = sl_pct × entry_price × size)
+    #
+    # 为什么是 regime gate: 在**三个样本**上它都是最好的那一个 ——
+    #   train  2024-09..2026-03 : E[R] +1.164 vs v20 +0.650 (PF 1.94 vs 1.41)
+    #   holdout 2026-03..2026-09: E[R] +2.622 vs v20 +0.359 (但仅 14 笔, t=1.62, 不显著)
+    #   独立期 2020-01..2024-09: E[R] -0.329 vs v20 -0.625 (两者均为负, 见下)
+    # 且它的**尾部依赖最低**: 尾十分位占毛盈利 111% vs v20 191% —— 收益最不依赖少数几笔。
+    # regime gate 用 compute_regime 的**默认参数**(不做调参), 避免在 gate 上过拟合。
+    #
+    # ⚠️ 必须同时记录的负面证据(不得只报好的一面):
+    #   * 独立时期 2020-2024: 本 preset E[R] = **-0.329** (t=-1.03); v20 = -0.625
+    #     (t=-2.73, 681 笔, 签名显著为负)。即**这个族在非趋势市里是亏钱的**;
+    #     2024-09 之后的正值来自当时的牛市 regime(策略 ≈ 市场 × 1.6 beta)。
+    #   * 因此本 preset **没有可证实的正 alpha** (§5)。它只是「亏得最少、最不依赖
+    #     少数几笔」的那一个, 不是「更赚钱」的那一个。
+    #   * 代价: 参与度大幅下降(train 122 vs 176 笔; holdout 14 vs 63 笔), 样本量小。
+    #
+    # §5 Iterative-Tuning Accounting: n_comparisons = 121
+    #   = v20 自报的 100 + 本次搜索 21 次试验 (k=101..121: 6 消融 + 3 信号候选 +
+    #     5 执行层候选 + 3 regime 候选 + 1 universe + 1 反转排序 + 2 重复基线)
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.021
+    # tp_pct: 0.2628
+    # max_hold: 18
+    "v33_long_reverse_v21": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 121,
+        "tp_pct": 0.2628,
+        "sl_pct": 0.021,
+        "max_hold": 18,
+        "max_positions": 1,
+        "position_sizing": "all_in",
+        "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
+        "MAX_POSITION_PCT": 1.0,     # §2
+        # 市场级择时 (compute_regime 默认参数; 无未来函数, 只用 ≤T 数据)
+        "regime": {
+            "ma_window": 20,
+            "breadth_window": 20,
+            "min_breadth": 0.45,
+            "require_rising": False,
+        },
+        "signal": {
+            "entry_mode": "v33_long_mirror",
+            "min_down_streak": 3,
+            "max_down_streak": 10,
+            "pct_chg_low": -0.088,
+            "pct_chg_high": -0.02,
+            "min_amount": 3e7,
+            "max_amount": 3e8,
+            "min_above_ma60_ratio": 0.6693,
+            "close_ma60_buffer": 0.0121,
+            "min_mom120": 0.18,
+        },
+    },
 }
 
 

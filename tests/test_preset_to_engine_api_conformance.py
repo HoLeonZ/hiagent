@@ -57,8 +57,11 @@ ENGINE_SOURCES = {
 
 
 # Nested config blocks that we don't audit as leaves (they're structured
-# config dicts passed as a single kwarg)
-NESTED_KEYS = {"signal", "universe", "periods", "weights"}
+# config dicts passed as a single kwarg).
+# `regime` 与 `signal` 同构: 都是在调用点被 `**p["regime"]` / `**p["signal"]` 展开,
+# 其子键由被调方(compute_regime / select_entries_*)消费, 而不是作为字面量出现在
+# 引擎源码里 —— 要求它们成为字面量是误报 (见 v33_long_reverse_v21 的 regime)。
+NESTED_KEYS = {"signal", "universe", "periods", "weights", "regime"}
 
 
 # 声明型键 (declaration-only)。这几个键由 §2/§3/§5 政策钉死为固定值, 运行时引擎
