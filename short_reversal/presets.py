@@ -2265,6 +2265,31 @@ PRESETS: dict[str, dict] = {
         "ensemble_substrategies": ["v44_ratio02_buf07", "v45_ratio01_buf10"],
         "ensemble_weight": 0.5,
     },
+    # v80_conv (2026-10-14): v44 + §2 conviction 选择 (steepest_slope)。
+    # 此前只在 v50 (含 F) 上测过; 测其在 F-free 基线 (v44) 上。
+    # 6 窗口 mean delta -11.92 (1/6 wins); holdout 2026-H2 -61.94。
+    # → conviction 选择在 v44 基线上同样有害。FAIL。
+    "v80_conv": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 40,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "entry_selection": "steepest_slope",
+    },
 }
 
 
