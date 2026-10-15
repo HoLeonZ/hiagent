@@ -620,6 +620,7 @@ for path in paths:
 | `c97515f` | §3 公司行为接入 `short_reversal`(**做空付出分红**,符号由引擎取反;从 locked_margin 扣出并记账) | 新增 2 条守卫;修绿 `test_corporate_actions_gap[short_reversal]` |
 | `26e781d` | §3 公司行为接入 `cycle_price_action`(四引擎全齐) | 4 条新守卫;顺手抓到该文件**没有 `logger`**,配股告警路径会 `NameError` |
 | `f7cd63f` | **根因修复**:`_table_exists` 只查表不查视图 → `v_daily_hfq` 探测恒 False → cycle 的 `adj_close` 从未送达信号层 | 3 个月窗口:10 笔成交字段变化,Σpnl 813,569 → **1,011,092**(+197,524);典型一笔 30% 送股所致"−253,403 → −48,320" |
+| `7ce982e` / `61f5f23` | **P1-B2 完成**:滑点标定值必须显式声明,`resolve_atr_slip_scale` 缺声明 fail-fast;100 个 preset + cycle 显式写入 `SLIP_NONE_ACKNOWLEDGED`;cycle broker 首次真正收到该值 | 100 个 preset 逐字段核验(除新增键外零差异);chase_up Phase-1 **逐字节零漂移**;端到端 fail-fast 已验证;11 条新守卫 |
 
 **测试层净效果**(失败集合逐条 `diff`,非仅比数量):
 
@@ -640,7 +641,11 @@ for path in paths:
 
 **公司行为(P2-10)**:**四个引擎已全部接入**同一 `core` 实现(做空为**付出**,符号由引擎决定;统一"除权日当天建仓不享有"的权益归属规则)。
 
-**仍未处理(按 §8 顺序)**:滑点的 preset 显式声明 + 缺声明 fail-fast(P1-B2,需给 100 个 preset 各加一条声明);公司行为推广至其余三引擎;§5 的 DSR `n_trials` 口径与基准归因;§7 源码内嵌业绩数字清理;`chase_up` 金标准基线仍红(陈旧产物),故 chase_up 侧的漂移今天仍不可见。
+**P1 已全部完成**(窗口边界、宇宙因果性与幸存者偏差、停牌语义、滑点单源与显式声明、涨跌停四引擎镜像守卫)。
+
+**仍未处理(按 §8 顺序)**:§5 的 DSR `n_trials` 口径与基准归因;**§4 滑点的实质**(把 100 个 preset 的 `SLIP_NONE_ACKNOWLEDGED` 换成真实标定值 —— 属研究决策);§7 源码内嵌业绩数字清理;§3 公司行为的 `raw_adjustment_events` 之外的公司行动(配股/缩股未建模);`chase_up` 金标准基线仍红(陈旧产物),故 chase_up 侧的漂移今天仍不可见。
+
+**当前测试状态**:failed 54→**44**,passed 796→**857**,errors 3→**0**,**新增失败 0**(逐条 diff,基线与我每一轮之间都比对)。
 
 **修复带来的结果变化(不得按「改善」叙述)**:每处修复都会改变结果,方向不一。
 
