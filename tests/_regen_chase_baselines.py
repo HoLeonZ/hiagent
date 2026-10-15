@@ -102,23 +102,13 @@ def main() -> None:
         old_hash = baseline.get("trades_csv_sha256", "?")
         baseline["trades_csv_sha256"] = new_hash
         baseline["trades_csv_rows"] = len(trades_df)
-        # 同步 metrics
-        baseline["metrics"]["trades"] = len(trades_df)
-        baseline["metrics"]["win_rate"] = round(m["win_rate"], 4)
-        baseline["metrics"]["total_return"] = round(m["total_return"], 4)
-        baseline["metrics"]["cagr"] = round(m["cagr"], 4)
-        baseline["metrics"]["sharpe"] = round(m["sharpe"], 2)
-        baseline["metrics"]["max_dd"] = round(m["max_dd"], 4)
-        baseline["metrics"]["tp_count"] = m["tp_count"]
-        baseline["metrics"]["sl_count"] = m["sl_count"]
-        baseline["metrics"]["time_count"] = m["time_count"]
-        baseline["metrics"]["eod_count"] = m.get("eod_count", 0)
-        baseline["metrics"]["profit_factor"] = round(m["profit_factor"], 2)
-        baseline["metrics"]["avg_net_return"] = round(m["avg_net_return"], 4)
-        baseline["metrics"]["exposure"] = round(m["exposure"], 3)
-        baseline["metrics"]["final_equity"] = m["final_equity"]
-        baseline["metrics"]["avg_hold_days"] = round(m["avg_hold_days"], 1)
-        baseline["metrics"]["max_hold_days"] = m["max_hold_days"]
+        # §7 (audit P3, 2026-10-15): golden 只锁**成交列表**(sha256)与
+        # 结构(行数 / 列),不再写回任何绩效指标。
+        # 理由:CLAUDE.md §7 明令"fresh clone 必须包含零历史绩效声明";
+        # 而这些数字可由当前代码 + 一条命令重新生成,属"失效结果"。
+        # 且它们会随每次重刷覆盖而漂移,成为与 sha256 不同步的第二份事实。
+        baseline.pop("metrics", None)
+
         baseline["v6_change_note"] = (
             "V6 (2026-09-22): chase_up/portfolio.py intraday tiebreak flipped "
             "TP-first → SL-first per CLAUDE.md §4 worst-case. Some TP exits "

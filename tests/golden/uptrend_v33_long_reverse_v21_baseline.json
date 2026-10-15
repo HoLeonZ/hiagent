@@ -26,11 +26,12 @@
   "note": "uptrend_pullback v33_long_reverse_v21 (= v20 + market regime gate) trades.csv sha256 baseline. Multi-run reproducibility invariant: same preset + DB -> byte-equal trades.csv. Drift indicates signal/exit/sizing/regime logic changed.",
   "pinned": {
     "date": "2026-10-14",
-    "objective": "R-multiple expectancy E[R] (see uptrend_pullback/tail_objective.py); this window: E[R]=+1.182, win%=24.6%, PF=2.02, top-decile share of gross R = 103%",
-    "why_new_preset": "v21 is the only candidate whose edge direction survived out-of-sample under the corrected objective, and it was best on all three samples: train 2024-09..2026-03 (E[R] +1.164 vs v20 +0.650), holdout 2026-03..2026-09 (E[R] +2.622 vs +0.359, n=14 only), independent era 2020-01..2024-09 (E[R] -0.329 vs v20 -0.625). It also has the LOWEST tail dependence (top-decile share 111% vs v20's 191% on train).",
-    "negative_evidence": "On the independent era 2020-01..2024-09 this preset's E[R] is NEGATIVE (-0.329, t=-1.03) and v20's is significantly negative (-0.625, t=-2.73 over 681 trades). The family therefore has NO demonstrated positive alpha; the positive numbers after 2024-09 come from that period's bull regime (the strategy behaves as ~1.6x market beta). v21 should be read as 'loses least / least tail-dependent', not as 'more profitable'.",
-    "cost": "Materially lower participation: train 122 vs 176 trades; holdout 14 vs 63.",
-    "n_comparisons": "121 = v20's declared 100 + 21 trials from this search (CLAUDE.md §5 Iterative-Tuning Accounting)."
+    "_note": "§7 (audit P3, 2026-10-15): 本块原有的绩效数值已按 CLAUDE.md §7 清除 —— repository 不得内嵌历史绩效声明。方法论与负面证据予以保留(那是它的价值);任何数值请以当前代码 + 一条命令重新生成,不要引用本文件的历史副本。",
+    "objective": "R-multiple expectancy E[R](实现见 uptrend_pullback/tail_objective.py)。",
+    "why_new_preset": "v21 是唯一在修正后的目标函数下、样本外**边缘方向**仍成立的候选,且在三个样本(训练窗 / 留出窗 / 独立区间)上均为最优,同时尾部依赖最低。",
+    "negative_evidence": "在独立区间上该 preset 的 E[R] 为**负**且不显著;v20 的显著为负。本家族**没有被证明的正 alpha** —— 较晚区间的正值来自那段牛市 regime,策略在该段近似为高 beta 的市场复制。v21 应读作「亏得最少 / 尾部依赖最低」,而不是「更赚钱」。",
+    "cost": "参与度显著下降:训练窗与留出窗的成交数均明显低于 v20。",
+    "n_comparisons_basis": "v20 已声明的试验数 + 本次搜索新增的试验数(§5 Iterative-Tuning Accounting)。权威值见 preset 声明的 `n_comparisons` —— 本文件不再复写数值。"
   },
   "repinned": {
     "date": "2026-10-15",

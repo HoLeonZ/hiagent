@@ -1,7 +1,7 @@
 """v4 = v3a + v3c 组合 — 信号收紧 + SL 略紧。
 
 预期:
-  - v3a: CAGR 326.97%, DD 31.33%, Sharpe 2.779, Win 39.29%, PF 1.818
+  - v3a: CAGR / DD / Sharpe / Win / PF —— 数值已按 §7 清除;请以当前代码重算
   - v4: DD 可能再降 1-3%, CAGR 可能微降 (sl 更紧砍得快)
 """
 from __future__ import annotations

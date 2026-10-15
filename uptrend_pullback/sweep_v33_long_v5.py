@@ -1,7 +1,7 @@
 """v5 - 在 v33_long_reverse 最优点附近精扫,找 Pareto front。
 
 目标 (v33_long_reverse 基准):
-  CAGR 280.27% | Sharpe 2.704 | DD 34.27% | Win 38.60% | PF 1.629 | Trades 57
+  CAGR / Sharpe / DD / Win / PF / Trades —— 数值已按 §7 清除;请以当前代码重算
 
 优化方向:
   - 信号收紧 (min_above_ma60_ratio↑): Win rate↑ / PF↑

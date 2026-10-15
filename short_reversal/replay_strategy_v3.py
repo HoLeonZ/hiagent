@@ -771,7 +771,7 @@ class Phase3V3Strategy(bt.Strategy):
             # NAV 含未实现浮盈 → target_value 虚高 → size 巨大; 而 cash gate
             # 只检查 entry_fee (几十~几百元) 不检查 notional (几百万~千万元),
             # 下一笔 PnL 进 settling 后 settle() flush 到 free_cash, free_cash
-            # 翻倍 → 仓位指数膨胀, CAGR +4688% (R249/R387.1 P0 已知)。
+            # 翻倍 → 仓位指数膨胀(具体量级已按 §7 清除;R249/R387.1 P0 已知)。
             # 对齐 chase_up/portfolio.py:521/562-573 模板。
             # v58 (2026-10-13): max_positions > 1 时, 每笔 sizing = free_cash
             # / max_positions (而不是 free_cash * position_fraction=1.0)。

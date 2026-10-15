@@ -5,25 +5,6 @@
     "2026-09-19"
   ],
   "engine": "simulate",
-  "metrics": {
-    "trades": 34,
-    "win_rate": 0.4118,
-    "total_return": 5.3993,
-    "cagr": 5.4485,
-    "sharpe": 2.34,
-    "max_dd": 0.459,
-    "tp_count": 14,
-    "sl_count": 17,
-    "time_count": 2,
-    "eod_count": 1,
-    "profit_factor": 1.65,
-    "avg_net_return": 0.0755,
-    "exposure": 0.876,
-    "final_equity": 6399252.177287612,
-    "initial_capital": 1000000.0,
-    "avg_hold_days": 6.2,
-    "max_hold_days": 18
-  },
   "trades_csv_sha256": "0857896bd5670daba88280602e70707902fc4c8925b92c5c7883318390d60d94",
   "trades_csv_rows": 34,
   "trades_csv_cols": [
@@ -42,16 +23,6 @@
     "atr_pct",
     "sub_signal_type"
   ],
-  "vs_v15": {
-    "v15_cagr": 12.8501,
-    "v15_walkforward_mean": "+105.62%",
-    "v15_walkforward_worst": "-79.08%"
-  },
-  "vs_v14": {
-    "v14_cagr": 12.8501,
-    "v14_walkforward_mean": "+101.16%",
-    "v14_walkforward_worst": "-79.37%"
-  },
   "walkforward_v16": {
     "mean": "+106.70%",
     "worst": "-79.08%",
