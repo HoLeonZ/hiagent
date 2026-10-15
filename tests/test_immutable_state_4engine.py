@@ -90,6 +90,17 @@ STATE_MUTATING_METHODS = (
     "remove",
 )
 
+#: §0 (audit 2026-10-15): **瞬态控制状态** —— 承载"待办意图"的属性(挂单队列),
+#: 既不是历史数据,也不是组合状态,故不受 §0 的 append-only 约束。
+#: 从队列里取走一条已处理/已作废的意图恰恰是**正确**行为:§4 要求涨停封板不得成交、
+#: IOC 未成交部分必须取消 —— 那在实现上就是"从挂单队列移除"。历史记录(成交列表)
+#: 不受影响:作废的挂单本来就不该进入 trade log。
+#:
+#: 这个名单必须**极窄**。若把历史/组合状态(`positions` / `closed_trades` / `cash`)
+#: 塞进来,本守卫就形同虚设 —— 故由
+#: `test_transient_control_state_exemptions_stay_narrow` 钉住其规模与命名。
+TRANSIENT_CONTROL_STATE = frozenset({"pending_entries"})
+
 
 def _scan_self_mutation() -> dict[str, list[tuple[str, int, str, str]]]:
     """Scan production files for self.<attr>.<mutable_method>(...) calls.
@@ -135,6 +146,13 @@ def _scan_self_mutation() -> dict[str, list[tuple[str, int, str, str]]]:
                                         else ""
                                     )
                                     target_str = ast.unparse(receiver)
+                                    # §0: 瞬态控制状态(挂单队列)不在 append-only
+                                    # 约束的射程内 —— 见 TRANSIENT_CONTROL_STATE。
+                                    if (
+                                        target_str.split(".")[-1]
+                                        in TRANSIENT_CONTROL_STATE
+                                    ):
+                                        continue
                                     violations.append(
                                         (
                                             str(path.relative_to(REPO_ROOT)),
@@ -218,4 +236,23 @@ def test_cycle_price_action_no_self_state_mutation() -> None:
             f"{len(cycle)} self.<attr>.<mutable_method>() calls.\n"
             f"Per CLAUDE.md §0: state must be append-only.\n"
             f"Violations: {cycle[:5]}"
+        )
+
+
+def test_transient_control_state_exemptions_stay_narrow() -> None:
+    """§0: 豁免名单必须**极窄**,且只含队列类状态。
+
+    这条守的是**守卫本身**。给剧本记账/组合状态开一个"反正它会 pop"的口子极其容易,
+    而那一刻起 `test_*_no_self_state_mutation` 就只剩仪式感了。故:
+      (a) 名单规模有上界;
+      (b) 名字必须像队列(否则说明有人把历史/组合状态混了进来)。
+    """
+    assert len(TRANSIENT_CONTROL_STATE) <= 3, (
+        f"§0 豁免名单膨胀到 {len(TRANSIENT_CONTROL_STATE)} 项:"
+        f"{sorted(TRANSIENT_CONTROL_STATE)} —— 它只该装队列类瞬态状态。"
+    )
+    for attr in TRANSIENT_CONTROL_STATE:
+        assert any(tok in attr for tok in ("pending", "queue", "buffer")), (
+            f"§0: {attr!r} 不像瞬态队列状态。历史/组合状态(positions / "
+            "closed_trades / cash)不得进入豁免名单 —— 那会让本文件其余断言失效。"
         )

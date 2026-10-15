@@ -80,10 +80,18 @@ class TestExecutionBar:
         bar = ExecutionBar(open=0.0, high=0.0, low=0.0, close=0.0)
         assert bar.close == 0.0
 
-    def test_extract_partial_nan_close_raises(self):
-        """end-to-end: partial-NaN (raw_close=NaN) 必须 raise, 不能静默 phantom。
+    def test_extract_partial_nan_close_falls_back_and_is_not_zeroed(self):
+        """partial-NaN (raw_close=NaN, 其余 raw_* 在场) → 回退 adj_close,不得静默归零。
 
-        实证数据来自 Round 3 回归测试 (chase_up simulate_portfolio)。
+        Round 30 (2026-09-28, §3) 把这里从"严格 raise"改成了**回退链**
+        `raw_* → adj_* → 默认列`:实测行情库里 `raw_prev_close` **整列为 NULL**,
+        严格 raise 会让任何真实回测直接挂掉。故本测试钉的是**回退后的取值**,
+        而不是 raise —— 原版钉 raise,已是陈旧契约。
+
+        ⚠️ 需要说清楚的 §3 偏离:回退到 adj 意味着这一根 bar 的**执行价**不是原始价。
+        这是**已知偏离**而非合规:执行域应恒用 raw(§3)。防幻影成交的第一道防线上移到了
+        调用方(entry override guard + `mark_price` 的 raw-first 语义),本函数保持
+        "只做取值、不猜业务"的纯净职责。故这里断言的是**取值可预测**,不是"这没问题"。
         """
         row = {
             "raw_open": 10.05, "raw_high": 10.10, "raw_low": 10.00,
@@ -91,8 +99,13 @@ class TestExecutionBar:
             "raw_prev_close": 9.95,
             "adj_open": 8.0, "adj_high": 8.5, "adj_low": 7.5, "adj_close": 8.2,
         }
-        with pytest.raises(ValueError, match="close"):
-            extract_execution_bar(row, LAYOUT_CHASE_UPTREND)
+        bar = extract_execution_bar(row, LAYOUT_CHASE_UPTREND)
+        assert (bar.open, bar.high, bar.low) == (10.05, 10.10, 10.00), (
+            "raw_open/high/low 在场 → 必须原样取用,不得因为 close 是 NaN 就整根回退"
+        )
+        assert bar.close == pytest.approx(8.2), (
+            "raw_close 缺失 → 回退 adj_close(而不是 0.0 —— 归零会凭空造出 −100% 的成交)"
+        )
 
     def test_frozen_immutability(self):
         """ExecutionBar 是 @dataclass(frozen=True) — 修改字段必须报错。"""
@@ -123,7 +136,10 @@ class TestLayoutAExtract:
     def test_extract_falls_back_to_adj_when_raw_missing(self):
         """raw_* 全 NaN (V3a 数据层未修) → 回退 adj_* (best-effort)。
 
-        此回退仅用于 partial NaN; 完全缺失时 (KeyError) 抛错让上游处理。
+        原版断言 `bar.open == 0.0`,并注明"raw 优先,NaN 时仍取 raw(即 0.0),
+        这是 §3 严格语义"。那与**同文件**的 `test_extract_partial_nan_close_raises`
+        (要求 raise)互相矛盾 —— 没有实现能同时满足"raise"与"归零"。两条都在钉
+        Round 30 之前的契约。现在钉**当前**契约:整根回退 adj_*,而不是归零。
         """
         row = {
             "raw_open": float("nan"), "raw_high": float("nan"),
@@ -132,10 +148,10 @@ class TestLayoutAExtract:
             "adj_open": 7.8, "adj_high": 8.6, "adj_low": 7.0, "adj_close": 8.2,
         }
         bar = extract_execution_bar(row, LAYOUT_CHASE_UPTREND)
-        # NaN → 0.0 (per _safe), adj_* 列被取用
-        assert bar.open == 0.0  # raw NaN 时回退 adj_open 但 safe=NaN→0
-        # 注: 这里期望 raw 优先, NaN 时仍取 raw (即 0.0), 这是 §3 严格语义。
-        # 真实 phantom 防护由 entry override guard 在上层处理, 本函数保持纯净。
+        assert (bar.open, bar.high, bar.low, bar.close) == (7.8, 8.6, 7.0, 8.2), (
+            "raw_* 整列 NaN → 回退 adj_*(best-effort)。归零(0.0)会凭空造出"
+            "−100% 的成交价,比回退到 adj 危险得多。"
+        )
 
     def test_extract_missing_core_columns_raises(self):
         """Layout A 但连 raw_* / adj_* 都没, 仅 default open/high/low/close —

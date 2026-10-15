@@ -167,6 +167,11 @@ def test_sl_gap_fill_uses_sl_p_loss_cap_semantics():
 
     此测试与 test_phase3_v3_bugfixes.py::test_sl_exit_uses_sl_price_not_open_when_gap_up
     形成 lock-in: 任何 flip 到 open_p 的提交都会同时打挂两个测试。
+
+    §4 (2026-10-15) 补充:场景里的跳空 (+12.6%) 已越过 A 股 ±10% 涨停,故**封板那一根
+    根本无法回补**(做空平仓 = 买入)。回补被推迟到下一根可成交 bar,然后按 sl_p 成交。
+    夹具因此必须让价格**留在**跳空价位 —— 否则价格跌回止损下方会让 SL 永不触发。这条
+    也是 §4 的正面证据:涨停封板确实挡住了幻影成交。
     """
     df = _run_single_stock_scenario(
         ep_estimate=22.20, tp_pct=0.06, sl_pct=0.10, max_hold=20,
@@ -184,13 +189,23 @@ def test_sl_gap_fill_uses_sl_p_loss_cap_semantics():
     assert sl_trade["exit_price"] == pytest.approx(sl_p_expected, rel=1e-4), (
         f"SL gap 应 fill @ sl_p={sl_p_expected:.4f},实际={sl_trade['exit_price']:.4f}"
     )
-    # SL 单笔损失严格 ≤ sl_pct (不被 open_p=25.0 放大到 -12.6%)
-    assert sl_trade["net"] > -0.10 - 0.001, (
-        f"SL gap 损失 {sl_trade['net']:.4f} 应 < -10% (loss cap)"
+    # SL 单笔损失严格 ≤ sl_pct + 往返成本(不被 open_p=25.0 放大到 -12.6%)。
+    # 成本从**夹具自己声明的费率**推导(见 _FIXTURE_COMMISSION / _FIXTURE_STAMP_DUTY),
+    # 不写字面量 —— 写死旧费率会在费率集中到 core/ 后变成一条钉住陈旧数字的断言。
+    round_trip_fee = 2 * _FIXTURE_COMMISSION + _FIXTURE_STAMP_DUTY
+    assert sl_trade["net"] == pytest.approx(-0.10 - round_trip_fee, abs=1e-3), (
+        f"SL gap 损失 {sl_trade['net']:.5f} 应 ≈ -sl_pct - 往返成本,即损失被截断。"
     )
 
 
 # ---------- helper: build single-stock cascade scenario --------------------
+
+#: 夹具显式声明的费率。命名成常量,是为了让断言(sl_pct 损失上限)与夹具**同源** ——
+#: 两边各写一遍字面量,费率一改就会出现「夹具用 A、断言用 B」的静默漂移。
+_FIXTURE_COMMISSION = 0.0006
+_FIXTURE_STAMP_DUTY = 0.001
+_FIXTURE_MARGIN_RATE = 0.086
+
 
 def _run_single_stock_scenario(
     *,
@@ -240,6 +255,24 @@ def _run_single_stock_scenario(
         "low": bar202_low, "close": bar202_close,
         "amount": 5e7, "volume": 1e6,
     }
+    # §4 (2026-10-15): bar 203+ 必须**维持在跳空后的价位**。
+    #
+    # 此前这里让价格回落到 22.20(低于空头止损),于是:bar 202 的涨停封板按 §4
+    # 正确地拒绝了回补(做空平仓 = 买入,+12.6% 已越过涨停),而后续价格又跌回
+    # 止损下方 → SL 永不触发、面板结束前无法平仓 → `trades` 为空,测试报
+    # 「未触发入场」(信息具有误导性:其实入场了,是**没平掉**)。
+    #
+    # 维持在跳空价位既更贴合场景(跳空穿过止损后价格**留在**那里),也让 §4 的
+    # 真实语义显形:封板那一根不能回补,回补被**推迟到下一根**可成交 bar,然后
+    # 按 sl_p 成交 —— 损失仍被 sl_pct 截断。
+    for i in range(203, n):
+        rows[i] = {
+            "thscode": "600000.SH",
+            "date": dates[i],
+            "open": bar202_open, "high": bar202_high,
+            "low": bar202_low, "close": bar202_close,
+            "amount": 5e7, "volume": 1e6,
+        }
     panel = pd.DataFrame(rows)
 
     cerebro = bt.Cerebro(stdstats=False)
@@ -252,9 +285,16 @@ def _run_single_stock_scenario(
         Phase3V3Strategy,
         tp_pct=tp_pct, sl_pct=sl_pct, max_hold=max_hold,
         position_fraction=1.0,
+        # §2 (audit 2026-10-15): NAV 闸门比例现由 preset 声明注入(生产路径经
+        # engine.run_backtest_v3 → core.preset_contract.resolve_nav_gate_ratio)。
+        # 单元夹具直接构造策略,故须显式给出 —— 此处沿用原写死默认值 0.05,
+        # 行为与修复前一致。
+        nav_gate_ratio=0.05,
         pct_chg_low=0.0, pct_chg_high=0.10,
         a_condition=a_condition,
-        margin_rate=0.086, commission_rate=0.0006, stamp_duty_rate=0.001,
+        margin_rate=_FIXTURE_MARGIN_RATE,
+        commission_rate=_FIXTURE_COMMISSION,
+        stamp_duty_rate=_FIXTURE_STAMP_DUTY,
         initial_capital=INITIAL_CAPITAL, lot_size=100,
         result_holder=holder,
     )
@@ -263,7 +303,7 @@ def _run_single_stock_scenario(
 
 
 def test_nav_gate_rejects_new_short_when_cash_below_threshold():
-    """min_cash_ratio 守卫 (R1+R2, 2026-09-21): NAV < initial × 5% 时拒绝新开仓。
+    """nav_gate_ratio 守卫 (R1+R2, 2026-09-21; 2026-10-15 更名为 preset 同名): NAV < initial × 5% 时拒绝新开仓。
 
     short_reversal 的 cash gate 在 replay_strategy_v3._fill_pending_entries:
     NAV = cash + (entry - current_close) × size (做空浮盈可正可负)。
@@ -318,7 +358,7 @@ def test_nav_gate_rejects_new_short_when_cash_below_threshold():
         margin_rate=0.0,  # 关掉 margin 费用以避免影响 NAV 估算
         commission_rate=0.0, stamp_duty_rate=0.0,
         initial_capital=initial, lot_size=100,
-        min_cash_ratio=0.05,
+        nav_gate_ratio=0.05,
         result_holder=holder,
     )
     cerebro.run()
@@ -372,6 +412,11 @@ def test_volume_participation_cap_enforced_for_short_entry():
         Phase3V3Strategy,
         tp_pct=0.06, sl_pct=0.10, max_hold=20,
         position_fraction=1.0,
+        # §2 (audit 2026-10-15): NAV 闸门比例现由 preset 声明注入(生产路径经
+        # engine.run_backtest_v3 → core.preset_contract.resolve_nav_gate_ratio)。
+        # 单元夹具直接构造策略,故须显式给出 —— 此处沿用原写死默认值 0.05,
+        # 行为与修复前一致。
+        nav_gate_ratio=0.05,
         pct_chg_low=0.0, pct_chg_high=0.10,
         a_condition="cascade_price",
         margin_rate=0.0, commission_rate=0.0, stamp_duty_rate=0.0,

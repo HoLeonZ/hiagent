@@ -260,9 +260,21 @@ class CyclePriceActionStrategy(bt.Strategy):
             # → 出场 submit_sell 抛 "cannot sell more than held")。
             if not self._broker_ext.can_fill(self.datas[0]._name, bar["date"]):
                 return
+            # §3/§6 (2026-10-15): 入场价与出场价走**同一条**执行价路径。
+            # 出场分支(上面)已经 core.dual_price.extract_execution_bar 校验
+            # ExecutionBar 不变量(close/high/low 必须为正且自洽);入场此前直接用
+            # feed 的 bar["close"],于是同一次成交在两条分支上受不同约束 ——
+            # §6 单层归属:一条规则只有一处归属,否则两处会各自演化。
+            # 变量名与出场分支同名:指的是**同一根 bar 的同一个 ExecutionBar**,
+            # 两个分支互斥(持仓/空仓),故不会互相覆盖。
+            bar_exec = extract_execution_bar(
+                {"open": bar["open"], "high": bar["high"],
+                 "low": bar["low"], "close": bar["close"]},
+                LAYOUT_CYCLE_PRICE,
+            )
             state = self._portfolio.try_enter(
                 self.datas[0]._name,
-                bar["close"],
+                bar_exec.close,
                 bar["date"],
                 {"k_line_score": kscore, "phase_score": cyc, "calendar_score": cal},
                 # R8 (2026-09-21): Volume Participation Limit (CLAUDE.md §4)。

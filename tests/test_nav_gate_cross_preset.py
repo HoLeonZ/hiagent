@@ -12,7 +12,7 @@ ledger_version = 2026-09-23 增量 (§2)
 A. **3 engines 用 module-level 常量, NOT preset-plumbed**:
    - chase_up/portfolio.py:64 `NAV_GATE_RATIO = 0.05`
    - uptrend_pullback/portfolio.py:48 `NAV_GATE_RATIO = 0.05`
-   - short_reversal/replay_strategy_v3.py:73 `min_cash_ratio=0.05`
+   - short_reversal/replay_strategy_v3.py:73 `nav_gate_ratio=0.05`
      (engine.py:189 通过 `cfg.get("min_cash_ratio", 0.05)` 从 preset
      读, 但 replay_strategy_v3 默认仍是 hardcoded 0.05)
    - cycle_price_action: 没有 NAV Gate (per [[cycle-nav-gate-missing]])
@@ -42,6 +42,8 @@ from __future__ import annotations
 import inspect
 import re
 from pathlib import Path
+
+import pytest
 
 # ---------------------------------------------------------------------------
 # Module-level constant detection
@@ -95,27 +97,38 @@ def test_uptrend_pullback_nav_gate_ratio_is_hardcoded_constant() -> None:
     )
 
 
-def test_short_reversal_replay_strategy_min_cash_hardcoded() -> None:
-    """§2 RED: short_reversal/replay_strategy_v3.py:73 hardcoded 0.05.
+def test_short_reversal_nav_gate_ratio_is_preset_driven() -> None:
+    """§2: NAV 闸门比例必须由 preset **显式声明**,缺声明 fail-fast。
 
-    engine.py:189 does `cfg.get("min_cash_ratio", 0.05)` so the preset
-    value CAN be passed — but replay_strategy_v3.py:73 default param
-    is hardcoded 0.05. If a preset omits min_cash_ratio, the engine
-    silently uses 0.05 instead of any preset-declared value.
+    原版断言 `replay_strategy_v3.py` 里**存在**写死的 `nav_gate_ratio=0.05`;
+    该缺陷已修(None 哨兵 + 规范契约解析),于是它退化为**空转通过** ——
+    提前 return,一个字都没断言。空转通过比红灯更难发现,故改为断言**修复后的形态**:
+    引擎经 `resolve_nav_gate_ratio` 取值、策略用 None 哨兵、全部出厂 preset 都声明。
     """
-    replay = Path("short_reversal/replay_strategy_v3.py")
-    text = replay.read_text(encoding="utf-8")
-    if "min_cash_ratio=0.05" not in text:
-        return
-    line_no = text[: text.index("min_cash_ratio=0.05")].count("\n") + 1
-    raise AssertionError(
-        f"GAP CAPTURED: short_reversal/replay_strategy_v3.py:{line_no} "
-        "uses hardcoded `min_cash_ratio=0.05` as default param. "
-        "engine.py:189 does `cfg.get('min_cash_ratio', 0.05)` but if "
-        "preset declares 0.10 it WILL be passed — but if preset omits "
-        "the key, silently falls back to 0.05. Forward-defense: should "
-        "raise on missing preset key, not silently default."
+    from core.preset_contract import PresetDeclarationMissing, resolve_nav_gate_ratio
+    from short_reversal.presets import PRESETS
+
+    replay = Path("short_reversal/replay_strategy_v3.py").read_text(encoding="utf-8")
+    assert "min_cash_ratio" not in replay, (
+        "§2 regression: 策略里又出现了 `min_cash_ratio` 这个**第二名字** —— "
+        "preset 键与策略参数都应叫 nav_gate_ratio。一个概念两个名字正是漂移的温床。"
     )
+    assert "nav_gate_ratio=None" in replay, (
+        "§2 regression: nav_gate_ratio 不再是 None 哨兵 —— 未注入时不会 fail-fast"
+    )
+    engine_src = Path("short_reversal/engine.py").read_text(encoding="utf-8")
+    assert "resolve_nav_gate_ratio(" in engine_src, (
+        "§2 regression: 引擎未经规范契约解析 nav_gate_ratio"
+    )
+
+    missing = [k for k, v in PRESETS.items() if "nav_gate_ratio" not in v]
+    assert not missing, (
+        f"§2 VIOLATION: 以下 preset 未声明 nav_gate_ratio: {missing[:5]} "
+        f"(共 {len(missing)} 个)"
+    )
+    assert resolve_nav_gate_ratio({"nav_gate_ratio": 0.05}, "p") == pytest.approx(0.05)
+    with pytest.raises(PresetDeclarationMissing, match="nav_gate_ratio"):
+        resolve_nav_gate_ratio({}, "p")
 
 
 def test_simulate_portfolio_accepts_nav_gate_ratio_param() -> None:

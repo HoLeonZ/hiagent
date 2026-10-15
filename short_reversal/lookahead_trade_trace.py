@@ -25,6 +25,7 @@ import backtrader as bt
 import numpy as np
 import pandas as pd
 
+from core.preset_contract import resolve_nav_gate_ratio  # §2 (audit 2026-10-15)
 from short_reversal.engine import (
     COMMISSION_RATE,
     INITIAL_CAPITAL,
@@ -163,6 +164,8 @@ def run() -> dict:
         sl_pct=cfg["sl_pct"],
         max_hold=cfg["max_hold"],
         position_fraction=1.0,
+        # §2 (audit 2026-10-15): 经规范契约解析(缺声明 fail-fast),与引擎同口径。
+        nav_gate_ratio=resolve_nav_gate_ratio(cfg, cfg.get("_name", "short_reversal")),
         pct_chg_low=cfg.get("pct_chg_low", 0.02),
         pct_chg_high=cfg.get("pct_chg_high", 0.06),
         a_condition=cfg.get("a_condition", "default"),

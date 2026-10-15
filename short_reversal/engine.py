@@ -42,6 +42,7 @@ from core.preset_contract import (  # §0/§2/§3 (audit 2026-10-15)
     ALL_IN,
     EXECUTION_PRICE_SOURCE,
     resolve_execution_price_source,
+    resolve_nav_gate_ratio,
     resolve_position_fraction,
     resolve_position_sizing,
 )
@@ -264,6 +265,9 @@ def run_backtest_v3(
     price_source_for_execution = resolve_execution_price_source(
         cfg, _name, supported=frozenset({EXECUTION_PRICE_SOURCE}),
     )
+    # §2 (audit 2026-10-15): NAV 闸门比例由 preset 的 `nav_gate_ratio` 声明驱动。
+    # 此前 75/75 个 preset 都不声明它,引擎却写 `cfg.get("min_cash_ratio", 0.05)`
+    # —— 「没声明」与「声明为 0.05」不可区分。现与参数同名,一个概念一个名字。
 
     universe = load_universe_asof(cfg["universe"], start, db_path)
     panel = _load_panel(db_path, start, end, universe)
@@ -307,7 +311,10 @@ def run_backtest_v3(
         stamp_duty_rate=STAMP_DUTY_RATE,
         initial_capital=INITIAL_CAPITAL,
         lot_size=100,
-        min_cash_ratio=cfg.get("min_cash_ratio", 0.05),
+        # §2 (audit 2026-10-15): NAV 闸门比例经规范契约解析(缺声明/越界 fail-fast),
+        # 不再 `cfg.get("min_cash_ratio", 0.05)` —— 那样「没声明」与「声明为 0.05」
+        # 不可区分,而此处此前 75/75 个 preset 都不声明。
+        nav_gate_ratio=resolve_nav_gate_ratio(cfg, _name),
         # V5' (2026-09-22, CLAUDE.md §4): ATR-aware slippage is opt-in via preset。
         # 默认 0.0 = baseline parity (无 slippage), preset 可上调启用真实市场摩擦。
         atr_slip_scale=resolve_atr_slip_scale(cfg, cfg.get("_name", "short_reversal")),

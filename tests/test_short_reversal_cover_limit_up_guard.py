@@ -60,7 +60,7 @@ def _run(cover_open: float, monkeypatch) -> tuple[list, pd.DataFrame]:
     cerebro.addstrategy(
         Phase3V3Strategy,
         result_holder=holder,
-        min_cash_ratio=0.05,
+        nav_gate_ratio=0.05,
         tp_pct=0.02,          # tp_p = 10.0 × 0.98 = 9.80(不会触及)
         sl_pct=0.05,          # sl_p = 10.0 × 1.05 = 10.50
         max_hold=3,

@@ -115,6 +115,33 @@ def resolve_volume_participation(
     return value
 
 
+def resolve_nav_gate_ratio(
+    preset: Mapping[str, Any], preset_name: str,
+) -> float:
+    """§2 NAV 闸门比例声明(NAV 跌破 `初始资金 × ratio` 时拒绝新开仓)。
+
+    此前 short_reversal 的 75 个 preset 一律不声明它,引擎却写
+    `cfg.get("min_cash_ratio", 0.05)` —— 「没声明」与「声明为 0.05」不可区分,
+    缺口靠沉默存在。与 §4 滑点同型。
+
+    取值域 (0, 1):ratio ≥ 1 会让闸门在初始资金处就锁死(永远无法开仓);
+    ratio ≤ 0 则闸门失效。两者都是静默的语义灾难,故在此 fail-fast。
+    """
+    raw = _declared(preset, "nav_gate_ratio", preset_name)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise PresetDeclarationMissing(
+            f"§2: preset {preset_name!r} 的 nav_gate_ratio={raw!r} 不是数字"
+        ) from exc
+    if not (0.0 < value < 1.0):
+        raise PresetDeclarationMissing(
+            f"§2: preset {preset_name!r} 的 nav_gate_ratio={value} 越界 (0, 1) —— "
+            "≥1 会在初始资金处锁死开仓,≤0 则闸门形同虚设。"
+        )
+    return value
+
+
 def resolve_execution_price_source(
     preset: Mapping[str, Any], preset_name: str, *, supported: frozenset[str],
 ) -> str:
@@ -136,6 +163,7 @@ __all__ = [
     "PresetDeclarationMissing",
     "resolve_execution_price_source",
     "resolve_max_positions",
+    "resolve_nav_gate_ratio",
     "resolve_position_fraction",
     "resolve_position_sizing",
     "resolve_volume_participation",

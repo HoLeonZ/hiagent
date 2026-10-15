@@ -23,7 +23,7 @@ B. **Other 3 engines have NAV gate**:
          # reject new entry
      ```
    - uptrend_pullback/portfolio.py:48 NAV_GATE_RATIO + same param + check
-   - short_reversal/replay_strategy_v3.py:64 min_cash_ratio=0.05 (different name, same logic)
+   - short_reversal/replay_strategy_v3.py:64 nav_gate_ratio=0.05 (different name, same logic)
 
 C. **cycle_price_action/portfolio.py:73-82 `__init__` signature**:
    ```python

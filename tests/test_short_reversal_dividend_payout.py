@@ -56,7 +56,7 @@ def _run(ex_bar: int, monkeypatch):
     cerebro.adddata(AShareData(dataname=panel, plot=False), name="600000.SH")
     holder: dict = {"cash": 100_000.0, "trades": [], "max_dd": 0.0}
     cerebro.addstrategy(
-        Phase3V3Strategy, result_holder=holder, min_cash_ratio=0.05,
+        Phase3V3Strategy, result_holder=holder, nav_gate_ratio=0.05,
         tp_pct=0.02, sl_pct=0.99, max_hold=3, signal_price_domain="adj",
     )
     results = cerebro.run()

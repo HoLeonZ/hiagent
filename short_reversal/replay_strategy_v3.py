@@ -225,7 +225,11 @@ class Phase3V3Strategy(bt.Strategy):
         # v81.2 (2026-10-14 审计 S1 修复): 默认由 None 改为 0.05 (与 engine.py 对齐)。
         # 原 None 设计意图是 fail-fast, 但 scan_signals.py / lookahead_trade_trace.py
         # 两个生产调用方漏传 → 生产路径 TypeError 崩溃 (实测触发 10 处测试失败)。
-        min_cash_ratio=0.05,
+        # §2 (audit 2026-10-15): NAV 闸门比例由 Control Plane 从 preset 声明
+        # (nav_gate_ratio)解析后注入;None = 未注入 → __init__ fail-fast。
+        # 此前这里写死 0.05,而 75/75 个 preset 都不声明该键 —— 「没声明」与
+        # 「声明为 0.05」不可区分。
+        nav_gate_ratio=None,
         # V5' (2026-09-22, CLAUDE.md §4): ATR-aware slippage (R5 mirror)。
         # 当 atr_slip_scale > 0, 在 entry 时 slippage = atr_pct × participation × scale
         # (做空方向: slippage 上调 entry_price, 即扣更少 sale proceeds = 悲观假设)。
@@ -370,6 +374,12 @@ class Phase3V3Strategy(bt.Strategy):
             raise ValueError(
                 f"§2: position_sizing={self.p.position_sizing!r} 应已在引擎分流"
                 f"(只有 {ALL_IN!r} 到达单腿策略)。"
+            )
+        # §2 (audit 2026-10-15): NAV 闸门比例必须由 preset 声明注入。
+        if self.p.nav_gate_ratio is None:
+            raise ValueError(
+                "§2: nav_gate_ratio 必须由 Control Plane 从 preset 声明解析后注入"
+                "(engine.run_backtest_v3 → core.preset_contract.resolve_nav_gate_ratio)。"
             )
         # §1 (audit, 2026-10-15): 窗口边界解析为 date,并让"未启用"可见而非静默。
         # §3 (audit P2-10): 累计已付出现金分红(做空为付出),供对账。
@@ -705,7 +715,7 @@ class Phase3V3Strategy(bt.Strategy):
             return
         # NAV-based cash gate: 用 cash + 当前持仓 mark-to-market 浮盈 估算真实净值
         nav = self._nav()
-        cash_gate_threshold = self.p.initial_capital * self.p.min_cash_ratio
+        cash_gate_threshold = self.p.initial_capital * self.p.nav_gate_ratio
         if nav < cash_gate_threshold:
             if not getattr(self, "_cash_gate_logged", False):
                 logger.warning(
@@ -981,7 +991,7 @@ class Phase3V3Strategy(bt.Strategy):
         # 与 chase_up / uptrend_pullback 的 NAV gate 入口 (R1) 同口径:
         # cash gate 拦 entry, NAV-gate 拦 active close。
         nav = self._nav()
-        if nav < self.p.initial_capital * self.p.min_cash_ratio:
+        if nav < self.p.initial_capital * self.p.nav_gate_ratio:
             self._close(d, float(d.close[0]), "nav_gate_eod")
             return
         low, high, close = float(d.low[0]), float(d.high[0]), float(d.close[0])

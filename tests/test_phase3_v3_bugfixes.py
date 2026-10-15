@@ -30,6 +30,8 @@ def _run_strategy(panel: pd.DataFrame, **kwargs) -> dict:
     kwargs.setdefault("pct_chg_high", 0.10)
     cerebro.addstrategy(
         Phase3V3Strategy,
+        nav_gate_ratio=0.05,  # §2 (audit 2026-10-15): 单元夹具直接构造策略,
+                              #   故须显式给出(生产路径由 preset 声明注入)
         initial_capital=initial_capital,
         lot_size=100,
         result_holder=holder,
@@ -128,15 +130,21 @@ def test_sl_exit_uses_sl_price_not_open_when_gap_up():
 
     ep = sl_trade["entry_price"]
     sl_p_expected = ep * 1.10
-    # Bug 修复前：exit_price = open_p = 25.0 → net = (25.0 - ep)/ep - 0.06% ≈ -12.6%
-    # Bug 修复后：exit_price = sl_p = 24.42 → net = (ep - sl_p)/ep - 0.06% ≈ -10.06%
-    #   (做空仓，价格涨到 sl_p → 损失 = sl_pct = 10%)
+    # 跳空穿过时 exit_price 必须是 sl_p(= 入场价 × (1+sl_pct)),不能用 open_p=25.0
+    # —— 否则单笔 SL 损失被跳空放大数倍。
     assert sl_trade["exit_price"] == pytest.approx(sl_p_expected, rel=1e-6), (
         f"SL exit_price 应 = sl_p={sl_p_expected:.4f}, 实际={sl_trade['exit_price']:.4f} "
         f"(Bug 1 修复验证：跳空穿过时不能用 open_p=25.0)"
     )
-    # SL 损失上限严格 = sl_pct（不能再被 open_p 放大）
-    assert sl_trade["net"] == pytest.approx(-0.10 - 0.0006, rel=1e-3)
+    # SL 损失上限严格 = sl_pct(不能再被 open_p 放大)。
+    # 成本**从规范单源推导**,不写字面量:做空往返 = 开仓卖出(佣金+印花税)+ 回补买入(佣金)。
+    # 此前这里写死 0.0006 —— 那是费率集中到 core/ 之前的旧值,费率规范化后它就成了
+    # 一条钉住陈旧数字的断言(§2 Canonical Cost Model:费率只能有一处定义)。
+    from core.dual_price import COMMISSION_RATE, STAMP_DUTY_RATE
+
+    round_trip_fee = 2 * COMMISSION_RATE + STAMP_DUTY_RATE
+    # abs 容差:成交额较小时触发 ¥5 最低佣金下限,与纯比例口径有微小差异。
+    assert sl_trade["net"] == pytest.approx(-0.10 - round_trip_fee, abs=1e-3)
 
 
 # ====================================================================

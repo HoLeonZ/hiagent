@@ -137,7 +137,13 @@ def test_engine_left_join_query_shape(monkeypatch):
     def fake_connect(*args, **kwargs):
         return FakeCon()
 
-    monkeypatch.setattr(eng.duckdb, "connect", fake_connect)
+    # 2026-10-15: duckdb 的生命周期已按 §6 从 strategy 层收到数据层 ——
+    # `short_reversal.engine` 不再 import duckdb(它只留一个转发给
+    # `_panel_loader` 的 `_load_panel` 薄包装),故旧的
+    # `eng.duckdb.connect` 补丁目标已不存在。改为补丁真正的连接点。
+    from short_reversal import _panel_loader
+
+    monkeypatch.setattr(_panel_loader.duckdb, "connect", fake_connect)
     df = eng._load_panel(Path("/tmp/nope.db"), "2024-06-01", "2024-06-02", ["TEST.SH"])
     # Confirm LEFT JOIN was issued and adj_* columns selected
     sql = captured["sql"]
