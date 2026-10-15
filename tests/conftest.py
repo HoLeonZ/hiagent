@@ -1,6 +1,7 @@
 """共享 fixture：临时 DuckDB（带 v_daily 完整 schema）+ 黑名单 + 合成单股 panel。"""
 from __future__ import annotations
 
+import zlib
 from pathlib import Path
 
 import duckdb
@@ -52,7 +53,12 @@ def temp_duckdb(tmp_path: Path, sample_thscodes: list[str]) -> Path:
         rows = []
         for code in sample_thscodes:
             for d in dates:
-                base = 10.0 + (hash(code) % 100) / 10.0
+                # §0 (audit 2026-10-15, 可复现性): 原为 `hash(code) % 100`。
+                # CPython 对 str 的 `hash()` 逐**进程**随机化(PYTHONHASHSEED),
+                # 于是同一份夹具在不同运行里生成**不同的价格** —— 既直接违反
+                # §0「相同输入必须产出逐字节相同的输出」,又是潜在的 flaky 来源
+                # (价格不同 → 可能触及不同的分支)。改用确定性摘要。
+                base = 10.0 + (zlib.crc32(code.encode("utf-8")) % 100) / 10.0
                 rows.append((code, d.date(), base, base + 0.5, base - 0.5,
                              base, 5e7, 1e6))
         con.executemany(

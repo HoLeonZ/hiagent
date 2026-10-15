@@ -71,11 +71,23 @@ def _all_thscodes(db_path: Path, asof_date: str | None = None) -> list[str]:
 
 
 def _load_exclude(exclude_path: Path | None) -> set[str]:
-    if exclude_path is None or not Path(exclude_path).exists():
+    """读取黑名单。None → 空集(未要求排除);显式传入但文件缺失 → fail-fast。
+
+    §0 (audit 2026-10-15): 此前 `not Path(exclude_path).exists()` 也静默返回空集,
+    于是"要排除 29 只"与"排除了 0 只"不可区分 —— 一个失效的风险控制输入会被
+    当成"已启用"。
+    """
+    if exclude_path is None:
         return set()
+    path = Path(exclude_path)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"§0: 要求应用黑名单,但文件不存在: {path}。"
+            "静默返回空集会让「要排除」与「排除 0 个」不可区分。"
+        )
     return {
         line.strip()
-        for line in Path(exclude_path).read_text(encoding="utf-8").splitlines()
+        for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.strip().startswith("#")
     }
 

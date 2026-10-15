@@ -8,7 +8,11 @@ DuckDB 无历史成分表 → as-of 代理：剔除 asof_date 之后才上市的
   - ST 股过滤: v_daily 无 ST/名称列; dim_symbol.name 全为 NULL (0 行非空)。
     ST 股 ±5% 涨跌停, 与主板 ±10% 不同, 理论上应单独处理 (参 §4 board-aware)。
   - 指数成分 (HS300/CSI500): 无历史成分表。
-  - 黑名单: data/exclude_thscodes.txt 不存在 → 当前为空集 (no-op)。
+  - 黑名单: `data/exclude_thscodes.txt` **存在且被跟踪**(ffe29be),但此前代码把
+    默认路径写成了不存在的 `short_reversal/data/exclude_thscodes.txt`,于是它从未
+    被加载 —— 与模式无关地恒为 no-op。2026-10-15 已修正:单一共享路径 + 由
+    `exclude_hs300_zhongtou_finance` 模式门控(名单是大盘金融股,属研究口径,
+    不应影响 `mainboard_only`)。
 如未来引入 ST 标记或成分表, 可在 _is_main_board 之外增设过滤。
 """
 from __future__ import annotations
@@ -28,8 +32,18 @@ _SZ_MAIN = ("000", "001", "002", "003")
 _SZ_CHINEXT = ("300",)
 _SH_STAR = ("688",)
 
-# 默认 exclude 路径（与历史约定一致）
-DEFAULT_EXCLUDE_PATH = Path(__file__).parent / "data" / "exclude_thscodes.txt"
+#: §3 (audit 2026-10-15): 黑名单是**单一共享**文件(仓库根 `data/`)。
+#: 此前这里指向 `short_reversal/data/exclude_thscodes.txt` —— 该路径**不存在**,
+#: 于是被 git 跟踪的共享黑名单(见 `data/exclude_thscodes.txt`,提交于 `ffe29be`)
+#: 从未被加载。更糟的是模块 docstring 把 no-op 的原因写成"该文件不存在",
+#: 而它**存在且已被跟踪** —— 一句错误的说明会把后来人引向完全错误的结论。
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_EXCLUDE_PATH = _REPO_ROOT / "data" / "exclude_thscodes.txt"
+
+#: 唯一应用黑名单的模式 —— 模式的**名字**就是它的契约。
+#: 此前黑名单与模式**无关**地生效,而唯一可能的默认路径又不存在,于是它对每个
+#: 模式都是 no-op,包括那个以"排除"命名的模式。模式名不是装饰。
+_EXCLUDE_MODE = "exclude_hs300_zhongtou_finance"
 
 
 def _is_main_board(code: str) -> bool:
@@ -61,10 +75,35 @@ def _is_broad(code: str) -> bool:
     return False
 
 
-def _load_exclude(exclude_path: Path | None) -> set[str]:
-    path = Path(exclude_path) if exclude_path else DEFAULT_EXCLUDE_PATH
-    if not path.exists():
+def _resolve_exclude_path(mode: str, exclude_path: Path | None) -> Path | None:
+    """决定实际要用的黑名单路径;返回 None 表示**不排除**。
+
+    - 调用方**显式**传入路径 → 一律生效(它明说了要排除)。
+    - 否则只有 `exclude_hs300_zhongtou_finance` 模式才排除。
+
+    模式门控的理由:黑名单的内容是**大盘金融股**(工/建/农/招行、中信/华泰/海通
+    等券商),那是一个**研究口径**的排除,不是安全清单。让它在 `mainboard_only`
+    下也生效,等于用一次"修 bug"偷偷改掉所有 preset 的股票池。
+    """
+    if exclude_path is not None:
+        return Path(exclude_path)
+    return DEFAULT_EXCLUDE_PATH if mode == _EXCLUDE_MODE else None
+
+
+def _load_exclude(path: Path | None) -> set[str]:
+    """读取黑名单。路径为 None → 空集;**要求排除却找不到文件 → fail-fast**。
+
+    §0 (audit 2026-10-15): 此前路径缺失时静默返回空集,于是"要排除 29 只"与
+    "排除了 0 只"完全不可区分 —— 一个失效的风险控制输入会被当成"已启用"。
+    与本仓库反复出现的静默默认同型一致。
+    """
+    if path is None:
         return set()
+    if not path.exists():
+        raise ShortReversalError(
+            f"§0: 要求应用黑名单,但文件不存在: {path}。"
+            "静默返回空集会让「要排除」与「排除 0 个」不可区分。"
+        )
     return {
         line.strip()
         for line in path.read_text(encoding="utf-8").splitlines()
@@ -86,7 +125,9 @@ def load_universe_asof(
              HS300/CSI500 历史成分表未建立。broad_only 加创业板+科创板。）
       asof_date: 'YYYY-MM-DD' —— 剔除该日之后才上市/才有交易的票
       db_path: DuckDB 路径
-      exclude_path: 黑名单文件路径（默认 data/exclude_thscodes.txt）
+      exclude_path: 黑名单文件路径。显式传入则一律生效;**缺省时仅
+                    `exclude_hs300_zhongtou_finance` 模式使用共享黑名单**
+                    (`<repo_root>/data/exclude_thscodes.txt`)。
 
     Raises:
       ValueError: mode 未知
@@ -102,7 +143,7 @@ def load_universe_asof(
             f"Available: mainboard_only, exclude_hs300_zhongtou_finance, broad_only"
         )
 
-    excluded = _load_exclude(exclude_path)
+    excluded = _load_exclude(_resolve_exclude_path(mode, exclude_path))
     con = duckdb.connect(str(db_path), read_only=True)
     try:
         rows = con.execute(
