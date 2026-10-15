@@ -52,6 +52,9 @@ PRESETS = [
 ]
 
 GOLDEN_DIR = ROOT / "tests" / "golden"
+# 本脚本**不写**运行产物(只锁哈希),故也不创建 results/:创建它会把
+# "目录不存在 → skip" 的产物 gap-tracker 变成 "目录存在但无产物 → fail",
+# 等于用一个空目录反过来污染产物检查。
 RESULTS_DIR = ROOT / "chase_up" / "results"
 WINDOW = ("2025-09-19", "2026-09-19")
 
@@ -69,10 +72,6 @@ def main() -> None:
     universe = set(load_universe("mainboard_only", DB_PATH))
     panel = load_panel(DB_PATH, WINDOW[0], WINDOW[1], universe=universe)
     panel_ind = compute_indicators(panel)
-
-    # §6: results/ 是 gitignored 目录,干净检出里不存在(旧脚本只在恰好有它的那个
-    # 检出里能用)。显式创建,避免 OSError。
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     print(f"[regen] V3a+ dual-price entry fix baselines — {len(PRESETS)} presets")
     print(f"[regen] window={WINDOW[0]}..{WINDOW[1]} universe={len(universe)}\n")
