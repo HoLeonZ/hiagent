@@ -180,6 +180,11 @@ class CyclePriceActionStrategy(bt.Strategy):
                 threshold=self.p.limit_up_threshold,
             ):
                 return  # skip entry: limit-up open, no shares available
+            # §1/§4 (2026-10-15): 先确认次根 bar 可成交,再让 Portfolio 建仓。
+            # 顺序反了会让组合持有一个 broker 无从卖出的仓位(停牌 → 买入无成交
+            # → 出场 submit_sell 抛 "cannot sell more than held")。
+            if not self._broker_ext.can_fill(self.datas[0]._name, bar["date"]):
+                return
             state = self._portfolio.try_enter(
                 self.datas[0]._name,
                 bar["close"],
@@ -196,8 +201,15 @@ class CyclePriceActionStrategy(bt.Strategy):
                 qty=state.shares,
                 decision_date=bar["date"],
             )
-            if fill is not None:
-                self._entry_day = fill.date
+            if fill is None:
+                # 前置 can_fill 已确认可成交,走到这里说明组合与 broker 状态
+                # 不一致 —— 那是真正的矛盾状态,按 §0 fail-fast,不静默留一个
+                # 卖不掉的仓位。
+                raise RuntimeError(
+                    f"§0 fail-fast: portfolio entered {state.thscode} but broker "
+                    f"returned no fill on a bar that can_fill() accepted"
+                )
+            self._entry_day = fill.date
         elif self._portfolio.position is not None and self._portfolio.hold_days(bar["date"]) >= self.p.max_hold:
             fill = self._broker_ext.submit_sell(
                 thscode=self._portfolio.position.thscode,

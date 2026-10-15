@@ -372,6 +372,21 @@ class Portfolio:
         else:
             fill, reason = float(close), "time"
 
+        # §2/§6 (audit P0-2b / B6, 2026-10-15): `time` = **未出场**。
+        #
+        # 本方法是"检查并出场",但 SLA/TP 以外的分支**不该提交成交** —— 调用方
+        # (backtrader_engine.next) 明确只在 `reason in ("SL","TP")` 时重置
+        # `_entry_day`,并注释 "reason == 'time' → fall through to max_hold
+        # check below"。而被调方此前在 time 分支也无条件写 closed_trades、清
+        # `self._pos` —— 于是:
+        #   - 持仓在第一根未触发 SL/TP 的 bar 就被强平;
+        #   - 调用方的 max_hold 分支成为**死代码**(`_pos` 已为 None);
+        #   - `_entry_day` 与实际持仓状态不一致。
+        # 即调用方与被调方的契约矛盾。此处把提交动作限定在真正触发的分支,
+        # 与调用方语义对齐;时间出场由调用方的 max_hold 分支经 try_exit() 完成。
+        if reason == "time":
+            return fill, reason
+
         gross_in = self._buy_cost(entry, self._pos.shares)
         net_out = self._sell_proceeds(fill, self._pos.shares)
         self.closed_trades.append(dict(

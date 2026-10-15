@@ -59,6 +59,19 @@ class ReplayBroker:
         # (open>0 + close=NaN raises ValueError).
         return self._data_provider.open_price(thscode, on_date)
 
+    def can_fill(self, thscode: str, decision_date: date) -> bool:
+        """次根 bar 是否可成交(停牌 → False)。
+
+        §1/§4 (2026-10-15): 入场必须**先确认能成交、再让 Portfolio 建仓**。
+        组合账本与 broker 的 `_open_positions` 是两套状态:若走出
+        `try_enter()` 但 `submit_buy()` 因停牌未成交,组合就持有一个 broker
+        认不到的仓位,后续 `submit_sell()` 会抛 "cannot sell more than held"
+        (实测 000639.SZ)。该顺序问题在 `submit_buy` 改成"停牌返回 None"之后
+        才暴露出来。
+        未知标的(库中完全无 bar)仍由 `_open_price` fail-fast 抛错。
+        """
+        return self._open_price(thscode, self._next_trading_date(decision_date)) is not None
+
     def _fee(
         self,
         side: str,
