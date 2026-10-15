@@ -43,27 +43,49 @@ adjustment to Position_Quantity and Average_Cost."
 """
 from __future__ import annotations
 
+import ast
+
 from pathlib import Path
 
 import pytest
 
 
 def _engine_has_event_handler(module_name: str) -> bool:
-    """检查 engine 是否实现 dividend_handler / split_handler."""
+    """引擎是否**导入并调用**了公司行为 handler(audit P3, 2026-10-15)。
+
+    原实现是**子串启发式**:在引擎源码里找 "dividend" 且 ("handler"|"_apply"|
+    "trigger")。它刚在一个合法重构上失效 —— 把 handler 提到 core 单源、引擎改为
+    导入调用之后,引擎文件里仍有 "dividend" 但不再有 "_apply",于是判为"无 handler",
+    而语义完全没变(反而更好了)。
+
+    这正是审计反复指出的"守卫断言的是文本形状而非行为"。改为 AST 判定:
+      (a) 从 core.corporate_actions 导入 apply_corporate_action,且
+      (b) 源码中确实**调用**了它。
+    对未接入的引擎为 False —— 那就是诚实的现状。
+    """
     import importlib
+
     try:
         mod = importlib.import_module(module_name)
     except ImportError:
         return False
     src = Path(mod.__file__).read_text(encoding="utf-8")
-    has_dividend = ("dividend" in src.lower() and
-                    ("handler" in src.lower() or "_apply" in src.lower() or
-                     "trigger" in src.lower()))
-    has_split = ("split" in src.lower() and
-                 ("handler" in src.lower() or "_apply" in src.lower() or
-                  "trigger" in src.lower()))
-    # 仅当 dividend/split 出现在业务逻辑而非注释/字符串 split() 才算
-    return has_dividend or has_split
+    tree = ast.parse(src)
+
+    imported = any(
+        isinstance(n, ast.ImportFrom)
+        and n.module == "core.corporate_actions"
+        and any(a.name == "apply_corporate_action" for a in n.names)
+        for n in ast.walk(tree)
+    )
+    if not imported:
+        return False
+    return any(
+        isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "apply_corporate_action"
+        for n in ast.walk(tree)
+    )
 
 
 @pytest.mark.parametrize("module", [
@@ -78,18 +100,13 @@ def test_engine_has_dividend_or_split_handler(module: str) -> None:
     当前 RED: 4 个 engine 均无 (因为使用 adj_close 前复权隐式嵌入分红,
     但 CLAUDE.md §3 字面要求显式 handler)。
     """
-    if module == "uptrend_pullback.portfolio":
-        pytest.skip(
-            "uptrend_pullback: 2026-10-13 决策为『不实现显式 CA handler』—— 实测该"
-            "策略持仓期中位数仅 3 天, 窗口内无任何持仓穿过除权日 (漏记分红 = 0, "
-            "幻影止损 = 0), 故 event 记账当前无收益; 该零暴露前提已由 "
-            "tests/test_uptrend_pullback_corporate_actions_exposure.py 以可证伪的"
-            "行为守卫锁定, 本 source-text 探针对其不再适用。"
-        )
     if _engine_has_event_handler(module):
         pytest.skip(
             f"{module} 已实现 dividend/split handler (GREEN, 本测试 supersede)"
         )
+    # 背景(2026-10-13):uptrend_pullback 曾因"持仓期中位数仅 3 天、窗口内无持仓
+    # 穿过除权日"而决策不实现显式 handler。2026-10-15 已接入 core 共享实现,
+    # 故该理由不再适用 —— 判定统一由 _engine_has_event_handler 给出。
     assert False, (
         f"GAP CAPTURED (RED): {module} 无 dividend_handler / split_handler. "
         f"CLAUDE.md §3 要求显式 cash deposit + quantity/cost 调整. "
