@@ -38,7 +38,12 @@ import numpy as np
 import pandas as pd
 
 from chase_up.signals import ENTRY_COLS
-from core.dual_price import mark_price, portfolio_nav, volume_cap_fill
+from core.dual_price import (
+    effective_slippage,
+    mark_price,
+    portfolio_nav,
+    volume_cap_fill,
+)
 from core.trade_schema import EQUITY_COLS
 
 logger = logging.getLogger(__name__)
@@ -557,9 +562,16 @@ def simulate_portfolio(
                                 participation = min(1.0, size_pre_cap / bar_vol)
                             else:
                                 participation = 0.0
-                            atr_slip = atr_slip_lookup * participation * atr_slip_scale
-                            if atr_slip > slippage:
-                                entry_px = float(o) * (1 + atr_slip)
+                            # §4 (audit P1-B, 2026-10-15): 滑点策略单源。
+                            # 两遍定价(static 估 size → pre-cap size 算
+                            # participation)保持不变,只把 max(static, atr)
+                            # 的口径收敛到 core.effective_slippage。
+                            slip_eff = effective_slippage(
+                                slippage, float(atr_slip_lookup), participation,
+                                atr_slip_scale,
+                            )
+                            if slip_eff > slippage:
+                                entry_px = float(o) * (1 + slip_eff)
                                 if entry_px <= 0:
                                     continue
                     if size < 100:

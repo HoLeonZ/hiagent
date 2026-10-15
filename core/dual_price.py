@@ -237,6 +237,30 @@ def atr_slippage(
     return atr_pct * participation * scale
 
 
+def effective_slippage(
+    static_slippage: float,
+    atr_pct: float,
+    participation: float,
+    scale: float,
+) -> float:
+    """§4 统一滑点策略 —— **唯一口径**。audit P1-B (2026-10-15)。
+
+        slip_eff = max(static_slippage, atr_pct × participation × scale)
+
+    背景:四个引擎各自内联重算过这一行(且 `short_reversal` 漏了与 static 取
+    max 的分支),而本模块已提供的 `atr_slippage()` **从未被任何引擎调用** ——
+    条款"已实现但不可达",§6 单源形同虚设。现在四处一律经本函数取滑点。
+
+    与既有行为逐点等价:
+      - chase_up / uptrend_pullback:两遍定价(先用 static 估 size_pre_cap,
+        再用 pre-cap size 算 participation),等价于 max(static, atr)。
+      - cycle_price_action:`max(static_slip, atr)`。
+      - short_reversal:无 static 滑点参数,等价于 max(0, atr) = atr。
+    `atr_slippage()` 在任一输入 ≤ 0 时返回 0.0,故退化情形与旧逻辑一致。
+    """
+    return max(float(static_slippage), atr_slippage(atr_pct, participation, scale))
+
+
 # ----------------------------------------------------------- internals
 
 def _safe(v: float | None) -> float:
@@ -421,4 +445,6 @@ __all__ = [
     "portfolio_nav",
     # audit P0-1b (2026-10-15): canonical raw-first mark price
     "mark_price",
+    # audit P1-B (2026-10-15): canonical slippage policy single-source
+    "effective_slippage",
 ]

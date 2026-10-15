@@ -81,8 +81,10 @@ class ReplayBroker:
             and atr_pct is not None
             and not _is_nan(atr_pct)
         ):
-            atr_slip = atr_pct * participation * self.atr_slip_scale
-            slip_eff = max(static_slip, atr_slip)
+            # §4 (audit P1-B, 2026-10-15): 滑点策略单源(core)。
+            slip_eff = effective_slippage(
+                static_slip, atr_pct, participation, self.atr_slip_scale,
+            )
         else:
             slip_eff = static_slip
         return commission + tax + notional * slip_eff

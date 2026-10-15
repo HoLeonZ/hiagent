@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 from core.dual_price import (
     LAYOUT_SHORT_REVERSAL,
-    atr_slippage as dual_atr_slippage,
+    effective_slippage,
     extract_execution_bar,
     is_limit_down,
     volume_cap_fill,
@@ -744,9 +744,13 @@ class Phase3V3Strategy(bt.Strategy):
                         participation = min(1.0, size_pre_cap / bar_vol)
                     else:
                         participation = 0.0
-                    atr_slip = atr_pct * participation * self.p.atr_slip_scale
-                    if atr_slip > 0:
-                        entry_price = entry_price * (1.0 + atr_slip)
+                    # §4 (audit P1-B, 2026-10-15): 滑点策略单源(core)。
+                    # 本引擎无 static 滑点参数,故等价于 max(0, atr) = atr。
+                    slip_eff = effective_slippage(
+                        0.0, atr_pct, participation, self.p.atr_slip_scale,
+                    )
+                    if slip_eff > 0:
+                        entry_price = entry_price * (1.0 + slip_eff)
             # CLAUDE.md §2 Margin Gatekeeper: budget base MUST be Free_Cash
             # (T+0 可用), 绝不用 NAV (含未实现浮盈) / settling_funds (T+1 才到)。
             # 旧 R4 (2026-09-21) 用 NAV 作 sizing basis 是 §2 violation 的根因:
