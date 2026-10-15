@@ -27,6 +27,7 @@ from core.dual_price import (
     PRICE_SOURCE_RAW,
     extract_execution_bar,
     effective_slippage,
+    is_limit_down,
     is_limit_up,
     mark_price,
     portfolio_nav,
@@ -142,6 +143,9 @@ __all__ = [
 
 # A 股主板涨跌停 10%；开盘涨幅超过该阈值视为无法买入
 LIMIT_UP_THRESHOLD = 0.098
+# §4 (audit P1-9, 2026-10-15): 跌停侧对称阈值。长仓出场是 SELL,
+# 跌停封板时物理上卖不出去。
+LIMIT_DOWN_THRESHOLD = 0.098
 
 # 防穿仓 (R8, 2026-09-21): Volume Participation Limit (CLAUDE.md §4)。
 # 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION。超出部分丢弃(不挂单)。
@@ -393,6 +397,23 @@ def simulate_portfolio(
                 if not np.isnan(r_o) and not np.isnan(r_h) and not np.isnan(r_lo) and not np.isnan(r_c):
                     o, h, lo, c = r_o, r_h, r_lo, r_c
             tp_p, sl_p = pos["tp"], pos["sl"]
+
+            # §4 (audit P1-9, 2026-10-15): 跌停封板**禁止卖出**(与 chase_up
+            # 同口径)。长仓出场是 SELL,封板时物理上卖不出去 → 本 bar 不成交,
+            # 持仓顺延到下一根可成交 bar(time/max_hold 一并顺延)。
+            # 方向保守:跳过 SL 出场意味着亏损可能继续扩大(§0)。
+            _pc = pi["prev_close"][j] if "prev_close" in pi else np.nan
+            if price_source_for_execution == "raw_close" and "raw_prev_close" in pi:
+                _rpc = pi["raw_prev_close"][j]
+                if not np.isnan(_rpc) and _rpc > 0:
+                    _pc = _rpc
+            if is_limit_down(
+                None if np.isnan(_pc) else float(_pc),
+                float(o),
+                threshold=LIMIT_DOWN_THRESHOLD,
+            ):
+                continue
+
             # V8 (2026-09-22, CLAUDE.md §4): 验证 intraday_tiebreak 声明。
             if intraday_tiebreak != "sl_first":
                 raise ValueError(
@@ -483,8 +504,16 @@ def simulate_portfolio(
                         r_pc_entry = pi["raw_prev_close"][j]
                         if not np.isnan(r_pc_entry) and r_pc_entry > 0:
                             pc = r_pc_entry
-                    # 涨停开盘视为无法买入
-                    if not np.isnan(pc) and pc > 0 and (o / pc - 1) >= LIMIT_UP_THRESHOLD:
+                    # 涨停开盘视为无法买入 (§4)。
+                    # §6 (audit P1-9, 2026-10-15): 改走 core.dual_price.is_limit_up
+                    # 单源 —— 此前本引擎在 Phase-1 内联重算了同一谓词,与 Phase-2
+                    # (replay_strategy.py)调用的 core 版本构成重复。threshold 沿用
+                    # 本地历史 override,保持零行为漂移。
+                    if is_limit_up(
+                        None if np.isnan(pc) else float(pc),
+                        float(o),
+                        threshold=LIMIT_UP_THRESHOLD,
+                    ):
                         continue
 
                     entry_px = float(o) * (1 + slippage)

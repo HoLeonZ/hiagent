@@ -5,8 +5,8 @@
     "2026-09-01"
   ],
   "engine": "simulate",
-  "trades_csv_sha256": "ad5d561da837b47de1513c7d765dc0dc299515ec335cb6ff6fc9d4bc0f36a349",
-  "trades_csv_rows": 105,
+  "trades_csv_sha256": "958b71c61df98012cba17803363ae83787bfd7221ae59adb7ef008b84fac6140",
+  "trades_csv_rows": 98,
   "trades_csv_cols": [
     "entry_date",
     "exit_date",
@@ -25,14 +25,13 @@
   ],
   "note": "uptrend_pullback v33_long_reverse_v19 trades.csv sha256 baseline. Multi-run reproducibility invariant: same preset + DB -> byte-equal trades.csv. Drift indicates signal/exit/sizing logic changed.",
   "repinned": {
-    "date": "2026-10-13",
+    "date": "2026-10-15",
     "previous": {
-      "trades_csv_sha256": "a6574c10155fd90d524e066f2368ae01a2e2eb110d60b11952634f49acdadec9",
-      "trades_csv_rows": 55,
-      "trades_csv_cols_count": 13
+      "trades_csv_sha256": "ad5d561da837b47de1513c7d765dc0dc299515ec335cb6ff6fc9d4bc0f36a349",
+      "trades_csv_rows": 105
     },
-    "why": "The previous pin was unreproducible: uptrend_pullback.load_universe(asof_date=<non-trading day>) returned an empty universe, so this window (2024-09-01 is a Sunday) produced 0 rows rather than 55 -- the pinned numbers could not be produced by any current code path. With the loader fixed to resolve asof to the last trading day, the window is live again and the pin was regenerated.",
-    "row_delta_attribution": "Verified NOT caused by the fixes in this branch: for the trading-day-start window 2025-07-01..2026-07-01 the simulate trade list is unchanged (56 rows before and after the loader fix). The 55 -> 105 delta is accumulated drift since the original capture (Tick 36 / Round 13) -- notably the new sub_signal_type column (13 -> 14 cols) and later engine changes (v3a dual-price, V8 plumbing, R7/R8 guards, Round 14/15 cost model).",
-    "reproducibility_check": "sha256 verified byte-identical across two independent runs before pinning."
+    "why": "§4 卖方跌停 no-fill 守卫上线(uptrend_pullback/portfolio.py 出场阶梯前调用 core.dual_price.is_limit_down)。CLAUDE.md §4 逐字要求 'a sell/cover on a limit-down-sealed bar MUST be rejected (no fill)' —— 旧实现在开盘即跌停封板的 bar 上照常按 SL/开盘价记成交,那是物理上不可能取得的成交价,系统性低报亏损。",
+    "row_delta_attribution": "逐笔归因(v19 首个变更点):603272.SH 于 2026-04-20 开盘 -10.00% 即封板,旧代码在该 bar '以 27.54 止损成交';该股随后 04-21(-9.99%)、04-22(-10.00%)继续封板,04-23 (-5.51%)才可成交。修后持有穿越三个封板日、于 2026-04-23 以 21.08 出场,该笔 gross_pnl 由 -92,380 变为 -284,888。此后各笔差异均为资本被多占用引发的连锁 (成交笔数下降、单笔规模变化)。",
+    "reproducibility_check": "同一 preset + DB + 窗口连续重算两次,sha256 一致(本脚本写入前已核验)。"
   }
 }
