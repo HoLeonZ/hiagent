@@ -56,3 +56,31 @@ def test_run_backtest_produces_trades(bullish_db):
         assert isinstance(t.k_line_score, float)
         assert isinstance(t.phase_score, float)
         assert isinstance(t.calendar_score, float)
+
+
+def test_metrics_are_labeled_with_the_account_model(bullish_db):
+    """§2: `total_pnl` 的分母必须随产物发布 —— 引擎是**每股一个独立账户**。
+
+    接线验证(不是 compute_metrics 的单测):`run_backtest` 必须把
+    **universe 成员数**作为账户数传下去。注意是成员数、不是成交过的股票数 ——
+    每个成员都开了一个账户,即使一笔未成交。
+
+    为什么这条重要:`cash=1_000_000` 是**每账户**资金,所以 total_pnl 的真实分母
+    是 `n_accounts × 100 万`。实测全主板 2953 个成员时该分母约 29.5 亿 ——
+    若读者按 chase_up 那种"一个 100 万组合"去理解,会差三个数量级。
+    """
+    from cycle_price_action.backtest import load_universe_data
+
+    start, end, cash = date(2025, 3, 1), date(2025, 9, 30), 1_000_000
+    result = run_backtest(db_path=str(bullish_db), start=start, end=end, cash=cash)
+    m = result.metrics
+
+    universe = load_universe_data(str(bullish_db), start, end, asof_date=start)
+    assert m["account_model"] == "per_stock_independent"
+    assert m["capital_per_account"] == pytest.approx(float(cash))
+    assert m["n_accounts"] == len(universe), (
+        "账户数必须是 universe 成员数,而不是成交过的股票数(n_stocks)"
+    )
+    assert m["notional_capital"] == pytest.approx(float(cash) * len(universe))
+    # "算不出"必须诚实地是 None —— 不得用横截面合计冒充组合指标
+    assert m["cagr"] is None and m["sharpe"] is None and m["max_dd"] is None

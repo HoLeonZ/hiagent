@@ -154,4 +154,13 @@ def run_backtest(
         # extraction bugs must fail loudly rather than be silently skipped.
         all_trades.extend(_extract_trades(strat))
 
-    return BacktestResult(trades=all_trades, metrics=compute_metrics(all_trades))
+    # §2 (audit 2026-10-15): 账户数 = **universe 成员数**,不是成交过的股票数 ——
+    # 每个成员都开了一个账户(即使那笔账户一笔未成交),故"本金"分母是前者。
+    # 两个参数是 compute_metrics 的必填项:产出一个不带口径的 total_pnl 会误导
+    # 读者把它当成单个 100 万组合的盈亏(实测 472 个账户时相差两个数量级)。
+    return BacktestResult(
+        trades=all_trades,
+        metrics=compute_metrics(
+            all_trades, cash_per_account=cash, n_accounts=len(universe),
+        ),
+    )
