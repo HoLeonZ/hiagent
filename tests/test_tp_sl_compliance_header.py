@@ -45,15 +45,20 @@ def _extract_presets(file_path: Path) -> list[tuple[str, int, str]]:
         if not isinstance(node, ast.Dict):
             continue
 
+        # audit P1-B2 (2026-10-15): literal_eval 要求整个 dict 都是字面量,而本
+        # 提取器**只用到键**。preset 现在通过命名常量声明滑点
+        # (`"atr_slip_scale": SLIP_NONE_ACKNOWLEDGED`) —— 那是可审计的写法,不该
+        # 为了迁就提取器退回字面量。故 literal_eval 失败时回退为"仅取键"。
         try:
             preset_dict = ast.literal_eval(node)
+            preset_keys = set(preset_dict.keys())
         except (ValueError, SyntaxError):
+            preset_keys = {
+                k.value for k in node.keys
+                if isinstance(k, ast.Constant) and isinstance(k.value, str)
+            }
+        if not preset_keys:
             continue
-
-        if not isinstance(preset_dict, dict):
-            continue
-
-        preset_keys = set(preset_dict.keys())
         if not (
             "universe" in preset_keys
             or "max_hold" in preset_keys

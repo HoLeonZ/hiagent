@@ -119,7 +119,11 @@ def test_all_engines_atr_slip_scale_opt_in() -> None:
         "chase_up/portfolio.py": "atr_slip_scale: float = 0.0",
         "uptrend_pullback/portfolio.py": "atr_slip_scale: float = 0.0",
         "cycle_price_action/portfolio.py": "atr_slip_scale: float = 0.0",
-        "short_reversal/engine.py": "atr_slip_scale=cfg.get",
+        # audit P1-B2 (2026-10-15): 该引擎的滑点标定值不再走 `cfg.get(..., 0.0)`
+        # 静默默认,而是经 core.dual_price.resolve_atr_slip_scale 解析 ——
+        # **缺声明 fail-fast**,仍来自 cfg(opt-in 语义不变,且更强:未声明会被
+        # 拦下而不是悄悄变成 0)。故断言改为新的取值路径。
+        "short_reversal/engine.py": "resolve_atr_slip_scale(cfg",
         "short_reversal/replay_strategy_v3.py": "atr_slip_scale=0.0",
     }
     for path, pattern in engines_with_atr_slip.items():

@@ -15,6 +15,7 @@ from cycle_price_action.data_feed import ReplayDataProvider, load_universe_data
 from cycle_price_action.metrics import TradeRecord, compute_metrics
 from cycle_price_action.presets import PRESET_V1
 from cycle_price_action.feed_bt import CyclePandasData
+from core.dual_price import resolve_atr_slip_scale  # §4 (audit P1-B2)
 
 logger = logging.getLogger(__name__)
 
@@ -73,11 +74,13 @@ def run_backtest(
     # Round 15 (2026-09-28, CLAUDE.md §4): intraday_tiebreak added to the
     # accepted whitelist so cycle preset declarations flow preset → strategy
     # params → Portfolio.__init__ (Tick 39 plumbing)。
-    # §4 (audit P1-B2): 滑点标定值必须显式声明,缺声明 fail-fast。
-    _slip = resolve_atr_slip_scale(preset, preset.get("name", "cycle_price_action"))
-    strategy_kwargs["atr_slip_scale"] = _slip
     _accepted = {"threshold", "min_dim", "max_hold", "atr_period", "atr_sl_mult", "tp_pct", "sl_pct", "initial_capital", "intraday_tiebreak", "atr_slip_scale"}
     strategy_kwargs = {k: v for k, v in preset.items() if k in _accepted}
+    # §4 (audit P1-B2): 滑点标定值必须显式声明,缺声明 fail-fast。
+    # 必须在 strategy_kwargs 构建**之后**解析(此前顺序写反 → UnboundLocalError)。
+    strategy_kwargs["atr_slip_scale"] = resolve_atr_slip_scale(
+        preset, preset.get("name", "cycle_price_action")
+    )
 
     for code, slice in universe.items():
         try:
