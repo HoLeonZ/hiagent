@@ -40,6 +40,7 @@ import pandas as pd
 from chase_up.signals import ENTRY_COLS
 from core.dual_price import (
     effective_slippage,
+    is_limit_up,
     mark_price,
     portfolio_nav,
     volume_cap_fill,
@@ -518,8 +519,22 @@ def simulate_portfolio(
                         r_pc_entry = pi["raw_prev_close"][j]
                         if not np.isnan(r_pc_entry) and r_pc_entry > 0:
                             pc = r_pc_entry
-                    # 涨停开盘视为无法买入
-                    if not np.isnan(pc) and pc > 0 and (o / pc - 1) >= LIMIT_UP_THRESHOLD:
+                    # 涨停开盘视为无法买入 (§4)。
+                    # audit P1-8 (2026-10-15): 改走 core.dual_price.is_limit_up
+                    # 单源。此前本引擎把同一谓词**内联重算**了一遍,与
+                    # uptrend_pullback / cycle_price_action 使用的 core 版本
+                    # 构成重复;后果不只是重复 —— §4 守卫在源码层面变为"不存在",
+                    # 以致 tests/test_limit_up_guard_cross_engine.py 长期报
+                    # "Regression: chase_up/portfolio.py no longer imports
+                    # is_limit_up"。
+                    # threshold 沿用 chase_up 的历史 override 0.098(略宽松于
+                    # core 默认 0.095),保持零行为漂移;是否与其余三引擎统一
+                    # 属策略参数决策,另行处理。
+                    if is_limit_up(
+                        None if np.isnan(pc) else float(pc),
+                        float(o),
+                        threshold=LIMIT_UP_THRESHOLD,
+                    ):
                         continue
 
                     # 先用静态 slippage 算 entry_px, 然后用预算算 size_pre_cap (R5
