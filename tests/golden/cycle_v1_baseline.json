@@ -1,0 +1,13 @@
+{
+  "engine": "cycle_price_action",
+  "preset": "v1",
+  "window": [
+    "2026-04-01",
+    "2026-05-01"
+  ],
+  "cash": 1000000.0,
+  "trades_csv_rows": 492,
+  "trades_csv_sha256": "753c1ef878bf9517b658e1e81c828c59c78158d55424dca59614fbdc8dcd5bd7",
+  "trades_sorted_sha256": "cb9ebb7111df7c2939e200bee862521fd60f02ffb5fee7360276f1eed20de3c7",
+  "note": "§0 完备性基线。原序哈希对 universe 遍历顺序敏感,故消费端优先断言排序哈希(见 trades_sorted_sha256)。重生成: python tests/_regen_cycle_baseline.py。此基线参与 §5 迭代计数:任何为了「让基线过」而改窗口或改策略的迭代,都必须计入 n_trials。"
+}
