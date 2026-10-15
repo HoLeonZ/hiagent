@@ -627,6 +627,7 @@ for path in paths:
 | `008ea11` | §5 归因机制(`dna_stats/attribution.py`:复利区间收益/超额/beta,fail-fast 而非猜测)+ 修 9 处 `dsr['p_value']` **活 KeyError** | 判据为 **beta 调整后 alpha**(原始超额无法区分技术与杠杆:纯 2× beta 的原始超额 +1.30% 全来自复利,而 beta 调整后恒为 0);**基准数据缺口已显式登记**(库中无任何指数) |
 | `5efcfbb` | §6 `cycle` 涨停守卫移入**执行层**(另三引擎本就在那);消除**两个测试文件对归属层的互相矛盾**;引擎改为只传 `prev_close` | `test_cycle_limit_up_guard` 4 条 + cross-engine 2 条转绿;`test_round30` 的两条结构断言改为**钉住调用点**(守卫可达) |
 | `548d8a0` | §0 静默 except 扫描器:口径改为「既不记录也不抛出」;修其**漏检 `return None`** 的缺陷;守卫改为**灵敏度测试**(植入三种裸处理器必须命中,两种有记录处理器必须不命中) | 2 条转绿;顺带纠正 `scan_signals.py`(它是 `raise`,本就不该算静默) |
+| `b8c1539` | **§0/§2/§3/§4 preset 声明到达引擎**:11 个键、180 处"声明了却无人读取"接通(权重/仓位比例/参与率/执行价源);新增 `core/preset_contract.py` 单源契约;修正扫描器 `.get()` 盲区(它曾把**真实消费**误报为丢弃);把已失效的历史缺口元用例换成栽桩灵敏度,并新增**行为**守卫 | **5 条 RED→GREEN,新增失败 0**(27→22 failed / 915→934 passed,逐条 diff);`chase_up` golden 33 项全绿 = 接通声明**未移动任何历史数字** |
 
 **测试层净效果**(失败集合逐条 `diff`,非仅比数量):
 
@@ -651,7 +652,7 @@ for path in paths:
 
 **仍未处理(按 §8 顺序)**:**§5 基准归因完全缺席**(Attribution Mandate:HEADLINE 收益必须附基准/风格相对超额,当前零实现);**§4 滑点的实质**(把 100 个 preset 的 `SLIP_NONE_ACKNOWLEDGED` 换成真实标定值 —— 属研究决策);§7 源码内嵌业绩数字清理;§3 公司行为的 `raw_adjustment_events` 之外的公司行动(配股/缩股未建模);~~`chase_up` 金标准基线仍红~~ → **已修复(见 `e063c43`)**,四个引擎的成交列表现在都有有效守卫。
 
-**当前测试状态**:failed 54→**27**,passed 796→**915**,errors 3→**0**,**新增失败 0**,**30 条既有红转绿**(逐条 diff,基线与我每一轮之间都比对)。剩余 27 条的构成见本表后说明。
+**当前测试状态**(截至 `b8c1539`):failed 54→**22**,passed 796→**934**,errors 3→**0**,**新增失败 0**,**35 条既有红转绿**(逐条 diff,基线与我每一轮之间都比对)。剩余 22 条的构成见本表后说明。
 
 **修复带来的结果变化(不得按「改善」叙述)**:每处修复都会改变结果,方向不一。
 
@@ -723,3 +724,51 @@ RuntimeError: backtest failed for 000639.SZ: cannot sell more than held
 **修法**:新增 `ReplayBroker.can_fill(thscode, decision_date)`,入场前**先确认次根 bar 可成交再建仓**;若 `can_fill` 通过而 `submit_buy` 仍无成交(真正的矛盾状态),按 §0 fail-fast 抛错,不静默留下一个卖不掉的仓位。数据缺口仍由 `_open_price` fail-fast,不受影响。
 
 **验证**:同一 3 个月窗口,修复前**崩溃**、修复后**跑通**(universe=2953,trades=2844)。
+
+---
+
+## 附五:被声明却无人读取的 preset 键(元缺口,已修)
+
+§0 的 Pessimistic Default 说"声明的承诺必须被强制"。本仓库有 **11 个不同的键、180 处声明**违反了这一条 —— 声明写在那里,而引擎从不读取它,于是缺口靠沉默存在:没有报错、没有日志、没有断言。
+
+三种形态,机制各不相同:
+
+| 形态 | 例子 | 为什么没人发现 |
+|---|---|---|
+| **装饰性声明** | `cycle_price_action` 的 `weight_kline/weight_cycle/weight_calendar` | 同样的 (1.0, 0.7, 0.5) 被硬编码成 `signals.fuse_scores` 的**默认参数**。预设与代码看起来完全一致 —— 改预设什么都不会发生,而回测仍"正常"跑出结果。 |
+| **结构性替代** | `short_reversal` 的 `position_sizing` | 真正决定走集成路径的是 `"ensemble_substrategies" in cfg`。声明与开关是**两个**东西,不一致时无人体检。 |
+| **无处可去** | `chase_up` 的 `position_fraction`;`cycle` 的 `max_positions` / `max_volume_participation` / `price_source_for_execution` | 引擎结构上只用另一个键(`position_sizing`),或用同名类常量(`MAX_VOL_PARTICIPATION`)——声明纯属装饰。 |
+
+**为什么"同值硬编码"是最坏的一种**:它让"声明生效"与"声明无效"在**输出上无法区分**。任何以结果为判据的检查都为绿,只有以**来源**为判据的检查才能发现。
+
+### 审计方法本身的假阳性——比假阴性更毒
+
+源文本扫描器只认 `["key"]` / `key=` / `.key`,**不认 `.get("key")`**。于是 `short_reversal/engine.py:148` 的 `cfg.get("ensemble_weight", 1.0/n)`(真实消费)被报成"从未被读"。
+
+误报比漏报更毒:漏报只是没抓到,误报会**诱导人去"修"一个根本没坏的地方**。修法是把 `.get(...)` 与 dict 字面量一并纳入模式。
+
+同时,`test_audit_method_finds_intraday_tiebreak_in_cycle` 钉的是 Tick 30/31 的**历史**缺口。该缺口已闭合,于是这条用例退化成永久噪音(它现在断言"审计必须检测到一个已不存在的缺陷")。改为**栽桩灵敏度**用例:人造一个必然无人消费的键,断言审计抓得到 —— 与 silent-except 扫描器同一处理。
+
+### 源文本审计可以被"空泛地满足"——必须有行为守卫
+
+文本审计有个致命弱点:往 `params = dict(weight_kline=1.0, ...)` 里加一个默认值就能让它变绿,**而声明依然被忽略**。所以本次并列新增 `tests/test_preset_declarations_are_load_bearing.py`,用**行为**断言:两个不同的声明值必须产出两个不同的结果(如 `position_fraction=0.5` 必须让成交股数减半),声明与引擎容量冲突必须 fail-fast。
+
+反面教材警告:用"某文件源码里含某字符串"来证明接线是不作数的。
+
+### 量化与验证
+
+同机、同 DB,逐测试比对失败集合(而非只比失败数量):
+
+| | 失败 | 通过 | 跳过 |
+|---|---|---|---|
+| `548d8a0`(修前) | 27 | 915 | 22 |
+| `b8c1539`(修后) | **22** | **934** | 22 |
+
+**零新增失败;5 项 RED→GREEN**(4 项 preset 一致性 + `test_all_in_sizing_fraction_preservation::test_chase_up_uses_position_fraction_in_sizing`,后者在修前确实是 RED)。通过数 +19 = 5 修复 + 14 新增用例。
+
+行为中性已单独验证:`chase_up` 的 golden baseline 33 项全绿 —— 接通声明**没有移动任何一个历史数字**(出厂值全是常量)。若将来有人改了预设值,行为应当随之改变:那时它是真的生效了。
+
+### 附带发现:钉字面量的测试钉住的是拼写,不是缺陷
+
+`test_volume_cap_rounding_constant_pin_cycle` 钉的是完整字面量 `int(bar_volume * self.MAX_VOL_PARTICIPATION // 100) * 100`。把参与率改为声明驱动后属性名变了、**缺陷一字未改**,旧断言却把这次无害重命名误报成"已修复"。已改为钉 **round-to-0 形状本身**(`// 100) * 100`),对属性重命名免疫。
+
