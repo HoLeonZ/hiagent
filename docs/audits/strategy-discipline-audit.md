@@ -635,6 +635,8 @@ for path in paths:
 | `8becfa2` | 清掉剩余全部红灯:§2 short_reversal `nav_gate_ratio` 静默默认(75/75 未声明)接通 + 参数更名;§3/§6 cycle 入场价改经 `extract_execution_bar`;§4 补全 65 个 preset 合规头(62 个由声明值生成);另修 8 条**判据本身错**的断言 | **12→0 failed / 941→954 passed**;逐条先判"代码错还是断言错"再动 |
 | `1e2bedd` | **查证审计自认「未审查」的六个面**:§0 时区(`update_db_direct.py` 按本机时区转换 → 同一负载落成不同 bar 日期)、§0 夹具 `hash()` 播种(逐进程随机 → 每次价格不同)、黑名单**未被跟踪文件从未加载**(默认路径指向不存在的文件 + docstring 给错原因 + 静默空集);并**用本机活库核验掉审计最重的未知**(raw/adj 前提) | 三处守卫**双向验证**(旧实现下必然失败);黑名单改动经模式门控,对 **73/75 出厂 preset 行为中性** |
 | `834cfc4` | §5 归因:让「未归因」标注随**每一份报告**一起走(写在唯一规范渲染点 `core/trade_report.py`);§6 展示工具 CAGR 口径统一为**交易日**(此前日历日 → 同一回测两个 CAGR) | 已双向验证;并给此前**零测试**的 1162 行工具补上首道守卫 |
+| `72633e8` | **新发现(不在原发现集内)**:cycle 的 `total_pnl` 缺分母 —— 引擎按**每股一个独立账户**跑,合计的分母是 `n_accounts × 每账户资金`(实测 **29.5 亿**),而另外三引擎是单个 100 万组合。`cagr/max_dd/sharpe` 已诚实返回 `None`,唯独 `total_pnl` 无标注 | 口径随产物发布(必填参数 → 忘记标注即在调用点失败);接线守卫验证 `n_accounts == len(universe)`;附八 |
+| `512b06e` | **新发现(不在原发现集内)**:全胜窗口下 `profit_factor=inf` → `json.dumps` 写出 `Infinity`,而那不是合法 JSON。Python 的 `json.loads` 宽松接受,故自家 round-trip 读得回来、缺陷长期隐形;JS/Go/Rust/jq 一律拒读 | 分母为 0 时返回 `None`(与 `max_dd=None` 同口径);四个引擎 **8 个写出点**加 `allow_nan=False`(让将来的非有限值在写出时失败);守卫双向验证;附九 |
 
 **测试层净效果**(失败集合逐条 `diff`,非仅比数量):
 
@@ -657,9 +659,18 @@ for path in paths:
 
 **P1 已全部完成**(窗口边界、宇宙因果性与幸存者偏差、停牌语义、滑点单源与显式声明、涨跌停四引擎镜像守卫)。
 
-**仍未处理(按 §8 顺序)**:全套件已 **0 failed / 954 passed / 30 skipped**,下列为**已登记**的未结事项(均在附六末尾逐条列出):**§5 基准归因**(行情库无指数序列,补齐方式与"选哪个基准"属研究决策;已由 `test_benchmark_data_gap_is_registered` 显式登记);**§4 滑点的实质**(100 个 preset 仍是 `SLIP_NONE_ACKNOWLEDGED`=0.0,换成真实标定值会改变每个成交价,属研究决策且须计入 `n_trials`);**§7 产物 writer**(`equity_curve.csv` / `cash_walk.csv` / per-preset `backtest.json` 尚未实现,故相应断言按 §6 skip 登记);**§3 公司行为**(配股/缩股未建模,全库 1 例,已显式告警);~~§7 源码内嵌业绩数字清理~~ → **已完成(`5c731cd`)**;~~`chase_up` 金标准基线仍红~~ → **已修复(`e063c43`)**;~~cycle 无成交列表基线~~ → **已补(`4cbc66c`)**。
+**仍未处理(按 §8 顺序)**:全套件 0 failed。下列为**已登记**的未结事项(逐条见附六/附八/附九末尾):
 
-**当前测试状态**(截至 `834cfc4`):failed 54→**0**,passed 796→**974**,errors 3→**0**,**新增失败 0**(逐条 diff,基线与我每一轮之间都比对)。30 条 skip = 22 条既有的 + 8 条本轮登记(产物边界 7 + cycle 慢 golden 1),全部带**点名缺口的** skip 文本,无静默跳过。剩余事项见 §8 与附六末尾。
+1. **§5 基准归因**(数据缺口):本地行情库无任何指数序列,归因不可计算;取数需联网写库、选哪个基准属研究决策。机制与"未归因"标注均已就位。
+2. **§4 滑点的实质**:100 个 preset 仍是 `SLIP_NONE_ACKNOWLEDGED`(=0.0)。换成真实标定值会改变每一个成交价,属研究决策,且按 §5 须计入 `n_trials`。
+3. **§0 依赖锁定**:`requirements.txt` 只有版本范围、无 lockfile。本机为 conda 环境,`pip freeze` 会产出**误导性**锁定,故不代做 —— 建议用 uv / pip-tools 在指定 Python 下生成。
+4. **§7 产物 writer**:`equity_curve.csv` / `cash_walk.csv` / per-preset `backtest.json` 的 writer 尚未实现(相应断言按 §6 skip 登记)。注:`cycle` 的 `cagr/sharpe/max_dd` 返回 `None` 是**诚实**的"横截面无法定义",不是缺口。
+5. **§6 展示层重复**:`tools/render_top5_presets_html.py` 重述逐 bar 指标与 A/B/C 文案(回测本身调用真引擎);消解需引擎暴露逐 bar 指标序列,属重构。
+6. **"有实现、无消费者"的库函数**:`tail_objective.tail_stats`(测试外无调用点)与 `render_top5` 同类;建议统一清理而非逐个顺手改。
+7. **§3 公司行为**:配股/缩股未建模(全库 1 例),`apply_corporate_action` 已显式告警。
+8. ~~§7 源码内嵌业绩数字清理~~ → **已完成(`5c731cd`)**;~~`chase_up` 金标准基线仍红~~ → **已修复(`e063c43`)**;~~cycle 无成交列表基线~~ → **已补(`4cbc66c`)**;~~审计自认的六个未覆盖面~~ → **已查证(附七)**。
+
+**当前测试状态**(截至 `512b06e`):failed 54→**0**,passed 796→**985**,errors 3→**0**,**新增失败 0**(逐条 diff,基线与我每一轮之间都比对)。30 条 skip = 22 条既有的 + 8 条本轮登记(产物边界 7 + cycle 慢 golden 1),全部带**点名缺口的** skip 文本,无静默跳过。剩余事项见 §8 与附六末尾。
 
 **修复带来的结果变化(不得按「改善」叙述)**:每处修复都会改变结果,方向不一。
 
@@ -919,4 +930,109 @@ metrics 对不上,**而两边看起来都"很合理"**,正是最难发现的一�
 顺带给这个此前**零测试**的 1162 行工具补上第一道守卫:断言其汇总指标与引擎规范实现逐位
 一致(1e-12),并单独钉住年化口径本身。已双向验证 —— 换回日历日口径时,恰好那两条 CAGR
 用例失败。
+
+---
+
+## 附八:一个「缺了分母」的数字 —— `cycle_price_action` 的 `total_pnl`
+
+这是本轮**唯一一条既不在原审计发现集、也不在那六个未覆盖面里**的发现,来自"按 §2 的原话
+去核对每一个对外发布的数字"。
+
+### 模型
+
+`cycle_price_action/backtest.py` 对 universe 里**每个成员各建一个独立账户**
+(`for code, slice in universe.items(): cerebro.broker.setcash(cash)`),再把所有账户的
+成交并成一张表。`cash` 是**每账户**资金(默认 100 万)。
+
+### 后果:一个没有分母的合计
+
+`compute_metrics` 诚实地把 `cagr` / `sharpe` / `max_dd` 返回 `None` —— 横截面研究里
+这三者**无法定义**,返回 None 正是"算不出就不算"。但 `total_pnl` 是裸的合计:
+
+| | 值 |
+|---|---|
+| 实测窗口 2026-04-01..05-01 | 492 笔成交 / **472** 只股票 |
+| `n_accounts`(universe 成员数,独立复核一致) | **2953** |
+| `notional_capital` | **¥2,953,000,000** |
+| 对照:chase_up / uptrend_pullback / short_reversal | 单个 **¥1,000,000** 组合 |
+
+也就是说 cycle 的 `total_pnl` 分母是 **29.5 亿**,与另外三个引擎的 100 万相差约 **2953 倍**。
+把它们的数字并排放在一张表里比较,读者会得到错误结论 —— **而引擎并没有算错**:
+错的是发布出来的数字**缺了它自己的分母**。
+
+### 一个正确的参照就在旁边
+
+`short_reversal` 的集成路径(`_run_ensemble`)做对了同一件事:`final_capital =
+sum(sub_i.final_capital × w_i)`,其中 `w = ensemble_weight`。实测三个集成 preset 都有
+**`n × ensemble_weight = 1.0`**(2×0.5 / 3×0.3333 / 2×0.5),即权重**归一**,结果与
+"一个 `INITIAL_CAPITAL` 组合"直接可比。同族问题在本仓库已有一处正确实现 —— 这让
+cycle 的缺口更像是遗漏,而不是设计选择。
+
+### 修法
+
+`compute_metrics` 新增**必填**的 `cash_per_account` / `n_accounts`,并把
+`account_model` / `capital_per_account` / `n_accounts` / `notional_capital` 写进返回值 ——
+于是**口径随产物一起发布**(这些字段会进入 `results/<preset>_metrics.json`)。
+
+必填而非可选是刻意的:让"忘记标注"在**调用点**就失败,而不是悄悄发布一个含义不明的合计。
+`run_backtest` 传的是 **universe 成员数**,不是成交过的股票数 —— 每个成员都开了账户,
+即使一笔未成交(这正是 472 与 2953 的差别)。
+
+守卫:单测覆盖两类返回路径 + `notional_capital` 恒等式 + 缺参数必须 `TypeError`;
+另有**接线**守卫用合成库验证 `n_accounts == len(universe)`(分母来自真实宇宙)。
+
+### 一般原则
+
+这与附七的 §5「未归因」标注是**同一条**:
+
+> **当一个数字的含义依赖某个未被说明的模型时,就不能只让那个模型活在 docstring 里。**
+
+本仓库反复吃亏的形态是"缺口靠沉默存在"(静默默认值、未接线声明、用失败表达待办)。
+"缺分母的数字"是它的**输出侧**版本 —— 它不需要代码有 bug,只需要读者不知道模型。
+
+---
+
+## 附九:`results/backtest.json` 在「全胜窗口」下是**非法 JSON**
+
+沿用附八的方法(逐个核对对外发布的产物),发现第二条输出侧缺陷。
+
+### 现象
+
+`profit_factor` 在**无亏损笔数**时返回 `float("inf")`(`chase_up/backtest.py`、
+`uptrend_pullback/backtest.py`)。而 Python 的 `json.dumps(float("inf"))` 写出的是:
+
+```json
+{"profit_factor": Infinity}
+```
+
+**`Infinity` 不是 RFC 8259 的合法值。** 关键在于:Python 自己的 `json.loads` 默认
+**宽松接受**它 —— 所以自家 round-trip 读得回来,缺陷因此长期隐形。而 JS 的
+`JSON.parse`、Go、Rust、`jq` 一律拒绝:**任何非 Python 的消费者都读不了这份产物**。
+
+实测(修复前):
+
+```
+profit_factor = inf
+严格 JSON 写出 → 失败: Out of range float values are not JSON compliant: inf
+```
+
+"全胜窗口"在短区间里很常见(样本少、行情顺),不是理论边角。
+
+### 修法
+
+1. `profit_factor` 分母为 0 时返回 **`None`** —— 与仓库既有的"算不出就 None"口径一致
+   (`max_dd=None` / `cagr=None` / `beta=None`),既合法,又不去冒充一个数字。
+2. 四个引擎的**全部 8 个产物写出点**加 `allow_nan=False`。这是**系统性的那一半**:
+   将来再引入非有限值会在**写出那一刻**失败(§0 fail-fast),而不是悄悄产出一份读不了
+   的产物、等到别的语言的消费者来读时才发现。
+
+守卫:真实算出的指标字典必须能被 `allow_nan=False` 严格序列化 + 逐值检查无非有限浮点
++ 四个引擎的写出点都必须禁非有限值。已双向验证 —— 换回 `inf` 时该用例必然失败。
+
+### 顺带发现(未修,已登记)
+
+`uptrend_pullback/tail_objective.py::tail_stats` 另有 `inf` 与 3 处 `nan`,
+但它在**测试之外没有任何调用点**,故不会进入产物 —— 与 `render_top5` 同属
+"无消费者的库函数"。这类"有实现、无消费者"的代码本仓库已多次出现,建议统一清理时
+一并处理,而不是逐个顺手改。
 
