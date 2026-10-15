@@ -399,6 +399,7 @@ for path in paths:
 - **§1 / §3**：`cycle_price_action/data_feed.py:211`（流动性筛选 SQL 无日期上界，成员由窗口之后的全表成交额决定）；`data_feed.py:160`、`:163`（成员判定只有 `MAX(date) >= ref_end`，窗口内 IPO 混入 as-of 宇宙）。
 - **§2**：`cycle_price_action/portfolio.py:300-302`、`:383-385`（出场同时把入场成本退回 Free_Cash 又把全额卖出款计入 Settling）；`portfolio.py:179`（`release_margin` 给 free_cash 记账，与 chase_up/uptrend 的约定相反）；`portfolio.py:131-140`（`settle()` 在包内无调用点）；`portfolio.py:224`（NAV 门读被抬高的 `self.cash`）；`portfolio.py:68-69`、`replay_broker.py:68`（费率常量重复）；`backtest.py:98`（每只股票一个全新 1,000,000 账户，preset 的 `max_positions`/`position_fraction` 被 `_accepted` 白名单丢弃）；`backtrader_engine.py:174-176`、`:185-191`、`:200`（入场按决策 bar 收盘记账、丢弃 broker 成交价，出场却用成交价）。
 - **§3**：`cycle_price_action/backtrader_engine.py:102-109`、`backtest.py:82-87`、`signals.py:87`（`adj_close` 被 join 后在喂给信号层前丢弃，MA 用原始价）；`portfolio.py:284`（无公司行为事件源）。
+  ⚠️ **根因更正（2026-10-15 修复时发现）**：`adj_close` 不是"被丢弃"，而是**从未被提供**。`data_feed._table_exists()` 只查 `duckdb_tables()`，而 `v_daily_hfq` 是**视图**，于是探测恒为 False，`load_universe_data` 静默走 raw-only 分支 —— §3「指标必须用复权价」在本引擎的历史上从未生效。已修为同时查表与视图（`_relation_exists`）。这说明"join 到了"不等于"送达了"：审计记录的是下游症状，真正的一环在上游。。
 - **§4**：`portfolio.py:356-365`（出场阶梯无跌停不成交判定）；`backtrader_engine.py:93`、`replay_broker.py:42`（ATR 滑点结构性不可达）；`portfolio.py:256-262`（10% 量比上限在 volume 不足一手时整体跳过）；`backtrader_engine.py:168`（涨跌停守卫判在决策 bar，而实际成交在次 bar）；`backtrader_engine.py:307`（出场侧完全无量比上限）。
 - **§6**：`tests/test_cycle_price_action_sha256_baseline.py:55`、`:94`（无 golden 基线，且哈希比对函数不被 pytest 收集）。
 
