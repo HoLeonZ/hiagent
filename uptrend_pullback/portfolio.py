@@ -27,10 +27,12 @@ from core.dual_price import (
     PRICE_SOURCE_RAW,
     extract_execution_bar,
     is_limit_up,
+    mark_price,
+    portfolio_nav,
     validate_price_source,
     volume_cap_fill,
 )
-from core.trade_schema import TRADE_COLS
+from core.trade_schema import EQUITY_COLS, TRADE_COLS
 
 logger = logging.getLogger(__name__)
 
@@ -291,7 +293,7 @@ def simulate_portfolio(
         ].unique()
     )
     if len(cal) == 0:
-        return _empty_trades(), pd.DataFrame(columns=["date", "cash", "holdings", "equity"])
+        return _empty_trades(), pd.DataFrame(columns=EQUITY_COLS)
 
     # 按信号日分组的候选（已按 score 降序）
     sigs_by_day: dict[np.datetime64, list[str]] = {}
@@ -423,9 +425,12 @@ def simulate_portfolio(
                 holdings_val_for_gate = 0.0
                 for code, pos in positions.items():
                     j = _row_at(pidx[code], day)
-                    px = pidx[code]["close"][j] if j is not None else pos["entry_price"]
+                    px = mark_price(pidx[code], j, pos["entry_price"],
+                                     price_source_for_execution)
                     holdings_val_for_gate += pos["size"] * px
-                nav_now = pf.total_cash + holdings_val_for_gate
+                nav_now = portfolio_nav(
+                    pf.free_cash, pf.settling_funds, holdings_val_for_gate
+                )
                 if nav_now < initial_capital * nav_gate_ratio:
                     if day not in _nav_gate_logged_dates:
                         logger.warning(
@@ -564,37 +569,43 @@ def simulate_portfolio(
                 pos = positions[code]
                 pi = pidx[code]
                 j = _row_at(pi, day)
-                px = float(pi["close"][j]) if j is not None else pos["entry_price"]
+                px = mark_price(pi, j, pos["entry_price"],
+                                 price_source_for_execution)
                 pos["bars"] = t - pos["entry_t"]
                 _close_position(code, pos, px, day, "eod")
                 del positions[code]
 
         # ---------- 4) 记录净值 ----------
         holdings_val = 0.0
-        unrealized = 0.0
         for code, pos in positions.items():
             j = _row_at(pidx[code], day)
-            px = pidx[code]["close"][j] if j is not None else pos["entry_price"]
+            px = mark_price(pidx[code], j, pos["entry_price"],
+                             price_source_for_execution)
             holdings_val += pos["size"] * px
-            # total_cash 是「已实现盈亏账本」, 建仓时并不扣减现金 (只有平仓时把
-            # net_pnl 计入)。因此持仓期内 NAV 只能加**未实现盈亏**; 若加持仓市值
-            # (size × px), 建仓名义金额就被计入两次 —— equity 会在建仓那根 bar 凭空
-            # 跳增约一个名义金额、平仓时再跳回, 单日权益收益出现 ±50%~+110% 这种
-            # 物理上不可能的跳变 (长仓 + max_positions=1 + A 股 ±10% 涨跌停 ⇒ 单日
-            # 对权益影响上限约 ±10%)。compute_metrics 的 sharpe/max_dd/exposure 全部
-            # 由这条曲线算出, 于是 §5 依赖的 DSR 输入不可信。
-            unrealized += (px - pos["entry_price"]) * pos["size"]
-        # Round 16 (CLAUDE.md §2): equity row uses total_cash.
+        # §2 (audit P0-1, 2026-10-15): 统一走 canonical NAV 单源。
+        #
+        # 本函数原先有两套互相矛盾的口径:权益行用 `total_cash + 未实现盈亏`,
+        # 而 NAV 闸门(`nav_now` 处)用 `total_cash + 持仓市值` —— 后者把
+        # locked_margin(持仓成本基础)与市值同时计入,持仓期间虚增约一个名义
+        # 金额,使防穿仓闸门形同虚设。同一变量在同一函数里两种算法本身就是
+        # 缺陷,现一律改为 core.dual_price.portfolio_nav。
+        #
+        # 为什么用「市值」形式而非「未实现盈亏」形式:入场费在
+        # reserve_for_entry 时已离开现金池且 release_margin 不回补 free_cash,
+        # 故 `total_cash + 未实现盈亏` 在持仓期间会高估 Σ 未平仓入场费。
         equity_rows.append({
             "date": pd.Timestamp(day),
             "cash": pf.total_cash,
             "holdings": holdings_val,
-            "equity": pf.total_cash + unrealized,
+            "equity": portfolio_nav(pf.free_cash, pf.settling_funds, holdings_val),
+            "free_cash": pf.free_cash,
+            "locked_margin": pf.locked_margin,
+            "settling_funds": pf.settling_funds,
         })
 
     trades_df = (
         pd.DataFrame(trades, columns=TRADE_COLS) if trades else _empty_trades()
     )
-    equity_df = pd.DataFrame(equity_rows, columns=["date", "cash", "holdings", "equity"])
+    equity_df = pd.DataFrame(equity_rows, columns=EQUITY_COLS)
     logger.info("simulate_portfolio: %d 笔交易", len(trades_df))
     return trades_df, equity_df

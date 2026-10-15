@@ -161,11 +161,20 @@ class Portfolio:
         self.locked_margin += actual_debit
 
     def release_margin(self, amount: float) -> None:
-        """Unlock Locked_Margin → Free_Cash (e.g., position closed).
+        """Unlock Locked_Margin on position close.
+
+        §2 (audit P0-2, 2026-10-15): **不再**把解锁额记入 Free_Cash。
+        原实现 `self.free_cash += actual_release` 与另外三个引擎
+        (chase_up/portfolio.py:154、uptrend_pullback/portfolio.py:127)的
+        约定相反,配合出场路径的 `credit_settling(全额卖出款)` 会把同一个
+        入场本金记两次 —— 一轮完整往返后 total_cash 多出一个本金
+        (100 → 入场 30 → 出场得款 33 应得 103,实际 133)。
+
+        正确语义:release 只是把 locked 桶解冻,仓位价值由出场时的
+        `credit_settling(卖出款)` 承载(卖出款已包含本金返还)。
 
         Round 28 (2026-09-28, CLAUDE.md §0 Pessimistic Default):
-        Tolerate sub-epsilon IEEE 754 drift on locked_margin
-        (sibling fix to Round 26 release_margin for short_reversal).
+        Tolerate sub-epsilon IEEE 754 drift on locked_margin.
         Clamp the actual release to `min(amount, locked_margin)`
         so cash walk stays consistent.
         """
@@ -176,7 +185,6 @@ class Portfolio:
             )
         actual_release = min(amount, self.locked_margin)
         self.locked_margin -= actual_release
-        self.free_cash += actual_release
 
     def credit_settling(self, amount: float) -> None:
         """Credit T+0 sell proceeds to Settling_Funds (not Free_Cash)."""

@@ -340,6 +340,64 @@ def calc_stamp_duty(notional: float, side: str) -> float:
     return notional * STAMP_DUTY_RATE if side == STAMP_DUTY_SIDE else 0.0
 
 
+def _is_missing(v: object) -> bool:
+    """NaN / None 判定(零依赖;`v != v` 对任何浮点类型都成立)。"""
+    return v is None or v != v
+
+
+def mark_price(
+    pi: dict,
+    j: int | None,
+    fallback: float,
+    price_source_for_execution: str,
+) -> float:
+    """§3 盯市价 —— 必须与执行价同域(raw-first)。audit P0-1b (2026-10-15)。
+
+    四个引擎都曾用 `size × 复权 close` 给一个以 `raw_open` 建仓的仓位盯市。
+    对有历史分红送股的标的,复权/原始比可达 0.70 量级 —— 于是**持仓期间
+    权益被系统性错算整整一个复权比例**,开仓时凭空出现、平仓时消失。
+    实测(preset `chase_v1_atr_tp4_sl1`, 2025-09-19→2026-09-19):单 bar
+    权益收益最高 **107.70%**,而 A 股 ±10% 涨跌停下物理上限约 ±10%;
+    样本 603585.SH 2026-04-08,entry_price 23.04 == raw_open,盯市所用
+    close 仅 16.24,比值 0.6956。
+
+    设计要点:`pi` 是引擎按股票建立的列字典(`close` = 复权域,
+    `raw_close` = 原始域),`j` 为当日行号。raw 列缺失(LEFT JOIN miss →
+    NaN)时回退复权价,与各引擎触发域的既有回退策略一致(baseline parity)。
+    本模块保持零外部依赖,故用 `_is_missing` 而非 numpy。
+    """
+    if price_source_for_execution == PRICE_SOURCE_RAW and "raw_close" in pi:
+        raw_px = pi["raw_close"][j] if j is not None else None
+        if not _is_missing(raw_px):
+            return float(raw_px)
+    if j is None:
+        return float(fallback)
+    return float(pi["close"][j])
+
+
+def portfolio_nav(
+    free_cash: float,
+    settling_funds: float,
+    holdings_value: float,
+) -> float:
+    """Canonical NAV = Free_Cash + Settling_Funds + Σ 持仓市值.
+
+    §2 (audit P0-1, 2026-10-15) — 唯一净值口径。
+
+    `locked_margin` 保存的是持仓的**成本基础**,而 `holdings_value` 是同一
+    持仓的**市值**。把两者相加会把仓位计两次:持仓期间权益虚增约一个入场
+    成本,平仓后该虚增自动消失 —— 因此这个错误**只在持仓期间出现**,
+    在"平仓后对账"式的测试下极易漏检,四个引擎都曾这样写。
+
+    入场费在 reserve_for_entry 时即离开现金池(且 release_margin 不回补
+    free_cash),所以净值里不含 locked_margin 才是正确口径。
+
+    等价写法 `total_cash + Σ未实现盈亏` 在持仓期间会高估 Σ入场费,不作为
+    规范口径;需要单源 NAV 时一律调用本函数。
+    """
+    return free_cash + settling_funds + holdings_value
+
+
 __all__ = [
     "LIMIT_UP_THRESHOLD",
     "LAYOUT_CHASE_UPTREND",
@@ -359,4 +417,8 @@ __all__ = [
     "STAMP_DUTY_SIDE",
     "calc_commission",
     "calc_stamp_duty",
+    # audit P0-1 (2026-10-15): canonical NAV single-source
+    "portfolio_nav",
+    # audit P0-1b (2026-10-15): canonical raw-first mark price
+    "mark_price",
 ]

@@ -38,7 +38,8 @@ import numpy as np
 import pandas as pd
 
 from chase_up.signals import ENTRY_COLS
-from core.dual_price import volume_cap_fill
+from core.dual_price import mark_price, portfolio_nav, volume_cap_fill
+from core.trade_schema import EQUITY_COLS
 
 logger = logging.getLogger(__name__)
 
@@ -303,7 +304,7 @@ def simulate_portfolio(
         ].unique()
     )
     if len(cal) == 0:
-        return _empty_trades(), pd.DataFrame(columns=["date", "cash", "holdings", "equity"])
+        return _empty_trades(), pd.DataFrame(columns=EQUITY_COLS)
 
     sigs_by_day: dict[np.datetime64, list[tuple[str, str]]] = {}
     atr_lookup: dict[tuple, float] = {}
@@ -455,12 +456,16 @@ def simulate_portfolio(
                 holdings_val = 0.0
                 for code, pos in positions.items():
                     j = _row_at(pidx[code], day)
-                    px = pidx[code]["close"][j] if j is not None else pos["entry_price"]
+                    px = mark_price(pidx[code], j, pos["entry_price"],
+                                     price_source_for_execution)
                     holdings_val += pos["size"] * px
-                # Round 16 (CLAUDE.md §2): NAV includes total_cash (settling_funds
-                # are still broker-side assets, just not yet T+0 available for new
-                # entries). Pessimistic Default keeps NAV = total equity, not Free.
-                nav_now = pf.total_cash + holdings_val
+                # §2 (audit P0-1, 2026-10-15): NAV = 可动用现金 + 结算中资金 +
+                # 持仓市值。旧式 `total_cash + holdings_val` 把 locked_margin
+                # (持仓成本)与市值同时计入,持仓期间虚增约一个入场成本,
+                # 使本闸门形同虚设。入场费已在 reserve_for_entry 时离开
+                # 现金池且 release_margin 不回补 free_cash,故不含 locked_margin
+                # 的形式才是正确的净值口径。
+                nav_now = portfolio_nav(pf.free_cash, pf.settling_funds, holdings_val)
                 if nav_now < initial_capital * nav_gate_ratio:
                     if day not in _nav_gate_logged_dates:
                         logger.warning(
@@ -602,7 +607,8 @@ def simulate_portfolio(
                 pos = positions[code]
                 pi = pidx[code]
                 j = _row_at(pi, day)
-                px = float(pi["close"][j]) if j is not None else pos["entry_price"]
+                px = mark_price(pi, j, pos["entry_price"],
+                                 price_source_for_execution)
                 pos["bars"] = t - pos["entry_t"]
                 _close_position(code, pos, px, day, "eod")
                 del positions[code]
@@ -611,21 +617,26 @@ def simulate_portfolio(
         holdings_val = 0.0
         for code, pos in positions.items():
             j = _row_at(pidx[code], day)
-            px = pidx[code]["close"][j] if j is not None else pos["entry_price"]
+            px = mark_price(pidx[code], j, pos["entry_price"],
+                             price_source_for_execution)
             holdings_val += pos["size"] * px
-        # Round 16 (CLAUDE.md §2): equity row records total_cash (free + locked
-        # + settling) as the back-compat `cash` column. Downstream readers
-        # interpret this as "broker-side total cash on hand".
+        # §2 (audit P0-1, 2026-10-15): 权益 = 可动用现金 + 结算中资金 + 持仓市值。
+        # `cash` 列保持 total_cash(券商侧总现金,兼容既有读者);
+        # 三个资金池单列输出,供 cash_walk.csv 如实落盘(旧实现在 main.py 里
+        # 把 locked_margin / settling_funds 硬编码为 0)。
         equity_rows.append({
             "date": pd.Timestamp(day),
             "cash": pf.total_cash,
             "holdings": holdings_val,
-            "equity": pf.total_cash + holdings_val,
+            "equity": portfolio_nav(pf.free_cash, pf.settling_funds, holdings_val),
+            "free_cash": pf.free_cash,
+            "locked_margin": pf.locked_margin,
+            "settling_funds": pf.settling_funds,
         })
 
     trades_df = (
         pd.DataFrame(trades, columns=TRADE_COLS) if trades else _empty_trades()
     )
-    equity_df = pd.DataFrame(equity_rows, columns=["date", "cash", "holdings", "equity"])
+    equity_df = pd.DataFrame(equity_rows, columns=EQUITY_COLS)
     logger.info("simulate_portfolio: %d 笔交易", len(trades_df))
     return trades_df, equity_df

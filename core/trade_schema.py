@@ -43,3 +43,17 @@ TRADE_COLS: tuple[str, ...] = (
     # 子信号类型 ("A"/"B"/"C" 拼接 — chase_up 专用, 其他 engine 留空)。
     "sub_signal_type",
 )
+
+# §2 (audit P0-1, 2026-10-15): per-bar 权益账本列契约（single source）。
+# 前四列是既有读者依赖的兼容列；后三列是真实三池，供 cash_walk.csv 如实
+# 落盘 —— 旧实现在各 main.py 里把 locked_margin / settling_funds 硬编码为
+# 0，三池隔离在产物层完全不可见，任何基于 cash_walk 的对账都退化为单池。
+EQUITY_COLS: tuple[str, ...] = (
+    "date",
+    "cash",            # total_cash（券商侧总现金，兼容列）
+    "holdings",        # 持仓市值 Σ size × mark_price
+    "equity",          # canonical NAV == core.dual_price.portfolio_nav(...)
+    "free_cash",
+    "locked_margin",
+    "settling_funds",
+)

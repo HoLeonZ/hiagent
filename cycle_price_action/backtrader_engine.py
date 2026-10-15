@@ -108,6 +108,15 @@ class CyclePriceActionStrategy(bt.Strategy):
             "volume": self.datas[0].volume[0],
         }
         self._bar_cache.append(bar)
+
+        # §2 (audit P0-2, 2026-10-15): A 股 T+1 结算 —— 把上一根 bar 的
+        # Settling_Funds 结转为 Free_Cash。此前 `Portfolio.settle()` **在包内
+        # 没有任何调用点**,于是出场回款永久滞留在 settling 池,free_cash 只减
+        # 不增,引擎在首次出场后即逐渐停止开仓(账实不符)。三个兄弟引擎均在
+        # 每根 bar 起始调用(见 chase_up/portfolio.py:387、
+        # uptrend_pullback/portfolio.py:365、short_reversal/replay_strategy_v3.py:496)。
+        self._portfolio.settle()
+
         df = self._bars_as_df()
         bars_until_today = bars_up_to(df, bar["date"])
 

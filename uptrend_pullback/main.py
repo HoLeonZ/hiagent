@@ -53,7 +53,12 @@ def _write_equity_curve(
     cash_walk_path: Path,
     equity: pd.DataFrame,
 ) -> None:
-    """Write equity_curve.csv + cash_walk.csv (§2/§3 Tick 51)."""
+    """Write equity_curve.csv + cash_walk.csv (§2/§3 Tick 51).
+
+    §2 (audit P0-1, 2026-10-15): cash_walk 如实落盘三池;旧实现把
+    locked_margin / settling_funds 硬编码为 0、把 total_cash 当作
+    free_cash 写出,`nav` 也用重复计入持仓成本的表达式。缺列时显式回退。
+    """
     equity_path.parent.mkdir(parents=True, exist_ok=True)
     cash_walk_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -67,14 +72,26 @@ def _write_equity_curve(
     eq_out.columns = ["date", "cash", "position_value", "total_equity", "drawdown"]
     eq_out.to_csv(equity_path, index=False)
 
-    cw = pd.DataFrame({
-        "date": eq["date"],
-        "free_cash": eq["cash"],
-        "locked_margin": 0.0,
-        "settling_funds": 0.0,
-        "nav": eq["cash"] + eq["position_value"],
-        "total_equity": eq["equity"],
-    })
+    _pool_cols = {"free_cash", "locked_margin", "settling_funds"}
+    if _pool_cols <= set(eq.columns):
+        cw = pd.DataFrame({
+            "date": eq["date"],
+            "free_cash": eq["free_cash"],
+            "locked_margin": eq["locked_margin"],
+            "settling_funds": eq["settling_funds"],
+            "nav": eq["equity"],
+            "total_equity": eq["equity"],
+        })
+    else:
+        # 调用方未提供三池(旧式 equity df):显式回退,不伪造 0。
+        cw = pd.DataFrame({
+            "date": eq["date"],
+            "free_cash": eq["cash"],
+            "locked_margin": 0.0,
+            "settling_funds": 0.0,
+            "nav": eq["equity"],
+            "total_equity": eq["equity"],
+        })
     cw.to_csv(cash_walk_path, index=False)
 
 

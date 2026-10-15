@@ -902,8 +902,23 @@ class Phase3V3Strategy(bt.Strategy):
         # 误触发 §0 fail-fast。
         released = pos.get("entry_cost", pos.get("entry_fee", 0.0)) - pos.get("margin_fees_paid", 0.0)
         released = min(released, self.locked_margin)
-        if released > 0:
-            self.release_margin(released)
+        # §2 (audit P0-3, 2026-10-15): 入场佣金+印花税必须真实离开现金账。
+        #
+        # 入场时 `reserve_for_entry(notional + entry_fee)` 把两者一起锁进
+        # locked_margin;此处若把 released 全额退回 Free_Cash,这笔 entry_fee
+        # 就**从未**从账上扣走 —— 逐笔记录的 net_pnl 扣了它(§3 口径正确),
+        # 而 ledger 没有,于是 final_capital / cash walk / NAV 闸门与逐笔
+        # P&L 出自两套成本口径,同一个 metrics 里的 Sharpe 与 CAGR 不自洽。
+        #
+        # 本金部分经 release_margin 退回(保留其容差 clamp 守卫),
+        # 费用部分直接从 locked 桶核销(不回补 free_cash ⇒ total_cash 减少)。
+        entry_fee = float(pos.get("entry_fee", 0.0))
+        principal_release = max(0.0, released - entry_fee)
+        if principal_release > 0:
+            self.release_margin(principal_release)
+        spent_entry_fee = min(entry_fee, self.locked_margin)
+        if spent_entry_fee > 0:
+            self.locked_margin -= spent_entry_fee
         gross_pct = (ep - price) / ep
         # Round 19 (2026-09-28, CLAUDE.md §0/§3 data integrity):
         # net 字段必须映射 cash walk (entry_fee + exit_fee 折算到 entry notional).
