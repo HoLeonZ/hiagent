@@ -21,6 +21,38 @@ Per-trade math closure invariant (per ``test_per_trade_math_closure.py``):
 """
 from __future__ import annotations
 
+# ---------------------------------------------------------------------------
+# 年化口径 —— §2 单源 (audit 2026-10-15)
+# ---------------------------------------------------------------------------
+#: A 股**交易日/年**。
+#:
+#: 日历日 ≠ 交易日。用 `calendar_days / 365` 年化日收益序列,与用
+#: `trading_bars / 243` 年化,会给出**不同**的 CAGR —— 而两边都"看起来合理"。
+#: 实测(同一窗口、同一 10% 总收益):
+#:
+#: | 窗口 | 交易日 / 日历日 | 交易日口径 CAGR | 日历日口径 CAGR |
+#: |---|---|---|---|
+#: | 2026-04-01→05-01 | 23 / 30   | 173.7% | 218.9% |
+#: | 2026-01-20→03-01 | 29 / 40   | 122.3% | 138.6% |
+#: | 2025 全年         | 261 / 364 |  9.28% | 10.03% |
+#:
+#: 本仓库此前有**三处**不同口径:chase_up / uptrend_pullback = 243(交易日)、
+#: short_reversal = 365(日历日)、dna_stats 默认 = 252。本常量是**引擎侧**的单源。
+#: `dna_stats` 的 252 属 §5 统计口径(改动会影响 DSR / Bonferroni 结论),
+#: 仍另行登记,不在此处一并改。
+TRADING_DAYS_PER_YEAR: int = 243
+
+
+def annualized_years(n_trading_days: int) -> float:
+    """交易日数 → 年数(下限一个交易日,避免除零)。
+
+    日收益序列的年化**必须**用交易日数,不得用日历日跨度。
+    """
+    return max(
+        n_trading_days / TRADING_DAYS_PER_YEAR, 1.0 / TRADING_DAYS_PER_YEAR
+    )
+
+
 # Canonical 14-column order — required for downstream analysis (trade_report,
 # render_html, sweep aggregation, deflated-sharpe stats). Engine modules MUST
 # use this exact order when writing trades.csv.

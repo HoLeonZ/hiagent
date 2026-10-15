@@ -46,6 +46,7 @@ from core.preset_contract import (  # §0/§2/§3 (audit 2026-10-15)
     resolve_position_fraction,
     resolve_position_sizing,
 )
+from core.trade_schema import annualized_years  # §2 年化单源 (audit 2026-10-15)
 
 INITIAL_CAPITAL = 1_000_000.0
 # §4 (audit P2-11, 2026-10-15): 融券年化费率改为 core 单源并再导出
@@ -53,7 +54,6 @@ INITIAL_CAPITAL = 1_000_000.0
 # 此前注释写"无 canonical 源,保留本地定义",而 presets.py 的
 # BORROW_ASSUMPTION.borrow_cost_rate 又独立写了同一个 0.086 —— 同值不同源。
 MARGIN_RATE = BORROW_RATE_ANNUAL
-DAYS_PER_YEAR = 365
 
 # Re-export for back-compat: tests/golden baselines reference this constant.
 PANEL_FORWARD_BUFFER_DAYS = PANEL_FORWARD_BUFFER_DAYS
@@ -72,16 +72,28 @@ def _load_panel(db_path: Path, start: str, end: str, universe: list[str]) -> pd.
     return load_panel_for_backtest(db_path, start, end, universe)
 
 
-def _metrics_from_holder(holder: dict, start: str, end: str, cfg: dict) -> dict:
-    """从 result_holder + 区间算出最终 metrics dict。"""
+def _metrics_from_holder(
+    holder: dict, start: str, end: str, cfg: dict, *, n_trading_days: int,
+) -> dict:
+    """从 result_holder + 区间算出最终 metrics dict。
+
+    §2 单源 (audit 2026-10-15): 年化用 **交易日数**,与 chase_up /
+    uptrend_pullback 同口径。此前这里用**日历日跨度** `/365`,而两引擎用
+    `交易日/243` —— 同一窗口同一收益会得到不同的 CAGR,且**两边都看起来合理**:
+
+    | 窗口 | 交易日/日历日 | 交易日口径 | 日历日口径 |
+    |---|---|---|---|
+    | 2026-04-01→05-01 | 23/30  | 173.7% | 218.9% |
+    | 2026-05 之前的 2025 全年 | 261/364 | 9.28% | 10.03% |
+
+    `n_trading_days` 是**必填**参数:让"用错口径"在调用点就失败,而不是悄悄
+    按日历日年化出一个与别的引擎不可比的数字。
+    """
     final_capital = float(holder["cash"])
     trades = holder["trades"]
     trades_count = len(trades)
 
-    years = max(
-        (pd.Timestamp(end) - pd.Timestamp(start)).days / DAYS_PER_YEAR,
-        1.0 / DAYS_PER_YEAR,
-    )
+    years = annualized_years(n_trading_days)
     total_yield = final_capital / INITIAL_CAPITAL - 1
     cagr = (final_capital / INITIAL_CAPITAL) ** (1 / years) - 1 if final_capital > 0 else -1.0
 
@@ -102,6 +114,9 @@ def _metrics_from_holder(holder: dict, start: str, end: str, cfg: dict) -> dict:
         "preset": cfg["_name"],
         "start": start,
         "end": end,
+        # §2 (audit 2026-10-15): 年化口径随产物发布 —— 拿到 cagr 时旁边就有它
+        # 的年数分母(交易日数),而不是让读者猜是交易日还是日历日。
+        "n_trading_days": int(n_trading_days),
         "trades": trades,
         "trades_count": trades_count,
         "win_rate": float(win_rate),
@@ -178,10 +193,11 @@ def _run_ensemble(
             all_trades.append(t2)
     all_trades.sort(key=lambda t: t.get("entry_time", ""))
 
-    years = max(
-        (pd.Timestamp(end) - pd.Timestamp(start)).days / DAYS_PER_YEAR,
-        1.0 / DAYS_PER_YEAR,
-    )
+    # §2 单源 (audit 2026-10-15): 年化必须用**交易日**,不能用日历日跨度 ——
+    # 后者与 chase_up / uptrend_pullback 的口径不同,同一窗口会给出不同的 CAGR
+    # (实测差 8%~26%,而两边都"看起来合理")。子策略共享同一窗口,故交易日数相同。
+    n_trading_days = max((r["n_trading_days"] for r in sub_results), default=0)
+    years = annualized_years(n_trading_days)
     cagr = (final_capital / INITIAL_CAPITAL) ** (1 / years) - 1
 
     wins = sum(1 for t in all_trades if t["net"] > 0)
@@ -198,6 +214,7 @@ def _run_ensemble(
         "preset": cfg["_name"],
         "start": start,
         "end": end,
+        "n_trading_days": int(n_trading_days),
         "trades": all_trades,
         "trades_count": trades_count,
         "win_rate": float(win_rate),
@@ -376,4 +393,8 @@ def run_backtest_v3(
         result_holder=holder,
     )
     cerebro.run()
-    return _metrics_from_holder(holder, start, end, cfg)
+    # §2 单源 (audit 2026-10-15): 年化用**窗口内的交易日数**(面板去重日期),
+    # 而不是日历日跨度 —— 与 chase_up / uptrend_pullback 同口径。
+    return _metrics_from_holder(
+        holder, start, end, cfg, n_trading_days=int(panel["date"].nunique())
+    )

@@ -25,11 +25,14 @@ from core.dual_price import (  # §2 单源 (audit P2-11, 2026-10-15)
     MIN_COMMISSION,
     STAMP_DUTY_RATE,
 )
+from core.trade_schema import TRADING_DAYS_PER_YEAR  # §2 单源 (audit 2026-10-15)
 
 logger = logging.getLogger(__name__)
 
 INITIAL_CAPITAL = 1_000_000.0
-TRADING_DAYS = 243
+#: 年化口径单源 —— 见 core.trade_schema.TRADING_DAYS_PER_YEAR(日历日 vs 交易日
+#: 会让同一窗口的 CAGR 差 8%~26%)。保留旧名以兼容调用方。
+TRADING_DAYS = TRADING_DAYS_PER_YEAR
 
 
 def compute_metrics(
