@@ -186,7 +186,7 @@ def main():
                 f"n_trials={len(all_sharpes)} | "
                 f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
                 f"expected_max={dsr['expected_max_sharpe']:.3f} | "
-                f"p_value={dsr['p_value']:.4f}"
+                f"p_value={dsr['dsr_p_value']:.4f}"
             )
 
 
