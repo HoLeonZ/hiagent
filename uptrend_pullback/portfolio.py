@@ -22,6 +22,7 @@ import logging
 import numpy as np
 import pandas as pd
 
+from core.corporate_actions import apply_corporate_action
 from core.dual_price import (
     COMMISSION_RATE,
     MIN_COMMISSION,
@@ -193,6 +194,10 @@ def _build_index(panel: pd.DataFrame) -> dict[str, dict]:
             "prev_close": prev_closes,
             # R8 (2026-09-21): Volume Participation Limit 需要每根 bar 的成交量
             "volume": sub["volume"].to_numpy(dtype=float) if "volume" in sub.columns else np.full(len(sub), np.nan),
+            # §3 (audit P2-10): 事件列(loader LEFT JOIN raw_adjustment_events)
+            "div_per_share": sub["div_per_share"].to_numpy(dtype=float) if "div_per_share" in sub.columns else np.zeros(len(sub)),
+            "bonus_ratio": sub["bonus_ratio"].to_numpy(dtype=float) if "bonus_ratio" in sub.columns else np.zeros(len(sub)),
+            "rights_ratio": sub["rights_ratio"].to_numpy(dtype=float) if "rights_ratio" in sub.columns else np.zeros(len(sub)),
         }
         if has_raw:
             entry["raw_open"] = sub["raw_open"].to_numpy(dtype=float) if "raw_open" in sub.columns else np.full(len(sub), np.nan)
@@ -322,6 +327,7 @@ def simulate_portfolio(
     positions: dict[str, dict] = {}
     trades: list[dict] = []
     equity_rows: list[dict] = []
+    dividends_cum = 0.0
 
     # Round 16 (2026-09-28, CLAUDE.md §2): Settlement Isolation — wrap state in
     # 3-pool Portfolio class. Mirror of chase_up/portfolio.py Round 16.
@@ -384,6 +390,27 @@ def simulate_portfolio(
             if j is None:
                 continue  # 停牌，无法交易
             pos["bars"] = t - pos["entry_t"]
+
+            # §3 (audit P2-10): 除权日先应用公司行为(分红入账 / 送股调量),
+            # 再做出场判定与盯市 —— 否则除权日的净值会出现物理上不存在的跳空。
+            _div = pi["div_per_share"][j] if "div_per_share" in pi else 0.0
+            _bonus = pi["bonus_ratio"][j] if "bonus_ratio" in pi else 0.0
+            _rights = pi["rights_ratio"][j] if "rights_ratio" in pi else 0.0
+            if (not np.isnan(_div) and _div > 0) or (not np.isnan(_bonus) and _bonus > 0) \
+                    or (not np.isnan(_rights) and _rights > 0):
+                _out = apply_corporate_action(
+                    size=int(pos["size"]),
+                    entry_price=float(pos["entry_price"]),
+                    dividend_per_share=0.0 if np.isnan(_div) else float(_div),
+                    bonus_ratio=0.0 if np.isnan(_bonus) else float(_bonus),
+                    rights_ratio=0.0 if np.isnan(_rights) else float(_rights),
+                )
+                for _w in _out.warnings:
+                    logger.warning("[corporate-action] %s @ %s: %s", code, day, _w)
+                pf.free_cash += _out.cash_delta
+                dividends_cum += _out.cash_delta
+                pos = {**pos, "size": _out.size, "entry_price": _out.entry_price}
+                positions[code] = pos
 
             o = pi["open"][j]
             h = pi["high"][j]
@@ -642,6 +669,9 @@ def simulate_portfolio(
             "free_cash": pf.free_cash,
             "locked_margin": pf.locked_margin,
             "settling_funds": pf.settling_funds,
+            # §3 (audit P2-10): 累计已入账现金分红(独立于逐笔 P&L 的现金流)。
+            # 缺此列会被 pd.DataFrame(columns=EQUITY_COLS) 静默填成 NaN。
+            "cum_dividends": dividends_cum,
         })
 
     trades_df = (

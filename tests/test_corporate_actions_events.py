@@ -23,7 +23,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from chase_up.portfolio import apply_corporate_actions, simulate_portfolio
+from chase_up.portfolio import simulate_portfolio
+from core.corporate_actions import apply_corporate_action
 from core.dual_price import portfolio_nav
 
 
@@ -104,21 +105,50 @@ def test_stock_bonus_adjusts_quantity_and_keeps_cost_basis() -> None:
     )
 
 
-def test_apply_corporate_actions_is_pure_and_reports_rights() -> None:
-    """纯函数语义 + 配股显式告警(不静默)。"""
-    class _PF:
-        free_cash = 0.0
+def test_apply_corporate_action_is_pure_and_reports_rights() -> None:
+    """core 纯函数语义:不改入参、返回 cash_delta、配股显式告警(不静默)。"""
+    out = apply_corporate_action(
+        size=1000, entry_price=10.0, dividend_per_share=0.5, bonus_ratio=0.0,
+        rights_ratio=0.0,
+    )
+    assert out.cash_delta == pytest.approx(500.0)
+    assert out.size == 1000, "无送股时数量不变"
+    assert out.entry_price == pytest.approx(10.0)
+    assert out.warnings == ()
 
-    pf = _PF()
-    pos = {"entry_price": 10.0, "size": 1000, "entry_fee": 0.0}
-    out = apply_corporate_actions(pf, pos, 0.5, 0.0, 0.0, "X.SH", "2026-01-01")
-    assert pf.free_cash == pytest.approx(500.0)
-    assert pos["size"] == 1000, "入参 pos 不得被原地修改(§0 append-only)"
-    assert out["size"] == 1000
+    # 送股:数量 ×2、成本价 ÷2、总成本基不变
+    out2 = apply_corporate_action(size=1000, entry_price=10.0, bonus_ratio=1.0)
+    assert out2.size == 2000
+    assert out2.entry_price == pytest.approx(5.0)
+    assert out2.entry_price * out2.size == pytest.approx(10_000.0)
+    assert out2.cash_delta == 0.0, "送股不产生现金流"
 
-    pf2 = _PF()
-    out2 = apply_corporate_actions(pf2, {"entry_price": 10.0, "size": 1000},
-                                   0.0, 1.0, 0.0, "X.SH", "2026-01-01")
-    assert out2["size"] == 2000
-    assert out2["entry_price"] == pytest.approx(5.0)
-    assert out2["entry_price"] * out2["size"] == pytest.approx(10_000.0)
+    # 配股:不建模但必须显式告警
+    out3 = apply_corporate_action(size=1000, entry_price=10.0, rights_ratio=0.4)
+    assert out3.warnings and "配股" in out3.warnings[0], (
+        "配股未建模时必须产出告警 —— 不能静默吞掉"
+    )
+
+    # 空头方向由调用方取负 —— 共享函数不替调用方决定符号
+    assert apply_corporate_action(
+        size=1000, entry_price=10.0, dividend_per_share=0.5,
+    ).cash_delta == pytest.approx(500.0), "core 返回多头口径的正值"
+
+
+def test_buying_on_the_ex_date_earns_no_dividend() -> None:
+    """§3 权益归属:除权日**当天买入不享有**本次分红。
+
+    除权日的定义就是"该日起股票不含本次分红交易"。持仓端因此按"bar 起始时
+    已持有"计息 —— 入场当日不应用事件。这条语义很容易写反(写成"只要持有期
+    与除权日有交集就发钱"),而那会让每笔在除权日进场的交易凭空多拿一笔现金。
+
+    独立核算(chase_up chase_v1_atr_tp4_sl1, 2025-09-19..2026-09-19):
+    应计 1 笔 = ¥4,340.00,与实测 Σdiv 一致;且"入场日=除权日"事件为 0 笔。
+    """
+    # 入场 bar 1;除权日 = bar 1(入场当日)
+    panel = _panel(ex_bar=1, kind="div")
+    trades, eq = _run(panel)
+    div_total = float(eq["cum_dividends"].iloc[-1])
+    assert div_total == pytest.approx(0.0), (
+        f"除权日当天买入不应获得分红,实际入账 {div_total:.2f}"
+    )
