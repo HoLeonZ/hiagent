@@ -107,7 +107,7 @@ def _write_per_preset_metrics(out_dir: Path, metrics: dict, preset: str) -> None
     """
     safe_metrics = dict(metrics)
     out = out_dir / f"{preset}_metrics.json"
-    out.write_text(json.dumps(safe_metrics, indent=2, default=str))
+    out.write_text(json.dumps(safe_metrics, indent=2, default=str, allow_nan=False))
 
 
 def _write_equity_curve(
@@ -173,7 +173,7 @@ def _run_backtest(args) -> int:
     # metrics.json below is preserved for back-compat (last run only).
     preset = getattr(args, "preset", "v1")
     _write_per_preset_metrics(out_dir, result.metrics, preset=preset)
-    (out_dir / "metrics.json").write_text(json.dumps(result.metrics, indent=2))
+    (out_dir / "metrics.json").write_text(json.dumps(result.metrics, indent=2, allow_nan=False))
 
     # 统一交易 HTML 报告(每个 preset 回测结束自动生成; results/ 已 gitignored §7)
     # cycle 三维分数为信号日标量 → trade_extra_cols 展示(引擎不存时序, 无副图)

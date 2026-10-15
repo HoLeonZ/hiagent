@@ -47,7 +47,7 @@ def _write_per_preset_metrics(
     safe = dict(metrics)
     out = out_dir / f"{preset}_metrics.json"
     out.write_text(
-        json.dumps(safe, ensure_ascii=False, indent=2, default=str),
+        json.dumps(safe, ensure_ascii=False, indent=2, default=str, allow_nan=False),
         encoding="utf-8",
     )
     return out
@@ -175,7 +175,7 @@ def main() -> None:
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(
-        json.dumps(metrics, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
+        json.dumps(metrics, ensure_ascii=False, indent=2, default=str, allow_nan=False), encoding="utf-8"
     )
 
     # §2/§3 Tick 58 GREEN: per-preset metrics audit trail.

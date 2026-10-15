@@ -87,7 +87,9 @@ def compute_metrics(
     wins = net[net > 0]
     losses = net[net < 0]
     profit_factor = (
-        float(wins.sum() / abs(losses.sum())) if losses.size and losses.sum() != 0 else float("inf")
+        float(wins.sum() / abs(losses.sum()))
+        if losses.size and losses.sum() != 0
+        else None  # §0/§7: 无亏损笔数时无定义 → None(不是 inf,那不是合法 JSON)
     )
 
     return {

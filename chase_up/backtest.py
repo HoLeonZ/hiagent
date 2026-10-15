@@ -67,14 +67,22 @@ def compute_metrics(
             "max_dd": max_dd, "avg_hold_days": 0.0, "max_hold_days": 0,
             "overrun_count": 0,
             "tp_count": 0, "sl_count": 0, "time_count": 0, "eod_count": 0,
-            "avg_net_return": 0.0, "profit_factor": float("inf"), "exposure": exposure,
+            "avg_net_return": 0.0, "profit_factor": None, "exposure": exposure,
         }
 
     net = trades_df["net_pnl"].to_numpy(dtype=float)
     wins = net[net > 0]
     losses = net[net < 0]
+    # §0/§7 (audit 2026-10-15): 无亏损笔数时 `profit_factor` **无定义**(分母 0),
+    # 返回 None 而不是 `float("inf")` —— Python 的 `json.dumps(inf)` 会写出
+    # `Infinity`,那不是 RFC 8259 的合法值:除 Python 自己的宽松 `json.loads`
+    # (正因它能读回来,这个缺陷一直没被发现)之外,JS / Go / Rust / jq 一律拒绝。
+    # 于是 `results/backtest.json` 在"全胜窗口"下是**非法 JSON**。None 既合法,
+    # 也与本仓库既有的"算不出就 None"口径一致(max_dd=None / cagr=None / beta=None)。
     profit_factor = (
-        float(wins.sum() / abs(losses.sum())) if losses.size and losses.sum() != 0 else float("inf")
+        float(wins.sum() / abs(losses.sum()))
+        if losses.size and losses.sum() != 0
+        else None
     )
 
     return {

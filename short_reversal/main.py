@@ -60,7 +60,7 @@ def _write_per_preset_metrics(
     safe = _strip_trades_for_json(metrics)
     out = out_dir / f"{preset}_metrics.json"
     out.write_text(
-        json.dumps(safe, indent=2, default=str), encoding="utf-8"
+        json.dumps(safe, indent=2, default=str, allow_nan=False), encoding="utf-8"
     )
     return out
 
@@ -139,7 +139,7 @@ def main() -> int:
     # per-trade list. The legacy `backtest.json` is the single-overwrite
     # last-run snapshot — keep it for back-compat.
     out_path.write_text(
-        json.dumps(_strip_trades_for_json(m), indent=2, default=str),
+        json.dumps(_strip_trades_for_json(m), indent=2, default=str, allow_nan=False),
         encoding="utf-8",
     )
 
