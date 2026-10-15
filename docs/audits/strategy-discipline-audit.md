@@ -38,7 +38,7 @@
 1. `chase_up` 权益/NAV 双计持仓成本基础与市值(`portfolio.py:619-623`、`:463`)
 2. `chase_up` Phase-2 静默在复权域撮合(`backtrader_engine.py:187`)
 3. 全库 **ATR 滑点恒为 0**(四引擎,0 个 preset 启用)
-4. `short_reversal` 窗口边界从未下发策略,**窗口前开仓**(`_panel_loader.py:90`)
+4. `short_reversal` 窗口边界从未下发策略(`_panel_loader.py:90`)—— ⚠️ **本条结论已更正,见 §0.4**:边界从未被强制,但**实际不存在窗口外成交**,"窗口前开仓"这一后果**已被实证否定**
 5. `short_reversal` 入场费 lock 后**全额退回**(`replay_strategy_v3.py:820`)
 6. `short_reversal` 跳空穿越止损仍按 `sl_p` 成交(`:769-770`)
 7. `short_reversal` 原始 close 与复权 MA60 混域比较(`:913`/`:927`)
@@ -78,6 +78,36 @@ origin/main = b597d0c   Merge pull request #10 from HoLeonZ/fix/short-reversal-s
 **因此**:本报告以指令要求的 `94ca15d` 为准;上述 4 项在**当前 `origin/main` 上已不成立**。其余发现(尤其 `chase_up` 权益双计、ATR 滑点恒 0、公司行为缺失、窗口边界、`cycle_price_action` 出场双记等)**在 `b597d0c` 上未见对应修复**。
 
 > 对 `b597d0c` 的完整复审计**未执行** —— 若需要,应把 `b597d0c`(或届时更新的 tip)固定为新快照后重跑。
+
+---
+
+## 0.4 ⚠️ 更正记录:一条 BLOCKER 的后果被后续修复证伪
+
+本报告发布后,在按 §8 顺序修复的过程中,以下结论被**实证推翻**,现予更正:
+
+**原结论(BLOCKER 第 4 族 / §3 V7 / §2.3 §1 项)**
+> `short_reversal` 窗口边界从未下发策略,**导致窗口前开仓**。
+
+**复核结果(2026-10-15)**
+
+- **"窗口前开仓"为假。** 把 `lookahead_trade_trace.TraceStrategy` 从"生产入场逻辑的分叉副本"改为委托生产实现后,三个窗口不变量用例**全部通过**:
+  - `test_pre_window_entry_count_is_zero` ✓
+  - `test_pre_window_pnl_contribution_is_zero` ✓
+  - `test_no_post_window_entries` ✓
+  即生产路径**确实不会**在窗口外入场。
+- **原结论为何看起来"证实"了。** 该 harness 是 Round 16 **之前的化石副本**:自建 size 公式、`self.cash -= entry_fee` 单池模型、**不调用 `reserve_for_entry`**、建仓字典只写 3 个键。于是 `locked_margin` 恒为 0,每笔建仓后的下一根 bar 就被融券日费的 fail-fast 打死:
+  `ValueError: margin fee 234.87 > locked_margin 0.00`。
+  这三个用例因此**常年是 ERROR 而非断言失败 —— 等于零有效覆盖**。更严重的是,`feed_bt.py` 的注释恰恰引用这个**跑不起来的测试**("LAHEAD-001 实证 pre_window_entry_count == 0")作为"边界安全"的依据。
+
+**仍然成立的部分(这才是真正的缺陷)**
+
+1. 策略里**没有任何**窗口参数,`feed_bt.py` 注释所称的 "entry 时点检查" 并不存在;边界安全来自**指标暖机的 NaN gate**,是偶然而非强制 —— 改指标周期 / `min_bars` / buffer 常量即可静默失守,且**当时没有任何守卫能发现**。
+2. 引用它的那条注释本身是**不实声明**(引用了一个从未有效运行的测试)。
+3. 验证层的问题属于 §6 而非 §1:守卫常年 ERROR = 零覆盖。
+
+**处置**:已在 `fix/discipline-remediation` 分支上把 harness 改为委托生产实现(恢复有效覆盖)、在策略中加入显式 `_in_window` 边界门并由生产入口下发、并加用例**钉住生产调用点**以防"修复做成可选开关"。窗口门对既定窗口内交易是 **no-op(零漂移,成交列表逐条一致)**。
+
+**教训(已写入本仓库流程)**:这类"分支副本式 harness"会让不变量长期假绿/假红。凡 override 生产逻辑的测试替身,必须委托生产实现,不能复制。
 
 ---
 
@@ -205,6 +235,8 @@ self.release_margin(gross_in_cost)                      # 入场本金 → free_
 
 ### V7 · `short_reversal` 窗口边界从未下发 —— CONFIRMED(结构性)
 
+> ⚠️ **2026-10-15 更正**:本条原本的后果表述("窗口前开仓")**已被实证否定**,详见 §0.4。
+
 - `short_reversal/_panel_loader.py:90-95` 面板向两端扩 buffer(`PANEL_FORWARD_BUFFER_DAYS` / `PANEL_POST_BUFFER_DAYS`)。
 - `short_reversal/feed_bt.py:100-104` 明确写下:
 
@@ -215,6 +247,8 @@ self.release_margin(gross_in_cost)                      # 入场本金 → free_
 
 即 **feed 不限制在 `[start, end]` 内**,边界完全依赖策略内部检查。同族:窗口后 buffer 的 bar 亦可成交,而单测只断言窗口**前**的计数。
 **注意**:本条我确认的是**结构性事实**(无 `fromdate/todate`、边界无强制约束、测试单侧覆盖)。"窗口前/后实际发生了多少笔成交"属需数据库复现的量化结论,本报告不主张其数值。
+
+**后续复核(2026-10-15,即 §0.4)**:策略里**根本没有** `start_date`/`end_date` 参数 —— 上面注释所说的 "entry 时点检查" 并不存在。但把 harness 修好后实测:**窗口前入场数为 0**,该不变量成立。所以缺陷是"边界未被强制",而非"边界被违反"。同时该注释引用的 `LAHEAD-001` 用例当时因 harness 分叉而**常年 ERROR**,即它引用的正是自己跑不起来。
 
 ### V8 · `cycle_price_action` 出场助手越权提交(`time` 分支)—— CONFIRMED
 
@@ -352,7 +386,7 @@ for path in paths:
 
 违反条款：
 
-- **§1**：`short_reversal/_panel_loader.py:90`（面板向前扩 180 天、窗口下界从未下发策略，导致窗口前开仓；指标按 (start,end) 年化）；`short_reversal/_panel_loader.py:93` + `short_reversal/feed_bt.py:101`（窗口后 60 天 bar 可成交，单测只断言窗口前计数）。
+- **§1**：`short_reversal/_panel_loader.py:90`（面板向前扩 180 天、窗口下界从未下发策略；指标按 (start,end) 年化）—— ⚠️ 原报告附带的"导致窗口前开仓"**已证伪,见 §0.4**:边界确实未被强制,但实测无窗口外成交;`short_reversal/_panel_loader.py:93` + `short_reversal/feed_bt.py:101`（窗口后 60 天 bar 可成交,单测只断言窗口前计数 —— 该单测当时因 harness 分叉常年 ERROR）。
 - **§2**：`short_reversal/replay_strategy_v3.py:820`（入场佣金+印花税 lock 后又被全额 release 回 Free_Cash，现金账从不扣除）；`:388`（`settle()` 只在为正时冲刷，亏损永不回到 Free_Cash）；`:636`、`:582`、`:465`（`max_positions` 只是定仓除数不是容量上限；并发信号按代码字母序成交）；`engine.py:61`（`final_capital` 取 `total_cash`，期末持仓不计浮盈）；`engine.py:37-38`、`replay_strategy_v3.py:58-60`（费率常量重复，且注释谎称已从 core 导入）。
 - **§3**：`short_reversal/replay_strategy_v3.py:927`、`:913`、`indicators_bt.py:102`、`:117`（原始 close 与复权 MA60 混域比较）；`scan_signals_fast.py:43`（线上扫描器全部指标用原始价，文档却声称与策略等价）；`replay_strategy_v3.py:546`（无公司行为事件源，做空在除息日把缺口记为利润）。
 - **§4**：`short_reversal/replay_strategy_v3.py:769-770`（跳空穿越止损时按 `sl_p` 成交）；`:592`、`:23`（做空的回补是买入，却无 `is_limit_up` 守卫）；`:646`（volume 为 0/NaN 时量比上限整体跳过）；`engine.py:266`、`replay_strategy_v3.py:175`（ATR 滑点恒为 0）；`presets.py:14-17`（`borrow_cost_model` 声明与引擎实际计费矛盾，远端 main 已修）。
@@ -382,7 +416,7 @@ for path in paths:
 | BLOCKER ×5 | §2 | `chase_up/portfolio.py:619-623`；同式 `chase_up/portfolio.py:463`（s1/s2/s3/s4/s6 五个 cell 各命中一次） | 权益/NAV 同时加持仓成本基础（`locked_margin`）与持仓市值（`holdings_val`），仓位被计两次；`total_cash` 本身已含成本基础 | NAV = `free_cash + settling_funds + 持仓市值`；或改用 `total_cash + 未实现盈亏`（与 `uptrend_pullback/portfolio.py:592` 一致）。加回归断言：开仓 bar 权益不变（±费用） |
 | BLOCKER ×1 | §3 / §0 | `chase_up/backtrader_engine.py:187` | 传 `panel_ind` 时把 `raw_*` 列裁掉，Phase-2 在复权域撮合，却拿原始域 TP/SL 去比；同一 preset 同一窗口下 CLI 与 walk-forward 两条入口结论互相矛盾，且无任何运行期检测 | `panel = panel_ind`（或补齐 raw_* 列）；`_build_bt_feed` 在声明 `raw_close` 而缺列时 fail-fast |
 | BLOCKER ×1 | §4 | `uptrend_pullback/backtest.py:177-178`；`uptrend_pullback/backtrader_engine.py:290-291` | ATR 滑点在 0/3 个 preset 中启用，成交价恒等于 bar 开盘价，§4 的 ATR×参与率模型形同不存在 | preset 显式声明非零 `atr_slip_scale`，或引擎在两者都缺失时 fail-fast |
-| BLOCKER ×1 | §1 | `short_reversal/_panel_loader.py:90` | 面板起点向前扩 180 天，但窗口下界从未下发策略，窗口前开仓、指标仍按 (start,end) 年化 | 把 (start,end) 传进策略并拒绝窗口外 entry，或按实际成交窗口计算指标 |
+| BLOCKER ×1 | §1 | `short_reversal/_panel_loader.py:90` | 面板起点向前扩 180 天，但窗口下界从未下发策略，边界仅靠指标暖机 NaN gate 偶然保证、无任何强制；指标仍按 (start,end) 年化。⚠️ **原表述"窗口前开仓"已证伪(§0.4)**：实测无窗口外成交 | 把 (start,end) 传进策略并拒绝窗口外 entry，或按实际成交窗口计算指标 |
 | BLOCKER ×3 | §2 | `short_reversal/replay_strategy_v3.py:820`（s2/s3/s6 三个 cell 各命中一次） | `entry_cost = notional + entry_fee` 被 lock 后，`release_margin` 把含费用的全额 release 回 Free_Cash，入场费从不从现金账扣除，`final_capital` 系统性偏高 | release 只放 notional，或入场即扣 `entry_fee`；加断言 `final_capital == INITIAL + Σ net_pnl − Σ margin_fee` |
 | BLOCKER ×2 | §4 | `short_reversal/replay_strategy_v3.py:769-770`；同族 `:769` | 做空的跳空穿越止损按 `sl_p` 成交（s3、s4 两个 cell 各命中一次），把跳空损失截断在止损幅度内 | 跳空分支改用 `open_p` 成交 |
 | BLOCKER ×2 | §3 | `short_reversal/replay_strategy_v3.py:927`、`:913`；`indicators_bt.py:102`、`:117` | 原始 `close` 与复权 `MA60` 在同一谓词里比较（A 条件与 below_ratio 双双中招） | 两侧同域：指标与比较操作数统一使用 `adj_close` |
@@ -560,3 +594,20 @@ for path in paths:
 17. §7：先修 `tests/_regen_chase_baselines.py:109`（否则清理后的数字会被再次写回），再清 `chase_up/presets.py`、`short_reversal/presets.py`、`tests/golden/*.json` 内嵌的业绩字段与选优叙述。
 18. cash_walk 三池（四个 `main.py`）、`.gitignore` 增加文件名级全局模式、`chase_up/portfolio.py:172` 常量单源化、`short_reversal/universe.py:19`/`:73` 的黑名单与宇宙上界、`uptrend_pullback/backtrader_engine.py:399` 的 schema 一致性。
 19. 6 个未覆盖面（第 6 节）立项确认，特别是 `tools/update_db_direct.py` 的时区处理与 `data/hiagent.db` 缺失导致的 raw/adj 前提不可核问题——后者是多个 §3 结论的共同前提，建议优先于其它 P4 项。
+---
+
+## 附:修复进展(分支 `fix/discipline-remediation`,基于 `b597d0c`)
+
+本审计的 P0/P1 修复正在独立分支推进,**未合入、未 push**。提交与依据:
+
+| 提交 | 内容 | 验证 |
+|---|---|---|
+| `d43aee7` | P0:权益/NAV 双计、raw 域建仓被复权价盯市、cycle 出场双记本金、short_reversal 入场费从不扣账、cash_walk 三池假账 | 实测单 bar 权益收益 107.70% → 9.99%;一轮往返 `total_cash` 1330 → 1030;全量测试失败集合与基线逐条一致(零回归) |
+| `38c57aa` | `short_reversal` 显式窗口门 + 修复分叉 harness(即 §0.4) | 三个窗口不变量首次真正通过;窗口门对成交列表为 no-op |
+| `35cb829` | `cycle_price_action` 宇宙:幸存者偏差(中途退市被剔除)+ 流动性均值无日期上界(未来函数) | `test_cycle_survivorship_bias.py` 4/4 通过(原 2 红) |
+| `f561198` | `cycle_price_action` 遇停牌**中止整个回测**(§1 规定缺 bar 语义);区分停牌与数据缺口,保留 fail-fast | 原本无法完成的回测可越过原崩溃点继续 |
+| `8a4f806` | §4/§6 滑点策略单源(`core.effective_slippage`);原 `atr_slippage` 被写出却**无任何引擎调用** | 192 点网格穷举等价(零行为变更);新增守卫经反证测试非空转 |
+
+**已知的漂移(§6)**:P0 使 `short_reversal` 成交列表 50 → 51 笔(引擎过去从不支付入场佣金,现在真实扣账)。这是正确性驱动的漂移;该引擎**没有任何 golden 基线**可供重生成(其唯一相关复现性用例长期空转),故此前无人报警 —— 补基线仍是未结事项。
+
+**仍未处理(按 §8 顺序)**:滑点的 preset 显式声明 + 缺声明 fail-fast(P1-B2);涨跌停双向守卫(P1-8);公司行为事件源;§5 的 DSR `n_trials` 口径与基准归因;§7 源码内嵌业绩数字清理。
