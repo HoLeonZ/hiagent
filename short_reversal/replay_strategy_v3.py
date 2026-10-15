@@ -22,6 +22,10 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 from core.dual_price import (
+    BORROW_RATE_ANNUAL,
+    COMMISSION_RATE,
+    MIN_COMMISSION,
+    STAMP_DUTY_RATE,
     LAYOUT_SHORT_REVERSAL,
     effective_slippage,
     extract_execution_bar,
@@ -78,13 +82,11 @@ def _board_limit_threshold(code: str, bar_date, default: float) -> float:
                 return _LIMIT_THRESHOLD_20PCT  # 创业板 2020-08-24 起 ±20%
     return default
 
-# Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical cost model constants
-# (single-source-of-truth in core.dual_price.py). Declared at module level so
-# the AST detector in tests/test_cost_model_canonical_conformance_4engine.py
-# can verify canonical compliance. Used by Phase3V3Strategy.params below.
-COMMISSION_RATE: float = 0.00025
-STAMP_DUTY_RATE: float = 0.0005
-MIN_COMMISSION: float = 5.0
+# §2 (audit P2-11, 2026-10-15): 规范费率从 core.dual_price **导入**(并再导出 ——
+# 本模块的其他调用方与 golden 基线引用这些名字)。
+# 此前这里是重复定义,而注释却写着 "single-source-of-truth in core.dual_price.py"
+# —— 声称已单源却不 import,是"注释撒谎"的典型;旧 AST 守卫之所以放过它,是因为
+# 那个守卫只比对**数值**是否等于 canonical,允许重复存在。
 
 
 def _canonical_trade_record(
@@ -196,12 +198,12 @@ class Phase3V3Strategy(bt.Strategy):
         # D 条件 MACD 阈值 (默认严格: DIF<0 & DEA<0 & |bar|<|prev_bar|)
         # 'strict' (V3 默认) | 'd_only' (D|dif|<0 only) | 'converge_strict' (|bar|<|prev_bar|*0.5)
         d_mode="strict",
-        margin_rate=0.086,
+        margin_rate=BORROW_RATE_ANNUAL,
         # Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical rates (was 0.0006+0.001
         # = 2.4x and 2x off canonical). Canonical values match engine.py
         # COMMISSION_RATE / STAMP_DUTY_RATE imported from core.dual_price single-source.
-        commission_rate=0.00025,
-        stamp_duty_rate=0.0005,
+        commission_rate=COMMISSION_RATE,
+        stamp_duty_rate=STAMP_DUTY_RATE,
         # Round 29a (2026-09-28, CLAUDE.md §0/§3): MIN_COMMISSION ¥5 floor
         # wired into strategy params so _fill_pending_entries / _close can
         # apply `max(min_commission, notional × commission_rate)`. chase_up +
@@ -209,7 +211,7 @@ class Phase3V3Strategy(bt.Strategy):
         # _buy_cost / _sell_proceeds helpers; short_reversal was the only
         # engine with the constant declared but never enforced (undercharges
         # small-notional trades by ¥2.50-5.00).
-        min_commission=5.0,
+        min_commission=MIN_COMMISSION,
         initial_capital=1_000_000.0,
         lot_size=100,
         # Round 14 (2026-09-28, CLAUDE.md §2): 现金闸门阈值。

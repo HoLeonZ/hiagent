@@ -65,11 +65,13 @@ class Portfolio:
     / no leverage).
     """
 
-    COMMISSION_RATE = 0.00025
-    MIN_COMMISSION = 5.0
-    # Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical 万5 post-Aug2023 rate
-    # (was 0.001 = 万10 pre-Aug2023 historical). Sell-side only.
-    STAMP_TAX_SELL = 0.0005
+    # §2 (audit P2-11, 2026-10-15): 类属性改为**引用**核心单源,不再写死字面量
+    # (此前虽有 import,却在类体里又用字面量覆盖了一遍 —— 导入的名字被遮蔽)。
+    COMMISSION_RATE = COMMISSION_RATE
+    MIN_COMMISSION = MIN_COMMISSION
+    # canonical 万5 post-Aug2023 rate(旧值 0.001 = 万10 pre-Aug2023 历史值)。
+    # Sell-side only.
+    STAMP_TAX_SELL = STAMP_DUTY_RATE
     # Project policy: every entry is all-in (CLAUDE.md §2, revised 2026-09-21).
     # Held at 1.0 explicitly so the constant survives for callers/tests.
     MAX_POSITION_PCT = 1.0

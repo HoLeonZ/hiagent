@@ -39,6 +39,9 @@ import pandas as pd
 
 from chase_up.signals import ENTRY_COLS
 from core.dual_price import (
+    COMMISSION_RATE,
+    MIN_COMMISSION,
+    STAMP_DUTY_RATE,
     effective_slippage,
     is_limit_down,
     is_limit_up,
@@ -47,6 +50,7 @@ from core.dual_price import (
     volume_cap_fill,
 )
 from core.trade_schema import EQUITY_COLS
+
 
 logger = logging.getLogger(__name__)
 
@@ -255,9 +259,9 @@ def simulate_portfolio(
     start_date: str,
     end_date: str,
     initial_capital: float = 1_000_000.0,
-    commission_rate: float = 0.00025,
-    stamp_duty_rate: float = 0.0005,
-    min_commission: float = 5.0,
+    commission_rate: float = COMMISSION_RATE,
+    stamp_duty_rate: float = STAMP_DUTY_RATE,
+    min_commission: float = MIN_COMMISSION,
     slippage: float = 0.0,
     # R5 (2026-09-21): ATR-aware slippage (CLAUDE.md §4)。
     # 若 atr_slip_scale > 0, slippage 改为 signal-day atr_pct × participation × scale。

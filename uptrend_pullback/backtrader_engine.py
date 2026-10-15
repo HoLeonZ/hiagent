@@ -37,6 +37,12 @@ from uptrend_pullback.presets import MAX_HOLD_LIMIT, get_preset
 from uptrend_pullback.replay_broker import AStockBroker
 from uptrend_pullback.replay_strategy import UpullbackTradeReplay
 
+from core.dual_price import (  # §2 单源 (audit P2-11, 2026-10-15)
+    COMMISSION_RATE,
+    MIN_COMMISSION,
+    STAMP_DUTY_RATE,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -284,9 +290,9 @@ def run_backtrader_backtest(
         # (commission/stamp/floor) + ATR-aware slippage from preset。
         # Defaults preserve pre-R15 behavior (legacy presets 无 key 时仍得
         # canonical 0.00025+0.0005+5.0 与 0.0 slippage)。
-        commission_rate=p.get("commission_rate", 0.00025),
-        stamp_duty_rate=p.get("stamp_duty_rate", 0.0005),
-        min_commission=p.get("min_commission", 5.0),
+        commission_rate=p.get("commission_rate", COMMISSION_RATE),
+        stamp_duty_rate=p.get("stamp_duty_rate", STAMP_DUTY_RATE),
+        min_commission=p.get("min_commission", MIN_COMMISSION),
         slippage=p.get("slippage", 0.0),
         atr_slip_scale=p.get("atr_slip_scale", 0.0),
         # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System execution source。
@@ -363,8 +369,8 @@ def run_backtrader_backtest(
         # buy_commission = max(notional × commission_rate, min_commission)
         notional_in = entry_price * size
         buy_commission = max(
-            notional_in * p.get("commission_rate", 0.00025),
-            p.get("min_commission", 5.0),
+            notional_in * p.get("commission_rate", COMMISSION_RATE),
+            p.get("min_commission", MIN_COMMISSION),
         )
         invested = notional_in + buy_commission
         net_return = net_pnl_bt / invested if invested > 0 else 0.0

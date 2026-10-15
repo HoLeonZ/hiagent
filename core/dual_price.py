@@ -343,6 +343,12 @@ COMMISSION_RATE: float = 0.00025  # 万 2.5 (commission on both buy + sell)
 STAMP_DUTY_RATE: float = 0.0005   # 万 5 (sell-side only, post-Aug2023)
 MIN_COMMISSION: float = 5.0       # ¥5 floor per fill
 STAMP_DUTY_SIDE: str = "sell"     # stamp duty applies only on sell side
+# §4 (audit P2-11, 2026-10-15): 融券年化费率。此前只在
+# short_reversal/engine.py 本地定义为 MARGIN_RATE,而 presets.py 的
+# BORROW_ASSUMPTION.borrow_cost_rate 又独立写了同一个数值 —— 两处同值
+# 不同源,正是会静默漂移的形态。§4 要求做空策略显式声明借券模型,
+# 该数值必须是同一个源。
+BORROW_RATE_ANNUAL: float = 0.086   # 年化 8.6%(做空融券费)
 
 
 def calc_commission(
@@ -439,6 +445,7 @@ __all__ = [
     "STAMP_DUTY_RATE",
     "MIN_COMMISSION",
     "STAMP_DUTY_SIDE",
+    "BORROW_RATE_ANNUAL",
     "calc_commission",
     "calc_stamp_duty",
     # audit P0-1 (2026-10-15): canonical NAV single-source

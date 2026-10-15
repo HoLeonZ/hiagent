@@ -32,11 +32,18 @@ from short_reversal.universe import load_universe_asof
 
 # §2 single-source (2026-10-14 审计修正): 规范费率从 core.dual_price 导入。
 # 此前为模块级重复定义, 且注释谎称"已从 core.dual_price 导入" (实际无 import)。
-from core.dual_price import COMMISSION_RATE, STAMP_DUTY_RATE
+from core.dual_price import (
+    BORROW_RATE_ANNUAL,
+    COMMISSION_RATE,
+    STAMP_DUTY_RATE,
+)
 
 INITIAL_CAPITAL = 1_000_000.0
-# MARGIN_RATE (融券年化费率) 无 canonical 源, 保留本地定义。
-MARGIN_RATE = 0.086
+# §4 (audit P2-11, 2026-10-15): 融券年化费率改为 core 单源并再导出
+# (scan_signals / lookahead_trade_trace 从本模块引用 MARGIN_RATE)。
+# 此前注释写"无 canonical 源,保留本地定义",而 presets.py 的
+# BORROW_ASSUMPTION.borrow_cost_rate 又独立写了同一个 0.086 —— 同值不同源。
+MARGIN_RATE = BORROW_RATE_ANNUAL
 DAYS_PER_YEAR = 365
 
 # Re-export for back-compat: tests/golden baselines reference this constant.

@@ -19,6 +19,12 @@ from uptrend_pullback.regime import compute_regime
 from uptrend_pullback.signals import compute_indicators, select_entries
 from uptrend_pullback.universe import load_universe
 
+from core.dual_price import (  # §2 单源 (audit P2-11, 2026-10-15)
+    COMMISSION_RATE,
+    MIN_COMMISSION,
+    STAMP_DUTY_RATE,
+)
+
 logger = logging.getLogger(__name__)
 
 INITIAL_CAPITAL = 1_000_000.0
@@ -171,9 +177,9 @@ def run_backtest(
         # Round 15 (2026-09-28) 在 portfolio.py:217-221 引入 ATR-aware slippage 与成本参数。
         # 当前 0/2 preset 声明这些 key, 函数默认 0.00025/0.0005/5.0/0.0/0.0 与 backtrader_engine.py p.get 默认完全一致 (R5/R6 同模式)。
         # 显式 plumb 防止未来 preset override 时两引擎 drift。
-        commission_rate=p.get("commission_rate", 0.00025),
-        stamp_duty_rate=p.get("stamp_duty_rate", 0.0005),
-        min_commission=p.get("min_commission", 5.0),
+        commission_rate=p.get("commission_rate", COMMISSION_RATE),
+        stamp_duty_rate=p.get("stamp_duty_rate", STAMP_DUTY_RATE),
+        min_commission=p.get("min_commission", MIN_COMMISSION),
         slippage=p.get("slippage", 0.0),
         atr_slip_scale=p.get("atr_slip_scale", 0.0),
     )

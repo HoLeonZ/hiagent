@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Literal
+from core.dual_price import BORROW_RATE_ANNUAL  # §4 单源 (audit P2-11, 2026-10-15)
 
 UniverseMode = Literal["mainboard_only", "exclude_hs300_zhongtou_finance"]
 
@@ -16,7 +17,7 @@ UniverseMode = Literal["mainboard_only", "exclude_hs300_zhongtou_finance"]
 BORROW_ASSUMPTION: dict = {
     "availability": "assumed_unlimited",
     "borrow_cost_model": "annualized_margin_rate",  # engine charges 8.6%/yr
-    "borrow_cost_rate": 0.086,
+    "borrow_cost_rate": BORROW_RATE_ANNUAL,  # §4: core 单源 (audit P2-11)
 }
 
 PRESETS: dict[str, dict] = {
