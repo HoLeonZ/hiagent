@@ -22,6 +22,9 @@ from cycle_price_action.walkforward import walkforward_windows
 from dna_stats.deflated import deflated_sharpe_ratio, bonferroni_correct
 
 
+# §5 (audit P3): 窗口真实交易日数(原硬编码 252 为全年)
+WINDOW_TRADING_DAYS = 126
+
 def _sweep_one_threshold(
     threshold: float,
     windows: list,
@@ -105,8 +108,11 @@ def main(argv: list[str] | None = None) -> int:
         observed = max(all_sharpes)
         dsr = deflated_sharpe_ratio(
             observed_sharpe=observed,
-            n_trials=len(all_sharpes),
-            n_returns=252,
+            # §5 (audit P3, 2026-10-15): 这里 all_sharpes = **阈值 × 窗口**,
+            # 直接把重复计数喂给 n_trials 会系统性过度折减。真正的试验数是**扫过的
+            # 阈值个数**;n_returns 用单个窗口的真实交易日数。
+            n_trials=len(thresholds),
+            n_returns=WINDOW_TRADING_DAYS,
         )
         bonferroni_p = bonferroni_correct(
             p_values=[dsr["dsr_p_value"]],
@@ -114,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(
             f"\n§5 DSR | observed_sharpe={observed:.3f} | "
-            f"n_trials={len(all_sharpes)} | "
+            f"n_trials={len(thresholds)} | "
             f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
             f"expected_max={dsr['expected_max_sharpe']:.3f} | "
             f"raw_p={dsr['dsr_p_value']:.4f} | "

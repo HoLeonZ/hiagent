@@ -31,6 +31,9 @@ RESULT_COLS = [
 ]
 
 
+# §5 (audit P3): 窗口真实交易日数(6 个月 ≈ 126;原硬编码 252 为全年)
+WINDOW_TRADING_DAYS = 126
+
 def build_windows(
     start: str,
     end: str,
@@ -172,12 +175,19 @@ def main() -> None:
         if not sharpes:
             continue
         observed = max(sharpes)
+        # §5 (audit P3, 2026-10-15): n_trials 必须是**试过的配置数**(仓库记录在
+        # preset 的 n_comparisons),而不是 walk-forward 的**窗口数**。原实现传
+        # len(sharpes) —— 本文件自己的输出标签就写着 `n_windows=`,与参数矛盾。
+        # n_returns 亦改为该窗口的真实交易日数,而非硬编码 252。
+        _cfg = get_preset(preset) if isinstance(preset, str) else preset
         dsr = deflated_sharpe_ratio(
-            observed_sharpe=observed, n_trials=len(sharpes), n_returns=252,
+            observed_sharpe=observed,
+            n_trials=int(_cfg["n_comparisons"]),
+            n_returns=WINDOW_TRADING_DAYS,
         )
         print(
             f"\n§5 DSR for {preset} | observed_sharpe={observed:.3f} | "
-            f"n_windows={len(sharpes)} | "
+            f"n_trials={int(_cfg['n_comparisons'])} | "
             f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
             f"expected_max={dsr['expected_max_sharpe']:.3f} | "
             f"p_value={dsr['dsr_p_value']:.4f}"

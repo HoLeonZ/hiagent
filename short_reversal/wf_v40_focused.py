@@ -11,6 +11,11 @@ sys.path.insert(0, str(ROOT))
 from short_reversal.engine import run_backtest_v3  # noqa: E402
 from dna_stats.deflated import deflated_sharpe_ratio  # noqa: E402
 from hiagent_config import DB_PATH  # noqa: E402
+from short_reversal.presets import get_preset  # §5: 取 n_comparisons
+
+# §5 (audit P3, 2026-10-15): 6 个月窗口 ≈ 126 个交易日(参照 wf_v56 的既有取值)。
+# 原实现硬编码 252(全年),与窗口长度不符 —— SE 项因此被低估。
+WINDOW_TRADING_DAYS = 126
 
 WINDOWS = [
     ("2024-09-12", "2025-03-12"),
@@ -39,12 +44,15 @@ def run_one(preset: str) -> None:
               flush=True)
     if sharpes:
         observed = max(sharpes)
+        _cfg = get_preset(preset) if isinstance(preset, str) else preset
         dsr = deflated_sharpe_ratio(
-            observed_sharpe=observed, n_trials=len(sharpes), n_returns=252,
+            observed_sharpe=observed,
+            n_trials=int(_cfg["n_comparisons"]),
+            n_returns=WINDOW_TRADING_DAYS,
         )
         print(
             f"\n§5 DSR for {preset} | observed_sharpe={observed:.3f} | "
-            f"n_trials={len(sharpes)} | "
+            f"n_trials={int(_cfg['n_comparisons'])} | "
             f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
             f"expected_max={dsr['expected_max_sharpe']:.3f} | "
             f"p_value={dsr['dsr_p_value']:.4f}"

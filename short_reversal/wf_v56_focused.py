@@ -15,6 +15,11 @@ sys.path.insert(0, str(ROOT))
 from short_reversal.engine import run_backtest_v3  # noqa: E402
 from dna_stats.deflated import deflated_sharpe_ratio  # noqa: E402
 from hiagent_config import DB_PATH  # noqa: E402
+from short_reversal.presets import get_preset  # §5: 取 n_comparisons
+
+# §5 (audit P3, 2026-10-15): 6 个月窗口 ≈ 126 个交易日(参照 wf_v56 的既有取值)。
+# 原实现硬编码 252(全年),与窗口长度不符 —— SE 项因此被低估。
+WINDOW_TRADING_DAYS = 126
 
 WINDOWS = [
     ("2024-09-18", "2025-03-18"),
@@ -48,9 +53,15 @@ def main():
               flush=True)
     if sharpes:
         observed = max(sharpes)
-        n_trials = 31  # v56 sweep: 28 v55 + 3 v56 = 31
+        # §5 (audit P3, 2026-10-15): 改为**消费** preset 声明的累计试验数,而不是
+        # 在脚本里再写一份。此处原本硬编码 `31  # 28 v55 + 3 v56`,而 v56 的 preset
+        # 已声明 `n_comparisons=31` —— 同一个数两处维护,必然漂移;该字段此前被声明
+        # 却无消费者,正是本文件在给它的用途打补丁。
+        _cfg = get_preset(preset) if isinstance(preset, str) else preset
         dsr = deflated_sharpe_ratio(
-            observed_sharpe=observed, n_trials=n_trials, n_returns=126,
+            observed_sharpe=observed,
+            n_trials=int(_cfg["n_comparisons"]),
+            n_returns=WINDOW_TRADING_DAYS,
         )
         avg_yield = sum(yields) / len(yields)
         max_dd_peak = max(dds)
