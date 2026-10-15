@@ -84,7 +84,8 @@ def load_panel_for_backtest(
     Strategy reads adj_close for indicator math, raw close for execution.
 
     Returns: pd.DataFrame with cols thscode, date, open, high, low, close,
-    amount, volume, adj_open, adj_high, adj_low, adj_close.
+    amount, volume, adj_open, adj_high, adj_low, adj_close,
+    div_per_share, bonus_ratio, rights_ratio.
     """
     panel_start = (
         pd.Timestamp(start) - pd.Timedelta(days=PANEL_FORWARD_BUFFER_DAYS)
@@ -101,8 +102,22 @@ def load_panel_for_backtest(
                    h.open  AS adj_open,
                    h.high  AS adj_high,
                    h.low   AS adj_low,
-                   h.close AS adj_close
+                   h.close AS adj_close,
+                   -- §3 (audit P2-10, 2026-10-15): 事件化公司行为(与 chase_up 同口径)。
+                   -- 做空方向:现金分红是**付出**,由引擎在除权日从该仓位的
+                   -- locked_margin 扣出(见 _apply_corporate_action)。
+                   COALESCE(ev.dividend_per_share, 0.0) AS div_per_share,
+                   COALESCE(ev.per_share_bonus, 0.0)    AS bonus_ratio,
+                   COALESCE(ev.rights_ratio, 0.0)       AS rights_ratio
             FROM v_daily v
+            LEFT JOIN (
+                SELECT thscode, ex_date,
+                       SUM(dividend_per_share) AS dividend_per_share,
+                       SUM(per_share_bonus)    AS per_share_bonus,
+                       SUM(rights_ratio)       AS rights_ratio
+                FROM raw_adjustment_events
+                GROUP BY thscode, ex_date
+            ) ev ON v.thscode = ev.thscode AND v.date = ev.ex_date
             LEFT JOIN v_daily_hfq h
               ON v.thscode = h.thscode AND v.date = h.date
             WHERE v.date BETWEEN ? AND ? AND v.thscode = ANY(?)

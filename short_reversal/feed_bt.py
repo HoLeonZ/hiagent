@@ -34,6 +34,8 @@ class AShareData(bt.feeds.PandasData):
     lines = (
         "amount",
         "adj_open", "adj_high", "adj_low", "adj_close",
+        # §3 (audit P2-10, 2026-10-15): 公司行为事件列
+        "div_per_share", "bonus_ratio", "rights_ratio",
     )
     params = (
         ("amount", "amount"),
@@ -41,6 +43,9 @@ class AShareData(bt.feeds.PandasData):
         ("adj_high", "adj_high"),
         ("adj_low", "adj_low"),
         ("adj_close", "adj_close"),
+        ("div_per_share", "div_per_share"),
+        ("bonus_ratio", "bonus_ratio"),
+        ("rights_ratio", "rights_ratio"),
         ("datetime", "date"),
         ("open", "open"),
         ("high", "high"),
@@ -60,7 +65,8 @@ class AShareData(bt.feeds.PandasData):
             super().start()
             return
         cols = self.p.dataname.columns
-        for col in ("adj_open", "adj_high", "adj_low", "adj_close"):
+        for col in ("adj_open", "adj_high", "adj_low", "adj_close",
+                    "div_per_share", "bonus_ratio", "rights_ratio"):
             if col not in cols:
                 # 补 NaN 占位列 — super().start() 之后的 _load 会读到 NaN,
                 # 策略仍走 raw (默认列) 路径, 不影响任何交易。
@@ -98,6 +104,11 @@ def build_per_stock_feeds(
         if needs_adj:
             for col in ("adj_open", "adj_high", "adj_low", "adj_close"):
                 sub[col] = float("nan")
+        # §3 (audit P2-10): 事件列缺失(旧测试 panel)→ 补 **0.0** 而非 NaN。
+        # 0.0 = "该 bar 无公司行为",NaN 会让"是否有事件"的判定失真。
+        for col in ("div_per_share", "bonus_ratio", "rights_ratio"):
+            if col not in sub.columns:
+                sub[col] = 0.0
         # 不设 fromdate/todate: 窗口边界由 strategy 侧显式约束。
         # §1 (audit, 2026-10-15): 在 backtrader 1.9.78.123 + pandas 3.0.5 栈下
         # `feed.fromdate = pd.Timestamp(...)` 会抛 TypeError,故不在 feed 层做

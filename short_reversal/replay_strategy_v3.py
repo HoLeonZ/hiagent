@@ -21,6 +21,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+from core.corporate_actions import apply_corporate_action
 from core.dual_price import (
     BORROW_RATE_ANNUAL,
     COMMISSION_RATE,
@@ -350,6 +351,8 @@ class Phase3V3Strategy(bt.Strategy):
 
     def __init__(self):
         # §1 (audit, 2026-10-15): 窗口边界解析为 date,并让"未启用"可见而非静默。
+        # §3 (audit P2-10): 累计已付出现金分红(做空为付出),供对账。
+        self._dividends_paid_total = 0.0
         self._win_start = _parse_window_day(self.p.window_start)
         self._win_end = _parse_window_day(self.p.window_end)
         if self._win_start is None or self._win_end is None:
@@ -564,6 +567,8 @@ class Phase3V3Strategy(bt.Strategy):
         for d in self.datas:
             code = d._name
             if code in self._holds:
+                # §3: 除权日先应用公司行为(空头付分红 / 送股调量),再判出场。
+                self._apply_corporate_action(d)
                 self._check_exit(d)
             elif code not in self.pending_entries:
                 if regime_ok and self._in_window(d) and self._all_conditions(d):
@@ -601,6 +606,9 @@ class Phase3V3Strategy(bt.Strategy):
                 "holdings_value": holdings_value,
                 "equity": nav,
                 "drawdown": dd,
+                # §3 (audit P2-10): 累计已付出分红(空头方向)。
+                # 现金守恒: final == initial + Σnet_pnl − Σcum_dividends
+                "cum_dividends": self._dividends_paid_total,
             })
 
     def _conviction_key(self, code: str) -> float:
@@ -854,6 +862,66 @@ class Phase3V3Strategy(bt.Strategy):
             pending = self.pending_entries
             pending.pop(code, None)
 
+    def _apply_corporate_action(self, d) -> None:
+        """§3 (audit P2-10, 2026-10-15): 除权日的公司行为。
+
+        **做空方向与多头相反**:现金分红是**付出** —— 空头须把分红付给借券方
+        (共享 core 函数返回的是多头口径的正值,此处按方向扣出,符号不藏在
+        共享代码里)。扣款源与 `_charge_margin_fees` 同源,即该仓位的
+        `locked_margin`(做空的卖股款冻结池),并记入 `pos["dividends_paid"]`,
+        由 `_close()` 释放时一并扣除,保持锁定池账实一致。
+
+        送股/拆股与多头同口径:借来的股票同样会送股 → 数量 ×(1+bonus),
+        成本价按总量不变重定。
+
+        权益归属:除权日**当天新开**的仓位不在 `_holds` 里(建仓发生在
+        `_fill_pending_entries`,晚于本调用),因此不会误领 —— 除权日买入/卖出
+        本就不享有本次分红。
+        """
+        code = d._name
+        pos = self._holds[code]
+        # §3 权益归属:除权日**当天新建**的仓位不享有本次分红(除权日买入/卖出
+        # 正是"不含本次分红"的交易)。chase_up / uptrend_pullback 由退出循环的
+        # `pos["entry_t"] == t` 跳过实现;本引擎的建仓发生在同一 next() 内更早的
+        # `_fill_pending_entries()`,故需显式用 entry_bar 判等跳过 —— 否则当天
+        # 建的仓会被误扣一笔分红。
+        if pos.get("entry_bar") == len(self):
+            return
+        try:
+            div = float(d.div_per_share[0])
+            bonus = float(d.bonus_ratio[0])
+            rights = float(d.rights_ratio[0])
+        except (AttributeError, TypeError, ValueError, IndexError):
+            return
+        if (math.isnan(div) or div <= 0) and (math.isnan(bonus) or bonus <= 0) \
+                and (math.isnan(rights) or rights <= 0):
+            return
+
+        out = apply_corporate_action(
+            size=int(pos["size"]),
+            entry_price=float(pos["entry_price"]),
+            dividend_per_share=0.0 if math.isnan(div) else div,
+            bonus_ratio=0.0 if math.isnan(bonus) else bonus,
+            rights_ratio=0.0 if math.isnan(rights) else rights,
+        )
+        for w in out.warnings:
+            logger.warning("[corporate-action] %s @ %s: %s", code, d.datetime.date(0), w)
+
+        new_pos = {**pos, "size": out.size, "entry_price": out.entry_price}
+        if out.cash_delta > 0:
+            # 空头付出分红:从该仓位的 locked_margin 扣出
+            debit = min(out.cash_delta, self.locked_margin)
+            if debit < out.cash_delta - 1e-9:
+                logger.warning(
+                    "[corporate-action] 分红付出 %.2f > locked_margin %.2f —— "
+                    "按可用额扣出并告警(不制造负余额,§2)",
+                    out.cash_delta, self.locked_margin,
+                )
+            self.locked_margin -= debit
+            new_pos["dividends_paid"] = pos.get("dividends_paid", 0.0) + debit
+            self._dividends_paid_total += debit
+        self._holds[code] = new_pos
+
     def _check_exit(self, d) -> None:
         code = d._name
         pos = self._holds[code]
@@ -972,7 +1040,11 @@ class Phase3V3Strategy(bt.Strategy):
         # 容差 clamp:long-hold (max_hold≥5) 累积的浮点误差可能让 released
         # 略大于 locked_margin (1e-9 量级),提前 clamp 防止 release_margin
         # 误触发 §0 fail-fast。
-        released = pos.get("entry_cost", pos.get("entry_fee", 0.0)) - pos.get("margin_fees_paid", 0.0)
+        # §3 (audit P2-10): 除权日已付出的分红同样已离开 locked_margin,
+        # 释放时须一并扣除,否则会把已付出去的钱再"退回"一次。
+        released = (pos.get("entry_cost", pos.get("entry_fee", 0.0))
+                    - pos.get("margin_fees_paid", 0.0)
+                    - pos.get("dividends_paid", 0.0))
         released = min(released, self.locked_margin)
         # §2 (audit P0-3, 2026-10-15): 入场佣金+印花税必须真实离开现金账。
         #
