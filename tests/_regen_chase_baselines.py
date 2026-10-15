@@ -78,16 +78,16 @@ def main() -> None:
     print(f"[regen] window={WINDOW[0]}..{WINDOW[1]} universe={len(universe)}\n")
 
     for preset in PRESETS:
-        # 删除旧 trades.csv 强制重新生成
         short_name = preset.replace("chase_", "")  # v5_pos2_...
-        trades_csv = RESULTS_DIR / f"{short_name.split('_pos')[0]}_trades.csv"
-        if trades_csv.exists():
-            trades_csv.unlink()
 
         # 跑 backtest
         res = run_backtest(preset, WINDOW[0], WINDOW[1], DB_PATH, panel_ind=panel_ind)
         trades_df = res["trades"]
-        trades_df.to_csv(trades_csv, index=False)
+        # §6 (audit P3, 2026-10-15): 不再写 trades.csv。
+        # 本脚本的职责是锁定**成交列表哈希**,而不是产出运行产物。原来写 CSV 是因为
+        # 测试侧会 round-trip 读回;哈希已改为直接取 DataFrame,写盘遂成冗余 ——
+        # 而它会把 results/ 变成"有 trades.csv 却无 metrics.json"的半套产物,直接
+        # 触发两个 provenance gap-tracker(实测)。产物由真实回测产生,不由重刷脚本。
         # §6 (audit P3, 2026-10-15): 哈希**直接从 DataFrame** 取,不做 CSV round-trip。
         # 测试侧现在一律重跑并哈希 `df.to_csv(index=False)`(与 uptrend_pullback 的
         # sha256 基线同口径)。原实现 round-trip 后哈希,与测试侧约定不一致 —— 两边
