@@ -21,7 +21,12 @@ import json
 import sys
 from pathlib import Path
 
-ROOT = Path("/Users/holeon/code/hiagent")
+# §0 (audit P3, 2026-10-15): 原为硬编码绝对路径 Path("/Users/holeon/code/hiagent")。
+# 后果有两层:(a) 脚本不可复现 —— 在任何别的检出里运行都会去改**另一个**仓库的
+# golden(实测:在 worktree 里跑,却把哈希写进了共享树,而测试读的是 worktree,
+# 两边永远对不上,重刷也修不好);(b) 会静默污染不属于它的工作树。
+# 现从本文件位置推导。
+ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from chase_up.backtest import run_backtest
@@ -65,6 +70,10 @@ def main() -> None:
     panel = load_panel(DB_PATH, WINDOW[0], WINDOW[1], universe=universe)
     panel_ind = compute_indicators(panel)
 
+    # §6: results/ 是 gitignored 目录,干净检出里不存在(旧脚本只在恰好有它的那个
+    # 检出里能用)。显式创建,避免 OSError。
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
     print(f"[regen] V3a+ dual-price entry fix baselines — {len(PRESETS)} presets")
     print(f"[regen] window={WINDOW[0]}..{WINDOW[1]} universe={len(universe)}\n")
 
@@ -79,10 +88,11 @@ def main() -> None:
         res = run_backtest(preset, WINDOW[0], WINDOW[1], DB_PATH, panel_ind=panel_ind)
         trades_df = res["trades"]
         trades_df.to_csv(trades_csv, index=False)
-        # 测试侧用 pd.read_csv + to_csv, 必须 round-trip 同一份 trades.csv 才能 hash 一致
-        import pandas as pd
-        reread = pd.read_csv(trades_csv)
-        new_hash = _hash_csv(reread)
+        # §6 (audit P3, 2026-10-15): 哈希**直接从 DataFrame** 取,不做 CSV round-trip。
+        # 测试侧现在一律重跑并哈希 `df.to_csv(index=False)`(与 uptrend_pullback 的
+        # sha256 基线同口径)。原实现 round-trip 后哈希,与测试侧约定不一致 —— 两边
+        # 各自"对"却永远对不上,重刷也修不好。
+        new_hash = _hash_csv(trades_df)
         m = res["metrics"]
 
         # 更新 golden baseline

@@ -5,8 +5,8 @@
     "2026-09-19"
   ],
   "engine": "simulate",
-  "trades_csv_sha256": "5ed2aca6aa5ab7274c81dcbbbb9b9fedfc386e9e5c6471d1a6e7235f5908bee0",
-  "trades_csv_rows": 33,
+  "trades_csv_sha256": "123791cf7e570594886f1dfbd47623f932258af5c9fe6cd700c49eb2f39989bd",
+  "trades_csv_rows": 12,
   "trades_csv_cols": [
     "entry_date",
     "exit_date",
