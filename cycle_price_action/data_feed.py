@@ -100,7 +100,12 @@ class ReplayDataProvider:
         con = duckdb.connect(self._db_path, read_only=True)
         try:
             row = con.execute(
-                "SELECT 1 FROM v_daily WHERE thscode = ? LIMIT 1", [thscode]
+                # Tick 68 convention: row-returning query carries explicit
+                # ORDER BY for cross-run reproducibility by construction
+                # (guarded by tests/test_reproducibility_audit.py).
+                "SELECT 1 FROM v_daily WHERE thscode = ? "
+                "ORDER BY thscode, date LIMIT 1",
+                [thscode],
             ).fetchone()
             return row is not None
         finally:
