@@ -124,6 +124,7 @@ def _metrics_from_holder(
         "total_yield": float(total_yield),
         "cagr": float(cagr),
         "sharpe": float(sharpe),
+        "sharpe_kind": "per_trade_ratio_approx",  # §2 (audit 2026-10-15): 逐笔 net 的 mean/std × √(min(n,250)) —— **交易级比率**,不是日收益 Sharpe,仅供本引擎内排序
         "max_dd": min(1.0, max(0.0, float(holder["max_dd"]))),
         "avg_pnl": avg_pnl,
         "avg_hold_days": avg_hold,
@@ -222,6 +223,7 @@ def _run_ensemble(
         "total_yield": float(total_yield),
         "cagr": float(cagr),
         "sharpe": float(sharpe),
+        "sharpe_kind": "per_trade_ratio_approx",  # §2 (audit 2026-10-15): 逐笔 net 的 mean/std × √(min(n,250)) —— **交易级比率**,不是日收益 Sharpe,仅供本引擎内排序
         "max_dd": min(1.0, max(0.0, float(max_dd))),
         "avg_pnl": avg_pnl,
         "avg_hold_days": avg_hold,

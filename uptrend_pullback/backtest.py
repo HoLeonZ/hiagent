@@ -80,6 +80,9 @@ def compute_metrics(
         return {
             "trades": 0, "win_rate": 0.0, "final_equity": final_equity,
             "total_return": total_return, "cagr": cagr, "sharpe": sharpe,
+            # §2 (audit 2026-10-15): sharpe 的定义随产物发布 —— 与 short_reversal
+            # 的 `sharpe` 不是同一个量(那个是逐笔比率的近似)。
+            "sharpe_kind": "daily_returns_annualized",
             "max_dd": max_dd, "avg_hold_days": 0.0, "max_hold_days": 0,
             "overrun_count": 0,
             "tp_count": 0, "sl_count": 0, "time_count": 0, "eod_count": 0,
@@ -102,6 +105,7 @@ def compute_metrics(
         "total_return": total_return,
         "cagr": cagr,
         "sharpe": sharpe,
+        "sharpe_kind": "daily_returns_annualized",  # §2 (audit 2026-10-15): 日收益序列的 Sharpe(mean/std × √243)。与 short_reversal 的 `sharpe` **不是**同一个量
         "max_dd": max_dd,
         "avg_hold_days": float(trades_df["hold_days"].mean()),
         "max_hold_days": int(trades_df["hold_days"].max()),
