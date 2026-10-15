@@ -903,17 +903,31 @@ def _render_trade_table(trades: pd.DataFrame, strategy: str) -> str:
 
 
 def _summary_metrics(trades: pd.DataFrame, equity: pd.DataFrame) -> dict:
-    """Compute summary metrics from trades + equity (for header)."""
+    """汇总指标(HTML 页首)。
+
+    §6 单源 (audit 2026-10-15): 此处曾**自己算** CAGR —— 且用的是**日历日**
+    (`(last-first).days / 365.25`),而引擎的规范实现用**交易日**
+    (`len(equity) / TRADING_DAYS`)。同一次回测因此会有两个不同的 CAGR:
+    220 根 bar 的窗口下,规范口径 years≈0.905,此处 years≈0.843 —— 页首数字与
+    引擎 metrics 对不上,而两边看起来都"很合理"。这是典型的「同一指标两处定义」,
+    必然漂移。现改为与引擎同口径(交易日年化)。
+
+    仍未消除的重复(已登记):`_compute_short_indicators` 与
+    `_build_entry_reasons_*` 仍各自重述指标与 A/B/C 判定 —— 那是**展示层**的
+    第二实现,消解它需要引擎暴露逐 bar 指标序列,属重构而非顺手改。
+    """
     if trades.empty or equity.empty:
         return {}
+    from chase_up.backtest import TRADING_DAYS
+
     n = len(trades)
     wins = (trades["net_pnl"] > 0).sum()
     win_rate = wins / n if n > 0 else 0.0
     start_eq = INITIAL_CAPITAL
     end_eq = float(equity["equity"].iloc[-1])
     total_return = end_eq / start_eq - 1.0
-    days = (pd.Timestamp(equity["date"].iloc[-1]) - pd.Timestamp(equity["date"].iloc[0])).days
-    years = days / 365.25 if days > 0 else 1.0
+    # 与引擎同口径:年数按**交易日**计(len(equity) 即逐 bar 净值行数)。
+    years = len(equity) / TRADING_DAYS
     cagr = (end_eq / start_eq) ** (1.0 / years) - 1.0 if years > 0 else 0.0
     return {
         "trades": n,

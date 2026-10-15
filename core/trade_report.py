@@ -107,6 +107,22 @@ def _chart_payload(
     return payload
 
 
+#: §5 (audit 2026-10-15) Attribution Mandate —— CLAUDE.md §5 verbatim:
+#:   "Headline returns MUST be reported alongside benchmark-relative excess
+#:    return (index or style basket). Pure style-beta replication MUST NOT be
+#:    presented as alpha."
+#:
+#: 本地行情库**没有任何指数序列**(`dim_symbol.asset_type` 全为 a-share),
+#: 故归因当前不可计算。§5 要求在这种状态下把结论**显式标注为「未归因」**,
+#: 而不是把裸绝对收益当作 alpha 呈现。报告渲染器是唯一的规范展示点,所以标注
+#: 只需一处 —— 而且它随**每一份报告**一起走,不是只躺在某个测试的 skip 文本里。
+UNATTRIBUTED_NOTICE = (
+    "未归因(CLAUDE.md §5): 上方为绝对收益,不含基准相对超额 —— "
+    "本地行情库无指数序列,归因暂不可计算。"
+    "补齐方式与机制见 dna_stats/attribution.py。"
+)
+
+
 def _summary_html(trades: pd.DataFrame, preset: str, window: tuple[str, str]) -> str:
     n = len(trades)
     net = trades["net_pnl"].astype(float) if n else pd.Series(dtype=float)
@@ -120,6 +136,7 @@ def _summary_html(trades: pd.DataFrame, preset: str, window: tuple[str, str]) ->
         f"<p>回测窗口: {_esc(window[0])} → {_esc(window[1])} ｜ "
         f"交易数: {n} ｜ 胜率: {win_rate * 100:.1f}% ｜ "
         f"总净收益: {total_net:,.0f} ｜ 平均单笔净收益率: {avg_ret * 100:+.2f}%</p>"
+        f'<p class="attribution">{_esc(UNATTRIBUTED_NOTICE)}</p>'
         "</section>"
     )
 
