@@ -609,6 +609,10 @@ for path in paths:
 | `8a4f806` | §4/§6 滑点策略单源(`core.effective_slippage`);原 `atr_slippage` 被写出却**无任何引擎调用** | 192 点网格穷举等价(零行为变更);新增守卫经反证测试非空转 |
 | `d77460e` | `chase_up` Phase-2 补回两处 §4 守卫(涨停入场跳过、同 bar SL-first),并把 Phase-1 内联的涨跌停谓词改为 core 单源 | 三处既有红用例转绿;Phase-2 成交列表 34 笔、字段 0 差异(**no-op**) |
 | `10e8a2f` | 修补前述提交引入的 **4 处回归**(见下) | 4 条转绿,失败集合无新增 |
+| `dd77584` | `chase_up` 出场侧跌停 no-fill 守卫 | 新增用例含反向对照;Phase-1 成交列表 34 笔、0 差异(no-op) |
+| `c3dafa7` | `uptrend_pullback` 同守卫 + 入场谓词单源 + **§6 重刷 3 个基线**(幻影止损,见附二) | 基线与逐笔归因如上;sha256 重算两次一致 |
+| `a59839d` | `cycle_price_action`:`time` 分支不再提交(调用方/被调方契约矛盾,`max_hold` 曾是死代码)+ `can_fill` 前置检查(修掉停牌修复引出的顺序问题) | 反事实 A/B 量化(见附三);3 个月回测由**崩溃**变为**跑通** |
+| `2fade0a` | `short_reversal` 回补侧涨停守卫(四引擎镜像守卫补齐) | 新增用例含反向对照(+6% 未封板仍应止损) |
 
 **测试层净效果**(失败集合逐条 `diff`,非仅比数量):
 
@@ -645,3 +649,44 @@ for path in paths:
 **含义**:受影响引擎(长仓出场侧)此前的绩效被**幻影出场流动性**美化 —— 这比"四舍五入偏差"严重得多,属于 §3 Reality Mapping 与 §4 的直接违反。修复后的数字更差,但是真实的。
 
 **顺带记录一次方法教训**:我第一次归因时对前后两棵树都报出"出场 bar 封板数 = 0",那是错的 —— 我统计的是**结果**成交的出场 bar,而守卫恰恰把出场**推迟**掉了,受影响的 bar 根本不会出现在结果里;此外成交日期字符串是 `2026-04-20 00:00:00`,与面板的 `%Y-%m-%d` 永不匹配,匹配静默全空。**一个"什么都没匹配到"的检查会给出一个看起来干净的错误答案。**
+
+---
+
+## 附三:`cycle_price_action` 的 `max_hold` 曾是死代码(契约矛盾)
+
+审计 B6/V8 的落地与量化。
+
+**缺陷**:`Portfolio.try_exit_with_intraday_check` 是"检查并出场"的助手,但它在**所有**分支(含 `reason == "time"`)都提交成交 —— 写 `closed_trades`、记现金、清 `self._pos`。而调用方明确只在 `reason in ("SL","TP")` 时重置状态,并注释 "reason == 'time' → fall through to max_hold check below"。于是:
+
+- 持仓在**第一根未触发 SL/TP 的 bar** 就以收盘价被强平(入场后一根 bar);
+- 调用方的 `max_hold` 分支**不可达**(其 `_pos is not None` 前提已为假),而 `max_hold` 是每个 cycle preset 都声明的参数;
+- `_entry_day` 与实际持仓状态不一致。
+
+修法:把提交动作限定在真正触发的分支,`time` 只返回判定;时间出场由调用方的 `max_hold` 分支经 `try_exit()` 完成。
+
+**量化**:由于**任何修复前的树都无法跑完回测**(见附四),不存在可比的前驱,故采用**反事实对照** —— 在已修树上还原 `time` 提交行为,同 DB、同 preset、窗口 2026-04-01..2026-06-30(3 个月子窗口;整年 cycle 回测因引擎逐笔新建 DB 连接而过慢,该问题审计另有记录):
+
+| | 反事实(`time` 提交) | 修复后 |
+|---|---|---|
+| 成交笔数 | 2892 | 2844 |
+| `hold_days` 均值 / 中位 | 4.80 / 4.0 | **6.19 / 7.0** |
+| `hold_days == 2` 占比 | **869 笔(30%)** | 258 笔 |
+| Σpnl | 2,650,546 | **813,569** |
+
+`hold_days == 2` 的尖峰正是该缺陷的签名(入场日 + 1 = 2 个日历日)。**这是量级差异,不是舍入差异** —— 意味着 `cycle_price_action` 此前报告的结果,对应的是一个实际只持有一根 bar 的策略。
+
+---
+
+## 附四:被自己的修复引出的顺序缺陷(已修,记录在案)
+
+把 `submit_buy` 改成"停牌返回 `None`"之后,`cycle_price_action` 暴露出一处既有的顺序问题:
+
+```
+RuntimeError: backtest failed for 000639.SZ: cannot sell more than held
+```
+
+**成因**:入场分支先调 `try_enter()`(**无条件**在组合账本建仓),再调 `submit_buy()`。停牌时 `submit_buy` 无成交,但组合已经有仓位、broker 的 `_open_positions` 却没有 —— 两套账本从此不一致,后续 `submit_sell()` 便抛 "cannot sell more than held"。
+
+**修法**:新增 `ReplayBroker.can_fill(thscode, decision_date)`,入场前**先确认次根 bar 可成交再建仓**;若 `can_fill` 通过而 `submit_buy` 仍无成交(真正的矛盾状态),按 §0 fail-fast 抛错,不静默留下一个卖不掉的仓位。数据缺口仍由 `_open_price` fail-fast,不受影响。
+
+**验证**:同一 3 个月窗口,修复前**崩溃**、修复后**跑通**(universe=2953,trades=2844)。
