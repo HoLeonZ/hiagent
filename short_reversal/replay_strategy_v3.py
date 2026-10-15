@@ -26,6 +26,7 @@ from core.dual_price import (
     effective_slippage,
     extract_execution_bar,
     is_limit_down,
+    is_limit_up,
     volume_cap_fill,
 )
 from core.trade_schema import TRADE_COLS
@@ -230,6 +231,9 @@ class Phase3V3Strategy(bt.Strategy):
         # 默认 0.095 (主板 -10% 跌停容差, 与 is_limit_down 核心常量对齐)。
         # preset 可覆盖 (e.g. 创业板 0.148, 科创板 0.198)。
         limit_down_threshold=0.095,
+        # §4 (audit P1-9, 2026-10-15): 回补侧对称阈值。做空回补是一次 BUY,
+        # 涨停封板时买不进 —— 与入场侧的 limit_down_threshold 互为镜像。
+        limit_up_threshold=0.095,
         # v50 (2026-10-12): F 条件 — MA20 5 日回归斜率 ≤ 0 (下降趋势过滤)。
         # 默认 False → v44 baseline 行为完全不变, v50 preset 显式开启。
         require_ma20_slope_neg=False,
@@ -858,6 +862,26 @@ class Phase3V3Strategy(bt.Strategy):
         # CRITICAL: exit 必须滞后 entry → 至少 1 完整 bar 后才允许出场
         # (CLAUDE.md P3: exit_date > entry_date, ≥ 1 日历日 / ≥ 1 bar)
         if held < 1:
+            return
+        # §4 (audit P1-9, 2026-10-15): 涨停封板**无法回补**。
+        # 做空的回补是一次 BUY;涨停封板时买不进(买单队列锁死),§4 要求
+        # "a sell/cover on a limit-down-sealed bar MUST be rejected (no fill)"
+        # —— 对称地,回补侧遇到涨停封板同样无成交。此前本引擎只守了入场侧的
+        # is_limit_down,回补侧**完全没有** is_limit_up 守卫,于是在涨停板上
+        # 照常"买入回补",把亏损截断在一个物理上取不到的价位。
+        # 用 raw 域(d.close/d.open 即 v_daily 原始价,与执行域同域)。
+        # NAV-gate 强制平仓一并顺延:封板时同样是买不进 —— 方向保守(亏损可能
+        # 继续扩大),符合 §0 Pessimistic Default。
+        prev_close = float(d.close[-1]) if len(d) > 1 else None
+        if is_limit_up(
+            prev_close=prev_close,
+            open_price=float(d.open[0]),
+            threshold=self.p.limit_up_threshold,
+        ):
+            logger.debug(
+                "[limit-up] skip short cover: %s open=%.2f prev_close=%.2f",
+                code, float(d.open[0]), prev_close if prev_close is not None else 0.0,
+            )
             return
         # 防穿仓 (R2, 2026-09-21): NAV-gate 强制 close。
         # 当 NAV 已跌到 cash_gate_threshold 以下 (cash gate 已拒绝新开仓),
