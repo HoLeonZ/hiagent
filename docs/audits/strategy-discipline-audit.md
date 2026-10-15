@@ -615,6 +615,8 @@ for path in paths:
 | `2fade0a` | `short_reversal` 回补侧涨停守卫(四引擎镜像守卫补齐) | 新增用例含反向对照(+6% 未封板仍应止损) |
 | `9a1d416` | §2/§4/§6 费率常量单源化(含类属性遮蔽、内联字面量、`BORROW_RATE_ANNUAL`);两个「只比对数值」的守卫改为断言**单源**本身 | 数值逐一相同;chase_up 成交列表逐字节一致(**零漂移**);新守卫经反证对四引擎旧代码全部命中 |
 | `091e512` | §3 事件化公司行为(chase_up):分红入 `Free_Cash`、送股原子调量/重定成本价;`EQUITY_COLS` 增 `cum_dividends` | 守恒恒等式**精确闭合 0.000000**;窗口内分红 ¥4,340;3 条新守卫 |
+| `545d7fc` / `b7cf3bb` | 公司行为逻辑提到 `core.corporate_actions` 单源;接入 `uptrend_pullback`;把"子串启发式"handler 守卫改为 AST(导入+调用) | uptrend 为 **no-op**(独立核算:窗口内仅 1 笔跨越除权日且**在除权日入场** → 不享有);修掉一处我自己引入的回归 |
+| `c97515f` | §3 公司行为接入 `short_reversal`(**做空付出分红**,符号由引擎取反;从 locked_margin 扣出并记账) | 新增 2 条守卫;修绿 `test_corporate_actions_gap[short_reversal]` |
 
 **测试层净效果**(失败集合逐条 `diff`,非仅比数量):
 
@@ -633,7 +635,7 @@ for path in paths:
 
 **涨跌停镜像守卫(P1-8/P1-9)已完成**:chase_up / uptrend_pullback 出场跌停、short_reversal 回补涨停、cycle_price_action 出场跌停 —— 四处均配反向对照用例。
 
-**公司行为(P2-10)**:`chase_up` 已实现(分红 + 送股,配股显式告警不静默);`uptrend_pullback` 仅落 0.0 占位列;**`short_reversal`(需分红**流出**)与 `cycle_price_action` 未实现**。
+**公司行为(P2-10)**:`chase_up` / `uptrend_pullback` / `short_reversal` 已接入同一 `core` 实现(做空为**付出**,符号由引擎决定;四条引擎统一"除权日当天建仓不享有"的权益归属规则);**`cycle_price_action` 仍未接入**。
 
 **仍未处理(按 §8 顺序)**:滑点的 preset 显式声明 + 缺声明 fail-fast(P1-B2,需给 100 个 preset 各加一条声明);公司行为推广至其余三引擎;§5 的 DSR `n_trials` 口径与基准归因;§7 源码内嵌业绩数字清理;`chase_up` 金标准基线仍红(陈旧产物),故 chase_up 侧的漂移今天仍不可见。
 
