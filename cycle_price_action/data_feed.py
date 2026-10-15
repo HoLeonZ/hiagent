@@ -32,19 +32,33 @@ from cycle_price_action.universe import apply_liquidity_filter, is_main_board
 logger = logging.getLogger(__name__)
 
 
-def _table_exists(con: duckdb.DuckDBPyConnection, name: str) -> bool:
-    """Check whether a table/view exists in the connected DB.
+def _relation_exists(con: duckdb.DuckDBPyConnection, name: str) -> bool:
+    """表**或视图**是否存在(§3, audit P2-10b, 2026-10-15)。
 
-    Used to detect v_daily_hfq (Layout B/C adj_close source) at runtime —
-    some test DBs only have raw v_daily. Without this fallback, the LEFT
-    JOIN in load_universe_data would raise CatalogException.
+    原实现名为 `_table_exists` 且只查 `duckdb_tables()` —— 而本库的
+    `v_daily_hfq` 是**视图**,于是探测恒为 False,`load_universe_data` 静默走进
+    raw-only 分支:**`adj_close` 从未到达本引擎的信号层**,§3 的「指标必须用
+    复权价」在 cycle_price_action 上从未生效。该缺口此前被审计记录为
+    "adj_close 在喂给信号层前被丢弃";实际根因更早 —— 它**从来没有被提供**。
+
+    同时查 `duckdb_tables()` 与 `duckdb_views()`,两者都有显式 ORDER BY
+    (可复现性纪律由 tests/test_reproducibility_audit.py 守卫)。
     """
-    row = con.execute(
-        "SELECT COUNT(*) FROM duckdb_tables() WHERE table_name = ? "
-        "ORDER BY 1",
-        [name],
-    ).fetchone()
-    return bool(row and row[0] > 0)
+    # duckdb_tables() 的列名是 table_name,duckdb_views() 是 view_name
+    for catalog, column in (("duckdb_tables()", "table_name"),
+                            ("duckdb_views()", "view_name")):
+        row = con.execute(
+            f"SELECT COUNT(*) FROM {catalog} WHERE {column} = ? ORDER BY 1",
+            [name],
+        ).fetchone()
+        if row and row[0] > 0:
+            return True
+    return False
+
+
+def _table_exists(con: duckdb.DuckDBPyConnection, name: str) -> bool:
+    """向后兼容别名(旧调用点/测试引用此名)。"""
+    return _relation_exists(con, name)
 
 
 @dataclass(frozen=True)
@@ -219,7 +233,7 @@ def load_universe_data(
         # signals.py k_line_score 在 adj_close 存在时优先使用 adj_close 计算 MA/Confluence。
         # close/open/high/low/amount/volume 仍走 v_daily (raw), 物理成交价不变。
         # v_daily_hfq 在某些测试 DB 中不存在 — 运行时探测, 缺则降级为 raw_only。
-        has_hfq = _table_exists(con, "v_daily_hfq")
+        has_hfq = _relation_exists(con, "v_daily_hfq")
         if has_hfq:
             # Tick 68 (2026-09-28, CLAUDE.md §1): plain string template + .format()
             # so ORDER BY appears in the FIRST Constant child of the AST —
