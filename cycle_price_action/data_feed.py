@@ -4,7 +4,10 @@
 cycle_price_action. This module owns two responsibilities:
 
   1. `load_universe_data` — universe selection (P8 + liquidity filter).
-     Already PIT-compliant.
+     §3 (audit, 2026-10-15): 此前本行写作 "Already PIT-compliant",**该声明不实**
+     —— 成员判定曾要求 `MAX(date) >= 参考日`(排除窗口内退市标的 = 幸存者偏差),
+     流动性均值又取自无日期上界的全历史(用到 `end` 之后的数据)。两处均已修正,
+     现由 `tests/test_cycle_survivorship_bias.py` 与流动性因果上界用例守卫。
 
   2. `ReplayDataProvider` — per-fill PIT data lookup (next trading date +
      open price bar). Owned here so the Execution Broker (`ReplayBroker`)
@@ -148,19 +151,20 @@ def load_universe_data(
     """
     con = duckdb.connect(db_path, read_only=True)
     try:
-        # §3 PIT: universe 在 asof_date 时仍在市 (i.e. MAX(date) >= asof_date)。
-        # 若 caller 未传 asof_date, 回退到 `end` (旧行为)。
-        # Use DB's actual last day as the in-DB reference — the data file
-        # may lag the requested `asof_date` by a few days. Comparing against
-        # the user-requested `asof_date` would silently drop the entire
-        # universe when the DB is stale.
-        db_last = con.execute("SELECT MAX(date) FROM v_daily").fetchone()[0]
+        # §3 PIT: 成员判定 = 「在请求窗口内至少有一个交易日」。
+        # §3 (audit P1-C2, 2026-10-15): 旧实现要求
+        # `MAX(date) >= min(asof_date or end, db_last)`,即「必须活到参考日」——
+        # 窗口中途退市的标的被整个剔除,其在窗口内已发生的盈亏被静默丢弃 =
+        # 幸存者偏差,与 §3 "Delisted assets must remain in the simulation until
+        # their physical delisting date" 直接冲突(见
+        # tests/test_cycle_survivorship_bias.py::test_includes_delisted_stocks_with_data_in_window)。
+        # asof_date 参数保留 —— 它约束的是**流动性**回看的因果上界(见下方
+        # liquidity 查询),不再用于「活到参考日」判定。
         ref_pit = asof_date if asof_date is not None else end
-        ref_end = min(ref_pit, db_last) if db_last else ref_pit
         listed_rows = con.execute(
             "SELECT thscode, MAX(date) AS last_date FROM v_daily GROUP BY thscode"
         ).fetchall()
-        listed = {r[0] for r in listed_rows if r[1] is not None and r[1] >= ref_end}
+        listed = {r[0] for r in listed_rows if r[1] is not None and r[1] >= start}
         main_board = {c for c in listed if is_main_board(c)}
         if not main_board:
             return {}
@@ -202,18 +206,23 @@ def load_universe_data(
         if panel.empty:
             return {}
 
-        # Liquidity filter needs full history (60d rolling mean of amount).
-        # Re-query without date filter for the universe codes.
-        # Tick 68 (2026-09-28): explicit ORDER BY for cross-run reproducibility
-        # by construction — apply_liquidity_filter is currently groupby/set-
-        # semantic (order-independent), but the convention requires explicit
-        # ORDER BY so future sequence-aware filters stay deterministic.
+        # Liquidity filter needs history (rolling mean of amount),但**只允许
+        # 参考日之前的历史**。
+        # §1/§3 (audit P1-C2, 2026-10-15): 旧实现 "Re-query without date
+        # filter" —— 整张全历史表(含 end 之后的行)喂给 apply_liquidity_filter
+        # 的 `groupby().mean()`,于是**宇宙成员由窗口之后的成交额决定**,
+        # 是典型的未来函数。现按 asof(ref_pit)加上因果上界;`date < start`
+        # 的历史仍然可用(那是合法的过去数据)。
+        _asof_sql = (
+            ref_pit.isoformat() if hasattr(ref_pit, "isoformat") else str(ref_pit)
+        )
         liquidity_codes = con.execute(
             (
                 "SELECT thscode, date, amount FROM v_daily "
                 "WHERE thscode IN ({codes_sql}) "
+                "AND date <= '{asof}' "
                 "ORDER BY thscode, date"
-            ).format(codes_sql=codes_sql)
+            ).format(codes_sql=codes_sql, asof=_asof_sql)
         ).fetchdf()
         liquid = apply_liquidity_filter(liquidity_codes, min_avg_turnover=5e7, lookback=60)
         final_codes = main_board & liquid
