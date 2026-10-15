@@ -197,22 +197,15 @@ class CyclePriceActionStrategy(bt.Strategy):
         ).iloc[0]
 
         if self._portfolio.position is None and sig:
-            # Round 30 (2026-09-28, CLAUDE.md §3): limit-up entry guard.
-            # cycle_price_action was the ONLY engine without this guard.
-            # Mirrors chase_up + uptrend_pullback (Portfolio-level) and
-            # short_reversal (engine-level for LIMIT_DOWN). prev_close from
-            # previous bar's close via backtrader feed; if feed too short,
-            # close[-1] is None → is_limit_up returns False (best-effort).
+            # §6 (audit P3, 2026-10-15): 涨停守卫**已移入 Portfolio**(执行层)。
+            # 此前它在这里(strategy 层),而另外三个引擎都在 portfolio 层 ——
+            # §6 单层归属要求一条规则只有一处归属,否则两处会各自演化。
+            # 这里只负责把 prev_close 传下去(前一根 bar 的收盘;feed 太短则为 None,
+            # 由 Portfolio 按 best-effort 处理)。
             try:
                 prev_close = float(self.datas[0].close[-1])
             except (IndexError, TypeError):
                 prev_close = None
-            if is_limit_up(
-                prev_close=prev_close,
-                open_price=bar["open"],
-                threshold=self.p.limit_up_threshold,
-            ):
-                return  # skip entry: limit-up open, no shares available
             # §1/§4 (2026-10-15): 先确认次根 bar 可成交,再让 Portfolio 建仓。
             # 顺序反了会让组合持有一个 broker 无从卖出的仓位(停牌 → 买入无成交
             # → 出场 submit_sell 抛 "cannot sell more than held")。
@@ -226,6 +219,7 @@ class CyclePriceActionStrategy(bt.Strategy):
                 # R8 (2026-09-21): Volume Participation Limit (CLAUDE.md §4)。
                 # 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION。
                 bar_volume=bar.get("volume"),
+                prev_close=prev_close,
             )
             if state is None:
                 return

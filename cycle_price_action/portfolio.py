@@ -38,6 +38,7 @@ from typing import Any, Mapping
 # Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical cost rates imported from
 # core/dual_price.py single-source-of-truth. (was 0.001 = 万10 pre-Aug2023).
 from core.corporate_actions import apply_corporate_action
+from core.dual_price import is_limit_up
 
 logger = logging.getLogger(__name__)
 from core.dual_price import (
@@ -106,6 +107,10 @@ class Portfolio:
         # 与 chase_up/portfolio.py:121 + short_reversal/replay_strategy_v3.py:154
         # (initial_capital=1_000_000.0) 口径一致, 防止多仓策略在反复 gap-down
         # 击穿 SL 后继续 all-in 累积亏损直到穿仓 0。
+        # §4 (audit P3, 2026-10-15): 涨跌停守卫属**执行层**,归 Portfolio。
+        # 此前它在 strategy 层(backtrader_engine.next 里 inflight 检查),而
+        # 另外三个引擎都在 portfolio 层 —— §6 单层归属要求一个规则只有一处归属。
+        is_limit_up_threshold: float = 0.095,
         initial_capital: float = 1_000_000.0,
         # R5' (2026-09-23, CLAUDE.md §4): ATR-aware slippage opt-in.
         # When atr_slip_scale > 0, slippage = max(0, atr_pct × participation × scale)
@@ -125,6 +130,7 @@ class Portfolio:
         self.cash = float(cash)
         self.initial_capital = float(initial_capital)
         self.atr_slip_scale = atr_slip_scale
+        self.is_limit_up_threshold = float(is_limit_up_threshold)
         self.intraday_tiebreak = intraday_tiebreak
         self._pos: PositionState | None = None
         self.closed_trades: list[dict] = []
@@ -266,10 +272,21 @@ class Portfolio:
         # R8 (2026-09-21): Volume Participation Limit input.
         # None / NaN → skip cap (back-compat for tests without volume column)。
         bar_volume: float | None = None,
+        # §4 (audit P3, 2026-10-15): 前收。提供时强制**涨停不成交**
+        # (CLAUDE.md §3 Reality Mapping:涨停封板无法买入)。None → 跳过检查
+        # (best-effort 回退,与 chase_up/uptrend/short_reversal 同口径)。
+        prev_close: float | None = None,
     ) -> PositionState | None:
         if self._pos is not None:
             return None
         if price <= 0:
+            return None
+        # §4: 涨停开盘拒绝(执行层的物理不可成交约束)
+        if is_limit_up(
+            prev_close=prev_close,
+            open_price=price,
+            threshold=self.is_limit_up_threshold,
+        ):
             return None
         # Round 10 (2026-09-28, CLAUDE.md §2): NAV-floor cash gate。
         # 当 NAV (cycle 单仓策略, NAV = self.cash, 因为 self._pos is None 守卫
