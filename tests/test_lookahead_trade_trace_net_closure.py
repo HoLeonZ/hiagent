@@ -66,21 +66,40 @@ def test_trace_close_uses_total_fee_ratio_not_single_commission() -> None:
 
 
 def test_trace_close_notional_pnl_includes_entry_fee() -> None:
-    """§0/§3 RED→GREEN: notional_pnl = (ep-price)×size − entry_fee − exit_fee."""
+    """§0/§3 RED→GREEN: notional_pnl = (ep-price)×size − entry_fee − exit_fee.
+
+    审计 P3 (2026-10-15): 原实现用正则要求源码里出现字面量
+    `notional_pnl = float(...entry_fee...)`。它断言的对象是**源码文本**而非
+    语义 —— 把同一个表达式挪进 dict 值(`"notional_pnl": float(...)`)就会
+    误报,而语义一字未变(该 refactor 发生在把 TraceStrategy 改为委托生产
+    实现时)。改为解析 AST 取出该值表达式再判定,对书写形式免疫。
+    """
+    import ast
+
     src = _src()
-    # The trace record uses `notional_pnl`. Round 24 fix must include entry_fee.
-    assert "notional_pnl" in src, (
-        "§0/§3: TraceStrategy must emit notional_pnl with entry_fee subtracted. "
-        "Current code computes `pnl − exit_fee` only, missing entry_fee."
+    tree = ast.parse(src)
+    exprs: list[ast.AST] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            for k, v in zip(node.keys, node.values):
+                if isinstance(k, ast.Constant) and k.value == "notional_pnl":
+                    exprs.append(v)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for t in targets:
+                if isinstance(t, ast.Name) and t.id == "notional_pnl":
+                    exprs.append(node.value)
+
+    assert exprs, (
+        "§0/§3: TraceStrategy 必须产出 notional_pnl,且扣除 entry_fee。"
     )
-    # Look at the calculation line that builds the value emitted under
-    # "notional_pnl": variable assignment must reference entry_fee.
-    # Pattern: notional_pnl = float(pnl − exit_fee − entry_fee) per Round 19 canonical.
-    import re
-    m = re.search(r"notional_pnl\s*=\s*float\([^)]*entry_fee[^)]*\)", src)
-    assert m is not None, (
-        "§0/§3: notional_pnl value must subtract entry_fee. Round 19 canonical "
-        "pattern: `notional_pnl = float(pnl − exit_fee − entry_fee)`. "
-        "Currently the calculation only subtracts exit_fee, overstating "
-        "per-trade PnL by ~5bp (stamp_duty on SELL entry)."
+    # 该文件里 notional_pnl 会出现多次:产出点(float(pnl - exit_fee - entry_fee))
+    # 以及汇总处的透传(t["notional_pnl"])。要求落在**产出点**上,故用 any。
+    def _names(expr: ast.AST) -> set[str]:
+        return {n.id for n in ast.walk(expr) if isinstance(n, ast.Name)}
+
+    assert any({"entry_fee", "exit_fee"} <= _names(e) for e in exprs), (
+        "§0/§3: 没有任何 notional_pnl 产出表达式同时减去 entry_fee 与 exit_fee"
+        "(Round 19 canonical: `pnl - exit_fee - entry_fee`);"
+        f"各产出点引用的名字: {[sorted(_names(e)) for e in exprs]}"
     )

@@ -98,10 +98,16 @@ def build_per_stock_feeds(
         if needs_adj:
             for col in ("adj_open", "adj_high", "adj_low", "adj_close"):
                 sub[col] = float("nan")
-        # 不设 fromdate/todate: 窗口边界由 strategy 内部的 indicator NaN gate
-        # + entry 时点检查保证 (LAHEAD-001 实证 pre_window_entry_count == 0)。
-        # 在 backtrader 1.9.78.123 + pandas 3.0.5 栈下,feed.fromdate = pd.Timestamp(...)
-        # 会抛 TypeError;若需 windowed run,需用 bt.date2num(float) 替代。
+        # 不设 fromdate/todate: 窗口边界由 strategy 侧显式约束。
+        # §1 (audit, 2026-10-15): 在 backtrader 1.9.78.123 + pandas 3.0.5 栈下
+        # `feed.fromdate = pd.Timestamp(...)` 会抛 TypeError,故不在 feed 层做
+        # 裁剪,改为把窗口下发到策略(Phase3V3Strategy.window_start/window_end,
+        # 由 engine.py 传入)并在入场决策处强制。
+        # ⚠️ 本注释此前写成「边界由 indicator NaN gate + entry 时点检查保证
+        # (LAHEAD-001 实证 pre_window_entry_count == 0)」—— 那句话有两处不实:
+        #   1) 策略里从来没有 entry 时点/窗口检查(现补上,见 _in_window);
+        #   2) 引用的 LAHEAD-001 用例当时因 harness 分叉而常年 ERROR,等于零覆盖
+        #      (harness 已修为委托生产实现,该不变量现被真正验证)。
         feed = AShareData(dataname=sub, plot=False)
         feeds.append((code, feed))
     return feeds

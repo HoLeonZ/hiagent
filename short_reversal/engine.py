@@ -313,6 +313,12 @@ def run_backtest_v3(
         entry_selection=cfg.get("entry_selection", "first"),
         # v81 (2026-10-14, §3): 信号价格域 ('raw' 默认兼容 / 'adj' §3 合规)。
         signal_price_domain=cfg.get("signal_price_domain", "adj"),
+        # §1 (audit, 2026-10-15): 窗口上下界显式下发到策略。
+        # 面板向两端扩 buffer 且 feed 不设 fromdate/todate,此前入场不受任何
+        # 窗口约束 —— 「无窗口前入场」只是指标暖机 NaN gate 的偶然结果。
+        # 生产入口必须传真实窗口;策略侧对 None 会打 warn 而非静默放行。
+        window_start=start,
+        window_end=end,
         result_holder=holder,
     )
     cerebro.run()

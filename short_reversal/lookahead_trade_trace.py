@@ -57,121 +57,80 @@ class TraceStrategy(Phase3V3Strategy):
         super().__init__()
         self.traces: list[dict] = []
 
+    # §6 (audit, 2026-10-15): 两个 override 改为**薄包装**，委托生产实现，
+    # 只做观测。
+    #
+    # 原实现是生产入场/出场逻辑的**分叉副本**：自建 size 公式（基于
+    # `self.cash` 而非 free_cash）、`self.cash -= entry_fee` 的单池模型、
+    # **不调用 `reserve_for_entry`**、建仓字典只写 3 个键。Round 16 把生产
+    # 代码迁到 3-pool settlement isolation 后这里没跟着改，后果是：
+    #   - `locked_margin` 恒为 0 → 下一根 bar 被融券日费的 fail-fast 打死，
+    #     于是三个「无前视」不变量用例常年是 ERROR 而不是断言失败 ——
+    #     **等于从未被有效覆盖**；
+    #   - `short_reversal/feed_bt.py` 的注释却引用 "LAHEAD-001 实证
+    #     pre_window_entry_count == 0" 作为窗口边界安全的依据，而那个测试
+    #     在当前代码栈上根本跑不起来。
+    # 即：harness 测的不是生产行为，任何由它得出的窗口结论都不成立。
+    # 现在改为委托，harness 与生产同源。
+
     def _fill_pending_entries(self) -> None:
-        if not self.pending_entries:
-            return
-        for d in self.datas:
-            code = d._name
-            if code not in self.pending_entries:
-                continue
-            entry_price = float(d.open[0])
-            target_value = self.cash * self.p.position_fraction
-            size = (
-                int(target_value / entry_price / self.p.lot_size) * self.p.lot_size
-            )
-            if size < self.p.lot_size:
-                self.pending_entries.pop(code, None)
-                continue
-            entry_fee = (
-                max(
-                    self.p.min_commission,
-                    size * entry_price * self.p.commission_rate,
-                )
-                + size * entry_price * self.p.stamp_duty_rate
-            )
-            self.cash -= entry_fee
-            self._holds[code] = {
-                "entry_price": entry_price,
-                "size": size,
-                "entry_bar": len(self),
-            }
-            # trace: 记录 entry
-            try:
-                entry_date = pd.Timestamp(d.datetime.date(0)).date()
-            except (ValueError, TypeError, AttributeError):
-                entry_date = None
-            self._entry_meta: dict = getattr(self, "_entry_meta", {})
+        before = set(self._holds)
+        super()._fill_pending_entries()
+        self._entry_meta = getattr(self, "_entry_meta", {})
+        for code in set(self._holds) - before:
+            pos = self._holds[code]
             self._entry_meta[code] = {
-                "entry_bar": len(self),
-                "entry_date": entry_date,
-                "entry_price": entry_price,
-                "size": size,
+                "entry_bar": pos.get("entry_bar"),
+                "entry_date": pos.get("entry_date"),
+                "entry_price": pos.get("entry_price"),
+                "size": pos.get("size"),
             }
-            self.pending_entries.pop(code, None)
 
     def _close(self, d, price: float, reason: str) -> None:
         code = d._name
-        pos = self._holds.pop(code)
-        ep = pos["entry_price"]
-        size = pos["size"]
-        # 做空盈亏：(entry - exit) × size
-        pnl = (ep - price) * size
-        exit_fee = max(
-            self.p.min_commission,
-            size * price * self.p.commission_rate,
-        )
-        # Round 24 (2026-09-28, CLAUDE.md §0/§3 truthfulness, propagate Round 19 fix):
-        # TraceStrategy 是 replay_strategy_v3 的子类,但 _close 被 override,
-        # Round 19 修复的总费率公式没传到这里。Trace report 之前用
-        # `net = gross - commission_rate`, 漏扣 stamp_duty_rate (5bp) 和 exit
-        # commission (2.5bp), 系统性高估每笔 net ~0.07%。修后与 canonical
-        # replay_strategy_v3._close 的 total_fee_ratio 公式一致。
-        entry_fee = pos.get(
-            "entry_fee",
-            max(self.p.min_commission, size * ep * self.p.commission_rate)
-            + size * ep * self.p.stamp_duty_rate,
-        )
-        gross_pct = (ep - price) / ep
+        # 生产实现会 pop 掉持仓，故先取快照
+        pos = dict(self._holds.get(code, {}))
+        super()._close(d, price, reason)
+        if not pos:
+            return
+        ep = float(pos["entry_price"])
+        size = float(pos["size"])
+        exit_px = float(price)
+        pnl = (ep - exit_px) * size
+        exit_fee = max(self.p.min_commission, size * exit_px * self.p.commission_rate)
+        entry_fee = float(pos.get("entry_fee", 0.0))
+        # Round 24 (canonical Round 19 同款): 总费率含 exit commission 与
+        # stamp_duty，避免系统性高估每笔 net。
+        gross_pct = (ep - exit_px) / ep
         total_fee_ratio = (
             (self.p.commission_rate + self.p.stamp_duty_rate)
-            + self.p.commission_rate * (price / ep)
+            + self.p.commission_rate * (exit_px / ep)
         )
         net = gross_pct - total_fee_ratio
-        # 现金账: entry_fee 在 entry 时已经 self.cash -= entry_fee 扣过,
-        # 这里不能再扣。TraceStrategy 不是 Round 16 settlement 状态机,
-        # 是单 cash pool 模型: 入场扣 entry_fee + 出场净收 pnl − exit_fee。
-        self.cash += pnl - exit_fee
-        # trade dict (与原 strategy 一致)
-        self.trades.append(
-            {
-                "thscode": code,
-                "entry_price": ep,
-                "exit_price": float(price),
-                "exit_reason": reason,
-                "size": size,
-                "net": float(net),
-                "hold_days": len(self) - pos["entry_bar"],
-            }
-        )
-        # trace: 拿 entry 元数据,合并 exit 元数据
         try:
             exit_date = pd.Timestamp(d.datetime.date(0)).date()
         except (ValueError, TypeError, AttributeError):
             exit_date = None
         meta = getattr(self, "_entry_meta", {}).pop(code, {})
-        # Round 24: notional_pnl 必须扣 entry_fee (Round 19 canonical 同款),
-        # 否则 trace report 的 pre_window_pnl 系统性多算 5bp/trade。
-        # 注意: 这是 metric 字段, 不是 cash walk。cash 已经在入场扣过 entry_fee,
-        # 这里只是把 round-trip 全成本摊到 trade record 让 trace 报告真实。
-        notional_pnl = float(pnl - exit_fee - entry_fee)
+        entry_date = meta.get("entry_date")
         self.traces.append(
             {
                 "thscode": code,
-                "entry_bar": meta.get("entry_bar"),
+                "entry_bar": meta.get("entry_bar", pos.get("entry_bar")),
                 "entry_date": (
-                    meta["entry_date"].isoformat()
-                    if meta.get("entry_date") is not None
-                    else None
+                    entry_date.isoformat() if entry_date is not None else None
                 ),
                 "entry_price": ep,
                 "exit_bar": len(self),
                 "exit_date": exit_date.isoformat() if exit_date is not None else None,
-                "exit_price": float(price),
+                "exit_price": exit_px,
                 "exit_reason": reason,
                 "size": size,
-                "hold_days": len(self) - pos["entry_bar"],
+                "hold_days": len(self) - int(pos.get("entry_bar", len(self))),
                 "net_per_share": float(net),
-                "notional_pnl": notional_pnl,
+                # metric 字段（非 cash walk）：round-trip 全成本摊到该笔，
+                # 使 trace 报告的窗口内外 P&L 口径真实。
+                "notional_pnl": float(pnl - exit_fee - entry_fee),
             }
         )
 

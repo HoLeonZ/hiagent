@@ -11,6 +11,7 @@ backtrader 源码（pip 装的 1.9.78.123）保持原封不动，只走子类化
 """
 from __future__ import annotations
 
+import datetime as _dt
 import logging
 import math
 from typing import Any
@@ -148,6 +149,27 @@ def _assert_trade_dict_is_canonical(trade: dict) -> None:
             f"short_reversal trade dict missing canonical keys {missing}; "
             f"present keys: {sorted(trade.keys())}"
         )
+
+
+def _parse_window_day(value: Any) -> _dt.date | None:
+    """§1 (audit, 2026-10-15): 把 window_start / window_end 归一为 datetime.date。
+
+    接受 None / date / datetime / "YYYY-MM-DD"。非法值 fail-fast —— 窗口边界是
+    正确性约束,解析失败必须让调用方知道,不能静默降级成"未启用"(那正是
+    §3 `signal_price_domain` 默认 'raw' 那类"修复不可达"的失败模式)。
+    """
+    if value is None:
+        return None
+    if isinstance(value, _dt.datetime):
+        return value.date()
+    if isinstance(value, _dt.date):
+        return value
+    try:
+        return _dt.date.fromisoformat(str(value)[:10])
+    except ValueError as exc:
+        raise ValueError(
+            f"window bound 无法解析为日期: {value!r} (期望 date 或 'YYYY-MM-DD')"
+        ) from exc
 
 
 class Phase3V3Strategy(bt.Strategy):
@@ -306,10 +328,30 @@ class Phase3V3Strategy(bt.Strategy):
         # v81.1 (审计修正): 默认值由 'raw' 改为 'adj' —— 审计指出"默认 raw 的
         #   开关 = 默认值仍是违规值" (§3 dual-price mandate)。'adj' 为强制合规值。
         signal_price_domain="adj",
+        # §1 (audit, 2026-10-15): 窗口上下界显式下发。
+        # 面板按 PANEL_FORWARD_BUFFER_DAYS / PANEL_POST_BUFFER_DAYS 向两端扩
+        # buffer,且 feed_bt.py 明确不设 fromdate/todate —— 此前**没有任何
+        # 窗口检查**。实测「无窗口前入场」成立,但那是靠指标暖机的 NaN gate
+        # 偶然保证的:改指标周期 / min_bars / buffer 常量即可静默失守,而
+        # 守卫用例常年 ERROR(harness 分叉)等于零覆盖。
+        # 这里把边界变成显式、可断言、可 fail-fast 的约束。
+        # None = 不启用(仅为不关心窗口的单测保留,启用时会打 warn);
+        # 生产入口 short_reversal/engine.py 必须传真实窗口。
+        window_start=None,
+        window_end=None,
         result_holder=None,
     )
 
     def __init__(self):
+        # §1 (audit, 2026-10-15): 窗口边界解析为 date,并让"未启用"可见而非静默。
+        self._win_start = _parse_window_day(self.p.window_start)
+        self._win_end = _parse_window_day(self.p.window_end)
+        if self._win_start is None or self._win_end is None:
+            logger.warning(
+                "[window-gate] window_start/window_end 未提供 —— 入场不受窗口"
+                "约束(§1 缺口)。仅不关心窗口的单元测试可如此;生产入口 "
+                "short_reversal/engine.py 必须传入真实窗口。"
+            )
         # per-data 指标字典（避免多 data 共享 indicator）
         self.indi: dict[str, dict] = {}
         # v57 J 条件状态: 最近一次 SL 出场的 exit_date, 用于冷却检查。
@@ -518,7 +560,7 @@ class Phase3V3Strategy(bt.Strategy):
             if code in self._holds:
                 self._check_exit(d)
             elif code not in self.pending_entries:
-                if regime_ok and self._all_conditions(d):
+                if regime_ok and self._in_window(d) and self._all_conditions(d):
                     self.pending_entries[code] = True
 
         # 4) 更新回撤（NAV-based：cash + 持仓 mark-to-market 浮盈）
@@ -986,6 +1028,18 @@ class Phase3V3Strategy(bt.Strategy):
             pos["margin_fees_paid"] = pos.get("margin_fees_paid", 0.0) + fee
 
     # ----------------------------------------------------------- 5 conditions
+
+    def _in_window(self, d) -> bool:
+        """§1 (audit, 2026-10-15): 入场必须落在声明的 [window_start, window_end] 内。
+
+        只约束**入场**。出场不受限 —— 面板的 PANEL_POST_BUFFER_DAYS 是"在途
+        平仓"约定(见 tests/test_short_reversal_no_lookahead.py 的 LAHEAD-002
+        说明),窗口后出场是设计而非漏洞。
+        """
+        if self._win_start is None or self._win_end is None:
+            return True
+        cur = bt.num2date(d.datetime[0]).date()
+        return self._win_start <= cur <= self._win_end
 
     def _all_conditions(self, d) -> bool:
         indi = self.indi[d._name]
