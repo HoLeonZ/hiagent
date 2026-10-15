@@ -22,6 +22,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 from core.corporate_actions import apply_corporate_action
+from core.preset_contract import ALL_IN, EXECUTION_PRICE_SOURCE  # §2/§3 (audit 2026-10-15)
 from core.dual_price import (
     BORROW_RATE_ANNUAL,
     COMMISSION_RATE,
@@ -184,6 +185,11 @@ class Phase3V3Strategy(bt.Strategy):
         sl_pct=0.0005,
         max_hold=5,
         position_fraction=1.0,
+        # §2/§3 (audit 2026-10-15, preset→engine conformance): 这两项此前被 preset
+        # 声明却无任何消费者。由 engine.run_backtest_v3 经 core.preset_contract
+        # 解析后注入;__init__ 核对声明与引擎实现是否一致。
+        position_sizing="all_in",
+        price_source_for_execution="raw_close",
         pct_chg_low=0.02,
         pct_chg_high=0.07,
         a_condition="default",  # 'default' (V1) | 'cascade_price' (V5)
@@ -350,6 +356,21 @@ class Phase3V3Strategy(bt.Strategy):
     )
 
     def __init__(self):
+        # §3 (audit 2026-10-15): 执行域价源必须与引擎实际所用一致。本引擎的
+        # 成交价/SL/TP/涨跌停守卫全部取自 raw 域(d.close/d.open = v_daily 原始价),
+        # 指标域才切 adj_close。声明 adj 域却按 raw 成交 = 承诺无人兑现,故 fail-fast。
+        if self.p.price_source_for_execution != EXECUTION_PRICE_SOURCE:
+            raise ValueError(
+                f"§3: price_source_for_execution="
+                f"{self.p.price_source_for_execution!r} 不被本引擎支持 "
+                f"(只有 {EXECUTION_PRICE_SOURCE!r}):执行域没有 adj 分支。"
+            )
+        # §2 (audit 2026-10-15): 单腿策略只实现 all_in(集成路径由引擎分流)。
+        if self.p.position_sizing != ALL_IN:
+            raise ValueError(
+                f"§2: position_sizing={self.p.position_sizing!r} 应已在引擎分流"
+                f"(只有 {ALL_IN!r} 到达单腿策略)。"
+            )
         # §1 (audit, 2026-10-15): 窗口边界解析为 date,并让"未启用"可见而非静默。
         # §3 (audit P2-10): 累计已付出现金分红(做空为付出),供对账。
         self._dividends_paid_total = 0.0

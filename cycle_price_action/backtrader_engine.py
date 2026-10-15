@@ -74,9 +74,48 @@ class CyclePriceActionStrategy(bt.Strategy):
         # (缺声明在那里 fail-fast)。此前本引擎从不读取 preset 的该值,
         # broker 恒用 0.0 —— 与其余三引擎的"静默默认"同型。
         atr_slip_scale=0.0,
+        # §0/§2/§3/§4 (audit 2026-10-15, preset→engine conformance):
+        # 以下六项此前**被 PRESET_V1 声明却无任何消费者** —— 声明纯装饰。
+        # 现由 Control Plane 从 preset 解析后注入(与 data_provider 同纪律):
+        # None = 未注入 → __init__ fail-fast,绝不退回硬编码默认值。
+        #   weight_kline/weight_cycle/weight_calendar
+        #                          三个评分维度权重 (此前硬编码在
+        #                          signals.fuse_scores 的默认参数里,与声明同值
+        #                          故缺口隐形)
+        #   position_fraction      §2 仓位比例
+        #   position_sizing        §2 sizing 模式
+        #   max_positions          §2 持仓上限(本引擎容量恒 1)
+        #   max_volume_participation §4 成交量参与率上限(此前为类常量)
+        #   price_source_for_execution §3 执行域价源
+        weight_kline=None,
+        weight_cycle=None,
+        weight_calendar=None,
+        position_fraction=None,
+        position_sizing=None,
+        max_positions=None,
+        max_volume_participation=None,
+        price_source_for_execution=None,
     )
 
     def __init__(self):
+        # §0 (audit 2026-10-15): preset 声明必须真的到达引擎。缺注入 → 炸,
+        # 而不是静默用默认值 —— 否则「没声明」与「声明为默认值」不可区分。
+        for _name in (
+            "weight_kline",
+            "weight_cycle",
+            "weight_calendar",
+            "position_fraction",
+            "position_sizing",
+            "max_positions",
+            "max_volume_participation",
+            "price_source_for_execution",
+        ):
+            if getattr(self.p, _name) is None:
+                raise ValueError(
+                    f"CyclePriceActionStrategy requires `{_name}` to be resolved "
+                    "from the preset by the Control Plane (backtest.run_backtest). "
+                    "CLAUDE.md §0: preset 声明不得被静默丢弃。"
+                )
         self._portfolio = Portfolio(
             cash=self.broker.getcash(),
             initial_capital=self.p.initial_capital,
@@ -84,6 +123,12 @@ class CyclePriceActionStrategy(bt.Strategy):
             # for intraday_tiebreak (181st dropped preset key gap)。
             # 与 chase_up + uptrend_pullback + short_reversal Portfolio 同口径。
             intraday_tiebreak=self.p.intraday_tiebreak,
+            # §2/§3/§4 (audit 2026-10-15): 其余声明的落点。
+            max_volume_participation=self.p.max_volume_participation,
+            position_fraction=self.p.position_fraction,
+            position_sizing=self.p.position_sizing,
+            max_positions=self.p.max_positions,
+            price_source_for_execution=self.p.price_source_for_execution,
         )
         # Tick 49: ReplayBroker receives pre-built data_provider from Control
         # Plane. If none was injected, raise — fail-fast rather than silently
@@ -194,6 +239,10 @@ class CyclePriceActionStrategy(bt.Strategy):
         sig = entry_signal(
             pd.Series([kscore]), pd.Series([cyc]), pd.Series([cal]),
             threshold=self.p.threshold, min_dim=self.p.min_dim,
+            # §0 (audit 2026-10-15): 权重来自 preset 声明,不再吃 fuse_scores 的
+            # 硬编码默认值 —— 此前删掉这行,融合分数依然"正确",因为默认值恰好
+            # 等于声明值。现在声明是唯一的真源。
+            weights=(self.p.weight_kline, self.p.weight_cycle, self.p.weight_calendar),
         ).iloc[0]
 
         if self._portfolio.position is None and sig:

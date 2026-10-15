@@ -156,9 +156,12 @@ def test_volume_cap_rounding_constant_pin_cycle() -> None:
     修复时不要引入 round-to-0 模式。若 cycle 已修复, 翻转此断言即可。
     """
     src = Path("cycle_price_action/portfolio.py").read_text(encoding="utf-8")
-    has_buggy = (
-        "int(bar_volume * self.MAX_VOL_PARTICIPATION // 100) * 100" in src
-    )
+    # 2026-10-15: 此前这里钉的是完整字面量 `int(bar_volume *
+    # self.MAX_VOL_PARTICIPATION // 100) * 100`。参与率改为由 preset 声明驱动后
+    # (self.max_volume_participation),属性名变了而**缺陷一字未改** —— 旧字面量
+    # 钉的是拼写而不是缺陷,于是把一次无害重命名误报成 GREEN。
+    # 改为钉 **round-to-0 形状本身**,对属性重命名免疫。
+    has_buggy = "// 100) * 100" in src
     # 当前 cycle 仍未修复 round-to-0 模式 — 此 pin 仍处于 RED→GREEN 中间状态。
     # 若 cycle 已 wire 到 volume_cap_fill, 翻转此断言为 has_helper 模式。
     assert has_buggy, (

@@ -110,10 +110,10 @@ def _audit_preset_to_engine(
     engine_name: str,
     presets_module_path: str,
     presets_attr: str,
-) -> list[tuple[str, str]]:
+) -> list[tuple[str, str, str]]:
     """For all presets in an engine, find leaf keys NOT referenced in engine source.
 
-    Returns: list of (preset_name, dropped_key) tuples.
+    Returns: list of (engine_name, preset_name, dropped_key) tuples.
     """
     mod = importlib.import_module(presets_module_path)
     if presets_attr == "PRESETS":
@@ -122,7 +122,14 @@ def _audit_preset_to_engine(
         # cycle uses PRESET_V1 (singleton)
         preset_singleton = getattr(mod, presets_attr)
         presets_dict = {presets_attr: preset_singleton} if isinstance(preset_singleton, dict) else {}
+    return _audit_presets_dict(engine_name, presets_dict)
 
+
+def _audit_presets_dict(
+    engine_name: str,
+    presets_dict: dict[str, Any],
+) -> list[tuple[str, str, str]]:
+    """同一审计,但直接接收 preset dict —— 让灵敏度用例能扫描**人造** preset。"""
     engine_src = _load_engine_source(engine_name)
     dropped: list[tuple[str, str, str]] = []
 
@@ -150,6 +157,14 @@ def _audit_preset_to_engine(
                 f'p["{key}"]',
                 f"p['{key}']",
                 f"self.{key}",
+                # 2026-10-15: `.get("key")` 此前是**盲区** —— 于是短反转的
+                # `cfg.get("ensemble_weight", 1.0/n)` 被误报为"从未被读"。
+                # 误报比漏报更毒:它会诱导人去"修"一个根本没坏的地方。
+                f'.get("{key}"',
+                f".get('{key}'",
+                # dict 字面量/转发:{"key": ...} 也是真实引用。
+                f'"{key}":',
+                f"'{key}':",
             ]
             if not any(p in engine_src for p in patterns):
                 dropped.append((engine_name, preset_name, key))
@@ -222,12 +237,50 @@ def test_cycle_price_action_presets_all_reach_engine() -> None:
     )
 
 
-def test_audit_method_finds_intraday_tiebreak_in_cycle() -> None:
-    """§6 Meta-test: this audit method correctly captures the Tick 30/31 gap.
+def test_audit_detects_a_planted_dropped_key() -> None:
+    """§6 灵敏度: 审计方法必须能抓到**确实没有任何消费者**的键。
 
-    Sanity check: when cycle is in its current state, this audit should
-    find `intraday_tiebreak` as a dropped key. If it doesn't, the audit
-    is broken (false negative — would let violations slip through).
+    原用例钉的是 Tick 30/31 的 `intraday_tiebreak` 缺口。该缺口已闭合(见下一条),
+    若继续钉一个已修复的历史缺口,本用例会永久 RED 且不再表达任何东西 —— 它会从
+    「方法坏了」退化成「噪音」。改为钉**方法本身**:人造一个必然无人消费的键。
+
+    (同形: silent-except 扫描器把「历史站点在名单里」换成「能抓到栽进去的桩」。)
+    """
+    planted = {
+        "_planted_key_that_no_engine_reads_xyzzy": 1,
+        "position_fraction": 1.0,   # 真实键: 应当**不**被报(证明不误报)
+    }
+    dropped = _audit_presets_dict("cycle_price_action", {"planted": planted})
+    dropped_keys = {k for _, _, k in dropped}
+    assert dropped_keys == {"_planted_key_that_no_engine_reads_xyzzy"}, (
+        "AUDIT METHOD BROKEN: 审计既未抓到栽进去的键,或把真实消费的键误报了。"
+        f"实际 dropped={sorted(dropped_keys)}"
+    )
+
+
+def test_scanner_sees_dict_get_reads() -> None:
+    """§6 灵敏度: `.get("key")` 是**读取**,不是丢弃。
+
+    2026-10-15 前扫描器只认 `["key"]` / `key=` / `.key`,于是
+    `cfg.get("ensemble_weight", 1.0/n)` 被误报为"从未被读"。误报比漏报更毒:
+    它会诱导人去"修"一个根本没坏的地方(short_reversal 的 3 个集成 preset 就
+    因此被误判)。
+    """
+    dropped = _audit_presets_dict(
+        "short_reversal", {"planted": {"ensemble_weight": 0.5}}
+    )
+    assert not dropped, (
+        "`cfg.get(\"ensemble_weight\", ...)` 是真实消费,不应被报为 dropped —— "
+        f"实际 {dropped}"
+    )
+
+
+def test_historical_intraday_tiebreak_gap_is_closed() -> None:
+    """Tick 30/31 的 `intraday_tiebreak` 静默丢弃缺口**已闭合**。
+
+    该键现由 Control Plane 经 `core.dual_price`/preset→strategy 管线注入
+    (backtest.py 白名单 + CyclePriceActionStrategy.params + Portfolio.__init__)。
+    记下来,是因为"缺口关闭"与"缺口从未存在"是两件不同的事 —— 后者不需要修。
     """
     dropped = _audit_preset_to_engine(
         "cycle_price_action",
@@ -235,8 +288,6 @@ def test_audit_method_finds_intraday_tiebreak_in_cycle() -> None:
         "PRESET_V1",
     )
     dropped_keys = {k for _, _, k in dropped}
-    assert "intraday_tiebreak" in dropped_keys, (
-        "AUDIT METHOD BROKEN: this audit failed to detect the known "
-        "intraday_tiebreak gap from Tick 30/31. The audit must be "
-        "sharpened — currently produces false negatives."
+    assert "intraday_tiebreak" not in dropped_keys, (
+        "Tick 30/31 的 intraday_tiebreak 缺口重新出现了 —— 声明又一次无人消费。"
     )

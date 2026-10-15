@@ -39,6 +39,7 @@ from typing import Any, Mapping
 # core/dual_price.py single-source-of-truth. (was 0.001 = 万10 pre-Aug2023).
 from core.corporate_actions import apply_corporate_action
 from core.dual_price import is_limit_up
+from core.preset_contract import ALL_IN, EXECUTION_PRICE_SOURCE
 
 logger = logging.getLogger(__name__)
 from core.dual_price import (
@@ -80,11 +81,18 @@ class Portfolio:
     # Project policy: every entry is all-in (CLAUDE.md §2, revised 2026-09-21).
     # Held at 1.0 explicitly so the constant survives for callers/tests.
     MAX_POSITION_PCT = 1.0
+    # §2 (audit 2026-10-15): 本账本的**物理**容量 —— 同一时刻只持 1 仓
+    # (`try_enter` 以 `if self._pos is not None: return None` 表达)。
+    # preset 声明的 max_positions 必须与之相等,否则 fail-fast。
+    MAX_POSITIONS_CAPACITY = 1
     # R8 (2026-09-21): Volume Participation Limit (CLAUDE.md §4)。
     # 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION。超出部分丢弃(不挂单)。
     # 与 chase_up/portfolio.py:49 / short_reversal/replay_strategy_v3.py 口径一致,
     # 防止小票大单砸穿市场。bar_volume is optional for backwards compatibility;
     # when None or NaN the cap is skipped (test fixtures without volume column)。
+    # 2026-10-15: 保留为**模块级参考值**;实际参与率由 preset 声明的
+    # `max_volume_participation` 经 __init__ 注入(self.max_volume_participation),
+    # 不再由本常量驱动 —— 此前 PRESET_V1 声明了它却无人读取。
     MAX_VOL_PARTICIPATION = 0.10
 
     # Round 10 (2026-09-28, CLAUDE.md §2): NAV-floor cash gate threshold。
@@ -116,6 +124,23 @@ class Portfolio:
         # When atr_slip_scale > 0, slippage = max(0, atr_pct × participation × scale)
         # is added on top of commission + tax. Default 0.0 = no slippage (back-compat).
         atr_slip_scale: float = 0.0,
+        # §4 (audit 2026-10-15, §0/§6 conformance): 成交量参与率上限。
+        # 此前本引擎把 0.10 写成类常量 MAX_VOL_PARTICIPATION,而 PRESET_V1 声明的
+        # `max_volume_participation=0.10` **从未被读取** —— 声明与常量同值,于是
+        # 改预设不会有任何效果。现在由声明驱动。
+        max_volume_participation: float = 0.10,
+        # §2 (audit 2026-10-15): preset 声明的仓位比例。此前从不被读取。
+        # 1.0 = 全仓政策;该值只**缩小**预算,余下仍受 free_cash 保证金闸门约束。
+        position_fraction: float = 1.0,
+        # §3 (audit 2026-10-15): 执行域价源声明。本组合的成交价/成交量全部来自
+        # v_daily(原始价),指标域才走 adj_close —— 见 data_feed 的 LEFT JOIN。
+        price_source_for_execution: str = "raw_close",
+        # §2 (audit 2026-10-15): 这两项此前**声明了却无任何消费者**。本组合是
+        # 单仓 all-in 账本,结构上无法多仓、也无法预留现金缓冲 —— 所以"消费"它们
+        # 的正确形态是**核对声明与容量的兼容性**:声明 2 仓或 'equal' 时必须炸,
+        # 而不是静默按 1 仓 all-in 跑完。这与 §3 价源声明同一纪律。
+        max_positions: int = 1,
+        position_sizing: str = "all_in",
     ) -> None:
         # Round 16 (2026-09-28, CLAUDE.md §2): Settlement Isolation — 3-pool
         # cash state machine. Mirror of chase_up/portfolio.py + uptrend_pullback.
@@ -132,6 +157,33 @@ class Portfolio:
         self.atr_slip_scale = atr_slip_scale
         self.is_limit_up_threshold = float(is_limit_up_threshold)
         self.intraday_tiebreak = intraday_tiebreak
+        # §4 (audit 2026-10-15): 参与率上限由声明驱动(不再读类常量)。
+        self.max_volume_participation = float(max_volume_participation)
+        # §2 (audit 2026-10-15): 仓位比例由声明驱动。
+        self.position_fraction = float(position_fraction)
+        # §3 (audit 2026-10-15): 执行域必须是原始价。本组合没有 adj 执行路径 ——
+        # 声明 adj_close 等于一句无人兑现的承诺,故 fail-fast 而非静默按 raw 执行。
+        if price_source_for_execution != EXECUTION_PRICE_SOURCE:
+            raise ValueError(
+                f"§3: price_source_for_execution={price_source_for_execution!r} "
+                f"不被本执行层支持(只有 {EXECUTION_PRICE_SOURCE!r})。"
+                "SL/TP/成交量/记账必须建立在原始价上。"
+            )
+        self.price_source_for_execution = price_source_for_execution
+        # §2 (audit 2026-10-15): 容量核对 —— 本账本同一时刻只持 1 仓。
+        if max_positions != self.MAX_POSITIONS_CAPACITY:
+            raise ValueError(
+                f"§2: preset 声明 max_positions={max_positions},但本组合的物理容量是 "
+                f"{self.MAX_POSITIONS_CAPACITY}(单仓账本)。声明超出容量 = 静默忽略。"
+            )
+        self.max_positions = int(max_positions)
+        # §2 (audit 2026-10-15): sizing 模式核对 —— 本账本只实现 all-in 分支。
+        if position_sizing != ALL_IN:
+            raise ValueError(
+                f"§2: preset 声明 position_sizing={position_sizing!r},但本组合只实现 "
+                f"{ALL_IN!r}。"
+            )
+        self.position_sizing = position_sizing
         self._pos: PositionState | None = None
         self.closed_trades: list[dict] = []
 
@@ -303,7 +355,7 @@ class Portfolio:
         # (locked_margin grows) but self.cash stays at initial value →
         # sizing over-allocates → reserve_for_entry fail-fast "cost >
         # free_cash". Fix: gate against free_cash directly.
-        lots = int(self.free_cash // (price * 100))
+        lots = int(self.free_cash * self.position_fraction // (price * 100))
         if lots < 1:
             return None
         shares = lots * 100
@@ -326,7 +378,7 @@ class Portfolio:
         # 这是 CLAUDE.md §4 "Max_Fill_Qty = MIN(Order_Qty, Bar_Volume * 0.10)"
         # 防止小票大单砸穿市场、产生 slippage / market impact。
         if bar_volume is not None and not _is_nan(bar_volume) and bar_volume > 0:
-            max_fill = int(bar_volume * self.MAX_VOL_PARTICIPATION // 100) * 100
+            max_fill = int(bar_volume * self.max_volume_participation // 100) * 100
             if max_fill > 0 and shares > max_fill:
                 shares = max_fill
                 cost = self._buy_cost(price, shares)

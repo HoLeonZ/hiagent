@@ -21,6 +21,11 @@ from core.dual_price import BORROW_RATE_ANNUAL  # §4 单源 (audit P2-11, 2026-
 SLIP_NONE_ACKNOWLEDGED = 0.0
 SLIP_KEY = "atr_slip_scale"
 
+# §2 (audit 2026-10-15): `position_sizing` 的两个合法取值。`ALL_IN` 是项目政策
+# (单腿全仓);`ENSEMBLE_SPLIT` 表示走集成路径(v63/v64/v79),资金等分到 N 条腿。
+# 引擎要求声明与 `ensemble_substrategies` 的存在性一致 —— 此前声明无人读取。
+ENSEMBLE_SPLIT = "ensemble_split"
+
 
 UniverseMode = Literal["mainboard_only", "exclude_hs300_zhongtou_finance"]
 

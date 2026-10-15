@@ -13,10 +13,32 @@ Compliance declaration (CLAUDE.md audit 2026-09-22):
 """
 from __future__ import annotations
 
+from core.preset_contract import PresetDeclarationMissing
+
 # §4 (audit P1-B2, 2026-10-15): 滑点标定值必须由 preset 显式声明;缺声明
 # fail-fast(core.dual_price.resolve_atr_slip_scale)。
 # SLIP_NONE_ACKNOWLEDGED=0.0 是「已知 §4 缺口」的显式确认值。
 SLIP_NONE_ACKNOWLEDGED = 0.0
+
+#: `fuse_scores` 的三个维度名,与 resolve_score_weights 的返回顺序一一对应。
+SCORE_WEIGHT_KEYS = ("weight_kline", "weight_cycle", "weight_calendar")
+
+
+def resolve_score_weights(preset: dict, preset_name: str) -> tuple[float, float, float]:
+    """§0: 把 preset 声明的三个维度权重映射成 `fuse_scores` 的 `weights`。
+
+    审计 (2026-10-15) 把这里点名为**装饰性声明**:`signals.fuse_scores` 曾把
+    `(1.0, 0.7, 0.5)` 写成**默认参数**,与 PRESET_V1 声明值恰好相同 —— 于是
+    预设与代码看起来一致,而**改预设什么都不会发生**(缺口靠沉默存在)。
+    现在权重只能来自声明,融合分数的三个系数由这一个函数单点映射。
+    """
+    missing = [k for k in SCORE_WEIGHT_KEYS if k not in preset]
+    if missing:
+        raise PresetDeclarationMissing(
+            f"§0: preset {preset_name!r} 未声明评分权重 {missing} —— "
+            "融合分数必须由声明驱动,不得退回硬编码默认值。"
+        )
+    return tuple(float(preset[k]) for k in SCORE_WEIGHT_KEYS)  # type: ignore[return-value]
 
 PRESET_V1 = dict(
     atr_slip_scale=SLIP_NONE_ACKNOWLEDGED,

@@ -279,6 +279,11 @@ def simulate_portfolio(
     atr_pct_cap: float = 0.08,
     position_sizing: str = "equal",
     kelly_fraction: float | None = None,
+    # §2 (audit 2026-10-15, preset→engine conformance): preset 声明的仓位比例。
+    # 此前 22 个 chase_up preset 全部声明 `position_fraction=1.0`,而引擎
+    # **从不读取** —— 声明纯装饰。现与 uptrend_pullback/portfolio.py:509 同口径,
+    # 缩放该 slot 的预算(1.0 = 全仓,行为不变)。
+    position_fraction: float = 1.0,
     # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System execution source。
     # "raw_close" → SL/TP 触发用 raw_high/raw_low/raw_close (除权日 raw > adj)。
     # "adj_close" (或 legacy 默认) → 用 adj high/low/close, 保持旧行为。
@@ -550,6 +555,9 @@ def simulate_portfolio(
                     slot_value = cash_only
                 else:  # kelly
                     slot_value = cash_only * kelly_fraction
+                # §2 (audit 2026-10-15): preset 声明的 position_fraction 缩放该 slot
+                # 的预算(与 uptrend_pullback 同口径)。全仓政策下恒为 1.0。
+                slot_value *= position_fraction
 
                 for code, sub_type in candidates:
                     if len(positions) >= max_positions:

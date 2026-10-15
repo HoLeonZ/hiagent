@@ -26,7 +26,7 @@ from short_reversal._panel_loader import (
     load_panel_for_backtest,
 )
 from short_reversal.feed_bt import build_per_stock_feeds
-from short_reversal.presets import PRESETS, get_preset
+from short_reversal.presets import ENSEMBLE_SPLIT, PRESETS, get_preset
 from short_reversal.replay_strategy_v3 import Phase3V3Strategy
 from short_reversal.universe import load_universe_asof
 
@@ -37,6 +37,13 @@ from core.dual_price import (
     BORROW_RATE_ANNUAL,
     COMMISSION_RATE,
     STAMP_DUTY_RATE,
+)
+from core.preset_contract import (  # §0/§2/§3 (audit 2026-10-15)
+    ALL_IN,
+    EXECUTION_PRICE_SOURCE,
+    resolve_execution_price_source,
+    resolve_position_fraction,
+    resolve_position_sizing,
 )
 
 INITIAL_CAPITAL = 1_000_000.0
@@ -225,12 +232,38 @@ def run_backtest_v3(
     """
     cfg = dict(get_preset(preset))
     cfg["_name"] = preset
+    _name = cfg.get("_name", "short_reversal")
 
     # v63 (2026-10-13): Ensemble 模式 — 跑 N 个子策略, 资金等分, 汇总 PnL。
     # OOS-validated (WFV mean +10.9%, holdout 2026-H2 +5.4%) over v50_slope.
     # 实现是 N 个独立 backtest 的 wrapper, 复用 v3 引擎, 行为等价。
-    if "ensemble_substrategies" in cfg:
+    #
+    # §2 (audit 2026-10-15, preset→engine conformance): 此前**真正**决定走哪条
+    # 路径的是结构性开关 `"ensemble_substrategies" in cfg`,而 preset 声明的
+    # `position_sizing` 从未被读取 —— 声明纯装饰(75 个 preset 全中)。现在两者
+    # 必须一致:'ensemble_split' ⇔ 有子策略。不一致 → fail-fast,而不是按声明
+    # 以外的方式静默跑完。
+    position_sizing = resolve_position_sizing(
+        cfg, _name, allowed=frozenset({ALL_IN, ENSEMBLE_SPLIT}),
+    )
+    has_ensemble = "ensemble_substrategies" in cfg
+    if has_ensemble != (position_sizing == ENSEMBLE_SPLIT):
+        raise ValueError(
+            f"§2: preset {_name!r} 声明 position_sizing={position_sizing!r},但 "
+            f"ensemble_substrategies {'存在' if has_ensemble else '缺失'} —— "
+            "声明与真正决定路径的结构性开关不一致:两者必须同时修正。"
+        )
+    if has_ensemble:
         return _run_ensemble(cfg, start, end, db_path, min_bars)
+
+    # §3 (audit 2026-10-15): 执行域价源声明。本引擎的成交价/SL/TP 全部取自
+    # raw 域(d.close/d.open 即 v_daily 原始价);指标域才切 adj_close。
+    # 声明别的价源必须炸 —— 否则「按原始价成交」是一句无人兑现的承诺。
+    # 与 position_sizing 一样在**碰数据库之前**解析:preset 契约不合法时
+    # 不应先跑半个宇宙再报错。
+    price_source_for_execution = resolve_execution_price_source(
+        cfg, _name, supported=frozenset({EXECUTION_PRICE_SOURCE}),
+    )
 
     universe = load_universe_asof(cfg["universe"], start, db_path)
     panel = _load_panel(db_path, start, end, universe)
@@ -252,7 +285,13 @@ def run_backtest_v3(
         # v58 (2026-10-13): 多仓并行。max_positions > 1 时每笔 sizing 改为
         # free_cash / max_positions, 维持 all-in 总仓位。默认 1 保 v50 兼容。
         max_positions=cfg.get("max_positions", 1),
-        position_fraction=cfg.get("position_fraction", 1.0),
+        # §2 (audit 2026-10-15): 经规范契约解析(缺声明/越界 fail-fast),不再
+        # `cfg.get(..., 1.0)` —— 那样「没声明」与「声明为 1.0」不可区分。
+        position_fraction=resolve_position_fraction(cfg, _name),
+        # §2 (audit 2026-10-15): 单腿路径只可能是 all_in(集成路径已在上面分流)。
+        position_sizing=resolve_position_sizing(cfg, _name, allowed=frozenset({ALL_IN})),
+        # §3 (audit 2026-10-15): 上面已解析(碰库之前),此处只注入。
+        price_source_for_execution=price_source_for_execution,
         pct_chg_low=cfg.get("pct_chg_low", 0.02),
         pct_chg_high=cfg.get("pct_chg_high", 0.06),
         a_condition=cfg.get("a_condition", "default"),

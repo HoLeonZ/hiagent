@@ -28,6 +28,7 @@ from core.dual_price import (  # §2 单源 (audit P2-11, 2026-10-15)
     MIN_COMMISSION,
     STAMP_DUTY_RATE,
 )
+from core.preset_contract import resolve_position_fraction  # §2 (audit 2026-10-15)
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +213,9 @@ def run_backtrader_backtest(
         atr_tp_mult=atr_tp, atr_sl_mult=atr_sl,
         position_sizing=p.get("position_sizing", "equal"),
         kelly_fraction=p.get("kelly_fraction"),
+        # §2 (audit 2026-10-15): 此前 22/22 preset 声明 position_fraction 却
+        # 无人读取。经规范契约解析后注入(缺声明 fail-fast)。
+        position_fraction=resolve_position_fraction(p, p.get("_name", "chase_up")),
         # Round 15 (2026-09-28, CLAUDE.md §0/§4): cost model plumbing
         # (commission/stamp/floor) + ATR-aware slippage from preset。
         # Defaults preserve pre-R15 behavior (legacy presets 无 key 时仍得

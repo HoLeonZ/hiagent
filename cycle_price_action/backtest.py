@@ -13,9 +13,19 @@ import pandas as pd
 from cycle_price_action.backtrader_engine import CyclePriceActionStrategy
 from cycle_price_action.data_feed import ReplayDataProvider, load_universe_data
 from cycle_price_action.metrics import TradeRecord, compute_metrics
-from cycle_price_action.presets import PRESET_V1
+from cycle_price_action.presets import PRESET_V1, resolve_score_weights
 from cycle_price_action.feed_bt import CyclePandasData
+from cycle_price_action.portfolio import Portfolio
 from core.dual_price import resolve_atr_slip_scale  # §4 (audit P1-B2)
+from core.preset_contract import (
+    ALL_IN,
+    EXECUTION_PRICE_SOURCE,
+    resolve_execution_price_source,
+    resolve_max_positions,
+    resolve_position_fraction,
+    resolve_position_sizing,
+    resolve_volume_participation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,19 +77,45 @@ def run_backtest(
     # (not `end`) — 避免 post-hoc constituents 入选。
     universe = load_universe_data(db_path, start, end, asof_date=start)
     all_trades: list[TradeRecord] = []
-    # Filter preset to keys CyclePriceActionStrategy.params accepts
-    # (weight_kline / weight_cycle / weight_calendar / periods / max_volume_participation
-    # live in PRESET_V1 but are not in the strategy params tuple; passing them
-    # would TypeError). V6'' (2026-09-22): sl_pct added for SL-first intraday tiebreak.
+    # Filter preset to keys CyclePriceActionStrategy.params accepts.
     # Round 15 (2026-09-28, CLAUDE.md §4): intraday_tiebreak added to the
     # accepted whitelist so cycle preset declarations flow preset → strategy
     # params → Portfolio.__init__ (Tick 39 plumbing)。
+    # 2026-10-15 (audit §0/§6): 此处曾记着「weight_kline / weight_cycle /
+    # weight_calendar / periods / max_volume_participation live in PRESET_V1 but
+    # are not in the strategy params tuple」—— 那句话是在**登记缺口**: 这四项
+    # (外加 position_* / max_positions / price_source_for_execution)被声明却
+    # 无人读取。现在除 `periods`(已由 signals.phase_score 内部按周期长度加权,
+    # 非 preset 可调)外,全部经 core.preset_contract 解析后显式注入。
     _accepted = {"threshold", "min_dim", "max_hold", "atr_period", "atr_sl_mult", "tp_pct", "sl_pct", "initial_capital", "intraday_tiebreak", "atr_slip_scale"}
     strategy_kwargs = {k: v for k, v in preset.items() if k in _accepted}
+    preset_name = preset.get("name", "cycle_price_action")
     # §4 (audit P1-B2): 滑点标定值必须显式声明,缺声明 fail-fast。
-    # 必须在 strategy_kwargs 构建**之后**解析(此前顺序写反 → UnboundLocalError)。
-    strategy_kwargs["atr_slip_scale"] = resolve_atr_slip_scale(
-        preset, preset.get("name", "cycle_price_action")
+    strategy_kwargs["atr_slip_scale"] = resolve_atr_slip_scale(preset, preset_name)
+    # §0/§2/§3/§4 (audit 2026-10-15): 其余被声明却无人读取的键,一律经规范
+    # 契约解析后再注入 —— 缺声明/值越界/超出引擎容量都在此 fail-fast,而不是
+    # 让策略退回一个"看起来合理"的默认值(那正是缺口靠沉默存在的形态)。
+    # §0 (audit 2026-10-15): 三个评分维度权重。此前硬编码在 signals.fuse_scores
+    # 的**默认参数**里(与 PRESET_V1 声明同值),于是改预设什么都不会发生。
+    # 现在逐名注入,与其余 preset 键同一条管线。
+    _weight_kline, _weight_cycle, _weight_calendar = resolve_score_weights(
+        preset, preset_name
+    )
+    strategy_kwargs["weight_kline"] = _weight_kline
+    strategy_kwargs["weight_cycle"] = _weight_cycle
+    strategy_kwargs["weight_calendar"] = _weight_calendar
+    strategy_kwargs["position_fraction"] = resolve_position_fraction(preset, preset_name)
+    strategy_kwargs["position_sizing"] = resolve_position_sizing(
+        preset, preset_name, allowed=frozenset({ALL_IN})
+    )
+    strategy_kwargs["max_positions"] = resolve_max_positions(
+        preset, preset_name, capacity=Portfolio.MAX_POSITIONS_CAPACITY
+    )
+    strategy_kwargs["max_volume_participation"] = resolve_volume_participation(
+        preset, preset_name
+    )
+    strategy_kwargs["price_source_for_execution"] = resolve_execution_price_source(
+        preset, preset_name, supported=frozenset({EXECUTION_PRICE_SOURCE})
     )
 
     for code, slice in universe.items():
