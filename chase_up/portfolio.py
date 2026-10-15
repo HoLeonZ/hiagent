@@ -40,6 +40,7 @@ import pandas as pd
 from chase_up.signals import ENTRY_COLS
 from core.dual_price import (
     effective_slippage,
+    is_limit_down,
     is_limit_up,
     mark_price,
     portfolio_nav,
@@ -177,6 +178,9 @@ TRADE_COLS = [
 
 # A 股主板涨跌停 10%;开盘涨幅超过该阈值视为无法买入
 LIMIT_UP_THRESHOLD = 0.098
+# §4 (audit P1-9, 2026-10-15): 跌停侧对称阈值。长仓出场是 SELL,
+# 跌停封板时物理上卖不出去 —— 与买方涨停跳过入场互为镜像。
+LIMIT_DOWN_THRESHOLD = 0.098
 
 # 防穿仓 (R8, 2026-09-21): Volume Participation Limit (CLAUDE.md §4)。
 # 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION。超出部分丢弃(不挂单)。
@@ -419,6 +423,26 @@ def simulate_portfolio(
                 if not np.isnan(r_o) and not np.isnan(r_h) and not np.isnan(r_lo) and not np.isnan(r_c):
                     o, h, lo, c = r_o, r_h, r_lo, r_c
             tp_p, sl_p = pos["tp"], pos["sl"]
+
+            # §4 (audit P1-9, 2026-10-15): 跌停封板**禁止卖出**。
+            # CLAUDE.md §4: "a sell/cover on a limit-down-sealed bar MUST be
+            # rejected (no fill)"。长仓出场是 SELL,封板时物理上卖不出去 →
+            # 本 bar 不成交,持仓顺延到下一根可成交 bar(含 time/max_hold 出场
+            # 一并顺延 —— 时间在流逝,但成交不能凭空发生)。
+            # 判定用 raw 域(与执行域同域),raw 缺失回退 adj(best-effort)。
+            # 方向是**保守**的:跳过 SL 出场意味着亏损可能继续扩大,符合 §0
+            # Pessimistic Default;与买方涨停跳过入场(见上方 entry 分支)镜像。
+            _pc = pi["prev_close"][j] if "prev_close" in pi else np.nan
+            if price_source_for_execution == "raw_close" and "raw_prev_close" in pi:
+                _rpc = pi["raw_prev_close"][j]
+                if not np.isnan(_rpc) and _rpc > 0:
+                    _pc = _rpc
+            if is_limit_down(
+                None if np.isnan(_pc) else float(_pc),
+                float(o),
+                threshold=LIMIT_DOWN_THRESHOLD,
+            ):
+                continue
 
             # V6 (2026-09-22): CLAUDE.md §4 同 bar SL+TP 双触发时, 假设 SL 命中
             # (worst-case Pessimistic Default)。Gap case 用 gap 价优先匹配,
