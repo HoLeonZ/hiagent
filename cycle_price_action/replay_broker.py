@@ -13,6 +13,8 @@ slippage / cost / position bookkeeping.
 """
 from __future__ import annotations
 
+import logging
+
 from dataclasses import dataclass
 from datetime import date
 from typing import Optional
@@ -20,6 +22,8 @@ from typing import Optional
 from core.dual_price import (
     STAMP_DUTY_RATE,  # Round 9 (2026-09-28): canonical 万5 sell-only stamp duty
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -49,7 +53,7 @@ class ReplayBroker:
         # Tick 49: delegate to Control Plane data_provider (DB-free broker).
         return self._data_provider.next_trading_date(after)
 
-    def _open_price(self, thscode: str, on_date: date) -> float:
+    def _open_price(self, thscode: str, on_date: date) -> float | None:
         # Tick 49 + N3: delegate to data_provider.open_price which routes
         # through extract_execution_bar to enforce partial-NaN guard
         # (open>0 + close=NaN raises ValueError).
@@ -95,6 +99,14 @@ class ReplayBroker:
             raise ValueError("qty must be positive multiple of 100")
         fill_date = self._next_trading_date(decision_date)
         price = self._open_price(thscode, fill_date)
+        if price is None:
+            # §1 (audit, 2026-10-15): 停牌(当日缺 bar)→ **本次不成交**。
+            # 不合成 bar、不排队到下一 bar(§4 IOC)。持仓/挂单状态不变,
+            # 复牌后由引擎的下一次决策重新评估。
+            logger.warning(
+                "[suspend] %s 在 %s 无 bar(停牌),买入不成交", thscode, fill_date
+            )
+            return None
         fee = self._fee("buy", qty, price, atr_pct=atr_pct, participation=participation)
         self._open_positions[thscode] = self._open_positions.get(thscode, 0) + qty
         return TradeFill(fill_date, thscode, "buy", qty, price, fee)
@@ -118,6 +130,14 @@ class ReplayBroker:
             raise ValueError("qty must be positive multiple of 100")
         fill_date = self._next_trading_date(decision_date)
         price = self._open_price(thscode, fill_date)
+        if price is None:
+            # §1 (audit, 2026-10-15): 停牌无法卖出 → 持仓**必须保留**,
+            # 复牌前不产生成交(旧实现直接 RuntimeError 中止整个回测)。
+            logger.warning(
+                "[suspend] %s 在 %s 无 bar(停牌),卖出不成交,持仓保留",
+                thscode, fill_date,
+            )
+            return None
         fee = self._fee("sell", qty, price, atr_pct=atr_pct, participation=participation)
         self._open_positions[thscode] -= qty
         if self._open_positions[thscode] == 0:

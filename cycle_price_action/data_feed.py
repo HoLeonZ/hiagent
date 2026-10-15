@@ -88,7 +88,25 @@ class ReplayDataProvider:
         finally:
             con.close()
 
-    def open_bar(self, thscode: str, on_date: date) -> dict[str, float]:
+    def has_any_bar(self, thscode: str) -> bool:
+        """该标的在库中是否**存在任何** bar。
+
+        §1 (audit, 2026-10-15): 用来区分两种「缺行」——
+          - **停牌**:该标的在别的日期有 bar → 合法市场状态,不得中止引擎;
+          - **数据缺口 / 未知标的**:完全没有任何 bar → 数据完整性问题,应 fail-fast。
+        只在缺行路径上多一次查询(不是每次成交都查),故不加剧 §6 关注的
+        逐笔 DB 访问。
+        """
+        con = duckdb.connect(self._db_path, read_only=True)
+        try:
+            row = con.execute(
+                "SELECT 1 FROM v_daily WHERE thscode = ? LIMIT 1", [thscode]
+            ).fetchone()
+            return row is not None
+        finally:
+            con.close()
+
+    def open_bar(self, thscode: str, on_date: date) -> dict[str, float] | None:
         """Read the full bar (open/high/low/close) for (thscode, on_date).
 
         Routed through `extract_execution_bar` so partial-NaN bars
@@ -98,6 +116,14 @@ class ReplayDataProvider:
         Reads as raw duckdb values (None for NULL) instead of float()-casting
         so extract_execution_bar → _safe can detect None/NaN and produce the
         0.0 fallback that triggers the ExecutionBar phantom guard.
+
+        §1 (audit, 2026-10-15): 该日期无 bar 时返回 **None**,不再 raise。
+        停牌在日线上就表现为缺 bar —— 旧实现直接 `RuntimeError`,导致任何
+        含停牌标的的窗口把整个回测中止(实测 000639.SZ @ 2026-04-29),
+        与 §1「Trading halts produce missing bars... MUST NOT generate fills
+        until trading resumes」直接冲突。是否算数据完整性错误,由
+        `open_price` 用 `has_any_bar` 区分。
+        存在但字段非法的 bar 仍然 fail-fast(ExecutionBar 不变量不受影响)。
         """
         con = duckdb.connect(self._db_path, read_only=True)
         try:
@@ -113,7 +139,7 @@ class ReplayDataProvider:
                 [thscode, on_date],
             ).fetchone()
             if row is None:
-                raise RuntimeError(f"no data for {thscode} on {on_date}")
+                return None
             # Keep None as None; _safe() in core.dual_price converts to 0.0.
             bar_row = {"open": row[0], "high": row[1],
                        "low": row[2], "close": row[3]}
@@ -130,14 +156,28 @@ class ReplayDataProvider:
             "close": exec_bar.close,
         }
 
-    def open_price(self, thscode: str, on_date: date) -> float:
+    def open_price(self, thscode: str, on_date: date) -> float | None:
         """Read the fill price (open col) for (thscode, on_date).
 
         Thin wrapper over `open_bar` to preserve ReplayBroker's existing
         `_open_price` call signature; routes through ExecutionBar to enforce
         the partial-NaN guard.
+
+        §1 (audit, 2026-10-15) 返回 Optional:
+          - `None` = 该标的当日停牌(缺 bar)→ 本次不成交,引擎继续;
+          - 若该标的在库中**完全无 bar**(数据缺口 / 未知标的)→ 仍 fail-fast
+            抛 RuntimeError。两者都是「缺行」,但前者是合法市场状态,后者是
+            数据完整性问题 —— 由 `has_any_bar` 区分,避免把停牌当成数据错误。
         """
-        return self.open_bar(thscode, on_date)["open"]
+        bar = self.open_bar(thscode, on_date)
+        if bar is None:
+            if not self.has_any_bar(thscode):
+                raise RuntimeError(
+                    f"no data for {thscode} on {on_date} — symbol has no bars at all "
+                    f"(data gap / unknown symbol)"
+                )
+            return None
+        return bar["open"]
 
 
 def load_universe_data(
