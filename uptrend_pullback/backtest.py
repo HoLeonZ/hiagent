@@ -20,6 +20,7 @@ from uptrend_pullback.signals import compute_indicators, select_entries
 from uptrend_pullback.universe import load_universe
 
 from core.dual_price import (  # §2 单源 (audit P2-11, 2026-10-15)
+    resolve_atr_slip_scale,
     COMMISSION_RATE,
     MIN_COMMISSION,
     STAMP_DUTY_RATE,
@@ -181,7 +182,7 @@ def run_backtest(
         stamp_duty_rate=p.get("stamp_duty_rate", STAMP_DUTY_RATE),
         min_commission=p.get("min_commission", MIN_COMMISSION),
         slippage=p.get("slippage", 0.0),
-        atr_slip_scale=p.get("atr_slip_scale", 0.0),
+        atr_slip_scale=resolve_atr_slip_scale(p, p.get("_name", "uptrend_pullback")),
     )
 
     metrics = compute_metrics(

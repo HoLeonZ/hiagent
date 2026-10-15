@@ -4,6 +4,18 @@ from __future__ import annotations
 from typing import Literal
 from core.dual_price import BORROW_RATE_ANNUAL  # §4 单源 (audit P2-11, 2026-10-15)
 
+# §4 (audit P1-B2, 2026-10-15): 滑点标定值必须由 preset **显式声明**;
+# 缺声明 fail-fast(core.dual_price.resolve_atr_slip_scale)。
+#
+# `SLIP_NONE_ACKNOWLEDGED = 0.0` 是「已知 §4 缺口」的**显式确认值**:审计实测
+# 四引擎成交价恒等于 bar 开盘价,§4 强制的 ATR×参与率滑点在全部出厂 preset 上
+# 都不生效,而此前这靠 `p.get(..., 0.0)` 的沉默存在 —— 没有报错、没有日志。
+# 现在它被逐条枚举、可审计。改成真实标定值会改变成交价,属研究决策(§5 迭代
+# 计数),不在此替用户决定。
+SLIP_NONE_ACKNOWLEDGED = 0.0
+SLIP_KEY = "atr_slip_scale"
+
+
 UniverseMode = Literal["mainboard_only", "exclude_hs300_zhongtou_finance"]
 
 # CLAUDE.md §4 Short-Side Feasibility (mandatory declaration for short legs):
@@ -56,6 +68,7 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: Fixed TP/SL; ultra-tight stop for short-reversal mean-reversion. No ATR multiplier.
     "v35_agg_pctchg_04_09": {
+                             "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
         "intraday_tiebreak": "sl_first",
@@ -122,6 +135,7 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: Fixed TP/SL; ultra-tight stop for short-reversal mean-reversion. No ATR multiplier.
     "v36_d_converge": {
+                       "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
         "intraday_tiebreak": "sl_first",
@@ -183,6 +197,7 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: Fixed TP/SL; ultra-tight stop for short-reversal mean-reversion. No ATR multiplier.
     "v38_a_relaxed": {
+                      "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
         "intraday_tiebreak": "sl_first",
@@ -248,6 +263,7 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: Fixed TP/SL; ultra-tight stop for short-reversal mean-reversion. No ATR multiplier.
     "v39_pctchg_03_10": {
+                         "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
         "intraday_tiebreak": "sl_first",
@@ -316,6 +332,7 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: Fixed TP/SL; TP widened from 0.06 to 0.07 for higher yield. No ATR multiplier.
     "v40_tp_07": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
         "intraday_tiebreak": "sl_first",
@@ -356,6 +373,7 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: Fixed TP/SL; aggressive TP 0.08 widening. No ATR multiplier.
     "v40_tp_08": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
         "intraday_tiebreak": "sl_first",
@@ -420,6 +438,7 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: Fixed TP/SL; buffer widened to 0.05. No ATR multiplier.
     "v42_buf05": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
         "intraday_tiebreak": "sl_first",
@@ -480,6 +499,7 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: Fixed TP/SL; ratio extreme relaxation 0.5→0.3. No ATR multiplier.
     "v43_ratio03": {
+                    "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
         "intraday_tiebreak": "sl_first",
@@ -548,6 +568,7 @@ PRESETS: dict[str, dict] = {
     # 效应由少数大胜主导 (+7.6/+6.5/+5.7/+4.3), 负项均 ≤1.96; F 约半数窗口不 bind。
     # 推荐: v44_ratio02_buf07 取代 v50_slope 作为默认 champion。
     "v44_ratio02_buf07": {
+                          "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
         "intraday_tiebreak": "sl_first",
@@ -616,6 +637,7 @@ PRESETS: dict[str, dict] = {
     #   判定: 弱候选 — 未达 v44 的确证标准 (t≈2.07)。且 DD 高风险 (见上)。
     #   → 不提升为 champion; 保留为高 yield 但高 DD 备选 (仅 DD 容忍度高时考虑)。
     "v45_ratio01_buf10": {
+                          "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
         "intraday_tiebreak": "sl_first",
@@ -656,6 +678,7 @@ PRESETS: dict[str, dict] = {
     # 24m 行为可能不同(震荡段 yield 不同分布)。
     # 实验设计:每次只改 1 个参数, 跑 24m 对比 v44。
     "v50_mh6": {
+                "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -716,6 +739,7 @@ PRESETS: dict[str, dict] = {
     #     (单侧 p≈0.028) → 达 5% 显著性。效应由少数大胜 (+7.6/+6.5/+5.7/+4.3) 主导,
     #     负项均 ≤1.96。F 在约半数窗口不 bind (delta=0)。
     "v50_slope": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -741,6 +765,7 @@ PRESETS: dict[str, dict] = {
     # v50_slope_strict (2026-10-12): v50_slope 加强版, slope ≤ -0.003/day。
     # 要求更严格的下降趋势 (5 日累计 -1.5% 以上), 进一步过滤反弹中段。
     "v50_slope_strict": {
+                         "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -774,6 +799,7 @@ PRESETS: dict[str, dict] = {
     # 与 F 互补: F 测短期动量 (rate of change), G 测中期水平 (cumulative loss)。
     # v51_weak_1m (2026-10-12): 1M 累计跌幅 ≥ 5%。
     "v51_weak_1m": {
+                    "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -798,6 +824,7 @@ PRESETS: dict[str, dict] = {
     },
     # v51_weak_3m (2026-10-12): 3M 累计跌幅 ≥ 10%。
     "v51_weak_3m": {
+                    "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -821,6 +848,7 @@ PRESETS: dict[str, dict] = {
     },
     # v51_weak_6m (2026-10-12): 6M 累计跌幅 ≥ 15%。
     "v51_weak_6m": {
+                    "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -844,6 +872,7 @@ PRESETS: dict[str, dict] = {
     },
     # v51_weak_combo (2026-10-12): 三窗口叠加 (持续弱势, 最严过滤)。
     "v51_weak_combo": {
+                       "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -882,6 +911,7 @@ PRESETS: dict[str, dict] = {
     #   v52_dryup_strict: 组合 (0.5 + 3M cumret ≤ -10%, 卖压枯竭 + 中期弱势)
     # v52_dryup_07 (2026-10-12): 5d/20d 成交额比率 ≤ 0.70 (起点假设)。
     "v52_dryup_07": {
+                     "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -906,6 +936,7 @@ PRESETS: dict[str, dict] = {
     },
     # v52_dryup_05 (2026-10-12): 5d/20d 成交额比率 ≤ 0.50 (严重萎缩)。
     "v52_dryup_05": {
+                     "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -929,6 +960,7 @@ PRESETS: dict[str, dict] = {
     },
     # v52_dryup_085 (2026-10-12): 5d/20d 成交额比率 ≤ 0.85 (轻微萎缩, 宽松)。
     "v52_dryup_085": {
+                      "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -953,6 +985,7 @@ PRESETS: dict[str, dict] = {
     # v52_dryup_combo (2026-10-12): H (严重萎缩 0.5) + G (3M 累计 ≤ -10%)。
     # 假设: 同时满足"近期资金枯竭"和"中期已下跌"是最纯粹的 dead-cat bounce。
     "v52_dryup_combo": {
+                        "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -988,6 +1021,7 @@ PRESETS: dict[str, dict] = {
     #   v53_rsi_30_slope: I 30 + F (MA20 5d slope ≤ 0, 组合双确认)
     # v53_rsi_30 (2026-10-12): 经典 RSI<30 超卖。
     "v53_rsi_30": {
+                   "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1012,6 +1046,7 @@ PRESETS: dict[str, dict] = {
     },
     # v53_rsi_25 (2026-10-12): 极端超卖 RSI<25。
     "v53_rsi_25": {
+                   "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1035,6 +1070,7 @@ PRESETS: dict[str, dict] = {
     },
     # v53_rsi_35 (2026-10-12): 轻微超卖 RSI<35 (宽松, 起点对照)。
     "v53_rsi_35": {
+                   "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1059,6 +1095,7 @@ PRESETS: dict[str, dict] = {
     # v53_rsi_30_slope (2026-10-12): I 30 + F (MA20 slope ≤ 0) 组合双确认。
     # 假设: 同时满足"超卖"+"下降趋势未结束"是最强 dead-cat bounce setup。
     "v53_rsi_30_slope": {
+                         "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1091,6 +1128,7 @@ PRESETS: dict[str, dict] = {
     #   v54_tp10_sl01: TP 0.08→0.10 + SL 0.01 (TP/SL 都放宽, 10:1 风险比)
     # v54_sl_01 (2026-10-12): 仅 SL 放宽 20x, TP 不变。
     "v54_sl_01": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1113,6 +1151,7 @@ PRESETS: dict[str, dict] = {
     },
     # v54_sl_005 (2026-10-12): SL 放宽 10x (中位)。
     "v54_sl_005": {
+                   "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1135,6 +1174,7 @@ PRESETS: dict[str, dict] = {
     },
     # v54_tp10_sl01 (2026-10-12): TP+SL 都放宽 (10:1 风险比)。
     "v54_tp10_sl01": {
+                      "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1183,6 +1223,7 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: Fixed TP/SL; SL tightened 0.0005→0.0002 for marginal DD improvement. No ATR multiplier.
     "v46_sl_0002": {
+                    "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
         "intraday_tiebreak": "sl_first",
@@ -1276,6 +1317,7 @@ PRESETS: dict[str, dict] = {
     #   若全部 < 9.76 → v50_slope 已达工程最优.
     # v55_swap_1m (2026-10-12): 用 1M 累计跌幅替代 MA20 5d slope 定义 downtrend。
     "v55_swap_1m": {
+                    "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1301,6 +1343,7 @@ PRESETS: dict[str, dict] = {
     },
     # v55_swap_3m (2026-10-12): 用 3M 累计跌幅替代 MA20 slope。
     "v55_swap_3m": {
+                    "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1325,6 +1368,7 @@ PRESETS: dict[str, dict] = {
     },
     # v55_swap_6m (2026-10-12): 用 6M 累计跌幅替代 MA20 slope。
     "v55_swap_6m": {
+                    "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1349,6 +1393,7 @@ PRESETS: dict[str, dict] = {
     },
     # v55_swap_combo (2026-10-12): 三窗口叠加 (持续弱势最严), 替代 MA20 slope。
     "v55_swap_combo": {
+                       "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1386,6 +1431,7 @@ PRESETS: dict[str, dict] = {
     #   若全部 < 9.76 → 5 个方向全部工程上限, v50_slope 为最终 best.
     # v56_mh_07 (2026-10-12): max_hold 5→7, 温和扩展。
     "v56_mh_07": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1408,6 +1454,7 @@ PRESETS: dict[str, dict] = {
     },
     # v56_mh_10 (2026-10-12): max_hold 5→10, 激进扩展。
     "v56_mh_10": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1430,6 +1477,7 @@ PRESETS: dict[str, dict] = {
     },
     # v56_mh_03 (2026-10-12): max_hold 5→3, 反向缩短, 测 SL 主导假说。
     "v56_mh_03": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1458,6 +1506,7 @@ PRESETS: dict[str, dict] = {
     # 三档: 3 / 5 / 7 个交易日, 与 v50_slope baseline 平行测试。
     # v57_cd_03 (2026-10-12): 冷却 3 日, 保守档。
     "v57_cd_03": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1481,6 +1530,7 @@ PRESETS: dict[str, dict] = {
     },
     # v57_cd_05 (2026-10-12): 冷却 5 日, 中档。
     "v57_cd_05": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1504,6 +1554,7 @@ PRESETS: dict[str, dict] = {
     },
     # v57_cd_07 (2026-10-12): 冷却 7 日, 激进档。
     "v57_cd_07": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1532,6 +1583,7 @@ PRESETS: dict[str, dict] = {
     # 风险: data 顺序的随机性会引入选股噪声。
     # v58_mp_2 (2026-10-13): max_positions=2, 单笔 sizing 50% free_cash。
     "v58_mp_2": {
+                 "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1555,6 +1607,7 @@ PRESETS: dict[str, dict] = {
     # v58_mp_3 (2026-10-13): max_positions=3, 单笔 sizing 33% free_cash。
     # 多仓 sweep 的「极端点」,看 N 进一步增大时 curve 是否仍下降。
     "v58_mp_3": {
+                 "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1582,6 +1635,7 @@ PRESETS: dict[str, dict] = {
     #   → 但因整体仍下降 (F 确认), 次日大概率回吐 (死猫跳)。
     # 单独启用 (无 F), 测 K 是否独立有效。
     "v61_k": {
+              "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1609,6 +1663,7 @@ PRESETS: dict[str, dict] = {
     # 这是「正交方向: 加性多条件堆叠」的真正测试 — 在 v50 基础上加 K,
     # 测 K 是否能在 F 之上提供独立信息(而不只是替换 F 的子集信号)。
     "v61_kf": {
+               "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1656,6 +1711,7 @@ PRESETS: dict[str, dict] = {
     #   汇总等权 PnL + 保守 max_dd (worst-case across subs)。
     # 注意: 单元持仓 max_positions=1 per sub, 合计 ≈ 2 个独立子仓。
     "v63_ensemble": {
+                     "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1674,6 +1730,7 @@ PRESETS: dict[str, dict] = {
     # 假设: strict 只在最强下行趋势入场 (更少但更高质量的信号), 与 v50/v44 错峰。
     # n_trials=14 (per §5)。
     "v64_ensemble_3leg": {
+                          "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1698,6 +1755,7 @@ PRESETS: dict[str, dict] = {
     #   (浮盈 ≥ 2% 才激活 trailing, 避免过早收紧)。
     # n_trials=15 (per §5)。
     "v65_trailing": {
+                     "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1728,6 +1786,7 @@ PRESETS: dict[str, dict] = {
     # 与所有个股级条件 (A-K) 正交: 这是 market-level 维度。
     # n_trials=16 (per §5)。
     "v66_regime": {
+                   "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1758,6 +1817,7 @@ PRESETS: dict[str, dict] = {
     #   按板+日期处理 (创业板 2020-08-24 起 20%)。
     # n_trials=17 (per §5)。
     "v67_broad": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "broad_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1786,6 +1846,7 @@ PRESETS: dict[str, dict] = {
     # 策略与 v50_slope 完全相同, 仅改 fill 选择顺序。
     # n_trials=18 (per §5)。
     "v68_conviction": {
+                       "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1812,6 +1873,7 @@ PRESETS: dict[str, dict] = {
     # 消融检验 v44 的 D 条件 (MACD) 是否过度限制。4 窗口 delta mean +0.37 → 中性。
     # 结论: MACD 收敛约束不是有害过滤器; 无改进。
     "v69_donly": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1837,6 +1899,7 @@ PRESETS: dict[str, dict] = {
     #   全 9 窗口 mean -2.58 (5/9 wins)。方向与 v63/v67/v68 相反 (帮旧损新),
     #   反向确认 2024-2026 是结构不同的 regime。C 条件不是可移除的有害过滤器。
     "v69_widec": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1859,6 +1922,7 @@ PRESETS: dict[str, dict] = {
     # v70_nob (2026-10-13): v44 + 移除 B 条件 (连阳 3-10 天 → 0-999, 即关闭)。
     # 4 窗口 delta mean -1.12 → B 是有用条件, 移除有害。FAIL。
     "v70_nob": {
+                "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1888,6 +1952,7 @@ PRESETS: dict[str, dict] = {
     #   4 窗口初测 (2017-H2+1.26, 2018-H1 0, 2024-H1 0, 2025-H1+4.57) mean +1.46。
     #   结论: 边际候选, 不构成确证改进 (单窗口主导)。
     "v70_lowratio": {
+                     "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1910,6 +1975,7 @@ PRESETS: dict[str, dict] = {
     # v71_liqwide (2026-10-13): v44 + 放宽 E 流动性区间 [3e7,3e8] → [1e7,1e9]。
     # 4 窗口 delta mean -4.22 → E 流动性过滤是有用的 (放宽有害)。FAIL。
     "v71_liqwide": {
+                    "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1934,6 +2000,7 @@ PRESETS: dict[str, dict] = {
     # v71_buf15 (2026-10-13): v44 + 放宽 A 的 close<ma60 约束 (buffer 0.07 → 0.15)。
     # 4 窗口 delta mean -1.97 → A 的 buffer 约束有用 (放宽有害)。FAIL。
     "v71_buf15": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1957,6 +2024,7 @@ PRESETS: dict[str, dict] = {
     # 检验 tp=0.08 是否过拟合值。4 窗口: tp05 mean 10.78 (-5.72), tp12 mean 12.64
     # (-3.86), 基线 16.50。3/4 窗口 tp=0.08 胜 → 稳健局部最优, 非过拟合。FAIL。
     "v72_tp05": {
+                 "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1977,6 +2045,7 @@ PRESETS: dict[str, dict] = {
         "close_ma60_buffer": 0.07,
     },
     "v72_tp12": {
+                 "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -2000,6 +2069,7 @@ PRESETS: dict[str, dict] = {
     # 4 窗口 mean Calmar 0.81 vs v44 16.50 (-15.69) → 0.05% 极紧 SL 是策略核心
     # 风控, 移除灾难性。SL 不可或缺。
     "v73_nosl": {
+                 "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -2022,6 +2092,7 @@ PRESETS: dict[str, dict] = {
     # v73_mh10 (2026-10-14): v44 + max_hold 5 → 10。
     # 4 窗口 mean Calmar 14.14 vs v44 16.50 (-2.36) → max_hold=5 正确。FAIL。
     "v73_mh10": {
+                 "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -2045,6 +2116,7 @@ PRESETS: dict[str, dict] = {
     # 4 窗口: hi[0.05,0.12] mean 10.42 (-6.08), lo[0.02,0.08] mean 13.90 (-2.60),
     # 基线 16.50 → 两者均更差。C 区间 [3%,10%] 是最优位置。FAIL。
     "v74_pc_hi": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -2065,6 +2137,7 @@ PRESETS: dict[str, dict] = {
         "close_ma60_buffer": 0.07,
     },
     "v74_pc_lo": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -2088,6 +2161,7 @@ PRESETS: dict[str, dict] = {
     # 5 窗口 mean delta -4.45 (1/5 wins); holdout 2026-H2 -28.47。FAIL —
     # F 移除与 universe 扩展的效应不能叠加, v44+broad 比 v44 更差。
     "v75_broad": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "broad_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -2111,6 +2185,7 @@ PRESETS: dict[str, dict] = {
     # (MA5<MA10<MA20<MA60 级联 + close<MA20)。4 窗口 mean 4.16 vs 16.50 (-12.34)
     # → 替代 A 模式大幅有害; default 模式 (close<MA60 + below_ratio) 是必需的。FAIL。
     "v76_cascade": {
+                    "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -2135,6 +2210,7 @@ PRESETS: dict[str, dict] = {
     # 4 窗口 mean 17.42 vs 16.50 (+0.92), 2 胜 2 负, 由 2025-H1 +5.09 驱动 →
     # 边际, 未达确证标准。FAIL。
     "v76_dstrict": {
+                    "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -2159,6 +2235,7 @@ PRESETS: dict[str, dict] = {
     # 基线 16.50。两者均更差 → v44 的 B 连阳范围 [3,10] 与 E 流动性范围
     # [3e7,3e8] 均为最优。FAIL。
     "v77_b_narrow": {
+                     "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -2181,6 +2258,7 @@ PRESETS: dict[str, dict] = {
         "up_streak_high": 8,
     },
     "v77_e_narrow": {
+                     "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -2209,6 +2287,7 @@ PRESETS: dict[str, dict] = {
     # 注: +RSI (I 条件) 无法测 — 触发 backtrader pre-existing ZeroDivisionError
     # (avg_loss==0, 见 replay_strategy_v3.py RSI opt-in 注释)。
     "v78_weak": {
+                 "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -2231,6 +2310,7 @@ PRESETS: dict[str, dict] = {
         "weak_1m_threshold": -0.05,
     },
     "v78_dryup": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -2256,6 +2336,7 @@ PRESETS: dict[str, dict] = {
     # 5 窗口 mean delta +0.40 (2 胜 2 负 1 平) → 边际, 未达确证标准。FAIL。
     # v44/v45 高度相关 (v45 = v44 + 微 A 宽松), 集成无 diversification 收益。
     "v79_ens44": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -2274,6 +2355,7 @@ PRESETS: dict[str, dict] = {
     # 6 窗口 mean delta -11.92 (1/6 wins); holdout 2026-H2 -61.94。
     # → conviction 选择在 v44 基线上同样有害。FAIL。
     "v80_conv": {
+                 "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -2305,6 +2387,7 @@ PRESETS: dict[str, dict] = {
     #   v50_adj  mean 10.06 → v44_adj > v50_adj (+3.75), F 移除的有益性在 §3 语义下稳健
     # 结论: v44 > v50 的 finding 不依赖 bug; 但绝对表现需以 v81_adj 为准 (§3 强制)。
     "v81_adj": {
+                "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -2330,6 +2413,7 @@ PRESETS: dict[str, dict] = {
     # 4 窗口 mean 16.54 vs v81_adj 13.81 (+2.73), 但 3/4 窗口为负, 由 2025-H1
     # (+18.23) 单窗口驱动 → 不确证。FAIL (regime-dependent)。
     "v82_ratio05": {
+                    "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -2353,6 +2437,7 @@ PRESETS: dict[str, dict] = {
     # v82_buf12 (2026-10-14): v81_adj + close_ma60_buffer 0.07 → 0.12 (§3-adj 语义)。
     # 4 窗口 mean 13.99 vs 13.81 (+0.18) → 中性。
     "v82_buf12": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -2380,6 +2465,7 @@ PRESETS: dict[str, dict] = {
     #   2026-H2 holdout -12.65。合并 10 窗口 mean +5.38 但不可信。
     # → FAIL: 移除 C 条件后波动极大, 不 robust。§3 语义下亦无稳健改进。
     "v83_widec": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -2403,6 +2489,7 @@ PRESETS: dict[str, dict] = {
     # v83_donly (2026-10-14): v81_adj + d_mode='d_only' (§3-adj 语义)。
     # 4 窗口 mean 18.71 vs 13.81 (+4.90, 3/4 胜)。未做 6 窗口验证。
     "v83_donly": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,

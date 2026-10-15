@@ -261,6 +261,38 @@ def effective_slippage(
     return max(float(static_slippage), atr_slippage(atr_pct, participation, scale))
 
 
+
+class SlippagePolicyUndeclared(ValueError):
+    """preset 未显式声明滑点标定值(§4, audit P1-B2)。"""
+
+
+def resolve_atr_slip_scale(preset: dict, preset_name: str = "<preset>") -> float:
+    """§4 滑点标定值必须由 preset **显式声明**;缺声明 → fail-fast。
+
+    为什么不允许静默默认(审计 P1-B2, 2026-10-15):
+    `p.get("atr_slip_scale", 0.0)` 让"没有声明"与"声明为 0"完全无法区分,于是
+    §4 强制的 ATR×参与率滑点在**全部 100 个出厂 preset** 上都不生效,而这一点在
+    任何地方都看不出来 —— 没有报错、没有日志、没有断言。审计实测四引擎的成交价
+    恒等于 bar 开盘价,"已实现但不可达"。
+
+    现在:缺声明直接抛错。厂商 preset 一律显式写下 `SLIP_NONE_ACKNOWLEDGED`
+    (= 0.0,即"已知缺口"的确认值),使缺口**被枚举、可审计**,而不是靠沉默存在。
+    把标定值改成真实数值会改变成交价,属研究决策(§5 迭代计数),不在此替用户决定。
+    """
+    if "atr_slip_scale" not in preset:
+        raise SlippagePolicyUndeclared(
+            f"§4: preset {preset_name!r} 未显式声明滑点标定值 `atr_slip_scale`。"
+            "滑点策略必须单源且显式声明 —— 请写入 `SLIP_NONE_ACKNOWLEDGED`"
+            "(=0.0,确认已知缺口)或真实标定值。静默默认已移除。"
+        )
+    try:
+        return float(preset["atr_slip_scale"])
+    except (TypeError, ValueError) as exc:
+        raise SlippagePolicyUndeclared(
+            f"§4: preset {preset_name!r} 的 atr_slip_scale={preset['atr_slip_scale']!r} "
+            "无法解析为 float"
+        ) from exc
+
 # ----------------------------------------------------------- internals
 
 def _safe(v: float | None) -> float:
@@ -454,4 +486,6 @@ __all__ = [
     "mark_price",
     # audit P1-B (2026-10-15): canonical slippage policy single-source
     "effective_slippage",
+    "resolve_atr_slip_scale",
+    "SlippagePolicyUndeclared",
 ]

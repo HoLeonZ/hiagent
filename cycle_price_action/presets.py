@@ -13,7 +13,13 @@ Compliance declaration (CLAUDE.md audit 2026-09-22):
 """
 from __future__ import annotations
 
+# §4 (audit P1-B2, 2026-10-15): 滑点标定值必须由 preset 显式声明;缺声明
+# fail-fast(core.dual_price.resolve_atr_slip_scale)。
+# SLIP_NONE_ACKNOWLEDGED=0.0 是「已知 §4 缺口」的显式确认值。
+SLIP_NONE_ACKNOWLEDGED = 0.0
+
 PRESET_V1 = dict(
+    atr_slip_scale=SLIP_NONE_ACKNOWLEDGED,
     threshold=2.0,
     min_dim=1.0,
     max_hold=5,

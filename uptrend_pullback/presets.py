@@ -46,6 +46,18 @@ from __future__ import annotations
 
 import copy
 
+# §4 (audit P1-B2, 2026-10-15): 滑点标定值必须由 preset **显式声明**;
+# 缺声明 fail-fast(core.dual_price.resolve_atr_slip_scale)。
+#
+# `SLIP_NONE_ACKNOWLEDGED = 0.0` 是「已知 §4 缺口」的**显式确认值**:审计实测
+# 四引擎成交价恒等于 bar 开盘价,§4 强制的 ATR×参与率滑点在全部出厂 preset 上
+# 都不生效,而此前这靠 `p.get(..., 0.0)` 的沉默存在 —— 没有报错、没有日志。
+# 现在它被逐条枚举、可审计。改成真实标定值会改变成交价,属研究决策(§5 迭代
+# 计数),不在此替用户决定。
+SLIP_NONE_ACKNOWLEDGED = 0.0
+SLIP_KEY = "atr_slip_scale"
+
+
 MAX_HOLD_LIMIT = 20
 
 PRESETS: dict[str, dict] = {
@@ -65,6 +77,7 @@ PRESETS: dict[str, dict] = {
     # max_hold: 15
     # Note: Fixed TP/SL; no ATR multiplier. Pessimistic Default = 2.93% stop / 30.5% TP.
     "v33_long_reverse_v19": {
+                             "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
         "intraday_tiebreak": "sl_first",
@@ -117,6 +130,7 @@ PRESETS: dict[str, dict] = {
     # max_hold: 18
     # Note: Fixed TP/SL; no ATR multiplier. Pessimistic Default = 2.1% stop / 26.28% TP.
     "v33_long_reverse_v20": {
+                             "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -177,6 +191,7 @@ PRESETS: dict[str, dict] = {
     # tp_pct: 0.2628
     # max_hold: 18
     "v33_long_reverse_v21": {
+                             "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,

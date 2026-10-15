@@ -73,7 +73,10 @@ def run_backtest(
     # Round 15 (2026-09-28, CLAUDE.md §4): intraday_tiebreak added to the
     # accepted whitelist so cycle preset declarations flow preset → strategy
     # params → Portfolio.__init__ (Tick 39 plumbing)。
-    _accepted = {"threshold", "min_dim", "max_hold", "atr_period", "atr_sl_mult", "tp_pct", "sl_pct", "initial_capital", "intraday_tiebreak"}
+    # §4 (audit P1-B2): 滑点标定值必须显式声明,缺声明 fail-fast。
+    _slip = resolve_atr_slip_scale(preset, preset.get("name", "cycle_price_action"))
+    strategy_kwargs["atr_slip_scale"] = _slip
+    _accepted = {"threshold", "min_dim", "max_hold", "atr_period", "atr_sl_mult", "tp_pct", "sl_pct", "initial_capital", "intraday_tiebreak", "atr_slip_scale"}
     strategy_kwargs = {k: v for k, v in preset.items() if k in _accepted}
 
     for code, slice in universe.items():

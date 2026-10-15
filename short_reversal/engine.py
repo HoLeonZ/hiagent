@@ -33,6 +33,7 @@ from short_reversal.universe import load_universe_asof
 # §2 single-source (2026-10-14 审计修正): 规范费率从 core.dual_price 导入。
 # 此前为模块级重复定义, 且注释谎称"已从 core.dual_price 导入" (实际无 import)。
 from core.dual_price import (
+    resolve_atr_slip_scale,
     BORROW_RATE_ANNUAL,
     COMMISSION_RATE,
     STAMP_DUTY_RATE,
@@ -270,7 +271,7 @@ def run_backtest_v3(
         min_cash_ratio=cfg.get("min_cash_ratio", 0.05),
         # V5' (2026-09-22, CLAUDE.md §4): ATR-aware slippage is opt-in via preset。
         # 默认 0.0 = baseline parity (无 slippage), preset 可上调启用真实市场摩擦。
-        atr_slip_scale=cfg.get("atr_slip_scale", 0.0),
+        atr_slip_scale=resolve_atr_slip_scale(cfg, cfg.get("_name", "short_reversal")),
         # V8 (2026-09-22, CLAUDE.md §4): max_volume_participation 与 intraday_tiebreak
         # 从 preset 显式 plumb 到 strategy (而非依赖模块常量/默认值)。
         # 当前 preset 默认 0.10 / 'sl_first', 完整覆盖 11/11 preset。

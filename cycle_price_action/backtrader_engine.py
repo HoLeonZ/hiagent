@@ -69,6 +69,11 @@ class CyclePriceActionStrategy(bt.Strategy):
         # available at limit-up open). Default 0.095 = 9.5% tolerance for
         # 10% A-share main-board limit-up; preset-overridable.
         limit_up_threshold=0.095,
+        # §4 (audit P1-B2, 2026-10-15): 滑点标定值由 Control Plane
+        # 经 core.dual_price.resolve_atr_slip_scale 解析后注入
+        # (缺声明在那里 fail-fast)。此前本引擎从不读取 preset 的该值,
+        # broker 恒用 0.0 —— 与其余三引擎的"静默默认"同型。
+        atr_slip_scale=0.0,
     )
 
     def __init__(self):
@@ -90,7 +95,9 @@ class CyclePriceActionStrategy(bt.Strategy):
                 "injected by Control Plane (backtest.run_backtest). "
                 "CLAUDE.md §6: Strategy has no direct DB access."
             )
-        self._broker_ext = ReplayBroker(self.p.data_provider)
+        self._broker_ext = ReplayBroker(
+            self.p.data_provider, atr_slip_scale=self.p.atr_slip_scale,
+        )
         # State for live bar evaluation.
         self._bar_cache: list[dict] = []
         self._entry_day = None
