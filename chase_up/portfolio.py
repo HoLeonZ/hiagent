@@ -228,6 +228,10 @@ def _build_index(panel: pd.DataFrame) -> dict[str, dict]:
             "prev_close": prev_closes,
             # R8 (2026-09-21): Volume Participation Limit 需要每根 bar 的成交量
             "volume": sub["volume"].to_numpy(dtype=float) if "volume" in sub.columns else np.full(len(sub), np.nan),
+            # §3 (audit P2-10): 事件列(loader LEFT JOIN raw_adjustment_events)
+            "div_per_share": sub["div_per_share"].to_numpy(dtype=float) if "div_per_share" in sub.columns else np.zeros(len(sub)),
+            "bonus_ratio": sub["bonus_ratio"].to_numpy(dtype=float) if "bonus_ratio" in sub.columns else np.zeros(len(sub)),
+            "rights_ratio": sub["rights_ratio"].to_numpy(dtype=float) if "rights_ratio" in sub.columns else np.zeros(len(sub)),
         }
         if has_raw:
             entry["raw_open"] = sub["raw_open"].to_numpy(dtype=float) if "raw_open" in sub.columns else np.full(len(sub), np.nan)
@@ -247,6 +251,60 @@ def _row_at(pi: dict, day: np.datetime64) -> int | None:
         return None
     return j
 
+
+
+def apply_corporate_actions(
+    pf: "Portfolio",
+    pos: dict,
+    div_per_share: float,
+    bonus_ratio: float,
+    rights_ratio: float,
+    code: str,
+    day,
+) -> dict:
+    """§3 事件化公司行为(audit P2-10, 2026-10-15)。
+
+    CLAUDE.md §3 逐字要求:
+      - "Cash dividends must explicitly trigger a physical cash deposit into
+         `Free_Cash`."
+      - "Stock splits must trigger an atomic multiplier adjustment to
+         `Position_Quantity` and `Average_Cost`."
+
+    为什么必须有:执行域是**原始价**,除权日 raw 价会向下跳空。没有本函数时,
+    那个缺口被当成真实盈亏 —— 长仓系统性少计分红、空仓把缺口记成利润。
+
+    语义:
+      - 分红: `free_cash += size × dividend_per_share`(持仓数量按当 bar 的
+        数量计;送股与分红同日时先按送股调整数量,与除权日的经济实质一致)。
+      - 送股/拆股: 数量 ×(1 + bonus_ratio),并按 `ep × size / new_size` 重定
+        成本价 —— **总成本基不变**(无现金流),从而 `ep × size` 保持不变,
+        与 `_close_position` 的 `release_margin(ep*size + entry_fee)` 兼容。
+      - 配股(`rights_ratio > 0`): **本实现不处理**,显式告警并跳过 —— 不静默。
+        窗口内实际 0 例,便于枚举核对。
+
+    返回新的 pos(不可变重建;§0 append-only)。
+    """
+    out = dict(pos)
+    size = int(pos["size"])
+
+    if bonus_ratio and bonus_ratio > 0:
+        new_size = max(1, int(round(size * (1.0 + float(bonus_ratio)))))
+        if new_size != size:
+            total_cost = float(pos["entry_price"]) * size
+            out["size"] = new_size
+            out["entry_price"] = total_cost / new_size
+            size = new_size
+
+    if div_per_share and div_per_share > 0:
+        # §3: 物理现金入账(按除权后的持仓数量)
+        pf.free_cash += size * float(div_per_share)
+
+    if rights_ratio and rights_ratio > 0:
+        logger.warning(
+            "[corporate-action] 配股未建模(rights_ratio=%.4f) %s @ %s —— "
+            "§3 未规定配股语义,显式跳过而非静默处理", float(rights_ratio), code, day,
+        )
+    return out
 
 def simulate_portfolio(
     entries: pd.DataFrame,
@@ -343,6 +401,7 @@ def simulate_portfolio(
     positions: dict[str, dict] = {}
     trades: list[dict] = []
     equity_rows: list[dict] = []
+    dividends_cum = 0.0
 
     # Round 16 (2026-09-28, CLAUDE.md §2): Settlement Isolation — wrap state in
     # 3-pool Portfolio class. Local alias `pf` carries state across function
@@ -410,6 +469,27 @@ def simulate_portfolio(
             if j is None:
                 continue
             pos["bars"] = t - pos["entry_t"]
+
+            # §3 (audit P2-10): 当 bar 为除权日 → 先应用公司行为(分红入账 /
+            # 送股调量),再做出场判定与盯市 —— 否则除权日的净值会出现
+            # 一个物理上不存在的跳空。
+            _div = pi["div_per_share"][j] if "div_per_share" in pi else 0.0
+            _bonus = pi["bonus_ratio"][j] if "bonus_ratio" in pi else 0.0
+            _rights = pi["rights_ratio"][j] if "rights_ratio" in pi else 0.0
+            if (not np.isnan(_div) and _div > 0) or (not np.isnan(_bonus) and _bonus > 0) \
+                    or (not np.isnan(_rights) and _rights > 0):
+                # §3: 累计已入账分红(独立于逐笔 P&L 的现金流,
+                # 现金守恒对账需要它:final_equity == initial + Σnet_pnl + Σdiv)
+                if not np.isnan(_div) and _div > 0:
+                    dividends_cum += float(pos["size"]) * float(_div)
+                pos = apply_corporate_actions(
+                    pf, pos,
+                    0.0 if np.isnan(_div) else float(_div),
+                    0.0 if np.isnan(_bonus) else float(_bonus),
+                    0.0 if np.isnan(_rights) else float(_rights),
+                    code, day,
+                )
+                positions[code] = pos
 
             o = pi["open"][j]
             h = pi["high"][j]
@@ -687,6 +767,7 @@ def simulate_portfolio(
             "free_cash": pf.free_cash,
             "locked_margin": pf.locked_margin,
             "settling_funds": pf.settling_funds,
+            "cum_dividends": dividends_cum,
         })
 
     trades_df = (

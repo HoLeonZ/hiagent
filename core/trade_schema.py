@@ -56,4 +56,9 @@ EQUITY_COLS: tuple[str, ...] = (
     "free_cash",
     "locked_margin",
     "settling_funds",
+    # §3 (audit P2-10, 2026-10-15): 累计已入账的现金分红。分红是**独立于
+    # 逐笔 P&L 的现金流**,因此现金守恒必须写成
+    #   final_equity == initial + Σnet_pnl + Σcum_dividends
+    # 把它作为列落盘,便于产物层直接对账。
+    "cum_dividends",
 )

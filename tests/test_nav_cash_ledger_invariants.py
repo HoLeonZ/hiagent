@@ -145,10 +145,19 @@ def test_chase_up_equity_nav_identity_and_cash_conservation() -> None:
     rhs = eq["free_cash"] + eq["settling_funds"] + eq["holdings"]
     assert (lhs - rhs).abs().max() < 1e-6, "equity != free + settling + holdings"
 
-    # (b) 现金守恒
+    # (b) 现金守恒。§3 (audit P2-10): 分红是**独立于逐笔 P&L 的现金流**
+    # (physical cash deposit into Free_Cash),必须计入恒等式 ——
+    # 否则实现公司行为之后这条守卫会"正确地"失败,而那是守卫不完整,不是代码错。
     init = 1_000_000.0
     realised = float(pd.to_numeric(trades["net_pnl"], errors="coerce").sum())
-    assert abs(float(eq["equity"].iloc[-1]) - (init + realised)) / init < 1e-4
+    assert "cum_dividends" in eq.columns, "权益账本缺少 cum_dividends 列(§3)"
+    dividends = float(eq["cum_dividends"].iloc[-1])
+    expected = init + realised + dividends
+    assert abs(float(eq["equity"].iloc[-1]) - expected) / init < 1e-4, (
+        f"现金守恒不成立: equity={float(eq['equity'].iloc[-1]):,.2f} "
+        f"!= init+Σnet_pnl+Σdividends={expected:,.2f} "
+        f"(Σnet_pnl={realised:,.2f}, Σ分红={dividends:,.2f})"
+    )
 
     # (c) 单 bar 权益收益不得超过涨跌停上界（旧 bug 实测 107.70%）
     worst = float(eq["equity"].pct_change().dropna().abs().max())

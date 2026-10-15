@@ -36,7 +36,8 @@ def load_panel(
 
     返回 columns=[thscode, date,
                   open, high, low, close, volume, amount,           -- 前复权
-                  raw_open, raw_high, raw_low, raw_close, raw_prev_close],
+                  raw_open, raw_high, raw_low, raw_close, raw_prev_close,
+                  div_per_share, bonus_ratio, rights_ratio],          -- §3 公司行为
     按 (thscode, date) 排序。raw_* 缺失填 NaN (LEFT JOIN miss)。
     """
     load_start = (pd.Timestamp(start) - pd.Timedelta(days=warmup_days)).strftime("%Y-%m-%d")
@@ -57,10 +58,28 @@ def load_panel(
                    -- Inline LAG keeps qfq schema compatibility for open/high/low/close.
                    LAG(r.close, 1) OVER (
                        PARTITION BY r.thscode ORDER BY r.date
-                   ) AS raw_prev_close
+                   ) AS raw_prev_close,
+                   -- §3 (audit P2-10, 2026-10-15): 事件化公司行为。
+                   -- CLAUDE.md §3 要求「现金分红必须显式触发 Free_Cash 入账;
+                   -- 拆股/送股必须原子调整持仓数量与成本」。此前四个引擎都不读
+                   -- raw_adjustment_events —— 于是在 raw 执行域下,除权缺口被
+                   -- 当成真实盈亏,长仓系统性少计分红、空仓把它记成利润。
+                   -- 事件按 (thscode, ex_date) 聚合后再 JOIN:即便上游出现同日
+                   -- 多行也能得到确定性的单行(GROUP BY + SUM,不依赖行序)。
+                   COALESCE(ev.dividend_per_share, 0.0) AS div_per_share,
+                   COALESCE(ev.per_share_bonus, 0.0)    AS bonus_ratio,
+                   COALESCE(ev.rights_ratio, 0.0)       AS rights_ratio
             FROM v_daily_qfq q
             LEFT JOIN raw_kline_daily r
               ON q.thscode = r.thscode AND q.date = r.date
+            LEFT JOIN (
+                SELECT thscode, ex_date,
+                       SUM(dividend_per_share) AS dividend_per_share,
+                       SUM(per_share_bonus)    AS per_share_bonus,
+                       SUM(rights_ratio)       AS rights_ratio
+                FROM raw_adjustment_events
+                GROUP BY thscode, ex_date
+            ) ev ON q.thscode = ev.thscode AND q.date = ev.ex_date
             WHERE q.date BETWEEN ? AND ?
             ORDER BY q.thscode, q.date
             """,
