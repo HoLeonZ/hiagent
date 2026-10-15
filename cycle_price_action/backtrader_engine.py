@@ -107,6 +107,14 @@ class CyclePriceActionStrategy(bt.Strategy):
             "close": self.datas[0].close[0],
             "volume": self.datas[0].volume[0],
         }
+        # §3 (audit P2-10, 2026-10-15): 读当 bar 的公司行为事件(feed lines)。
+        # 缺 line(旧测试 feed)→ 视为无事件,而非 NaN。
+        _d0 = self.datas[0]
+        for _col in ("div_per_share", "bonus_ratio", "rights_ratio"):
+            try:
+                bar[_col] = float(getattr(_d0, _col)[0])
+            except (AttributeError, TypeError, ValueError, IndexError):
+                bar[_col] = 0.0
         self._bar_cache.append(bar)
 
         # §2 (audit P0-2, 2026-10-15): A 股 T+1 结算 —— 把上一根 bar 的
@@ -116,6 +124,24 @@ class CyclePriceActionStrategy(bt.Strategy):
         # 每根 bar 起始调用(见 chase_up/portfolio.py:387、
         # uptrend_pullback/portfolio.py:365、short_reversal/replay_strategy_v3.py:496)。
         self._portfolio.settle()
+
+        # §3 (audit P2-10, 2026-10-15): 除权日先应用公司行为(分红入 Free_Cash /
+        # 送股调量),再做出场判定与建仓 —— 否则除权缺口会被当成真实盈亏。
+        # 位置在**建仓分支之前**,故除权日当天新建的仓位不会被误记分红
+        # (权益归属:除权日买入不享有本次分红)。
+        def _ev(name: str) -> float:
+            v = bar.get(name, 0.0)
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                return 0.0
+            return 0.0 if v != v else v  # NaN → 0.0
+
+        self._portfolio.apply_corporate_action(
+            dividend_per_share=_ev("div_per_share"),
+            bonus_ratio=_ev("bonus_ratio"),
+            rights_ratio=_ev("rights_ratio"),
+        )
 
         df = self._bars_as_df()
         bars_until_today = bars_up_to(df, bar["date"])

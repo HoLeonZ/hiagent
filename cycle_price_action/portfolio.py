@@ -28,6 +28,7 @@ V6'' (2026-09-22, CLAUDE.md §4): SL-first intraday tiebreak.
 """
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from datetime import date
@@ -36,6 +37,9 @@ from typing import Any, Mapping
 
 # Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical cost rates imported from
 # core/dual_price.py single-source-of-truth. (was 0.001 = 万10 pre-Aug2023).
+from core.corporate_actions import apply_corporate_action
+
+logger = logging.getLogger(__name__)
 from core.dual_price import (
     COMMISSION_RATE,
     MIN_COMMISSION,
@@ -191,6 +195,47 @@ class Portfolio:
     def credit_settling(self, amount: float) -> None:
         """Credit T+0 sell proceeds to Settling_Funds (not Free_Cash)."""
         self.settling_funds += amount
+
+    def apply_corporate_action(
+        self,
+        dividend_per_share: float = 0.0,
+        bonus_ratio: float = 0.0,
+        rights_ratio: float = 0.0,
+    ) -> None:
+        """§3 (audit P2-10, 2026-10-15): 除权日公司行为(多头方向)。
+
+        - 现金分红 → `free_cash`(§3: physical cash deposit into Free_Cash)
+        - 送股/拆股 → 数量 ×(1+bonus),成本价按总量不变重定;`PositionState` 是
+          frozen dataclass,故**重建**而非原地修改(§0 append-only)。
+        - 配股不建模,由 core 产出告警后落日志。
+
+        权益归属:本方法只在"bar 起始已持有"时被调用(引擎在 next() 顶部、
+        建仓分支之前应用),因此除权日当天新建的仓位不会被误记分红。
+        """
+        pos = self._pos
+        if pos is None:
+            return
+        if (dividend_per_share <= 0) and (bonus_ratio <= 0) and (rights_ratio <= 0):
+            return
+        out = apply_corporate_action(
+            size=int(pos.shares),
+            entry_price=float(pos.entry_price),
+            dividend_per_share=dividend_per_share,
+            bonus_ratio=bonus_ratio,
+            rights_ratio=rights_ratio,
+        )
+        for w in out.warnings:
+            logger.warning("[corporate-action] %s @ %s: %s", pos.thscode, pos.entry_date, w)
+        self.free_cash += out.cash_delta
+        self.cash = self.total_cash
+        if out.size != pos.shares or out.entry_price != pos.entry_price:
+            self._pos = PositionState(
+                thscode=pos.thscode,
+                shares=out.size,
+                entry_price=out.entry_price,
+                entry_date=pos.entry_date,
+                decision_meta=pos.decision_meta,
+            )
 
     @property
     def position(self) -> PositionState | None:

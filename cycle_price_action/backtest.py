@@ -14,6 +14,7 @@ from cycle_price_action.backtrader_engine import CyclePriceActionStrategy
 from cycle_price_action.data_feed import ReplayDataProvider, load_universe_data
 from cycle_price_action.metrics import TradeRecord, compute_metrics
 from cycle_price_action.presets import PRESET_V1
+from cycle_price_action.feed_bt import CyclePandasData
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +80,8 @@ def run_backtest(
         try:
             cerebro = bt.Cerebro(stdstats=False)
             feed_df = slice.df.set_index(pd.to_datetime(slice.df["date"]))
-            feed = bt.feeds.PandasData(
+            # §3 (audit P2-10, 2026-10-15): 改用携带事件列的自定义 feed
+            feed = CyclePandasData(
                 dataname=feed_df,
                 open="open", high="high", low="low",
                 close="close", volume="volume",

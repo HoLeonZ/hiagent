@@ -230,9 +230,21 @@ def load_universe_data(
             panel = con.execute(
                 (
                     "SELECT v.thscode, v.date, v.open, v.high, v.low, v.close, "
-                    "v.volume, v.amount, h.close AS adj_close "
+                    "v.volume, v.amount, h.close AS adj_close, "
+                    # §3 (audit P2-10, 2026-10-15): 事件化公司行为。按 (thscode,
+                    # ex_date) 聚合后再 JOIN —— 同日多行也不影响确定性。
+                    "COALESCE(ev.dividend_per_share, 0.0) AS div_per_share, "
+                    "COALESCE(ev.per_share_bonus, 0.0) AS bonus_ratio, "
+                    "COALESCE(ev.rights_ratio, 0.0) AS rights_ratio "
                     "FROM v_daily v "
                     "LEFT JOIN v_daily_hfq h ON v.thscode = h.thscode AND v.date = h.date "
+                    "LEFT JOIN ("
+                    "  SELECT thscode, ex_date, "
+                    "         SUM(dividend_per_share) AS dividend_per_share, "
+                    "         SUM(per_share_bonus) AS per_share_bonus, "
+                    "         SUM(rights_ratio) AS rights_ratio "
+                    "  FROM raw_adjustment_events GROUP BY thscode, ex_date"
+                    ") ev ON v.thscode = ev.thscode AND v.date = ev.ex_date "
                     "WHERE v.thscode IN ({codes_sql}) "
                     "AND v.date BETWEEN '{start}' AND '{end}' "
                     "ORDER BY v.thscode, v.date"
