@@ -33,6 +33,8 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
+import pytest
+
 
 def test_cycle_intraday_tiebreak_is_parameter() -> None:
     """§4 RED: cycle_price_action Portfolio must accept intraday_tiebreak
@@ -60,54 +62,72 @@ def test_cycle_intraday_tiebreak_is_parameter() -> None:
     )
 
 
-def test_cycle_preset_intraday_declared_has_engine_effect() -> None:
-    """§4 RED: cycle preset's `intraday_tiebreak='sl_first'` declaration
-    must have actual engine effect.
+def test_cycle_intraday_declaration_reaches_the_execution_layer() -> None:
+    """§4: cycle preset 声明的 `intraday_tiebreak='sl_first'` 必须有**引擎效果**。
 
-    cycle/presets.py:32 declares `"intraday_tiebreak": "sl_first"` but
-    Portfolio.__init__ ignores it. The behavior IS hardcoded to sl_first
-    in try_exit_with_intraday_check, but the parameter is silently
-    dropped. Future preset tune will have ZERO effect.
+    原版判据是「`run_backtest` 的**函数签名**里没有 `intraday_tiebreak`」——这个判据
+    本身就是错的:该键经 preset 白名单 → strategy params → Portfolio 三层流动
+    (见 `backtest.py` 的 `_accepted`),不必是 `run_backtest` 的形参。于是 Round 15
+    修好接线之后,这条用例仍在报旧结论 —— **判据选错,修复也会被报成缺口**。
 
-    Verify: passing `intraday_tiebreak='tp_first'` to run_backtest should
-    change behavior, but currently doesn't.
+    现在的判据是「声明真的到执行层,而且会被强制」:Portfolio 拒绝任何非
+    'sl_first' 的值(§4 强制 SL-first 悲观口径 —— 同 bar 双触及时假设先止损),
+    故该声明是一条**可被违反、违反即失败**的契约,而不是装饰。
     """
-    # Run cycle with both 'sl_first' and 'tp_first' intraday_tiebreak and
-    # verify they produce DIFFERENT results. If identical → gap captured.
-    from cycle_price_action.backtest import run_backtest as cycle_run
+    from cycle_price_action.backtrader_engine import CyclePriceActionStrategy
+    from cycle_price_action.portfolio import Portfolio
 
-    # The cycle engine silently drops intraday_tiebreak param
-    # (it has no such param). Both calls produce identical results.
-    # If this test is GREEN, cycle API exposed the parameter correctly.
-    import inspect
-    sig = inspect.signature(cycle_run)
-    has_param = "intraday_tiebreak" in sig.parameters
+    # (a) 三层接线都在:preset 白名单 → strategy params → Portfolio 形参
+    backtest_src = Path("cycle_price_action/backtest.py").read_text(encoding="utf-8")
+    assert "intraday_tiebreak" in backtest_src, (
+        "§4 VIOLATION: cycle 的 preset 白名单不再放行 intraday_tiebreak"
+    )
+    assert hasattr(CyclePriceActionStrategy.params, "intraday_tiebreak"), (
+        "§4 VIOLATION: CyclePriceActionStrategy.params 缺 intraday_tiebreak"
+    )
+    assert "intraday_tiebreak" in inspect.signature(Portfolio.__init__).parameters, (
+        "§4 VIOLATION: Portfolio 不接受 intraday_tiebreak(声明到不了执行层)"
+    )
 
-    if not has_param:
-        raise AssertionError(
-            "GAP CAPTURED: cycle_price_action.backtest.run_backtest "
-            "missing `intraday_tiebreak` parameter. Preset declaration "
-            "`'intraday_tiebreak': 'sl_first'` is silently dropped."
+    # (b) 声明被**强制**:非 sl_first → 出场判定 fail-fast(而不是静默按 sl_first 跑完)。
+    #     校验点就在出场决策里 —— 正是"同 bar 双触发时假设先止损"这条悲观口径的入口。
+    from datetime import date
+
+    pf = Portfolio(cash=100_000.0, intraday_tiebreak="tp_first")
+    assert pf.try_enter("600000.SH", 10.0, date(2024, 6, 3), {"k_line_score": 1.0})
+    with pytest.raises(ValueError, match="intraday_tiebreak"):
+        pf.try_exit_with_intraday_check(
+            exit_date=date(2024, 6, 4),
+            open_price=10.0, high=11.0, low=9.0, close=10.0,
+            tp_pct=0.06, sl_pct=0.05,
         )
 
 
-def test_all_engines_volume_cap_formula_consistent() -> None:
-    """§4 baseline: all 4 engines use the same `bar_vol * X / lot` formula
-    family (with same low-bar bypass bug — already in Tick 25).
+#: §4 成交量上限的四条接线点 —— 必须全部经**规范助手**,而不是各写一份字面公式。
+VOLUME_CAP_SITES = (
+    "chase_up/portfolio.py",
+    "uptrend_pullback/portfolio.py",
+    "short_reversal/replay_strategy_v3.py",
+    "cycle_price_action/portfolio.py",
+)
 
-    Pin the consistency pattern across all 4 engines.
+
+def test_all_engines_route_the_volume_cap_through_the_canonical_helper() -> None:
+    """§4: 四个引擎的成交量上限必须走**同一个**规范助手 `volume_cap_fill`。
+
+    原版钉的是四条**字面公式**(其中三条自带 round-to-0 缺陷)。chase_up /
+    uptrend_pullback 改用规范助手之后,它反而报「回归,§4 审计必须重跑」——
+    **把修复当成破坏**。钉住缺陷的字面量,是在为缺陷投保。
+
+    规范助手的关键性质:薄量 bar 上至少返回 1 lot 而非 0。旧公式取整到 0 时
+    `max_fill > 0` 守卫被跳过,下单**完全不受约束**(liquidity illusion)。
     """
-    engines_with_formula = {
-        "chase_up/portfolio.py": "int(bar_vol * max_volume_participation // 100) * 100",
-        "uptrend_pullback/portfolio.py": "int(bar_vol * max_volume_participation // 100) * 100",
-        "cycle_price_action/portfolio.py": "int(bar_volume * self.MAX_VOL_PARTICIPATION // 100) * 100",
-        "short_reversal/replay_strategy_v3.py": "bar_vol * self.p.max_volume_participation / self.p.lot_size",
-    }
-    for path, formula in engines_with_formula.items():
-        src = Path(path).read_text(encoding="utf-8")
-        assert formula in src, (
-            f"Regression: {path} no longer uses {formula!r}. §4 audit "
-            f"must be re-run to find new violations."
+    for rel in VOLUME_CAP_SITES:
+        src = Path(rel).read_text(encoding="utf-8")
+        assert "volume_cap_fill" in src, (
+            f"§4 VIOLATION: {rel} 未使用规范 volume_cap_fill —— "
+            "自行实现的 `int(bar_vol * pct // 100) * 100` 在 `bar_vol × pct < 100` "
+            "时取整到 0,守卫随之被跳过,薄量 bar 上产生无上限的幻影成交。"
         )
 
 

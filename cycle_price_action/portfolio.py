@@ -38,7 +38,7 @@ from typing import Any, Mapping
 # Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical cost rates imported from
 # core/dual_price.py single-source-of-truth. (was 0.001 = 万10 pre-Aug2023).
 from core.corporate_actions import apply_corporate_action
-from core.dual_price import is_limit_up
+from core.dual_price import is_limit_up, volume_cap_fill
 from core.preset_contract import ALL_IN, EXECUTION_PRICE_SOURCE
 
 logger = logging.getLogger(__name__)
@@ -378,8 +378,16 @@ class Portfolio:
         # 这是 CLAUDE.md §4 "Max_Fill_Qty = MIN(Order_Qty, Bar_Volume * 0.10)"
         # 防止小票大单砸穿市场、产生 slippage / market impact。
         if bar_volume is not None and not _is_nan(bar_volume) and bar_volume > 0:
-            max_fill = int(bar_volume * self.max_volume_participation // 100) * 100
-            if max_fill > 0 and shares > max_fill:
+            # §4 (2026-10-15): 改用规范 `volume_cap_fill`。旧式写法先把
+            # `bar_volume × pct` 除以 100 取整、再乘回 100 —— 当
+            # `bar_volume × pct < 100` 时结果为 **0**,`max_fill > 0` 守卫随之被跳过,
+            # 薄量 bar 上的下单**完全不受约束**(liquidity illusion: 小票照样砸出
+            # 巨量成交)。规范助手在此情形下至少返回 1 lot,由调用方决定成交或拒绝
+            # (与 chase_up / uptrend_pullback / short_reversal 同口径)。
+            max_fill = volume_cap_fill(
+                bar_volume, self.max_volume_participation, lot_size=100
+            )
+            if shares > max_fill:
                 shares = max_fill
                 cost = self._buy_cost(price, shares)
                 if cost > self.free_cash + 1e-9 or shares < 100:
