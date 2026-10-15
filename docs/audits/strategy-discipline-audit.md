@@ -623,6 +623,7 @@ for path in paths:
 | `7ce982e` / `61f5f23` | **P1-B2 完成**:滑点标定值必须显式声明,`resolve_atr_slip_scale` 缺声明 fail-fast;100 个 preset + cycle 显式写入 `SLIP_NONE_ACKNOWLEDGED`;cycle broker 首次真正收到该值 | 100 个 preset 逐字段核验(除新增键外零差异);chase_up Phase-1 **逐字节零漂移**;端到端 fail-fast 已验证;11 条新守卫 |
 | `4acfc2e` | §5 walk-forward DSR 的 `n_trials` 由**窗口数**改为**配置数**(消费 preset 的 `n_comparisons`);`n_returns` 由硬编码 252 改为 126 | 逐文件分类 25 处:7 处网格本就正确(未动)、15 处 WFD 修正;32 条新守卫;**未跑完整 wf 回测**(仅编译+导入+取值验证) |
 | `5c731cd` | §7 清除内嵌绩效声明(13 个 golden 的 `metrics`/`vs_*` 块、回写脚本、57 行 preset 注释、4 处 docstring/注释、v21 的 `pinned` 块**保留负面证据**);并把 2 个空转守卫改为可证伪 | 22+75+3 个 preset 与 HEAD **逐字段一致**;终检全库清洁;Layer 5 由"存储数字 + 30% 容差"改为**精确恒等式**并转绿 |
+| `e063c43`…`eea8cb3` | **§6 `chase_up` 金标准守卫修复**:8 个用例改为"一律重跑、无 DB 则 skip";重刷 13 个基线;regen 脚本修掉硬编码绝对路径与产物写入 | **8/8 转绿**;关键发现:**旧 pin 相对 main 早已陈旧**(v5/v8/v19 旧 pin 107/82/33 vs main 重跑 38/27/12,而整改后重跑与 main 完全一致) |
 
 **测试层净效果**(失败集合逐条 `diff`,非仅比数量):
 
@@ -645,9 +646,9 @@ for path in paths:
 
 **P1 已全部完成**(窗口边界、宇宙因果性与幸存者偏差、停牌语义、滑点单源与显式声明、涨跌停四引擎镜像守卫)。
 
-**仍未处理(按 §8 顺序)**:**§5 基准归因完全缺席**(Attribution Mandate:HEADLINE 收益必须附基准/风格相对超额,当前零实现);**§4 滑点的实质**(把 100 个 preset 的 `SLIP_NONE_ACKNOWLEDGED` 换成真实标定值 —— 属研究决策);§7 源码内嵌业绩数字清理;§3 公司行为的 `raw_adjustment_events` 之外的公司行动(配股/缩股未建模);`chase_up` 金标准基线仍红(陈旧产物),故 chase_up 侧的漂移今天仍不可见。
+**仍未处理(按 §8 顺序)**:**§5 基准归因完全缺席**(Attribution Mandate:HEADLINE 收益必须附基准/风格相对超额,当前零实现);**§4 滑点的实质**(把 100 个 preset 的 `SLIP_NONE_ACKNOWLEDGED` 换成真实标定值 —— 属研究决策);§7 源码内嵌业绩数字清理;§3 公司行为的 `raw_adjustment_events` 之外的公司行动(配股/缩股未建模);~~`chase_up` 金标准基线仍红~~ → **已修复(见 `e063c43`)**,四个引擎的成交列表现在都有有效守卫。
 
-**当前测试状态**:failed 54→**43**,passed 796→**890**,errors 3→**0**,**新增失败 0**(逐条 diff,基线与我每一轮之间都比对)。
+**当前测试状态**:failed 54→**35**,passed 796→**898**,errors 3→**0**,**新增失败 0**,**22 条既有红转绿**(逐条 diff,基线与我每一轮之间都比对)。
 
 **修复带来的结果变化(不得按「改善」叙述)**:每处修复都会改变结果,方向不一。
 
