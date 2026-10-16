@@ -72,3 +72,41 @@ def test_engine_plumbs_fill_order_from_preset() -> None:
     assert 'fill_order=cfg.get("fill_order", "code")' in text, (
         "engine.py 必须把 preset 的 fill_order 传给 strategy, 否则参数是死的"
     )
+
+
+class _DataVwap(_Data):
+    """带 amount/volume 的 feed 桩。"""
+
+    def __init__(self, name: str, close: float, amount: float, volume: float) -> None:
+        super().__init__(name)
+        self.close = [close]
+        self.amount = [amount]
+        self.volume = [volume]
+
+
+class _FakeVwap:
+    def __init__(self, rows: list[_DataVwap], fill_order: str) -> None:
+        self.datas = rows
+        self.pending_entries = {r._name: 0.0 for r in rows}
+        self.p = _Params(fill_order)
+        self.pending_entries = {
+            r._name: ShortReversalStrategy._conviction(self, r) for r in rows
+        }
+
+    def order(self) -> list[str]:
+        return [d._name for d in ShortReversalStrategy._fill_order(self)]
+
+
+def test_vwap_conviction_prefers_close_below_vwap() -> None:
+    """'vwap': 收盘越低于当日成交均价, conviction 越高 (越先成交)。"""
+    below = _DataVwap("600001.SH", close=10.0, amount=1000 * 10.1, volume=1000)  # vwap 10.1
+    above = _DataVwap("600002.SH", close=10.0, amount=1000 * 9.9, volume=1000)   # vwap 9.9
+    f = _FakeVwap([above, below], "vwap")
+    assert f.order()[0] == "600001.SH", "收盘低于 VWAP 的那只应排在前"
+
+
+def test_vwap_conviction_falls_back_on_missing_volume() -> None:
+    """§0: 量价缺失时退化为 0.0 (同级), 不抛异常也不伪造顺序。"""
+    bad = _DataVwap("600001.SH", close=10.0, amount=0.0, volume=0.0)
+    f = _FakeVwap([bad], "vwap")
+    assert f.pending_entries["600001.SH"] == 0.0

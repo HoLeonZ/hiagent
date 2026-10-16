@@ -254,6 +254,7 @@ class Phase3V3Strategy(bt.Strategy):
         # 'code' (默认) = feed 顺序 = thscode 字典序 —— 历史行为, 与信号强度无关,
         #   属 §2「predefined tie-breaker」的弱读法。
         # 'slope'      = 按 conviction 降序 (MA20 斜率越负越先), §2 的严格读法。
+        # 'vwap'       = 按 conviction 降序 (收盘越低于当日 VWAP 越先)。
         # 默认保持 'code' 以免静默改变既有 preset 的结果; 新候选显式开启。
         fill_order="code",
         # v65 (2026-10-13): 浮动止损 (trailing stop, short-side, opt-in)。
@@ -569,7 +570,23 @@ class Phase3V3Strategy(bt.Strategy):
         指标不可得 / NaN 时退化为 0.0 —— 该票退到同级, 由代码字典序兜底,
         不引入未定义顺序。本函数不做任何取舍判断, 只给排序提供一个显式、
         确定、可复述的度量 (§2「sort them by statistical conviction」)。
+
+        两种度量 (与 fill_order 名一致):
+          'slope' = -MA20 斜率      → 趋势越陡越可信
+          'vwap'  = -(close/vwap-1) → 收盘越低于当日成交均价越可信
+                    (尾盘卖压压过买盘, 与做空死猫跳的论点直接对应;
+                     与 L 条件的区别: L 用它**过滤**(实测更差, 会滤掉 80% 候选),
+                     这里只用它**排序**, 只在同日争位时改变取舍。)
         """
+        if self.p.fill_order == "vwap":
+            amt = d.amount[0]
+            vol = d.volume[0]
+            if amt is None or vol is None:
+                return 0.0
+            amt_v, vol_v = float(amt), float(vol)
+            if not (vol_v > 0) or not (amt_v > 0) or np.isnan(amt_v) or np.isnan(vol_v):
+                return 0.0
+            return -(float(d.close[0]) / (amt_v / vol_v) - 1.0)
         indi = self.indi.get(d._name, {})
         slope = indi.get("ma20_slope_5d")
         if slope is None:
@@ -582,11 +599,12 @@ class Phase3V3Strategy(bt.Strategy):
 
         fill_order='code' (默认, 历史行为): 按 feed 顺序 = thscode 字典序。
         这是「预定义 tie-breaker」的弱形式 —— 与信号强度无关。
-        fill_order='slope': 按 conviction 降序 (§2 的严格读法), 平分按 thscode。
+        fill_order='slope' / 'vwap': 按 conviction 降序 (§2 的严格读法),
+        平分按 thscode。度量定义见 _conviction()。
         默认保持 'code' 以免静默改变既有 preset 的结果; 新候选显式开启。
         """
         eligible = [d for d in self.datas if d._name in self.pending_entries]
-        if self.p.fill_order != "slope":
+        if self.p.fill_order == "code":
             return eligible
         return sorted(
             eligible, key=lambda d: (-self.pending_entries[d._name], d._name)
