@@ -139,23 +139,125 @@ def test_empty_universe_fails_fast_instead_of_reporting_zero_trades() -> None:
 
 
 @pytest.mark.parametrize("engine,path", sorted(_ENGINES.items()))
-def test_pit_query_uses_last_trading_day_not_the_literal_asof(
+def test_no_engine_uses_the_literal_asof_having_form(
     engine: str, path: Path
 ) -> None:
-    """两侧都必须取「asof 当日或之前的 MAX(date)」,不得用 asof 字面值。"""
+    """§3 反向守卫:**禁止**字面值 as-of 的 HAVING 形式(附二十五 的缺陷形态)。
+
+    这条是**负向**断言(禁止已知的错误写法),而不是按"正确写法"做拼写匹配 ——
+    后者在附三十三 把 SQL 换成 CTE 形式之后会**静默 skip**(本文件实测曾 skip 2 条,
+    覆盖悄悄消失,而套件依然是绿的)。语义正确性由
+    `test_halted_name_stays_and_delisted_name_leaves`(合成库 × 三引擎 ×
+    「正常/停牌/已退市」三种情形)在行为层钉住。
+    """
     src = path.read_text(encoding="utf-8")
     code = "\n".join(
         ln for ln in src.splitlines() if not ln.lstrip().startswith("#")
     )
-    if "HAVING MAX(date)" not in code:
-        pytest.skip(f"{engine} 无同形 PIT 查询")
-    assert "HAVING MAX(date) >= (SELECT MAX(date) FROM v_daily WHERE date <= ?)" in code, (
-        f"§0/§3 VIOLATION {engine}: PIT 查询的 HAVING 仍用 asof 字面值 —— "
-        "非交易日 asof 会让每一只票都被误判为已退市 ⇒ 空宇宙"
-    )
-    assert code.count("(SELECT MAX(date) FROM v_daily WHERE date <= ?)") == 2, (
-        f"{engine}: WHERE 与 HAVING 两侧都必须锚定最后一个交易日"
-    )
+    assert "v_daily" in code, f"{engine}: 预期文件里有 v_daily 查询"
+    for bad in ("HAVING MAX(date) >= ?", "HAVING MAX(date) >= asof_date"):
+        assert bad not in code, (
+            f"§3 VIOLATION {engine}: 又出现字面值 as-of 的 HAVING(`{bad}`)—— "
+            "非交易日 asof 会让每只票都被误判为已退市(空宇宙),且把当日停牌错杀成退市"
+        )
     assert '"Empty universe' in code, (
         f"§0 VIOLATION {engine}: 空 universe 必须 fail-fast,不能静默返回 []"
     )
+
+
+# ---------------------------------------------------------------------------
+# 附三十三(2026-10-16):"已退市" 的判据不得退化成「当日恰好有 bar」
+# ---------------------------------------------------------------------------
+
+
+def _synthetic_db(tmp_path: Path) -> Path:
+    """造一个只含三只票的小库,把「正常 / 停牌 / 已退市」三种情形分离开。
+
+    真实库里**没有**退市票(实测:整表最后一根 bar 落在 2020~2024 的标的一只也没有
+    —— 数据集里的票都还活着),所以退市那一支只能靠合成库来钉。
+    """
+    import duckdb
+
+    db = tmp_path / "synthetic.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("CREATE TABLE v_daily (thscode VARCHAR, date DATE)")
+    rows = []
+    # 正常票:一直有 bar(截至 asof 与之后)
+    for d in ("2025-01-02", "2025-01-03", "2025-01-06", "2025-01-07"):
+        rows.append(("600001.SH", d))
+    # 停牌票:asof(2025-01-06)当日**没有** bar,但之后复牌
+    rows += [("600002.SH", "2025-01-02"), ("600002.SH", "2025-01-03"),
+             ("600002.SH", "2025-01-20"), ("600002.SH", "2025-01-21")]
+    # 已退市票:整表最后一根 bar 远早于 asof
+    rows += [("600003.SH", "2024-06-03"), ("600003.SH", "2024-06-04")]
+    con.executemany("INSERT INTO v_daily VALUES (?, ?)", rows)
+    con.close()
+    return db
+
+
+def test_halted_name_stays_and_delisted_name_leaves(tmp_path: Path) -> None:
+    """§3 PIT: asof 当日**停牌**的票必须留在宇宙里;asof 之前**已退市**的票必须剔除。
+
+    缺陷形态(修复前):判据是 `HAVING MAX(date) >= last_td`,而 MAX 建在
+    `date <= last_td` 过滤后的分组上 —— 恒 <= asof,于是退化成「在最后一个交易日
+    **恰好有** bar」:停牌票被当成退市票踢掉(实测少 2~9 只),而**真退市票**反倒
+    因为"当天没数据"和"停牌"同形而无法区分。
+    三种情形在同一张合成表上分开钉住,故这条断言对两边都有牙。
+    """
+    db = _synthetic_db(tmp_path)
+    from chase_up.universe import load_universe as chase
+    from short_reversal.universe import load_universe_asof as short_rev
+    from uptrend_pullback.universe import load_universe as uptrend
+
+    asof = "2025-01-06"  # 600002.SH 当日停牌;600003.SH 早已退市
+    universes = {
+        "chase_up": set(chase("mainboard_only", db, asof_date=asof)),
+        "uptrend_pullback": set(uptrend("mainboard_only", db, asof_date=asof)),
+        "short_reversal": set(short_rev("mainboard_only", asof, db)),
+    }
+    for engine, uni in universes.items():
+        assert "600001.SH" in uni, f"{engine}: 正常票被漏掉"
+        assert "600002.SH" in uni, (
+            f"{engine}: §3 VIOLATION —— asof 当日**停牌**的票被当成已退市踢出了宇宙;"
+            "停牌票仍在市,窗口内会复牌"
+        )
+        assert "600003.SH" not in uni, (
+            f"{engine}: §3 VIOLATION —— asof 之前**已退市**的票仍在宇宙里"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 三引擎必须给出同一个宇宙(缺陷的形态:同一语义两处实现)
+# ---------------------------------------------------------------------------
+
+
+def _short_rev(asof: str) -> list[str]:
+    from short_reversal.universe import load_universe_asof
+
+    return load_universe_asof("mainboard_only", asof, _db())
+
+
+@_NEEDS_DB
+@pytest.mark.parametrize(
+    "asof", [_FRI, _SAT, _SUN, _HOLIDAY, "2025-09-19", "2026-09-30"]
+)
+def test_all_three_engines_agree_on_the_universe(asof: str) -> None:
+    """同一 asof 下**三个**引擎的 mainboard 宇宙必须逐只相同。
+
+    此前只有 chase/uptrend 参与这条不变量,而 short_reversal 的查询**根本没有退市
+    判定**(`WHERE date <= ?`)—— 于是它把 2018 年退市的票也留在 2026 年的宇宙里。
+    """
+    c, u, s = set(_chase(asof)), set(_uptrend(asof)), set(_short_rev(asof))
+    assert c == u == s, (
+        f"asof={asof}: chase={len(c)} / uptrend={len(u)} / short_reversal={len(s)} —— "
+        f"仅 chase 有 {sorted(c - s)[:3]},仅 sr 有 {sorted(s - c)[:3]}"
+    )
+
+
+@_NEEDS_DB
+def test_short_reversal_also_fails_fast_on_an_empty_universe() -> None:
+    """§0: short_reversal 的空宇宙同样必须失败,不得静默返回 []。"""
+    from short_reversal import ShortReversalError
+
+    with pytest.raises(ShortReversalError, match="Empty universe"):
+        _short_rev("1990-01-01")

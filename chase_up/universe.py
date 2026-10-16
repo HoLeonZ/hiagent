@@ -59,13 +59,28 @@ def _all_thscodes(db_path: Path, asof_date: str | None = None) -> list[str]:
             # 干净"的零结果,会被下游 sweep 当成有效样本参与统计。
             # last_td 在交易日上恒等于 asof,故交易日行为不变。
             # (uptrend_pullback/universe.py 早已是此形式并带同样注释 —— 本条即两者对齐。)
+            # §3 PIT (audit 2026-10-16): "已退市" 的判据必须是「**整表**最后一根
+            # bar 早于 asof 当日或之前的最后一个交易日」,而不是「asof 那天没有
+            # bar」。后者把**当日停牌**与**已退市**混为一谈:`MAX(date)` 是在
+            # `date <= ?` 过滤后的分组里取的,恒 <= asof,于是
+            # `HAVING MAX(date) >= last_td` 退化成「在最后一个交易日**恰好有** bar」
+            # —— 这正是本注释上半段自己声明的判据(「asof_date 之前已退市的票」)
+            # 的反面。
+            #
+            # 实测(2026-01-09,mainboard_only):本式 3167 只 vs short_reversal 3176 只,
+            # 少掉的 9 只全部是**当天/近日停牌**的票(如 002049.SZ 最后一根 bar
+            # 2025-12-29,而整表最后一根是 2026-09-30 —— 停牌,不是退市)。
+            # 停牌票仍在市、窗口内会复牌,按 §1/§3 必须留在 universe 里。
             rows = con.execute(
-                "SELECT thscode FROM v_daily "
-                "WHERE date <= (SELECT MAX(date) FROM v_daily WHERE date <= ?) "
-                "GROUP BY thscode "
-                "HAVING MAX(date) >= (SELECT MAX(date) FROM v_daily WHERE date <= ?) "
-                "ORDER BY thscode",
-                [asof_date, asof_date],
+                "WITH last_td AS (SELECT MAX(date) AS d FROM v_daily WHERE date <= ?), "
+                "     overall AS (SELECT thscode, MAX(date) AS last_any "
+                "                 FROM v_daily GROUP BY thscode) "
+                "SELECT DISTINCT v.thscode FROM v_daily v "
+                "JOIN overall o ON o.thscode = v.thscode "
+                "WHERE v.date <= (SELECT d FROM last_td) "
+                "  AND o.last_any >= (SELECT d FROM last_td) "
+                "ORDER BY v.thscode",
+                [asof_date],
             ).fetchall()
     finally:
         con.close()

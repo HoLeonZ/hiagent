@@ -146,9 +146,25 @@ def load_universe_asof(
     excluded = _load_exclude(_resolve_exclude_path(mode, exclude_path))
     con = duckdb.connect(str(db_path), read_only=True)
     try:
+        # §3 PIT (audit 2026-10-16): 本查询此前只是 `WHERE date <= ?`,**没有退市
+        # 判定** —— 于是一只 2018 年就退市的票在 2026 年的窗口里依然"在宇宙里"。
+        # §3 的 PIT Mandate 要求「Delisted assets must remain in the simulation
+        # **until their physical delisting date**」,即退市日之后必须剔除。
+        #
+        # 判据与 chase_up / uptrend_pullback 对齐(三者必须给同一个宇宙):
+        # 活跃 ⇔ 该票**整表**最后一根 bar >= asof 当日或之前的最后一个交易日。
+        # 注意**不能**写成 `HAVING MAX(date) >= asof` —— 那样在 asof 落在非交易日时
+        # 对每只票都不成立(全部被误判为已退市 ⇒ 空宇宙),且会把
+        # "当日停牌"(整表最后一根 bar 在 asof 之后)错杀成退市。
         rows = con.execute(
-            "SELECT DISTINCT thscode FROM v_daily "
-            "WHERE date <= ? ORDER BY thscode",
+            "WITH last_td AS (SELECT MAX(date) AS d FROM v_daily WHERE date <= ?), "
+            "     overall AS (SELECT thscode, MAX(date) AS last_any "
+            "                 FROM v_daily GROUP BY thscode) "
+            "SELECT DISTINCT v.thscode FROM v_daily v "
+            "JOIN overall o ON o.thscode = v.thscode "
+            "WHERE v.date <= (SELECT d FROM last_td) "
+            "  AND o.last_any >= (SELECT d FROM last_td) "
+            "ORDER BY v.thscode",
             [asof_date],
         ).fetchall()
     except duckdb.Error as e:
@@ -167,4 +183,14 @@ def load_universe_asof(
             c for c in all_codes
             if _is_main_board(c) and c not in excluded
         ]
+    if not filtered:
+        # §0 Fail-Fast (audit 2026-10-16): 空 universe 必须显式失败。
+        # 此前静默返回 [] —— 与 chase_up / uptrend_pullback 的同款守卫不对称:
+        # asof 早于数据覆盖起点、或黑名单滤掉全部标的时,回测会**静默跑出 0 笔
+        # 交易**,与"策略没信号"完全同形。
+        raise ShortReversalError(
+            f"Empty universe: mode={mode!r}, asof_date={asof_date!r}, db={db_path}. "
+            f"§0 Fail-Fast: 空 universe 会让回测静默产出 0 笔交易。"
+            f"常见原因: asof_date 早于数据覆盖起点(或黑名单滤掉了全部标的)。"
+        )
     return sorted(filtered)

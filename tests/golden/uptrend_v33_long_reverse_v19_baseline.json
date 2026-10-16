@@ -5,8 +5,8 @@
     "2026-09-01"
   ],
   "engine": "simulate",
-  "trades_csv_sha256": "958b71c61df98012cba17803363ae83787bfd7221ae59adb7ef008b84fac6140",
-  "trades_csv_rows": 98,
+  "trades_csv_sha256": "b41249b3a227330f260c51d87a09c149d82fa42d11fe5366eaea2214eb609c6a",
+  "trades_csv_rows": 106,
   "trades_csv_cols": [
     "entry_date",
     "exit_date",
@@ -25,13 +25,23 @@
   ],
   "note": "uptrend_pullback v33_long_reverse_v19 trades.csv sha256 baseline. Multi-run reproducibility invariant: same preset + DB -> byte-equal trades.csv. Drift indicates signal/exit/sizing logic changed.",
   "repinned": {
-    "date": "2026-10-15",
+    "date": "2026-10-16",
     "previous": {
-      "trades_csv_sha256": "ad5d561da837b47de1513c7d765dc0dc299515ec335cb6ff6fc9d4bc0f36a349",
-      "trades_csv_rows": 105
+      "trades_csv_sha256": "958b71c61df98012cba17803363ae83787bfd7221ae59adb7ef008b84fac6140",
+      "trades_csv_rows": 98
     },
-    "why": "§4 卖方跌停 no-fill 守卫上线(uptrend_pullback/portfolio.py 出场阶梯前调用 core.dual_price.is_limit_down)。CLAUDE.md §4 逐字要求 'a sell/cover on a limit-down-sealed bar MUST be rejected (no fill)' —— 旧实现在开盘即跌停封板的 bar 上照常按 SL/开盘价记成交,那是物理上不可能取得的成交价,系统性低报亏损。",
-    "row_delta_attribution": "逐笔归因(v19 首个变更点):603272.SH 于 2026-04-20 开盘 -10.00% 即封板,旧代码在该 bar '以 27.54 止损成交';该股随后 04-21(-9.99%)、04-22(-10.00%)继续封板,04-23 (-5.51%)才可成交。修后持有穿越三个封板日、于 2026-04-23 以 21.08 出场,该笔 gross_pnl 由 -92,380 变为 -284,888。此后各笔差异均为资本被多占用引发的连锁 (成交笔数下降、单笔规模变化)。",
-    "reproducibility_check": "同一 preset + DB + 窗口连续重算两次,sha256 一致(本脚本写入前已核验)。"
+    "why": "§3 PIT 修正:universe 的\"已退市\"判据此前是「asof 当日或之前的最后一个交易日**恰好有** bar」(HAVING 建在被 `date <= last_td` 过滤过的分组上,恒 <= asof ⇒ 退化成等号),把**当日/近日停牌**与**已退市**混为一谈。§3 PIT Mandate 要求剔除的是退市票,停牌票仍在市、窗口内会复牌。现改为「整表最后一根 bar >= last_td」(与 chase_up / short_reversal 对齐,三引擎在同一 asof 上给出同一宇宙)。",
+    "row_delta_attribution": "逐笔归因旧代码在本窗口产出 98 行、sha256 == 上一版 pinned 值(已核),故漂移完全由本改动引起。修复后有 13 只标的**首次进入**可交易集合:000586.SZ / 002718.SZ / 002921.SZ / 002937.SZ / 003036.SZ / 600777.SH / 603016.SH / 603150.SH / 603303.SH / 603387.SH / 603557.SH / 603685.SH / 605056.SH —— 它们在本窗口 asof(2024-09-01,周日;最后一个交易日 2024-08-30)上没有 bar 而在 2026 年恢复交易,旧查询因此把它们**整窗**排除。它们的信号落在 2026-03~2026-06,贡献 TP/SL 各若干(如 002718.SZ 2026-06-08→06-16 TP +411,568;603303.SH 2026-05-22→06-01 TP +316,069)。净 98 → 106 行,其余差额来自资本被重新占用引发的连锁。",
+    "reproducibility_check": "同一 preset + DB + 窗口连续重算两次,sha256 一致。",
+    "history": {
+      "date": "2026-10-15",
+      "previous": {
+        "trades_csv_sha256": "ad5d561da837b47de1513c7d765dc0dc299515ec335cb6ff6fc9d4bc0f36a349",
+        "trades_csv_rows": 105
+      },
+      "why": "§4 卖方跌停 no-fill 守卫上线(uptrend_pullback/portfolio.py 出场阶梯前调用 core.dual_price.is_limit_down)。CLAUDE.md §4 逐字要求 'a sell/cover on a limit-down-sealed bar MUST be rejected (no fill)' —— 旧实现在开盘即跌停封板的 bar 上照常按 SL/开盘价记成交,那是物理上不可能取得的成交价,系统性低报亏损。",
+      "row_delta_attribution": "逐笔归因(v19 首个变更点):603272.SH 于 2026-04-20 开盘 -10.00% 即封板,旧代码在该 bar '以 27.54 止损成交';该股随后 04-21(-9.99%)、04-22(-10.00%)继续封板,04-23 (-5.51%)才可成交。修后持有穿越三个封板日、于 2026-04-23 以 21.08 出场,该笔 gross_pnl 由 -92,380 变为 -284,888。此后各笔差异均为资本被多占用引发的连锁 (成交笔数下降、单笔规模变化)。",
+      "reproducibility_check": "同一 preset + DB + 窗口连续重算两次,sha256 一致(本脚本写入前已核验)。"
+    }
   }
 }

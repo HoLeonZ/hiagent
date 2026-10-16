@@ -46,9 +46,18 @@ def test_unknown_mode_raises(temp_duckdb: Path):
 
 
 def test_asof_filters_future_ipo(temp_duckdb: Path):
-    """asof_date 太早 → 应返回空（所有代码都是 2024-06 之后才在 DB 出现）。"""
-    codes = load_universe_asof("mainboard_only", "2020-01-01", temp_duckdb)
-    assert codes == []
+    """asof 早于数据覆盖 ⇒ **fail-fast**(§0),而不是静默返回空集。
+
+    §0 (audit 2026-10-16): 这里此前断言 `codes == []` —— 即把"asof 太早/数据覆盖不足"
+    这个**输入错误**固化成"合法的空宇宙"。而空宇宙会让回测静默跑出 0 笔交易、
+    CAGR 0.0000,与"策略没信号"完全同形,并会被下游 sweep 当成有效样本
+    (chase_up / uptrend_pullback 的同款守卫已在附二十五 落地,short_reversal 在
+    附三十三 补齐)。故本用例改为断言**抛错**。
+    """
+    from short_reversal import ShortReversalError
+
+    with pytest.raises(ShortReversalError, match="Empty universe"):
+        load_universe_asof("mainboard_only", "2020-01-01", temp_duckdb)
 
 
 def test_asof_at_first_date_returns_all(temp_duckdb: Path):
