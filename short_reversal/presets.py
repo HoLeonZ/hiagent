@@ -1967,6 +1967,50 @@ PRESETS: dict[str, dict] = {
         "up_streak_low": 1,
         "liq_high": 1000000000.0,
     },
+    # v72_tp_default (2026-10-17): v71 + tp_pct 0.08 → 0.06 (引擎默认值)。
+    #
+    # 由来: 把当前最优 preset 与**引擎默认值**做全量 diff —— 9 个参数与默认不同。
+    # 逐个做回退测试后, 其中两个是"改坏了":
+    #   d_mode   converge_strict → strict (= 默认)  : 已在 v71 采纳
+    #   tp_pct   0.08 → 0.06 (= 默认)               : 本 preset
+    # 其余 7 个覆盖经回退测试**站得住** (回退后更差), 与 d_mode/tp_pct 不同型。
+    #
+    # 五个窗口 (W2 / IND / IS1 / IS2 + 全新 holdout 2019-10-01..2021-09-30):
+    #   **CAGR / Sharpe / MaxDD / Calmar 四项, 5/5 个窗口全部更好。**
+    # 这是本次挖掘里唯一一次**严格占优**(零权衡) 的改进 —— 不是用收益换风险,
+    # 也不是用风险换收益, 而是把一条纯有害的覆盖撤掉。
+    #
+    # 机理: tp_pct 是止盈宽度。这个策略的钱来自 TP 命中 (18.6% 的交易贡献了 86%
+    # 的盈亏), 而收窄止盈会**同时**提高命中率与降低单笔盈利 —— 实测前者胜出。
+    # 注: 0.08 是 2026-10-12 用 v40_tp_07 / v40_tp_08 两个单窗对照选出来的;
+    # 与 v71 的 d_mode 一样, 那次选择没有跨窗口证据, 且从未与默认值对照过。
+    #
+    # §5 n_comparisons = 95 (= 86 + 5 个回退探针 + 4 个跨窗口)
+    # 本节不记数字 (§7)。
+    "v72_tp_default": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 95,
+        "position_sizing": "all_in",
+        "max_positions": 4,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.06,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.15,
+        "d_mode": "strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "ma20_slope_period": 5,
+        "up_streak_low": 1,
+        "liq_high": 1000000000.0,
+    },
 }
 
 
