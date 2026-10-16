@@ -42,6 +42,11 @@ from hiagent_config import DB_PATH  # noqa: E402
 from uptrend_pullback.presets import MAX_HOLD_LIMIT, get_preset  # noqa: E402
 from uptrend_pullback.walkforward import monthly_windows, run_windows  # noqa: E402
 
+#: §5 (audit 2026-10-15): 单窗交易日数 ≈ 21/月 —— 取自**仓库既有口径**:
+#: walk-forward 家族用 6 个月 = 126 个交易日,即 126 / 6 = 21。此处沿用同一比例,
+#: 而不是另发明一个数。
+WINDOW_TRADING_DAYS_PER_MONTH = 21
+
 logger = logging.getLogger(__name__)
 
 
@@ -253,6 +258,51 @@ def main() -> None:
             f"{r['sharpe_med']:>+7.2f} {r['avg_dd']*100:>+8.2f} "
             f"{r['worst_dd']*100:>+10.2f} {r['n_pos']:>4} {r['avg_trades']:>7.2f}",
         )
+
+    # ================= §5 Penalty Metrics =================
+    # (audit 2026-10-15) 这是一个**多 trial 搜索**(默认 100 次迭代),而此前它只打印
+    # TOP-K、**没有任何惩罚指标** —— 违反 §5 verbatim:
+    #   "Evaluation scripts must output DSR or apply Bonferroni corrections when
+    #    reporting backtest results from multi-parameter sweeps."
+    # 同仓库的姊妹脚本 `uptrend_pullback/sweep_v33_long.py` 是有的,这个漏了。
+    #
+    # 口径(与仓库既有约定一致):
+    #   observed = **被选中那个配置**的窗口中位 Sharpe(即 rank-1 那一行);
+    #   n_trials = **实际评分的配置数**(§5 Iterative-Tuning Accounting 要的是累计
+    #              试验数,不是窗口数)—— 用 len(rows) 而不是 args.iter,因为失败的
+    #              迭代并没有被评分;
+    #   n_returns = 单窗交易日数。
+    #
+    # ⚠️ 仍须说清楚:TOP-K 是在**同一批窗口**上选出来的(selection in-sample)。
+    # DSR 量化的正是"从 k 个配置里挑最好"带来的虚高,但**它不能代替样本外验证**。
+    # 要把某个 config 当作结论,必须另外跑 OOS —— 见 `wfv_eval.py` 的 train/test 划分。
+    try:
+        from dna_stats.deflated import bonferroni_correct, deflated_sharpe_ratio
+
+        observed = float(rows[0]["sharpe_med"])
+        n_trials = len(rows)
+        n_returns = WINDOW_TRADING_DAYS_PER_MONTH * args.window_months
+        dsr = deflated_sharpe_ratio(
+            observed_sharpe=observed, n_trials=n_trials, n_returns=n_returns,
+        )
+        bonf = bonferroni_correct(
+            p_values=[dsr["dsr_p_value"]], n_comparisons=n_trials,
+        )
+        print(
+            f"\n§5 DSR(rank-1 配置) | observed_sharpe={observed:+.3f} | "
+            f"n_trials={n_trials}(实际评分的配置数) | "
+            f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
+            f"expected_max={dsr['expected_max_sharpe']:.3f} | "
+            f"raw_p={dsr['dsr_p_value']:.4f} | "
+            f"bonferroni_p={float(bonf[0]):.4f}"
+        )
+        print(
+            f"  ⚠️ in-sample selection:TOP-K 是在上面这 {len(windows)} 个窗口上选出的。\n"
+            f"     DSR 只量化「从 {n_trials} 个配置里挑最好」的虚高,**不等于**样本外验证 ——\n"
+            f"     要把某个 config 当结论,请走 uptrend_pullback/wfv_eval.py 的 train/test 划分。"
+        )
+    except ImportError as exc:  # pragma: no cover - 仅在缺 dna_stats 时
+        print(f"\n[!] §5 惩罚指标不可用({exc})—— 结果**不得**作为结论引用")
 
     # 输出 top-K 参数对比
     print("\n=== TOP-{} preset diff vs v19 base ===".format(args.top))
