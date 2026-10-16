@@ -29,7 +29,17 @@ def main():
     from short_reversal import presets as _p
     preset = "v37_liq_3e7_5e8"
     if preset not in _p.PRESETS:
-        raise SystemExit(f"preset {preset!r} 不在 PRESETS")
+        # §5 (audit 2026-10-15): 把**失败原因与由来**一并给出,而不是只报"找不到"。
+        # 该 preset 是在提交 4b7eab0("iter #2 CLAUDE.md fixes")中被**裁剪**的
+        # (presets.py 减 212 行 / 增 66 行 —— 是删除而非重命名,故没有可安全回指的
+        # 替代名)。本脚本保留作为研究记录,登记见:
+        #   tests/test_research_scripts_reference_live_presets.py::KNOWN_DEAD_REFERENCES
+        raise SystemExit(
+            f"preset {preset!r} 不在 PRESETS —— 它在提交 4b7eab0 中被裁剪(非重命名),\n"
+            "本脚本因此无法运行,保留作为研究记录。\n"
+            "  登记: tests/test_research_scripts_reference_live_presets.py::"
+            "KNOWN_DEAD_REFERENCES"
+        )
     print(f"=== {preset} walk-forward (6-month windows × {len(WINDOWS)}) ===")
     sharpes: list[float] = []
     for s, e in WINDOWS:

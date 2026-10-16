@@ -33,6 +33,19 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 #: 已知失效引用(债务登记)。修好其中一个 → 必须同时从这里删掉。
+#:
+#: **由来**(2026-10-15 从 git 史查清,不是猜的):这四个 preset 是在提交 `4b7eab0`
+#: ("iter #2 CLAUDE.md fixes")中被**裁剪**的 —— 该提交对 `short_reversal/presets.py`
+#: 减 212 行 / 增 66 行,是**删除而非重命名**。故**不存在**可安全回指的替代名:
+#: 把脚本改成某个"看起来像"的 preset 就是编造实验记录(见附十三 §3)。
+#:
+#: 四个脚本现在**自己**把这段由来写进失败信息(跑一下就会看到裁剪提交与登记位置),
+#: 免得下一个人还要重查一遍 git 史。
+#: 另注:`v41_pctchg_04_10` 当初是作为**单点过拟合失败案例**引入的(见 `0a80f74`),
+#: 也就是说被裁掉的那个 preset 本身就是一份负面证据 —— 这是它们值得**保留**
+#: 而不是删除的原因。
+PRUNED_IN_COMMIT = "4b7eab0"
+
 KNOWN_DEAD_REFERENCES = {
     "short_reversal/wf_v34_focused.py": "v34_mainboard_pctchg_tight",
     "short_reversal/wf_v37_focused.py": "v37_liq_3e7_5e8",
@@ -214,6 +227,34 @@ def test_such_a_script_fails_loudly_rather_than_silently(script: str, expected: 
     assert "不在 PRESETS" in src or "SystemExit" in src, (
         f"{script} 引用失效 preset 却不再响亮失败 —— "
         "静默跳过会让「脚本没跑」看起来像「脚本跑了且没结论」。"
+    )
+
+
+@pytest.mark.parametrize("script", sorted(KNOWN_DEAD_REFERENCES))
+def test_such_a_script_reports_where_its_preset_went(script: str) -> None:
+    """**运行**脚本,断言失败**信息**里带着由来(裁剪提交 + 登记位置)。
+
+    注意这里是**执行**而不是查源码:第一版我写的是
+    `assert PRUNED_IN_COMMIT in src` —— 而该字符串在文件里还出现在**注释**中,
+    于是把失败信息里的提交号删掉,测试**仍然通过**(一条空转守卫)。
+    只有真正跑一遍、只看它吐出来的那句话,才验得了"读者看得到"这件事。
+    """
+    import subprocess
+
+    proc = subprocess.run(
+        [sys.executable, str(REPO_ROOT / script)],
+        capture_output=True, text=True, cwd=str(REPO_ROOT),
+    )
+    msg = (proc.stdout or "") + (proc.stderr or "")
+
+    assert proc.returncode != 0, f"{script} 未以非零码退出(应 fail-fast)"
+    assert PRUNED_IN_COMMIT in msg, (
+        f"{script} 的**失败信息**未给出裁剪提交({PRUNED_IN_COMMIT})—— "
+        "读者无法判断这是「被删除」还是「被改名后忘了更新」。\n"
+        f"实际输出: {msg.strip()[:200]}"
+    )
+    assert "KNOWN_DEAD_REFERENCES" in msg, (
+        f"{script} 的失败信息未指向登记表 —— 债务应有一个可查的归属处。"
     )
 
 
