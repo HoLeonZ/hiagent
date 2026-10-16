@@ -689,7 +689,7 @@ for path in paths:
 3. **§0 依赖锁定**:`requirements.txt` 只有版本范围、无 lockfile。本机为 conda 环境,`pip freeze` 会产出**误导性**锁定,故不代做 —— 建议用 uv / pip-tools 在指定 Python 下生成。
 3b. **§5 统计口径**:`dna_stats` 的 `trading_days_per_year` 默认 `252`,而引擎侧单源为 `243`(A 股)。改动它会影响 DSR / Bonferroni 的收缩量、使既往比较失效 —— 属统计口径变更,需使用者拍板(附十)。
 3c. **§5 迭代数**:`cycle_price_action/PRESET_V1` 的 `n_comparisons=1` 与仓库自身矛盾(其 sweep 的默认候选含出厂的 `threshold=2.0`)—— **需使用者提供迭代记录**才能据实填写;已登记于 `tests/...::KNOWN_UNRECORDED_TRIAL_COUNTS`(附十三 §5)。这是本轮唯一一处我明确交还给使用者的**数值**。
-4. **§7 产物 writer**:`equity_curve.csv` / `cash_walk.csv` / per-preset `backtest.json` 的 writer 尚未实现(相应断言按 §6 skip 登记)。注:`cycle` 的 `cagr/sharpe/max_dd` 返回 `None` 是**诚实**的"横截面无法定义",不是缺口。
+4. **§7 产物 writer**:**更正(附三十七)** —— 该说法不成立:四个 `main.py` 里都有 `_write_equity_curve`。真实缺口是**接线**:`short_reversal` 的 metrics 此前不带 `equity_curve` 键(writer 恒不执行,已修);`cycle_price_action` 的 writer **无调用点**(已登记并由守卫钉住)。注:`cycle` 的 `cagr/sharpe/max_dd` 返回 `None` 是**诚实**的"横截面无法定义",不是缺口。
 5. **§6 展示层重复**:`tools/render_top5_presets_html.py` 重述逐 bar 指标与 A/B/C 文案(回测本身调用真引擎);消解需引擎暴露逐 bar 指标序列,属重构。
 6. **"有实现、无消费者"的库函数**:`tail_objective.tail_stats`(测试外无调用点)与 `render_top5` 同类;建议统一清理而非逐个顺手改。
 6b. **§1 扫描器的覆盖面**:`sql/` 未被扫(AstScanner 是 Python AST 实现,SQL 视图/迁移需另一套检查)。当前 `sql/` 只有 `migrate_v_daily_dual.sql`,且本机活库的视图定义已人工核验过(附七);但**没有任何自动检查**防它将来被改坏。
@@ -861,7 +861,7 @@ RuntimeError: backtest failed for 000639.SZ: cannot sell more than held
 
 ### 仍未闭合的缺口(30 条 skip,均带点名文本,无静默跳过)
 
-- **§7 产物边界(8 条)**:`equity_curve.csv` / `cash_walk.csv` / per-preset `backtest.json` 的 **writer** 尚未实现。`results/` 按 §7 不入库,故这些断言只在产物存在时校验 schema、缺失时 skip 登记。§2 的实质要求(NAV 恒等式 + 现金守恒)已由 `test_nav_cash_ledger_invariants.py` 在内存中确定性覆盖。
+- **§7 产物边界(8 条)**:**更正(附三十七)** —— writer 存在,缺口是接线(见该附录)。该文件的四条守卫已由『等本机产物』改为**自己产出再校验**(合成输入 + 一条真跑端到端),不再真空。`results/` 按 §7 不入库,故这些断言只在产物存在时校验 schema、缺失时 skip 登记。§2 的实质要求(NAV 恒等式 + 现金守恒)已由 `test_nav_cash_ledger_invariants.py` 在内存中确定性覆盖。
 - **§0 cycle 慢 golden(1 条)**:需 `DNA_RUN_SLOW_GOLDENS=1` 显式开启(单次约 6.5 分钟)。
 - **§5 基准归因**:本地行情库**无任何指数序列**,归因无法计算(已由 `test_benchmark_data_gap_is_registered` 显式登记)。补齐需 `hithink-finance index history`,**选哪个基准是研究决策**。
 - **§4 滑点的实质**:100 个 preset 仍是 `SLIP_NONE_ACKNOWLEDGED`(= 0.0,"已知缺口"的确认值)。换成真实标定值会改变每一个成交价,属研究决策,且按 §5 必须计入 `n_trials`。
