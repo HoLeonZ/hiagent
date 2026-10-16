@@ -591,6 +591,9 @@ for path in paths:
 13. 修三个空转守卫（`tests/test_reproducibility_audit.py:331`/`:352`、`tests/test_cycle_price_action_sha256_baseline.py:94`、`tests/test_cost_constants_single_source_4engine.py:265`、`tests/test_chase_up_no_lookahead.py:642-656`、`tests/test_backtest_data_integrity.py:58`），并把 61 failed + 3 error 登记 owner 或修绿。
 14. 补 `tests/golden/short_reversal_*_baseline.json`（先修守卫，否则加了基线也无人执行）。
 15. §5：`dsr['p_value']` 键名错误、`n_trials` 累计口径、sweep 的 OOS 窗口（`uptrend_pullback/sweep_v33_long*.py`、`short_reversal/wf_v34_focused.py`、`chase_up/wf_sweep_all.py`）。
+    → **已处理(见附十三)**:键名、`n_trials` 口径、DSR 分子/分母一致性、收益率当 Sharpe 均已修;
+    **仍未闭合**:4 个脚本引用已删除的 preset(已登记 `KNOWN_DEAD_REFERENCES`)、以及原文点名的
+    「窗口跨越已声明的 holdout」(需使用者确认 holdout 边界)。
 16. 补 §5 Attribution Mandate 的实现（基准超额），这是目前完全空缺的一项。
 
 **P4 —— 产物卫生与低危加固**
@@ -640,6 +643,7 @@ for path in paths:
 | `998447a` | **新发现(不在原发现集内)**:年化口径**三处不同** —— 两引擎 `交易日/243`(且同值各写一份)、`short_reversal` `日历日/365`、`dna_stats` 默认 `252`。实测同一窗口同一 10% 收益,CAGR 差 **8%~26%**(连整年窗口都差 8%) | 新增 `core.trade_schema.TRADING_DAYS_PER_YEAR` 单源;两引擎零漂移接入,short_reversal 切交易日口径(**有意漂移,量级已记**);`n_trading_days` 写进产物;`dna_stats` 的 252 属 §5 统计口径另行登记;附十 |
 | `048bedf` | **新发现(不在原发现集内)**:`sharpe` 在三个引擎里**不是同一个量** —— 两引擎是日收益年化 Sharpe,`short_reversal` 是逐笔 net 的交易级比率。而 sweep 脚本**按它排序**,跨引擎比较无意义,键名却看不出来 | 四个发布点加 `sharpe_kind`;守卫要求两类字符串真的不同 + 凡发布 `sharpe` 必发布 `sharpe_kind`;附十一 |
 | (本轮) | **新发现(不在原发现集内)**:把库拿掉再跑 —— **fresh clone 拿到的是红的套件**。无库时 15 failed + 5 errors,0 字节占位时 8 failed + 3 errors,合计 **31 个**用例违反 §6「无库必须 skip,不得 error」 | 单一共享助手 `require_market_db()` / `market_db_available()`(检查**存在且非空** —— 原实现只查存在性,恰好让 0 字节占位漏过);两种缺库形状均跑成 **0 failed / 0 errors**;附十二 |
+| `5a413d8` | **§5 的执行层在 25 个研究脚本里**(不在引擎里):(a) 14 个 WF 脚本的 DSR **分子是 max(窗口)、分母是配置数** —— 两次不同的选择,窗口那层没被折减;(b) `chase_up/wf_sweep_all.py` 把**收益率**当 Sharpe 传进 DSR(12% 当 0.12 → p=0.966,而真 Sharpe=1.20 → p=0.772);(c) 4 个脚本引用**已删除**的 preset,启动即退出 | (a) 分子改跨窗口均值 + **数值验证**(断言收到 0.9 而非 1.9);(b) 用现成的 `mean_sharpe` 列;(c) **不改名字**(无重命名映射可推断 = 编造记录),改**登记债务** + 登记表必须等于实际集合;11 条守卫均双向验证;附十三 |
 
 **测试层净效果**(失败集合逐条 `diff`,非仅比数量):
 
@@ -674,13 +678,13 @@ for path in paths:
 7. **§3 公司行为**:配股/缩股未建模(全库 1 例),`apply_corporate_action` 已显式告警。
 8. ~~§7 源码内嵌业绩数字清理~~ → **已完成(`5c731cd`)**;~~`chase_up` 金标准基线仍红~~ → **已修复(`e063c43`)**;~~cycle 无成交列表基线~~ → **已补(`4cbc66c`)**;~~审计自认的六个未覆盖面~~ → **已查证(附七)**。
 
-**当前测试状态**(截至 `8722839`)——**三种条件都跑过**(§6 的验收条件就是 fresh clone 的条件):
+**当前测试状态**(截至 `5a413d8`)——**三种条件都跑过**(§6 的验收条件就是 fresh clone 的条件):
 
 | 条件 | 结果 |
 |---|---|
-| 有本机行情库 | 998 passed / 30 skipped / **0 failed** |
-| 无库(路径不存在) | 954 passed / 74 skipped / **0 failed / 0 errors** |
-| 无库(0 字节占位) | 954 passed / 74 skipped / **0 failed / 0 errors** |
+| 有本机行情库 | 1007 passed / 30 skipped / **0 failed** |
+| 无库(路径不存在) | 963 passed / 74 skipped / **0 failed / 0 errors** |
+| 无库(0 字节占位) | 963 passed / 74 skipped / **0 failed / 0 errors** |
 
 基线 `b597d0c` 为 failed 54 / passed 796 / errors 3。改动全程逐条 diff 失败集合,**新增失败 0**。
 30 条有库 skip = 22 条既有的 + 8 条本轮登记(产物边界 7 + cycle 慢 golden 1),全部带
@@ -1189,4 +1193,78 @@ CLAUDE.md §6 verbatim:
 
 守卫的形状:**我把两种"没有库"的形状都跑成了 0 failed / 0 errors** —— 这不是"看起来对",
 而是把 fresh clone 的条件本身当成了验收条件。
+
+---
+
+## 附十三:§5 的执行层不在引擎里,在那 25 个研究脚本里
+
+§8 第 15 条登记的「sweep 的 OOS 窗口」一直开着。这一轮把它查清:**§5 的纪律不是由引擎
+执行的,而是由 25 个 `sweep*.py` / `wf_*_focused.py` / `grid*.py` 脚本执行的** ——
+DSR、n_trials、WFV 全在那里。所以"引擎合规"与"研究合规"是两件事。
+
+### 1 · WF 家族(14 个文件):分子与分母描述了**两次不同的选择**
+
+`deflated_sharpe_ratio` 的契约原文(其 docstring):
+
+> `n_trials`: Number of independent strategy configurations tested. This is the
+> "selection bias" correction — **selecting the best Sharpe from k trials** ...
+
+也就是说 `n_trials` 必须与产生 `observed_sharpe` 的那次选择**对应**。而 14 个 WF 脚本里:
+
+- **分子** `observed = max(sharpes)`,其中 `sharpes` 是**单个 preset 在 4 个窗口**上的
+  Sharpe → 这是「最好的那一个**窗口**」;
+- **分母** `n_trials = n_comparisons` → 这是「试过多少个**配置**」。
+
+两者不是同一次选择,于是**窗口那一层选择完全没有被折减**,报出的显著性偏高。
+
+**这不是新引入的**:提交 `4acfc2e` 把 `n_trials` 从窗口数改成配置数(方向正确),
+但**没有同步修改分子**;而它当时的验收方式是「未跑完整 wf 回测(**仅编译 + 导入 +
+取值验证**)」。这正是本报告反复出现的那个教训的又一例:**结构验证不等于验证。**
+
+修:分子改为**跨窗口均值**(WFV 的无偏汇总),分母仍为配置数 —— 两者描述同一次选择;
+逐窗口数值本来就逐行打印,信息不丢失,最大值单独标注为「选中值,不作显著性输入」。
+
+**数值验证**(不再只做结构验证):把 `run_backtest_v3` 换成依次返回
+`[0.4, 1.9, 0.7, 0.6]`,断言 DSR 收到的是 **0.9(均值)** 而不是 **1.9(最大)**。
+
+### 2 · `chase_up/wf_sweep_all.py`:把**收益率**当 Sharpe 传进 DSR
+
+原为 `observed = max(summary["median_return_pct"]) / 100` —— 窗口中位**总收益**的
+百分比被当成「年化 Sharpe」,而 DSR 的 docstring 明确要求后者。
+
+后果**不是数值误差,是结论错误**。实测同一批数字:
+
+| 输入 | DSR | p 值 | 读作 |
+|---|---|---|---|
+| `12%` 当成 Sharpe=0.12 | 0.034 | 0.966 | 「毫无优势」 |
+| 真 Sharpe = 1.20 | 0.228 | 0.772 | 有边际优势 |
+
+即它会把**有边际优势**稳定地印成「无优势」,而且照样作为显著性结果打印出来。
+汇总表里本来就有 `mean_sharpe` 列,改用它是显然正确的修法。打印标签一并改正 ——
+原先写 `observed_median_ret=+12.00%`,照原样会把 Sharpe 印成百分数。
+
+### 3 · 4 个研究脚本引用**已被删除**的 preset,根本跑不起来
+
+| 脚本 | 引用的 preset | 现状 |
+|---|---|---|
+| `wf_v34_focused.py` | `v34_mainboard_pctchg_tight` | v34 系列**一个都不剩** |
+| `wf_v37_focused.py` | `v37_liq_3e7_5e8` | v37 系列**一个都不剩** |
+| `wf_v39_focused.py` | `v39_pctchg_04_09` | 只剩 `v39_pctchg_03_10` |
+| `wf_v41_focused.py` | `v41_pctchg_04_10` | v41 系列**一个都不剩** |
+
+它们在启动第一行就 `SystemExit("preset ... 不在 PRESETS")`。
+
+**我没有改它们。** 被删的 preset 没有留下可推断的重命名映射(v34/v37/v41 一个都不剩),
+把名字改成某个"看起来像"的 preset 就是**编造实验记录** —— 那比留着失效更糟。
+
+处置:**登记债务**,而不是静默。新增守卫要求实际失效集合**等于** `KNOWN_DEAD_REFERENCES`
+登记表:新增失效会失败(被抓住),而只有把旧的修掉、同步缩短登记表才算通过(防止登记表
+变成永久借口);另有一条钉住这些脚本必须**响亮**失败,不许被改成"找不到就跳过"
+—— 静默跳过会让「脚本没跑」看起来像「脚本跑了且没结论」。
+
+### 这一轮的方法论小结
+
+25 个脚本里,7 个网格类脚本的 `max(sharpes)` 是**正确的**(sharpes 逐配置,分母也是配置数)。
+**没有先分清哪一类就"统一改一遍",会把对的改错。** 同样的教训本轮出现两次:
+分子/分母的语义要先对齐,再动代码。
 
