@@ -210,6 +210,61 @@ PRESETS: dict[str, dict] = {
             "min_mom120": 0.18,
         },
     },
+    # v33_long_reverse_v22 (2026-10-17): v21 + signal.max_amount 3e8 → 1e9。
+    #
+    # 由来: 短侧的 v68 发现"流动性**上界** 3e8 把日成交额 3 亿以上的票整类排除,
+    # 而那批并不更差"。`max_amount = 3e8` 这个常量在**四个引擎里各写了一遍**
+    # (族内不对称), 短侧撤掉后收益显著改善, 长侧从未试过 —— 本条把它平移过来。
+    #
+    # 五个窗口 (W2 / IND / IS1 / IS2 + 全新 holdout 2019-10-01..2021-09-30):
+    #   Calmar: 4/5 更高 (W2 / IND / IS2 / HOLD), 幅度大; IS1 更低
+    #   CAGR  : 4/5 更高 (同上)
+    #   MaxDD : 3/5 更低
+    #   Sharpe: 2/5 更高
+    #
+    # ⚠️ 必须同时记下否定的一半: **本 preset 并没有让这个族变得可用** ——
+    # IND (-33%) / IS1 (-31%) / IS2 (-20%) 三个窗口的年化收益**仍然全部为负**,
+    # 与 §6 已写下的"该族在非趋势市里期望为负"一致。它只是"亏得更少/赚得更多
+    # 的那一个", 不是可用策略。
+    #
+    # 另: 逐笔 E[R] 口径下 `min_mom120` 覆盖**不生效** (改回 0.0 结果逐位相同),
+    # 已在本轮记录; 该覆盖保留, 不追究。
+    #
+    # §5 n_comparisons = 121 + 5 (= v21 自报 121 + 本轮该改动在五个窗口上的评估)
+    # 本节不记数字 (§7)。
+    "v33_long_reverse_v22": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 126,
+        "tp_pct": 0.2628,
+        "sl_pct": 0.021,
+        "max_hold": 18,
+        "max_positions": 1,
+        "position_sizing": "all_in",
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "regime": {
+            "ma_window": 20,
+            "breadth_window": 20,
+            "min_breadth": 0.45,
+            "require_rising": False,
+        },
+        "signal": {
+            "entry_mode": "v33_long_mirror",
+            "min_down_streak": 3,
+            "max_down_streak": 10,
+            "pct_chg_low": -0.088,
+            "pct_chg_high": -0.02,
+            "min_amount": 3e7,
+            "max_amount": 1e9,
+            "min_above_ma60_ratio": 0.6693,
+            "close_ma60_buffer": 0.0121,
+            "min_mom120": 0.18,
+        },
+    },
 }
 
 
