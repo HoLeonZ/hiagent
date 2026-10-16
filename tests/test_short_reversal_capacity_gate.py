@@ -36,6 +36,7 @@ capacity at time T MUST BE **IMMEDIATELY DISCARDED** (no queueing into T+1).」
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -129,13 +130,18 @@ def test_every_engine_has_an_explicit_capacity_gate(engine: str, expected: tuple
 
 
 def test_capacity_gate_discards_rather_than_queues() -> None:
-    """§2: 超出容量的信号必须**立即丢弃**,不得排队到 T+1。"""
+    """§2: 超出容量的信号必须**立即丢弃**,不得排队到 T+1。
+
+    断言的是**行为**("把剩余意图从 pending 队列里 pop 掉"),不是某一种拼写 ——
+    钉字面量会把守卫变成拼写检查:本用例曾钉 `pending.pop(`,而 S2 修复把局部别名
+    改回直调 `self.pending_entries.pop(` 之后就假红了一次(附二十八)。
+    """
     src = (REPO_ROOT / "short_reversal" / "replay_strategy_v3.py").read_text(encoding="utf-8")
     start = src.index("if len(self._holds) >= self.p.max_positions:")
     # 闸门块的边界 = 紧随其后的建仓语句(而不是固定字符数,否则改日志就会漏判)
     end = src.index("d = self.getdatabyname(code)", start)
     block = src[start:end]
-    assert "pending.pop(" in block, (
+    assert re.search(r"(self\.pending_entries|pending)\.pop\(", block), (
         "§2 VIOLATION: 容量闸门未丢弃剩余信号 —— 排队到 T+1 会把容量约束变成延迟"
     )
     assert "break" in block

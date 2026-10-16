@@ -730,14 +730,14 @@ class Phase3V3Strategy(bt.Strategy):
                     nav, cash_gate_threshold, len(self.pending_entries),
                 )
                 self._cash_gate_logged = True
-            # 拒绝所有 pending entries (保留在 pending 让下一根 bar 重新评估)
-            # CLAUDE.md §0 §6: pending_entries is a per-bar T+1 fill queue,
-            # drained at end-of-bar when NAV-floor rejects new entries
-            # (transient working state, NOT historical ledger). Local alias
-            # preserves runtime semantics while satisfying AST detector in
-            # tests/test_immutable_state_4engine.py.
-            pending = self.pending_entries
-            pending.clear()
+            # §0/§6: pending_entries 是**每 bar 的 T+1 挂单队列**(瞬态控制状态,
+            # 不是历史台账),故整体清空它不属于 §0 的 append-only 约束对象 ——
+            # 该豁免由 tests/test_immutable_state_4engine.py 的
+            # TRANSIENT_CONTROL_STATE 显式登记,不再靠局部别名绕开扫描器。
+            # 注:原注释写"保留在 pending 让下一根 bar 重新评估",与代码实际的
+            # 清空**相矛盾**;按 §2(超容/被拒的信号立即丢弃、不得排队到 T+1),
+            # 清空才是正确行为,注释已更正。
+            self.pending_entries.clear()
             return
         # v68 (§2): 并发信号按统计信心排序后依次填充 (single-bullet)。
         # 'steepest_slope' 按 MA20 斜率升序 (最陡下降优先); 'first' 保留 datas 顺序。
@@ -765,9 +765,8 @@ class Phase3V3Strategy(bt.Strategy):
             # (chase_up/portfolio.py:563 / uptrend_pullback/portfolio.py:512),
             # 只有本引擎缺 —— 与"停牌盯市""非交易日 asof"同一种族内不对称。
             if len(self._holds) >= self.p.max_positions:
-                pending = self.pending_entries
                 for _c in codes_to_fill:
-                    pending.pop(_c, None)  # §2: 立即丢弃,不排队到 T+1
+                    self.pending_entries.pop(_c, None)  # §2: 立即丢弃,不排队到 T+1
                 # 每次触发都刷日志会淹没回测输出(实测 3 个月窗口触发 30+ 次),
                 # 故按本文件既有的 `_cash_gate_logged` 惯例只报首次。
                 if not getattr(self, "_capacity_logged", False):
@@ -871,10 +870,9 @@ class Phase3V3Strategy(bt.Strategy):
                 if size > max_fill:
                     size = max_fill
             if size < self.p.lot_size:
-                # CLAUDE.md §0 §6: pending_entries is a per-bar T+1 fill queue.
-                # Drain sub-lot-sized entry (transient working state).
-                pending = self.pending_entries
-                pending.pop(code, None)
+                # §0/§6: pending_entries 是每 bar 的 T+1 挂单队列(瞬态控制状态,
+                # 见 TRANSIENT_CONTROL_STATE);不足 1 手的意图从队列移除。
+                self.pending_entries.pop(code, None)
                 continue
             # CLAUDE.md §2 Atomic Cash Locks: notional + entry_cost > free_cash
             # must reject (no leverage). Mirrors chase_up/portfolio.py:562-573
@@ -896,8 +894,7 @@ class Phase3V3Strategy(bt.Strategy):
                 # downsize by 1 lot
                 size -= self.p.lot_size
                 if size < self.p.lot_size:
-                    pending = self.pending_entries
-                    pending.pop(code, None)
+                    self.pending_entries.pop(code, None)
                     continue
                 notional = size * entry_price
                 entry_fee = (
@@ -909,8 +906,7 @@ class Phase3V3Strategy(bt.Strategy):
                 )
                 entry_cost = notional + entry_fee
                 if entry_cost > self.free_cash + 1e-9:
-                    pending = self.pending_entries
-                    pending.pop(code, None)
+                    self.pending_entries.pop(code, None)
                     continue
             # Round 16 (CLAUDE.md §2): entry cost (notional + fee) reserves margin.
             # 旧实现只锁 entry_fee, notional 完全没锁 → phantom leverage 通道打开。
@@ -932,12 +928,9 @@ class Phase3V3Strategy(bt.Strategy):
                 # 是 _close() release_margin 应释放的实际锁定金额。
                 "entry_cost": entry_cost,
             }
-            # CLAUDE.md §0 §6: drain pending entry after successful fill
-            # (T+1 fill queue completed — trade already recorded in
-            # self._holds; not historical state). Local alias satisfies
-            # tests/test_immutable_state_4engine.py AST detector.
-            pending = self.pending_entries
-            pending.pop(code, None)
+            # §0/§6: 成交后把该意图从每 bar 的 T+1 挂单队列中取走
+            # (瞬态控制状态;历史记录已落在 self.trades 与 self._holds)。
+            self.pending_entries.pop(code, None)
 
     def _apply_corporate_action(self, d) -> None:
         """§3 (audit P2-10, 2026-10-15): 除权日的公司行为。
@@ -1084,10 +1077,15 @@ class Phase3V3Strategy(bt.Strategy):
         # CLAUDE.md §0 §6: drain closed position from _holds (canonical
         # trade record appended to self.trades below — historical P&L
         # preserved in self.trades; _holds is transient working state).
-        # Local alias preserves runtime semantics while satisfying AST
-        # detector in tests/test_immutable_state_4engine.py.
-        holds = self._holds
-        pos = holds.pop(code)
+        #
+        # §0 (audit 2026-10-16, S2): 用**重建**而不是原地 `self._holds.pop(code)`。
+        # 此前这里取了一个局部别名再 pop,并附一句注释**明说**别名是为了让静态
+        # 不可变性扫描器看不见 —— 那使该守卫的"绿"不再具备任何含义(§6 最严重的
+        # 测试层腐蚀)。现在扫描器会解析别名(见 tests/test_immutable_state_4engine.py
+        # 的 `_aliases_to_self_attrs`),故正确做法是不再绕:重建一个不含该持仓的
+        # 新字典 —— 语法本身即合规,也不再有需要解释的注释。
+        pos = self._holds[code]
+        self._holds = {c: p for c, p in self._holds.items() if c != code}
         ep = pos["entry_price"]
         size = pos["size"]
         # 做空盈亏：(entry - exit) × size，扣 exit 佣金
