@@ -595,6 +595,8 @@ for path in paths:
 **P3 —— 验证层与统计严谨**
 13. 修三个空转守卫（`tests/test_reproducibility_audit.py:331`/`:352`、`tests/test_cycle_price_action_sha256_baseline.py:94`、`tests/test_cost_constants_single_source_4engine.py:265`、`tests/test_chase_up_no_lookahead.py:642-656`、`tests/test_backtest_data_integrity.py:58`），并把 61 failed + 3 error 登记 owner 或修绿。
 14. 补 `tests/golden/short_reversal_*_baseline.json`（先修守卫，否则加了基线也无人执行）。
+    → **已完成(附三十九)**：`v50_slope`(28 笔) + `v58_mp_2`(58 笔)，守卫在测试内重算后比对；
+      生成时连续两次重算一致才 pin。`test_reproducibility_audit` 里的登记用例随之自然通过。
 15. §5：`dsr['p_value']` 键名错误、`n_trials` 累计口径、sweep 的 OOS 窗口（`uptrend_pullback/sweep_v33_long*.py`、`short_reversal/wf_v34_focused.py`、`chase_up/wf_sweep_all.py`）。
     → **已处理(见附十三)**:键名、`n_trials` 口径、DSR 分子/分母一致性、收益率当 Sharpe 均已修;
     **附三十二再补两处输入口径**:年化常量单源(引擎 243 / dna_stats 曾 252)、
@@ -3091,3 +3093,68 @@ cerebro.addstrategy(Phase3V3Strategy, **strategy_kwargs(cfg, _name, …))
 - §8#7d("先抽纯函数、再补对拍")**部分兑现**:对拍已就位;**纯函数抽取仍未做**
   (F–K 的实现前提),继续登记。
 - §8#7c 提到的"信号层"相关登记随之更新:扫描工具的构造已收口到单源。
+
+---
+
+## 附三十九 —— 补上 short_reversal 的成交列表基线:这是此前**缺的那张安全网**
+
+### 1 · 缺口
+
+§6 明文:「Golden-baseline hashes lock trade-list behavior **for every engine**;
+any logic change that alters the trade list MUST regenerate the baseline and
+justify the drift in the PR.」
+
+实测 `tests/golden/`:chase **13** 条、uptrend **3** 条、cycle **1** 条,
+**short_reversal 0 条** —— 而它是四个引擎里迭代最频繁的一个(v35 → v83,75 个 preset)。
+后果:任何触碰它信号/出场/sizing/容量的改动,判据只剩"套件还是绿的",
+**而套件里没有一条锁住成交列表**。
+
+§8 早已登记此项,并写明了正确的做法:**"先修守卫,否则加了基线也无人执行"** ——
+即基线必须像 `test_uptrend_pullback_sha256_baseline.py` 那样**在测试内重算**再比对,
+不能去读 gitignored 的 `results/`(那种写法在 fresh clone 下会静默 PASS,
+本仓库在 uptrend 上吃过一次这个亏)。
+
+### 2 · 本轮补齐
+
+| preset | 覆盖 | 成交 |
+|---|---|---|
+| `v50_slope` | 单腿生产路径的规范形态 | 28 笔 |
+| `v58_mp_2` | **多仓容量路径**(附二十七 改过其 sizing 与容量闸门) | 58 笔 |
+
+窗口 `2026-03-01..2026-08-31`。生成脚本 `tests/_capture_short_reversal_baseline.py`:
+每个 preset **连续重算两次、要求哈希一致**才落 pin(不可复现的东西不该被 pin);
+哈希**直接取 DataFrame**,不做 CSV 往返 —— 后者两边各自"对"却永远对不上
+(该教训写在 `_regen_chase_baselines.py` 里;附三十三 repin 时我也踩过一次)。
+
+**代价如实记**:面板的暖机缓冲主导运行成本(实测 6 个月 ≈3.9 分钟/preset、
+一年 ≈5.3 分钟,故缩短窗口收益有限),两条共约 **8 分钟**加到套件里。
+这是"成交列表可锁"的价格,写进 golden 的 `pinned` 块。
+
+### 3 · 双向验证(以及一次**无效**的验证)
+
+把 `core/dual_price.py` 里**真正的** `COMMISSION_RATE` 赋值从 `0.00025` 改到 `0.000257`
+(2.8%)⇒ 守卫立刻变红,并打印 expected/actual 与 §6 的漂移要求;恢复后干净。
+
+> **第一次双向验证是无效的**:我用正则 `COMMISSION_RATE\s*=\s*([0-9.eE-]+)` 去改,
+> 它匹配到的是**注释里的**那一行(`#   - short_reversal engine.py:24  COMMISSION_RATE = 0.0006 (2.4x off)`),
+> 于是"跑完没变红"其实是**改错了地方**,不是基线失效。现改为锚定整行赋值,
+> 且**先看 `git diff` 确认只动了那一行,再跑**。
+> 这是本审计第 N 次遇到同一件事:**按正则/子串下手之前,先确认命中的是哪一处**
+> (附三十:AST 守卫多抓出 3 处;附三十六:子串守卫命中我自己的注释)。
+
+### 4 · 顺带闭合的登记
+
+`tests/test_reproducibility_audit.py::test_short_reversal_has_trades_csv_sha256_baseline`
+是一条 "GAP CAPTURED" 登记用例(用红灯表达待办)。它的判据正是"`tests/test_short*` 里
+存在 sha256 基线" ⇒ 本提交之后它**自然通过**,无需改动它 —— 登记与实现对齐。
+
+### 5 · 这张网解开了一个此前的僵局
+
+附三十八 里我拒绝"顺手把 F–K 也用 pandas 重写"的理由是:引擎用 backtrader 指标类算它们,
+在 pandas 侧支持 = **重新推导**这些定义 = 新增一处重复实现;正确做法是先把它们抽成
+**纯函数**再两处共用。而我当时不愿动引擎指标层的原因正是:**short_reversal 没有成交列表基线,
+改坏了没人知道**。
+
+现在这张网有了(`v50_slope` 28 笔 + `v58_mp_2` 58 笔,逐字节可锁)。故那条重构的风险
+从"无保护"降到"有基线可对照",可以立项 —— 但仍**不在本轮做**:它需要把 backtrader 指标
+逐个与 pandas 实现**逐值对拍**后才敢替换,是独立一件事。
