@@ -1873,6 +1873,52 @@ PRESETS: dict[str, dict] = {
         "up_streak_low": 1,
         "liq_high": 1000000000.0,
     },
+    # v70_pct_wide (2026-10-17): v69 + C 条件单日涨幅上界 0.10 → 0.15。
+    #
+    # 由来: 沿 "继续问每个生效条件 —— 它排除掉的那一批真的更差吗" 这条线逐个查。
+    # 这一轮同时试了三个**松绑**方向 (前两次成功都是松绑, 所以优先试松绑):
+    #   close_ma60_buffer 0.07 → 0.15 : W2 Calmar 21.8 (基本无变化)
+    #   below_ratio_60    0.20 → 0.05 : W2 Calmar 22.0 (基本无变化)
+    #   pct_chg_high      0.10 → 0.15 : W2 Calmar **25.0** (四项指标同时改善)
+    #
+    # 五个窗口 (W2 / IND / IS1 / IS2 + 全新 holdout 2019-10-01..2021-09-30):
+    #   CAGR  : 5/5 更高
+    #   Sharpe: 5/5 更高
+    #   Calmar: 4/5 更高 (holdout 上 9.5 vs 9.7, 基本持平)
+    # 是本轮开始"逐个查条件"以来命中面最广的一次。
+    #
+    # 机理: 0.15 与 0.20 实测给出**完全相同**的结果 (同笔数、同指标) ⇒ 这个上界在
+    # 0.15 以上已不生效, 即 0.10 这个值只是在排除边角样本。它与 v68 的 liq_high
+    # 同型: **一个上界把一批样本整类排除, 而那批并不更差**。
+    #   (主板日涨跌停 ±10%, 正常日 pct_chg 到不了 15%; 但信号用的是复权价序列,
+    #    除权除息日附近的复权收益率可以越界 —— 0.10 排除的主要是这类样本。)
+    #
+    # §5 n_comparisons = 80 (= 72 + 3 个 W2 松绑探针 + 4 个跨窗口 + 1 个 0.20 对照)
+    # 本节不记数字 (§7)。
+    "v70_pct_wide": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 80,
+        "position_sizing": "all_in",
+        "max_positions": 4,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.15,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "ma20_slope_period": 5,
+        "up_streak_low": 1,
+        "liq_high": 1000000000.0,
+    },
 }
 
 
