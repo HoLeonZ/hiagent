@@ -592,6 +592,8 @@ for path in paths:
 14. 补 `tests/golden/short_reversal_*_baseline.json`（先修守卫，否则加了基线也无人执行）。
 15. §5：`dsr['p_value']` 键名错误、`n_trials` 累计口径、sweep 的 OOS 窗口（`uptrend_pullback/sweep_v33_long*.py`、`short_reversal/wf_v34_focused.py`、`chase_up/wf_sweep_all.py`）。
     → **已处理(见附十三)**:键名、`n_trials` 口径、DSR 分子/分母一致性、收益率当 Sharpe 均已修;
+    **附三十二再补两处输入口径**:年化常量单源(引擎 243 / dna_stats 曾 252)、
+    `n_returns` 不再硬编码(10 处写 252 → 来自本次运行的观测数);
     **仍未闭合**:4 个脚本引用已删除的 preset(已登记 `KNOWN_DEAD_REFERENCES`)、以及原文点名的
     「窗口跨越已声明的 holdout」(需使用者确认 holdout 边界)。
 16. 补 §5 Attribution Mandate 的实现（基准超额），这是目前完全空缺的一项。
@@ -2575,3 +2577,84 @@ F/G/H/I/J/K 与市场波动宽度开关;也不评估多腿集成(`ensemble_subst
 引用旧文本做变更说明本身是好习惯(它让后来者知道缺陷曾经存在),但它与
 子串型守卫**天然冲突**。结论:**子串守卫只能针对"当前声明",不能针对"历史叙述"**;
 二者要共存,就得让历史说明改述(或让守卫升级为结构性判定)。
+
+---
+
+## 附三十二 —— §5 的两处**输入口径**:DSR 年化常量不同源、观测数被硬编码(均**成立**,已修)
+
+### 1 · (a) 年化常量:引擎 243,`dna_stats` 252
+
+`deflated_sharpe_ratio` 的第一件事是把 `observed_sharpe` **除回逐期**:
+
+```python
+sr = observed_sharpe / math.sqrt(trading_days_per_year)
+```
+
+所以消费者用的常数**必须**等于生产者算它时用的常数。而:
+
+| 层 | 常数 | 位置 |
+|---|---|---|
+| 引擎(`chase_up` / `uptrend_pullback` 的 `sharpe`) | `mean/std × sqrt(243)` | `core.trade_schema.TRADING_DAYS_PER_YEAR` |
+| `dna_stats`(消费者) | **252** | `deflated.py:84/111/230`、`walkforward_report.py:37` |
+
+⇒ 逐期 Sharpe 被系统性缩放 `sqrt(243/252) ≈ 0.982`(1.8%),DSR 随之偏离。
+同一层里的 `annualized_sharpe()`(**生产者**)也是 252 —— 即"同一量两处定义",
+而真正的边界(引擎 → DSR)**恰好跨在这两份定义之间**。
+
+实测影响(DSR 相对变化):
+
+| observed_sharpe | k | T | DSR@252 | DSR@243 | 相对变化 |
+|---|---|---|---|---|---|
+| 0.84 | 19 | 1071 | 0.4410 | 0.4536 | **+2.84%** |
+| 0.60 | 30 | 500 | 0.1095 | 0.1124 | +2.67% |
+| 1.50 | 10 | 250 | 0.4654 | 0.4762 | +2.32% |
+| 2.50 | 50 | 1200 | 0.9992 | 0.9994 | +0.02% |
+
+**中段最受影响** —— 而中段正是"要不要继续研究这个策略"的判据所在。方向是**更少**
+折减(引擎确实按 √243 年化,消费者此前除得不够),不是"更保守",即不是我要的偏好,
+而是把口径对回去。
+
+### 2 · (b) `n_returns` 被硬编码为 252(实测 **10 处**,不是我最初以为的 7 处)
+
+`n_returns` 是"Sharpe 用了多少个收益观测"(T),用于标准误修正。写成常数 `252` 的位置:
+
+| 文件 | 处理 |
+|---|---|
+| `uptrend_pullback/sweep_v33_long{,_v2..v6}.py`(6) | 改用 `panel["date"].nunique()`(面板在作用域内) |
+| `chase_up/sweep.py` | 同上 |
+| `short_reversal/grid_runner.py` | 改用发布的 `n_trading_days`(并把它写进落盘 CSV) |
+| `chase_up/sweep_all.py` | 改用发布的 `n_daily_returns` |
+| `chase_up/wf_sweep_all.py` | 同上,取多窗口的**均值**(observed 是跨窗 mean_sharpe) |
+
+实测这些窗口只有 **242~243** 个交易日 ⇒ T 被高估 **+3.7%~+4.1%**,标准误被低估约 2%
+⇒ DSR **系统性偏乐观**。窗口恰好约一年只是让它**碰巧**没差太远;而 sweep 脚本的
+全部用途就是换窗口重跑 —— 那时它会错得更多。
+
+**缺字段即 fail-fast**,不再用常数兜底 —— 兜底值正是这个缺陷的形态。
+
+### 3 · 顺带:观测数随产物发布
+
+`chase_up` / `uptrend_pullback` 的 `compute_metrics` 增发 `n_daily_returns`
+(= `len(eq) - 1`,即 T 的定义),两个 return 分支都发。它与 `short_reversal` 的
+`n_trading_days` 是**两个量**:一个是"窗口有多少个交易日"(用于年化),一个是
+"有多少个收益观测"(用于标准误),差一个观测 —— 注释里写明,避免日后被当成同一个量。
+
+### 4 · 守卫与双向验证
+
+`tests/test_dsr_inputs_single_source.py`(7 条):四个入口的默认 == 规范常量;
+两种常数给出**不同**结论(否则单源断言无判别力);**用 AST** 判定所有
+`deflated_sharpe_ratio(...)` 调用点的 `n_returns` / `trading_days_per_year`
+不得是字面量;并断言扫描面非空(防空真绿)。
+
+两个方向都验:还原 252 默认 + 硬编码 ⇒ **5 red / 2 green**,恢复后 7 全绿。
+
+> **方法论**:这个 AST 守卫当场多抓出 **3 处**(`chase_up/sweep*.py`)——
+> 我先前是用 `grep -rn n_returns= -- | head -12` 数的,结果被 `head` 截断。
+> 又一次:**完整扫描不要截断**;并再次印证"子串/正则统计"不如 AST 判定可靠。
+
+### 5 · 自我纠错(记录在案)
+
+首版补丁脚本对同一个锚点连续做了两次 `replace` ⇒ 字段被重复插进"空权益"分支,
+而**真正会被读到的**主分支反而没有。由仓库既有的
+`test_chase_up_sweep_discloses_in_sample` 抓出(它用真实 `compute_metrics` 造夹具)。
+改为按行结构性插入,并在**两个分支**各验证一次取值。
