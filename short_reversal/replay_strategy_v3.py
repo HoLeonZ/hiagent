@@ -825,11 +825,17 @@ class Phase3V3Strategy(bt.Strategy):
             # 单笔最大成交量 = Bar_Volume × max_volume_participation, 超出丢弃。
             # CLAUDE.md §4 "Max_Fill_Qty = MIN(Order_Qty, Bar_Volume * 0.10)"。
             bar_vol = float(d.volume[0])
-            if bar_vol > 0:
+            # §4/§0 (audit 2026-10-15): 量比约束**无条件**调用。
+            # 旧写法 `if bar_vol > 0:` 把零成交 bar 整段跳过 ⇒ 该 bar 上订单**不限量**,
+            # 与 §0"对流动性取最坏情形"相反。零成交 ⇒ helper 返回 0 ⇒ `size` 归零 ⇒
+            # 由下面的 `size < lot_size` 分支如实拒单(排空 pending)。
+            # NaN(面板无 volume 列)不可传给 helper —— `int(nan)` 会抛 ValueError ——
+            # 故仍跳过;那是"无列兼容",不是"零成交",两者不可混为一谈。
+            if not math.isnan(bar_vol):
                 max_fill = volume_cap_fill(
                     bar_vol, self.p.max_volume_participation, lot_size=self.p.lot_size
                 )
-                if max_fill > 0 and size > max_fill:
+                if size > max_fill:
                     size = max_fill
             if size < self.p.lot_size:
                 # CLAUDE.md §0 §6: pending_entries is a per-bar T+1 fill queue.

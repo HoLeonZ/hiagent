@@ -377,7 +377,12 @@ class Portfolio:
         # 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION, 超出丢弃 (不挂单)。
         # 这是 CLAUDE.md §4 "Max_Fill_Qty = MIN(Order_Qty, Bar_Volume * 0.10)"
         # 防止小票大单砸穿市场、产生 slippage / market impact。
-        if bar_volume is not None and not _is_nan(bar_volume) and bar_volume > 0:
+        # §4/§0 (audit 2026-10-15): `bar_volume > 0` 这个条件**去掉**。
+        # 它把"零成交"(= helper 返回 0,即 §4 的 `MIN(Target, 0)`)与"无 volume 列"
+        # 混为一谈,于是零成交 bar 上订单**不限量** —— 与 §0"对流动性取最坏情形"相反。
+        # 现在:None/NaN 才是"无列兼容"(跳过约束);零成交走 helper → max_fill=0 →
+        # `shares < 100` → 如实拒单。
+        if bar_volume is not None and not _is_nan(bar_volume):
             # §4 (2026-10-15): 改用规范 `volume_cap_fill`。旧式写法先把
             # `bar_volume × pct` 除以 100 取整、再乘回 100 —— 当
             # `bar_volume × pct < 100` 时结果为 **0**,`max_fill > 0` 守卫随之被跳过,

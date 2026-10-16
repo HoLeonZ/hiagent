@@ -562,11 +562,19 @@ def simulate_portfolio(
                     # V8 (2026-09-22): 改为参数化 (从 preset 显式传入, 默认 0.10)。
                     bar_vol = pi["volume"][j]
                     size_pre_cap = size
-                    if not np.isnan(bar_vol) and bar_vol > 0:
+                    # §4/§0 (audit 2026-10-15): 量比约束**无条件调用**。
+                    # `volume_cap_fill` 对 `bar_vol <= 0` 返回 0(= §4 的
+                    # `MIN(Target, Bar_Volume × pct)`),而此前 `if bar_vol > 0`
+                    # 把整段跳过 —— 零成交 bar 上订单**不限量**,与 §0 悲观默认相反。
+                    # NaN 仍按"面板无 volume 列"跳过(夹具兼容),且 helper 不可吃 NaN
+                    # (`int(nan)` 会抛 ValueError)。
+                    if not np.isnan(bar_vol):
                         max_fill = volume_cap_fill(
                             float(bar_vol), max_volume_participation, lot_size=100
                         )
-                        if max_fill > 0 and size > max_fill:
+                        if max_fill <= 0:
+                            continue  # 该 bar 物理上无法成交 → 放弃这个候选
+                        if size > max_fill:
                             size = max_fill
                     # R5 (2026-09-21): ATR-aware slippage (CLAUDE.md §4)。
                     # participation = size_pre_cap / bar_vol, slip = atr × part × scale。

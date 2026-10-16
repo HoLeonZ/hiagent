@@ -621,11 +621,21 @@ def simulate_portfolio(
                     # V8 (2026-09-22): 改为参数化 (从 preset 显式传入, 默认 0.10)。
                     bar_vol = pi["volume"][j]
                     size_pre_cap = size
-                    if not np.isnan(bar_vol) and bar_vol > 0:
+                    # §4/§0 (audit 2026-10-15): 量比约束**无条件调用**。
+                    # `core.dual_price.volume_cap_fill` 对 `bar_vol <= 0` 返回 0
+                    # (= §4 的 `MIN(Target, Bar_Volume × pct)`,零成交 ⇒ 零成交),
+                    # 而此前这里用 `if bar_vol > 0` 把整段**跳过** —— 于是零成交 bar 上
+                    # 订单**不限量**,正好与 §0"对流动性取最坏情形"相反。
+                    # (该契约早有测试钉着 `volume_cap_fill(0, …) == 0`,缺的是**调用点**
+                    # 照它执行 —— 规则存在 ≠ 规则被应用。)
+                    # NaN 仍按"面板无 volume 列"处理(夹具兼容),不下约束。
+                    if not np.isnan(bar_vol):
                         max_fill = volume_cap_fill(
                             float(bar_vol), max_volume_participation, lot_size=100
                         )
-                        if max_fill > 0 and size > max_fill:
+                        if max_fill <= 0:
+                            continue  # 该 bar 物理上无法成交 → 放弃这个候选
+                        if size > max_fill:
                             size = max_fill
                     # R5 (2026-09-21): ATR-aware slippage (CLAUDE.md §4)。
                     # 静态 slippage 不区分低/高波动率; 改用 signal-day atr_pct ×
