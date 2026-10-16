@@ -20,6 +20,37 @@ from dna_data.dual_price_resolver import (
 )
 
 
+# ---------- §3: 不得跨价域回退 ----------
+#
+# 2026-10-15 (audit 附十五):三个解析函数里,`signal_close` 与 `execution_close`
+# 的回退链都**刻意跳过另一个价域**(各自的注释写明 "skip the OTHER family ...
+# they're not interchangeable"),而 `execution_open` 当时是
+# `("raw_open", "adj_open", "open")` —— raw 缺失时会落到 **adj_open**,即让
+# **执行价静默变成复权价**。那既违反 §3,也与同文件的兄弟函数自相矛盾。
+# 下面把"三个函数都不跨域"钉成一个统一契约。
+
+@pytest.mark.parametrize("helper,source,other", [
+    (execution_open, "raw_close", "adj_open"),
+    (execution_close, "raw_close", "adj_close"),
+    (signal_close, "adj_close", "raw_close"),
+])
+def test_helpers_never_fall_back_across_price_domains(helper, source, other):
+    """缺本域列时必须 fail-fast(KeyError),不得改用另一个价域的列。
+
+    这一条是**幻影成交**的源头之一:执行价被换成复权价不会报错、不留日志,
+    只在结果里体现为一笔"本该拿不到"的成交。
+    """
+    row = pd.Series({other: 9.99})          # 只提供**另一个**价域的列
+    with pytest.raises(KeyError):
+        helper(row, source)
+
+
+def test_execution_open_still_works_when_raw_present():
+    """对照组:raw_open 在场时必须正常返回(否则上一条可能是"全都失败"而空转)。"""
+    row = pd.Series({"raw_open": 11.10, "adj_open": 10.40})
+    assert execution_open(row, "raw_close") == pytest.approx(11.10)
+
+
 # ---------- happy path: dual panel ----------
 
 def test_signal_uses_adj_close_when_declared():
