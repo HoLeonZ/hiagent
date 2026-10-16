@@ -60,16 +60,22 @@ PANEL_FORWARD_BUFFER_DAYS = PANEL_FORWARD_BUFFER_DAYS
 
 
 def _benchmark_block(panel, total_return: float) -> dict:
-    """§5:基准收益 + 相对超额。见 core/benchmark.py 的选择理由。"""
+    """§5:基准收益 + 相对超额。见 core/benchmark.py 的选择理由。
+
+    基准**算不出时**(窗口内没有可构成买入持有的标的)发布 `None`,不是 0.0 ——
+    否则 `excess_return` 会等于总收益,读起来像"基准没动",与真实的 0% 不可区分
+    (与 `profit_factor` 的 None 口径一致)。
+    """
     from core.benchmark import BENCHMARK_KIND_EQUAL_WEIGHT, equal_weight_basket_return
 
     bench, n_members = equal_weight_basket_return(panel)
     return {
-        # 数字必须带着它的含义一起发布(与 sharpe_kind / n_trading_days 同一原则)。
+        # 数字必须带着它的含义一起发布(与 sharpe_kind / n_daily_returns 同一原则):
+        # "超额 +3%"在没说明基准是什么之前,不是一个可引用的结论。
         "benchmark_kind": BENCHMARK_KIND_EQUAL_WEIGHT,
         "benchmark_return": bench,
         "benchmark_members": n_members,
-        "excess_return": total_return - bench,
+        "excess_return": None if bench is None else total_return - bench,
     }
 
 
@@ -239,7 +245,12 @@ def _run_ensemble(
     # §5 Attribution Mandate: 集成的基准取自子策略 —— 它们共享同一窗口与(实际
     # 上相同的)宇宙,故基准应当一致。**不一致即 fail-fast**:那说明子策略的宇宙
     # 不同,怎么合并基准是个人为决定,不该由这里悄悄取平均或取第一个。
-    bench_values = sorted({round(float(r["benchmark_return"]), 12) for r in sub_results})
+    raw_bench = [r["benchmark_return"] for r in sub_results]
+    if any(b is None for b in raw_bench) and not all(b is None for b in raw_bench):
+        raise ValueError(
+            f"§5: 集成子策略的基准部分为 None(无法计算): {raw_bench} —— 不允许静默取平均"
+        )
+    bench_values = sorted({None if b is None else round(float(b), 12) for b in raw_bench})
     if len(bench_values) != 1:
         raise ValueError(
             f"§5: 集成子策略的基准不一致 {bench_values} —— 子策略宇宙不同,"
@@ -256,7 +267,7 @@ def _run_ensemble(
         "benchmark_kind": sub_results[0]["benchmark_kind"],
         "benchmark_return": bench,
         "benchmark_members": n_members,
-        "excess_return": float(total_yield) - bench,
+        "excess_return": None if bench is None else float(total_yield) - bench,
         "trades": all_trades,
         "trades_count": trades_count,
         "win_rate": float(win_rate),

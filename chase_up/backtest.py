@@ -128,7 +128,12 @@ def compute_metrics(
 
 
 def _benchmark_block(panel, total_return: float) -> dict:
-    """§5:基准收益 + 相对超额。见 core/benchmark.py 的选择理由。"""
+    """§5:基准收益 + 相对超额。见 core/benchmark.py 的选择理由。
+
+    基准**算不出时**(窗口内没有可构成买入持有的标的)发布 `None`,不是 0.0 ——
+    否则 `excess_return` 会等于总收益,读起来像"基准没动",与真实的 0% 不可区分
+    (与 `profit_factor` 的 None 口径一致)。
+    """
     from core.benchmark import BENCHMARK_KIND_EQUAL_WEIGHT, equal_weight_basket_return
 
     bench, n_members = equal_weight_basket_return(panel)
@@ -138,7 +143,7 @@ def _benchmark_block(panel, total_return: float) -> dict:
         "benchmark_kind": BENCHMARK_KIND_EQUAL_WEIGHT,
         "benchmark_return": bench,
         "benchmark_members": n_members,
-        "excess_return": total_return - bench,
+        "excess_return": None if bench is None else total_return - bench,
     }
 
 

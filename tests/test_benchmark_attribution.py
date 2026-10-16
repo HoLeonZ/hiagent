@@ -77,8 +77,45 @@ def test_basket_uses_first_and_last_available_bar() -> None:
     assert members == 1
 
 
-def test_empty_panel_is_zero_with_no_members() -> None:
-    assert equal_weight_basket_return(pd.DataFrame(columns=["thscode", "date", "close"])) == (0.0, 0)
+def test_no_members_yields_none_not_a_silent_zero() -> None:
+    """算不出基准时必须发布 `None`,**不是 0.0**。
+
+    若返回 0.0,`excess_return = 总收益 - 0.0 = 总收益`,产物读起来像"基准什么都没涨"
+    —— 与"基准确实是 0%"不可区分。本仓库对"算不出"的口径一贯是 `None`
+    (见 `profit_factor` 的处理)。这条守的是**我自己刚写的代码**(自查发现)。
+    """
+    empty = pd.DataFrame(columns=["thscode", "date", "close"])
+    assert equal_weight_basket_return(empty) == (None, 0)
+    # 只有一根 bar 的标的无法构成买入持有 ⇒ 同样算不出
+    one_bar = _panel([("600001.SH", "2025-03-03", 50.0)])
+    assert equal_weight_basket_return(one_bar) == (None, 0)
+    assert equal_weight_basket_return(one_bar)[0] is not 0.0
+
+
+@pytest.mark.parametrize(
+    "module_name,func_name",
+    [
+        ("chase_up.backtest", "_benchmark_block"),
+        ("uptrend_pullback.backtest", "_benchmark_block"),
+        ("short_reversal.engine", "_benchmark_block"),
+    ],
+)
+def test_engine_block_publishes_none_when_the_benchmark_is_undefined(
+    module_name: str, func_name: str
+) -> None:
+    """引擎侧:基准算不出 ⇒ `benchmark_return` 与 `excess_return` **都**是 None。"""
+    import importlib
+
+    block_fn = getattr(importlib.import_module(module_name), func_name)
+    empty = pd.DataFrame(columns=["thscode", "date", "close"])
+    blk = block_fn(empty, 0.07)
+    assert blk["benchmark_return"] is None, (
+        f"{module_name}: 基准算不出却发布了 {blk['benchmark_return']!r} —— "
+        "0.0 会让 excess_return 等于总收益,与真实的 0% 不可区分"
+    )
+    assert blk["excess_return"] is None
+    assert blk["benchmark_members"] == 0
+    assert blk["benchmark_kind"] == BENCHMARK_KIND_EQUAL_WEIGHT
 
 
 def test_the_kind_constant_says_what_it_is() -> None:

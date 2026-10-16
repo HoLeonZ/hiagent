@@ -37,8 +37,13 @@ import pandas as pd
 BENCHMARK_KIND_EQUAL_WEIGHT = "equal_weight_pit_universe_buy_and_hold"
 
 
-def equal_weight_basket_return(panel: pd.DataFrame) -> tuple[float, int]:
-    """等权买入持有(不调仓)的总收益,返回 `(return, 纳入的标的数)`。
+def equal_weight_basket_return(panel: pd.DataFrame) -> tuple[float | None, int]:
+    """等权买入持有(不调仓)的总收益,返回 `(return | None, 纳入的标的数)`。
+
+    **无成员时返回 `None`,不是 `0.0`**(2026-10-16 自查修正):若返回 0.0,
+    `excess_return = 总收益 - 0.0 = 总收益`,产物读起来就是"基准什么都没涨" ——
+    与"基准确实是 0%"不可区分。本仓库对"算不出"的口径一贯是 `None`
+    (见 `profit_factor` 的处理),这里照办。
 
     每只标的取窗口内**第一根与最后一根**可用 bar 的复权价之比;bar 数 < 2 的
     标的不纳入(窗口内无法构成一次买入持有),其数量由第二个返回值如实带出 ——
@@ -48,7 +53,7 @@ def equal_weight_basket_return(panel: pd.DataFrame) -> tuple[float, int]:
     这也是"等权指数"的常见口径,且与本仓库的确定性要求一致(无路径依赖)。
     """
     if panel.empty:
-        return 0.0, 0
+        return None, 0
 
     per_name: list[float] = []
     for _, sub in panel.groupby("thscode", sort=False):
@@ -59,7 +64,7 @@ def equal_weight_basket_return(panel: pd.DataFrame) -> tuple[float, int]:
         per_name.append(float(series[-1] / series[0] - 1.0))
 
     if not per_name:
-        return 0.0, 0
+        return None, 0
     return float(sum(per_name) / len(per_name)), len(per_name)
 
 
