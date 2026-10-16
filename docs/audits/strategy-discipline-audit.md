@@ -644,6 +644,7 @@ for path in paths:
 | `048bedf` | **新发现(不在原发现集内)**:`sharpe` 在三个引擎里**不是同一个量** —— 两引擎是日收益年化 Sharpe,`short_reversal` 是逐笔 net 的交易级比率。而 sweep 脚本**按它排序**,跨引擎比较无意义,键名却看不出来 | 四个发布点加 `sharpe_kind`;守卫要求两类字符串真的不同 + 凡发布 `sharpe` 必发布 `sharpe_kind`;附十一 |
 | (本轮) | **新发现(不在原发现集内)**:把库拿掉再跑 —— **fresh clone 拿到的是红的套件**。无库时 15 failed + 5 errors,0 字节占位时 8 failed + 3 errors,合计 **31 个**用例违反 §6「无库必须 skip,不得 error」 | 单一共享助手 `require_market_db()` / `market_db_available()`(检查**存在且非空** —— 原实现只查存在性,恰好让 0 字节占位漏过);两种缺库形状均跑成 **0 failed / 0 errors**;附十二 |
 | `5a413d8` | **§5 的执行层在 25 个研究脚本里**(不在引擎里):(a) 14 个 WF 脚本的 DSR **分子是 max(窗口)、分母是配置数** —— 两次不同的选择,窗口那层没被折减;(b) `chase_up/wf_sweep_all.py` 把**收益率**当 Sharpe 传进 DSR(12% 当 0.12 → p=0.966,而真 Sharpe=1.20 → p=0.772);(c) 4 个脚本引用**已删除**的 preset,启动即退出 | (a) 分子改跨窗口均值 + **数值验证**(断言收到 0.9 而非 1.9);(b) 用现成的 `mean_sharpe` 列;(c) **不改名字**(无重命名映射可推断 = 编造记录),改**登记债务** + 登记表必须等于实际集合;11 条守卫均双向验证;附十三 |
+| `a714e64` | **同族缺陷的另一半**:`cycle_price_action/sweep_thresholds.py` 在**展平网格**(阈值×窗口)上取 max,却按**阈值个数**折减 —— 且它**自己打印的表**(逐阈值均值)与它实际传给 DSR 的数**不是同一个**。另:`cycle` 的 `n_comparisons=1` 理由写作「无 sweep」,而其 `sweep_thresholds.py` 的**默认候选恰好包含出厂的 threshold=2.0** | 分子改为「阈值均值的最大」+ **数值验证**(0.9 而非 1.0);注释更正;`n_comparisons` 的**真实值交还给使用者**(无迭代记录即无法据实填写,填 3 是伪精确);新增"max 取几项/n_trials 数几项"守卫(只罚不匹配的那种组合);附十三 §4-6 |
 
 **测试层净效果**(失败集合逐条 `diff`,非仅比数量):
 
@@ -672,19 +673,20 @@ for path in paths:
 2. **§4 滑点的实质**:100 个 preset 仍是 `SLIP_NONE_ACKNOWLEDGED`(=0.0)。换成真实标定值会改变每一个成交价,属研究决策,且按 §5 须计入 `n_trials`。
 3. **§0 依赖锁定**:`requirements.txt` 只有版本范围、无 lockfile。本机为 conda 环境,`pip freeze` 会产出**误导性**锁定,故不代做 —— 建议用 uv / pip-tools 在指定 Python 下生成。
 3b. **§5 统计口径**:`dna_stats` 的 `trading_days_per_year` 默认 `252`,而引擎侧单源为 `243`(A 股)。改动它会影响 DSR / Bonferroni 的收缩量、使既往比较失效 —— 属统计口径变更,需使用者拍板(附十)。
+3c. **§5 迭代数**:`cycle_price_action/PRESET_V1` 的 `n_comparisons=1` 与仓库自身矛盾(其 sweep 的默认候选含出厂的 `threshold=2.0`)—— **需使用者提供迭代记录**才能据实填写;已登记于 `tests/...::KNOWN_UNRECORDED_TRIAL_COUNTS`(附十三 §5)。这是本轮唯一一处我明确交还给使用者的**数值**。
 4. **§7 产物 writer**:`equity_curve.csv` / `cash_walk.csv` / per-preset `backtest.json` 的 writer 尚未实现(相应断言按 §6 skip 登记)。注:`cycle` 的 `cagr/sharpe/max_dd` 返回 `None` 是**诚实**的"横截面无法定义",不是缺口。
 5. **§6 展示层重复**:`tools/render_top5_presets_html.py` 重述逐 bar 指标与 A/B/C 文案(回测本身调用真引擎);消解需引擎暴露逐 bar 指标序列,属重构。
 6. **"有实现、无消费者"的库函数**:`tail_objective.tail_stats`(测试外无调用点)与 `render_top5` 同类;建议统一清理而非逐个顺手改。
 7. **§3 公司行为**:配股/缩股未建模(全库 1 例),`apply_corporate_action` 已显式告警。
 8. ~~§7 源码内嵌业绩数字清理~~ → **已完成(`5c731cd`)**;~~`chase_up` 金标准基线仍红~~ → **已修复(`e063c43`)**;~~cycle 无成交列表基线~~ → **已补(`4cbc66c`)**;~~审计自认的六个未覆盖面~~ → **已查证(附七)**。
 
-**当前测试状态**(截至 `5a413d8`)——**三种条件都跑过**(§6 的验收条件就是 fresh clone 的条件):
+**当前测试状态**(截至 `a714e64`)——**三种条件都跑过**(§6 的验收条件就是 fresh clone 的条件):
 
 | 条件 | 结果 |
 |---|---|
-| 有本机行情库 | 1007 passed / 30 skipped / **0 failed** |
-| 无库(路径不存在) | 963 passed / 74 skipped / **0 failed / 0 errors** |
-| 无库(0 字节占位) | 963 passed / 74 skipped / **0 failed / 0 errors** |
+| 有本机行情库 | 1011 passed / 30 skipped / **0 failed** |
+| 无库(路径不存在) | 967 passed / 74 skipped / **0 failed / 0 errors** |
+| 无库(0 字节占位) | 967 passed / 74 skipped / **0 failed / 0 errors** |
 
 基线 `b597d0c` 为 failed 54 / passed 796 / errors 3。改动全程逐条 diff 失败集合,**新增失败 0**。
 30 条有库 skip = 22 条既有的 + 8 条本轮登记(产物边界 7 + cycle 慢 golden 1),全部带
@@ -1267,4 +1269,53 @@ DSR、n_trials、WFV 全在那里。所以"引擎合规"与"研究合规"是两�
 25 个脚本里,7 个网格类脚本的 `max(sharpes)` 是**正确的**(sharpes 逐配置,分母也是配置数)。
 **没有先分清哪一类就"统一改一遍",会把对的改错。** 同样的教训本轮出现两次:
 分子/分母的语义要先对齐,再动代码。
+
+### 4 · cycle 的 sweep:同一个缺陷的**另一半**
+
+`cycle_price_action/sweep_thresholds.py`(与 `wf_*` 相反的方向):
+
+```
+observed = max(all_sharpes)      # all_sharpes = 阈值 × 窗口 展平后的**每一格**
+n_trials = len(thresholds)       # 却只数阈值
+```
+
+即 **max 取了 T×W 项、按 T 折减**。WF 家族是"max 取窗口、按配置折减",这里是
+"max 取整张网格、按一维折减" —— 同一个契约违反的两个方向。
+
+**一个自相矛盾的信号**:该脚本**自己打印的表**是逐阈值的 `avg_sharpe`(0.900 / 0.500),
+而 DSR 用的是展平后的 1.000。**打印出来的数**与**实际拿去算显著性的数**不是同一个 ——
+这类"展示与计算不一致"很难靠读代码发现,是靠"把打印的数和传进函数的数对一遍"发现的。
+
+修:每个阈值先按窗口取均值(窗口是同一策略在不同数据上,不是独立 trial),再在 T 个
+阈值均值里取最大 → "max 取 T 项 + n_trials = T" ✓,且与它自己的表一致。
+**数值验证**:塞入 `{2.0: [1.0, 0.8], 2.5: [0.6, 0.4]}`,断言 DSR 收到 **0.9** 而非 **1.0**。
+
+顺带记一条**该脚本做对了的事**(避免读者以为它整体不合格):它用规范
+`walkforward_windows`、跑 OOS 的 `test_start/test_end`(Round 24 修过且留了记录)、
+报 Bonferroni —— 同类纪律里,它是仓库的执行范例。
+
+### 5 · 一处**与仓库自身矛盾**的声明
+
+`cycle_price_action/presets.py` 把 `n_comparisons=1` 的理由写成
+「cycle 单一 preset,**无 sweep**」。而:
+
+- `cycle_price_action/sweep_thresholds.py` 就是为**本 preset 的 `threshold`** 建的 sweep;
+- 它的默认候选是 `--thresholds 1.5,2.0,2.5`,而**出厂的 `threshold=2.0` 正在其中**
+  (而且是正中间那个)。
+
+若 2.0 确由那次 sweep 选出,§5 Iterative-Tuning Accounting 要求把它计入 `n_trials`,
+`n_comparisons=1` 即**低估** —— 报出来的是 PSR 而不是 DSR,也就是"不做折减"。
+
+**我没有改这个数值。** 真实的累计试验数只能来自**迭代记录**,不是从代码能推出来的量;
+写成 `3` 之类的"看起来合理"的数字是**伪精确**,而且大概率仍然低估。处置是:
+更正那句与仓库矛盾的注释 + 把该 preset 登记进 `KNOWN_UNRECORDED_TRIAL_COUNTS`,
+直到记录补齐。**这一条需要你提供迭代记录** —— 它是本轮唯一一处我明确交还给你的数值。
+
+### 6 · 新增两条 §5 守卫(含一条"防误伤")
+
+- **"max 取几项,n_trials 就数几项"**:只惩罚「展平网格上取 max **且** 按其中一维折减」
+  这一种组合 —— `uptrend_pullback/sweep_v33_long*.py` 的 `max(all_sharpes)` 配
+  `n_trials=len(all_sharpes)` 是**对的**,不能被误伤。
+- **举证责任倒置**:"参数值 ∈ 自家 sweep 的默认候选,却声明 `n_comparisons=1`"必须
+  登记或据实填写 —— 让"这个值不是 sweep 选的"从**默认成立**变成**需要说明**。
 
