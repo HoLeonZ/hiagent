@@ -751,6 +751,33 @@ class Phase3V3Strategy(bt.Strategy):
                 d._name for d in self.datas if d._name in self.pending_entries
             ]
         for code in codes_to_fill:
+            # §2 容量上限 (audit HIGH, 2026-10-16): 声明的 `max_positions` 必须
+            # **真正约束并发持仓数**。此前本引擎只有"经济约束"——每笔按
+            # `free_cash / max_positions` 下注,现金耗尽即自然停下 —— 而该公式
+            # **每笔都重算**,于是份额几何衰减 (F/N, F/N², F/N³, …),
+            # 现金几乎永远不耗尽:
+            #   实测 preset `v58_mp_2`(声明 max_positions=2)最大并发 **24** 个仓,
+            #   `v58_mp_3`(声明 3)= **33** 个。声明的容量与实际风险敞口差了
+            #   一个数量级,而 §2 明写「Capacity is bounded by the preset's
+            #   `max_positions`; signals beyond capacity at time T MUST BE
+            #   IMMEDIATELY DISCARDED (no queueing into T+1)」。
+            # 姊妹引擎 chase_up/uptrend_pullback 都有显式 `break` 闸门
+            # (chase_up/portfolio.py:563 / uptrend_pullback/portfolio.py:512),
+            # 只有本引擎缺 —— 与"停牌盯市""非交易日 asof"同一种族内不对称。
+            if len(self._holds) >= self.p.max_positions:
+                pending = self.pending_entries
+                for _c in codes_to_fill:
+                    pending.pop(_c, None)  # §2: 立即丢弃,不排队到 T+1
+                # 每次触发都刷日志会淹没回测输出(实测 3 个月窗口触发 30+ 次),
+                # 故按本文件既有的 `_cash_gate_logged` 惯例只报首次。
+                if not getattr(self, "_capacity_logged", False):
+                    logger.warning(
+                        "[§2 容量] 并发持仓已达 max_positions=%d,本 bar 丢弃 %d 个信号 "
+                        "(首个: %s);后续同类事件不再重复报告",
+                        self.p.max_positions, len(codes_to_fill), codes_to_fill[0],
+                    )
+                    self._capacity_logged = True
+                break
             d = self.getdatabyname(code)
             if code not in self.pending_entries:
                 continue
@@ -814,10 +841,16 @@ class Phase3V3Strategy(bt.Strategy):
             # v58 (2026-10-13): max_positions > 1 时, 每笔 sizing = free_cash
             # / max_positions (而不是 free_cash * position_fraction=1.0)。
             # 维持 all-in 总仓位, 但分散到 N 个并行仓 (各 1/N)。
-            if self.p.max_positions > 1:
-                target_value = self.free_cash / self.p.max_positions
-            else:
-                target_value = self.free_cash * self.p.position_fraction
+            # §2 (audit HIGH, 2026-10-16): N 个 slot **等分**且合计 100% 部署。
+            # 分母必须是"**剩余未占用**的 slot 数",而不是常数 max_positions ——
+            # 否则第 k 笔拿到 F/N^k(几何衰减):既不是"等分",合计也远达不到
+            # 100%,于是现金耗尽这个"经济约束"形同虚设(实测能开出 24/33 个仓)。
+            # 本式与仓库既有的书面契约一致(tests/test_claudemd_full_audit.py:12-18:
+            # 「多仓时每个 slot 的预算是 free_cash/max_positions,合计仍是 100% 部署」)。
+            # max_positions == 1 ⇒ slots_left 恒为 1 ⇒ 行为与此前**逐字相同**
+            # (73/75 个 preset 走这条路径,零漂移)。
+            slots_left = max(1, self.p.max_positions - len(self._holds))
+            target_value = self.free_cash * self.p.position_fraction / slots_left
             size = (
                 int(target_value / entry_price / self.p.lot_size) * self.p.lot_size
             )
