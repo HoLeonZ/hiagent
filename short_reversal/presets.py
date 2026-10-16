@@ -1697,6 +1697,42 @@ PRESETS: dict[str, dict] = {
         "require_market_breadth_bear": True,
         "market_breadth_max": 0.5,
     },
+    # v58_mp_4 (2026-10-16): 容量维度外推 —— max_positions 1/2/3/4/5/6 六点扫描。
+    #
+    # 由来: v58_mp_2 / v58_mp_3 的"多仓无效"是在容量闸门有缺陷时测的 (声明 N 实开
+    # 24/33, 见 abe7dc7); 修好后它们反超 v50_slope ⇒ 这条维度其实**从未被真正开采**,
+    # 只试过 1/2/3。本 preset 把扫描补到 6 点。
+    #
+    # 三窗口 (W2 2024-10~2026-09 / IND 2022-10~2024-09 / IS1 2021-10~2022-09) 实测:
+    #   Sharpe 在三个窗口都于 N=2 见顶; Calmar 在三个窗口都于 N=4 见顶;
+    #   CAGR 随 N 单调下降。即风险调整后 N=1 最差, N∈{2,4} 全面优于它。
+    # 曲线形状 (先升后降的单峰) 来自分散化本身, 不是单点侥幸。
+    #
+    # §5 Iterative-Tuning Accounting: n_comparisons = 37 + 9
+    #   (v58 自报 37; 本轮新增 N=4/5/6 × 三个窗口 = 9 次评估)
+    # 本节不记数字 (§7)。
+    "v58_mp_4": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 46,
+        "position_sizing": "all_in",
+        "max_positions": 4,
+        "position_fraction": 1.0,   # 仍 all-in 总仓位, 引擎除以 max_positions
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "ma20_slope_period": 5,
+    },
 }
 
 
