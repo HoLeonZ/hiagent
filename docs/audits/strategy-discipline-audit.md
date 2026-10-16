@@ -1996,9 +1996,9 @@ P3 轮已改为真断言,原语句留在注释里作记录。顺带核对了另�
 | §7 golden/源码内嵌业绩(HIGH×3) | **已修**(`5c731cd`) |
 | §1 窗口边界/宇宙 as-of(HIGH×4) | **已修**(附二十五 —— 该行唯一待复核项「非交易日 asof 静默产出空宇宙」成立:chase_up 空集 + 端到端 0 笔/CAGR 0.0000) |
 | §1 停牌/退市按 `entry_price` 盯市(HIGH×1) | **已修**(附二十四;黄金批次零漂移 —— 该窗口从未踩中,故只能靠合成夹具) |
-| §4/§0 cycle 入场按决策 bar 记账(HIGH×2) | **未复核** |
+| §4/§0 cycle 入场按决策 bar 记账(HIGH×2) | **成立**:3/4 引擎在下一根 bar 开盘成交,cycle 用**同 bar 收盘**(附二十六)。非 §1 lookahead,是 §0 悲观默认的偏离 —— 改口径=结果变更,**待决策** |
 
-**已闭合 9 / 部分 0 / 未复核 3 / 属研究决策 1。**
+**已闭合 10 / 未复核 0 / 待决策 2(上表 12 行;待决策两项为 §4 ATR 滑点取值、本次 cycle 成交口径)。**
 
 
 ---
@@ -2172,3 +2172,55 @@ asof 一旦落在**非交易日**,对**每一只票**都有「最后一个交易
 asof 早于数据覆盖起点时会静默返回 `[]`、回测静默 0 笔。这与 chase_up 那条的
 **成因不同**(覆盖不足 vs 非交易日),不影响本次结论,故另行登记而非顺手改 ——
 避免把两种不同的失效原因混成一次改动。
+
+---
+
+## 附二十六 —— §3.2「cycle 入场按决策 bar 记账」(§4/§0 HIGH×2):**成立**;属**未声明的跨引擎约定分歧**,待决策
+
+### 1 · 事实(四个引擎的成交时点对照)
+
+| 引擎 | 信号取自 | 成交价 | 代码位置 |
+|---|---|---|---|
+| `chase_up` | `cal[t-1]` | `raw_open[j]` @ bar t | `portfolio.py:517`(信号)→ 入场用当日开盘 |
+| `uptrend_pullback` | `cal[t-1]` | 同形,bar t 开盘 | `portfolio.py:475` |
+| `short_reversal` | T 日 close | 「**T+1 日 open 成交**(cheat-on-open 模式)」 | `replay_strategy_v3.py:5, 712` |
+| `cycle_price_action` | **bar T** | **`bar_exec.close`(同一根 bar 的收盘)** | `backtrader_engine.py:275-283` |
+
+即:**3/4 个引擎在"下一根 bar 的开盘"成交,cycle 在"决策 bar 自己的收盘"成交。**
+cycle 的 `try_enter(..., bar_exec.close, ...)` 与同一函数里的涨停守卫
+`is_limit_up(prev_close=close[T-1], open_price=bar_exec.close)` 一起看,语义是自洽的
+(在收盘封板时买不到),但它的成交价与决策所用的是**同一根 bar 的同一个价格** ——
+决策与成交之间**没有任何不利波动的窗口**。
+
+### 2 · 性质判定:不是 §1 的 lookahead,而是 §0 悲观默认的偏离
+
+- **不构成 §1 未来函数**:决策与成交用的是同一根 bar 已实现的价格,没有引用 `t+1` 的信息,
+  `data[timestamp <= as_of_time]` 的切片规则未被违反;
+- **构成 §0 Pessimistic Default 的偏离**:§0 原文要求「Always assume the **worst-case
+  scenario** for market liquidity, **execution price**, and statistical significance」。
+  同 bar 收盘成交是执行价的**最乐观端点**(等于"在收盘那一刻同时决定并成交"),
+  而 §1 的 `AsOf` 规则本身也在暗示决策发生在 bar 结束后。三个姊妹引擎一致选下一根
+  开盘,cycle 单独选同 bar 收盘 —— 二者在跨引擎比较时会给出系统性偏向 cycle 的数字。
+
+### 3 · 为什么不擅自改
+
+改成交口径(同 bar 收盘 → 下一根开盘)**会改变 cycle 的全部已发布结果**,属结果变更,
+与"缺 bar 按成本价盯市""非交易日 asof 出空宇宙"这类**明确的契约违反**不同类。
+按本轮一贯的处置(**契约违反就修;结果变更先登记**),本条登记为待决策。
+
+待决策的具体问题:**cycle 是否改为与其余三引擎一致的"下一根 bar 开盘"成交?**
+(若改,需要重跑 cycle 的全部基线并与旧结果对照;若保留,应在产物里显式声明
+`execution_convention = "same_bar_close"`,以免跨引擎比较时被误读。)
+
+> 注:**我未在本次改动中给 cycle 的产物加 `execution_convention` 字段。** 理由:
+> 口径尚未决定,先落一个字段等于把**现状**固化成"声明过的正确值"。等 §3 的决策落地后
+> 再一并加,那时它声明的才是**应当**的口径。(这与本审计反复强调的"声明必须可兑现"
+> 是同一条 —— 现在加,只能兑现一个我不认为是终态的约定。)
+
+### 4 · 双向验证(可复核的判据)
+
+本条的证据是**四个引擎的信号 bar 与成交价来源的对照表**(§1),可用
+`grep -n "sigs_by_day.get(cal\[t - 1\]" chase_up/portfolio.py uptrend_pullback/portfolio.py`
+与 `grep -n "try_enter" cycle_price_action/backtrader_engine.py` 一次性重现;
+`tests/test_limit_up_guard_cross_engine.py` 已锁四引擎的涨停守卫同源,
+但**尚未**有一条守卫锁"成交时点约定"—— 因为约定未定,锁什么都是错的。
