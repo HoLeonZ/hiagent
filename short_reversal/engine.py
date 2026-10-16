@@ -244,6 +244,7 @@ def run_backtest_v3(
         # v58 (2026-10-13): 多仓并行。max_positions > 1 时每笔 sizing 改为
         # free_cash / max_positions, 维持 all-in 总仓位。默认 1 保 v50 兼容。
         max_positions=cfg.get("max_positions", 1),
+        fill_order=cfg.get("fill_order", "code"),
         position_fraction=cfg.get("position_fraction", 1.0),
         pct_chg_low=cfg.get("pct_chg_low", 0.02),
         pct_chg_high=cfg.get("pct_chg_high", 0.06),

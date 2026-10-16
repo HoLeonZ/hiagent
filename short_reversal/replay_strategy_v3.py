@@ -245,6 +245,12 @@ class Phase3V3Strategy(bt.Strategy):
         # 注意: 此改动会改变 _fill_pending_entries 的 sizing 公式,
         # 通过 self.p.max_positions 路由, 其它模块不变。
         max_positions=1,
+        # v58_mp (2026-10-16, CLAUDE.md §2): 满仓时的成交顺序。
+        # 'code' (默认) = feed 顺序 = thscode 字典序 —— 历史行为, 与信号强度无关,
+        #   属 §2「predefined tie-breaker」的弱读法。
+        # 'slope'      = 按 conviction 降序 (MA20 斜率越负越先), §2 的严格读法。
+        # 默认保持 'code' 以免静默改变既有 preset 的结果; 新候选显式开启。
+        fill_order="code",
         # v65 (2026-10-13): 浮动止损 (trailing stop, short-side, opt-in)。
         # 假设: 固定 SL 在入场时锁定风险上界, 但不锁定利润。死猫跳反弹后
         # 继续下跌时, 若能把止损位随最低价 trailing 下移, 可锁住已获浮盈
@@ -371,7 +377,7 @@ class Phase3V3Strategy(bt.Strategy):
         # code -> {'entry_price', 'size', 'entry_bar'}
         self._holds: dict[str, dict] = {}
         # code -> True（T+1 待成交）
-        self.pending_entries: dict[str, bool] = {}
+        self.pending_entries: dict[str, float] = {}
         # 已成交 trades
         self.trades: list[dict] = []
         # 风险指标
@@ -468,7 +474,9 @@ class Phase3V3Strategy(bt.Strategy):
                 self._check_exit(d)
             elif code not in self.pending_entries:
                 if regime_ok and self._all_conditions(d):
-                    self.pending_entries[code] = True
+                    # §2: 记录 statistical conviction, 供满仓时排序成交。
+                    # 存 float 而不是 True —— 排序键。
+                    self.pending_entries[code] = self._conviction(d)
 
         # 4) 更新回撤（NAV-based：cash + 持仓 mark-to-market 浮盈）
         nav = self._nav()
@@ -548,6 +556,37 @@ class Phase3V3Strategy(bt.Strategy):
 
     # ------------------------------------------------------------- entry/exit
 
+    def _conviction(self, d) -> float:
+        """§2 statistical conviction —— 满仓时的成交排序键。
+
+        取 MA20 N 日回归斜率的**相反数**: 越陡的下降趋势, 与该策略的论点
+        (「确认下降趋势里的反弹终将失败」) 越贴合, conviction 越高。
+        指标不可得 / NaN 时退化为 0.0 —— 该票退到同级, 由代码字典序兜底,
+        不引入未定义顺序。本函数不做任何取舍判断, 只给排序提供一个显式、
+        确定、可复述的度量 (§2「sort them by statistical conviction」)。
+        """
+        indi = self.indi.get(d._name, {})
+        slope = indi.get("ma20_slope_5d")
+        if slope is None:
+            return 0.0
+        v = float(slope[0])
+        return 0.0 if np.isnan(v) else -v
+
+    def _fill_order(self) -> list:
+        """返回本 bar 的成交尝试顺序。
+
+        fill_order='code' (默认, 历史行为): 按 feed 顺序 = thscode 字典序。
+        这是「预定义 tie-breaker」的弱形式 —— 与信号强度无关。
+        fill_order='slope': 按 conviction 降序 (§2 的严格读法), 平分按 thscode。
+        默认保持 'code' 以免静默改变既有 preset 的结果; 新候选显式开启。
+        """
+        eligible = [d for d in self.datas if d._name in self.pending_entries]
+        if self.p.fill_order != "slope":
+            return eligible
+        return sorted(
+            eligible, key=lambda d: (-self.pending_entries[d._name], d._name)
+        )
+
     def _fill_pending_entries(self) -> None:
         """T+1 日 open 成交。
 
@@ -579,10 +618,8 @@ class Phase3V3Strategy(bt.Strategy):
             pending = self.pending_entries
             pending.clear()
             return
-        for d in self.datas:
+        for d in self._fill_order():
             code = d._name
-            if code not in self.pending_entries:
-                continue
             # Round 23 (2026-09-28, CLAUDE.md §3/§4): LIMIT-DOWN guard。
             # 做空 entry = sell, 跌停日卖单无法成交 (买盘消失)。
             # prev_close = d.close[-1] (前一根 K 线的 close)。
