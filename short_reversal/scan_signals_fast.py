@@ -8,9 +8,25 @@
   C 涨跌幅: pct_chg ∈ [pct_chg_low, pct_chg_high]
   D MACD:   dif < 0 AND dea < 0 AND |bar| < |prev_bar|
 
+⚠️ §6/§0 (audit 2026-10-16) —— **本器不是引擎的等价实现**,只有满足下列全部条件的
+preset 才能走这条路,否则 `_scan_preset` 会 fail-fast 拒答:
+
+  1. 未启用 F/G/H/I/J/K 与 market-breadth 这些**引擎会评估、本器不实现**的入场开关
+     （其中 J 与 breadth 还是路径依赖的，单行扫描**原理上**无法复现）；
+  2. 未声明与 `BAKED_IN_PARAMS` 不同的参数 —— 本器把 E/A/B/C/D 的参数**写死在
+     代码里**（`_filter_signals` 里直接写 3e7/3e8/3/10/0.6），不读 preset 的同名声明；
+  3. 不是多腿集成的 preset（本器不评估 `ensemble_substrategies`）。
+
+实测 75 个 preset 里有 **71 个**不满足（37 个启用未实现开关；70 个 `d_mode`、
+70 个 `below_ratio_60`、70 个 `close_ma60_buffer`、2 个 `up_streak_*`、2 个 `liq_*`、
+1 个 `a_condition` 与写死值不同）。此前的 docstring 曾宣称本器与策略**完全等价**
+—— 那对**实时交易**工具是危险的：多报的信号就是会去下单的票。（这句夸大的
+等价声明已删；保留此处说明是为了让后来者知道**它曾经存在过**。）
+需要其它 preset 时请用 `python -m short_reversal.scan_signals`（构造真实
+`Phase3V3Strategy`，与回测同一条条件路径）。
+
 回测引擎 (run_backtest_v3) 是 per-stock cerebro 单跑,这里向量化版本
 只对 T 日 close 这一行做 5 条件,所以不重复 warmup 逻辑、也不进出场。
-结果与策略 100% 等价(LAHEAD-001 信号层 vs 执行层已经解耦)。
 
 §6 architecture (Tick 40, 2026-09-28): panel loading moved to Control Plane
 helper `short_reversal._panel_loader`. _scan_preset / _filter_signals are
@@ -133,6 +149,75 @@ def _filter_signals(df: pd.DataFrame, preset: dict, signal_date: str) -> pd.Data
     return out
 
 
+class FastScannerDivergence(ValueError):
+    """快速扫描器对**这个** preset 的结论与引擎不等价 —— 不得出结果。"""
+
+
+#: 引擎 `_all_conditions` 会评估、而本器（单行向量化）**未实现**的入场开关。
+#: 其中 `sl_cooldown_days`(J) 与 `require_market_breadth_bear` 还是**路径依赖**的
+#: （取决于运行历史 / 当日全市场宽度），单行扫描**原理上**无法复现。
+UNSUPPORTED_ENTRY_SWITCHES = (
+    "require_ma20_slope_neg",   # F
+    "require_weak_1m",          # G
+    "require_weak_3m",
+    "require_weak_6m",
+    "require_amount_dryup",     # H
+    "require_rsi_oversold",     # I
+    "require_intraday_reversal",  # K
+    "sl_cooldown_days",         # J（路径依赖）
+    "require_market_breadth_bear",  # 路径依赖
+)
+
+#: 本器把 E/A/B/C/D 五条件的**参数写死在代码里**（见 `_filter_signals`），
+#: 并不读 preset 的同名声明。只要 preset 声明了不同的值，两边的条件就不同。
+BAKED_IN_PARAMS = {
+    "liq_low": 3e7,
+    "liq_high": 3e8,
+    "up_streak_low": 3,
+    "up_streak_high": 10,
+    "below_ratio_60": 0.6,
+    "close_ma60_buffer": 0.0,
+    "d_mode": "strict",
+    "a_condition": "default",
+}
+
+
+def fast_path_divergences(cfg: dict) -> list[str]:
+    """列出本器**无法忠实复现**这个 preset 的原因（空列表 = 结论可信）。"""
+    reasons: list[str] = []
+    for key in UNSUPPORTED_ENTRY_SWITCHES:
+        if cfg.get(key) not in (None, False, 0, 0.0):
+            reasons.append(f"启用了本器未实现的入场开关 {key}={cfg[key]!r}")
+    for key, baked in BAKED_IN_PARAMS.items():
+        declared = cfg.get(key, baked)
+        if declared != baked:
+            reasons.append(f"{key} 声明为 {declared!r}，而本器写死 {baked!r}")
+    if "ensemble_substrategies" in cfg:
+        reasons.append("该 preset 是多腿集成（ensemble），本器不评估子策略")
+    return reasons
+
+
+def _assert_fast_path_equivalent(cfg: dict, preset_name: str) -> None:
+    """§6/§0 (audit 2026-10-16): 不等价即 fail-fast，不静默给出偏的信号集。
+
+    本器是 E/A/B/C/D 的**第二处实现**，且把参数写死。实测 75 个 preset 里
+    **71 个**两者结论不一致（37 个启用未实现开关；71 个有参数被写死：
+    `d_mode` 70、`below_ratio_60` 70、`close_ma60_buffer` 70、`up_streak_*` 2、
+    `liq_*` 2、`a_condition` 1）—— 而模块 docstring 当时宣称"结果与策略 100% 等价"。
+    对**实时交易**工具而言，多报的信号就是要下单的票，方向错误比不出结果更糟。
+    """
+    reasons = fast_path_divergences(cfg)
+    if reasons:
+        raise FastScannerDivergence(
+            f"§6 fail-fast: preset {preset_name!r} 的结论**不能**由快速扫描器给出，"
+            f"它与引擎条件不等价：\n  - " + "\n  - ".join(reasons) + "\n"
+            f"本器只做 E/A/B/C/D 且参数写死（见 _filter_signals），引擎还会评估 "
+            f"F/G/H/I/J/K 与 preset 声明的参数。请改用 `python -m "
+            f"short_reversal.scan_signals`（它直接构造 Phase3V3Strategy，与回测走"
+            f"同一条条件路径，只是慢）。"
+        )
+
+
 def _scan_preset(
     preset_name: str,
     signal_date: str,
@@ -147,6 +232,7 @@ def _scan_preset(
     pd.DataFrame in. This function performs only compute + filter, no IO.
     """
     cfg = get_preset(preset_name)
+    _assert_fast_path_equivalent(cfg, preset_name)
     if panel.empty:
         return pd.DataFrame(), []
 
