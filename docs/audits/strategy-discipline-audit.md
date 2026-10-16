@@ -1877,7 +1877,7 @@ P3 轮已改为真断言,原语句留在注释里作记录。顺带核对了另�
 | 恒真断言 | **早已修**;另 5 条经核对为真不变量 |
 | WFV 单 asof | **不是缺陷**(保守方向,已文档化) |
 | 信号层子进程 | **已闭合**(附二十九:定性不成立 + 静默放行已修) |
-| 滑点侧未知量 | **仍开**(§8 的 7b) |
+| 滑点侧未知量 | **已修**(附三十:成交量未知时参与率改取上界 1.0;潜伏缺陷,100 个 preset 全未开启该路径 ⇒ 零漂移) |
 | Phase-2 TP-first、限价守卫判在错误 bar(§4 MEDIUM×4) | **未复核** |
 
 还剩两族没逐条看:§4 的 Phase-2 语义分歧,与 §6 的"条件被第二处复制实现"。
@@ -2434,3 +2434,66 @@ CLI 不在 / 超时 / 返回非 JSON / `ok=false` / `thscode` 不匹配时,`name
 **并为 fail-fast 配了逃生门守卫**:`test_both_entry_points_offer_an_explicit_opt_out`
 断言两个入口都有 `--include-st` —— 没有逃生门的 fail-fast 会被运维用"改代码绕过"的方式
 绕开,那时守卫就真的失效了。
+
+---
+
+## 附三十 —— §8 #7b「滑点侧未知量」:**成立**,已修(潜伏缺陷,实测零漂移)
+
+### 1 · 缺陷
+
+三个引擎算滑点参与率时写着同一条分支:
+
+```python
+if bar_vol > 0:  participation = min(1.0, size_pre_cap / bar_vol)
+else:            participation = 0.0        # ← NaN(面板无 volume 列)也走这里
+```
+
+而 `core.dual_price.effective_slippage` 的**唯一口径**是
+
+    slip_eff = max(static_slippage, atr_pct × participation × scale)
+
+取 `participation = 0.0` ⇒ `slip_eff = static_slippage`(本仓库多为 0)⇒
+**恰好在流动性未知处把滑点归零**。方向与 §0(「Always assume the worst-case
+scenario for market liquidity, **execution price**」/「Do not silently bypass」)
+相反:拿不到成交量的时候,引擎反而假设自己毫无市场冲击。
+
+可达路径只有一条:**面板无 `volume` 列**(LEFT JOIN miss ⇒ NaN,量比闸门对 NaN 跳过)。
+零成交(`bar_vol <= 0`)在量比闸门已被拒单,到不了这一行 —— 修附二十时确认过。
+
+| 引擎 | 站点 |
+|---|---|
+| `chase_up/portfolio.py` | 第 656 行(旧) |
+| `uptrend_pullback/portfolio.py` | 第 591 行(旧) |
+| `short_reversal/replay_strategy_v3.py` | 第 824 行(旧) |
+
+### 2 · 修法
+
+`participation = 1.0` —— 模型定义域的上界(假设自己吃掉整根 bar 的成交量),
+即该模型能表达的最坏冲击。
+
+### 3 · **这是一条潜伏缺陷**(据实说明,不夸大)
+
+`atr_slip_scale` 是 opt-in,而实测 **100 个 preset 全部为 0**(chase_up 0/22、
+uptrend_pullback 0/3、short_reversal 0/75)⇒ 整条 ATR 滑点路径在当前配置下
+**不可达**,本次修复**零漂移**。
+
+仍然要修的理由:§8#2 登记的「ATR 滑点取值」是一个**待决事项**。一旦有人按 §4 的
+要求把 `atr_slip_scale` 打开(§4 原文:「Execution slippage MUST be modeled
+dynamically as a function of the asset's current ATR and the order's participation
+rate」),他会在**流动性未知**的地方拿到零滑点 —— 这是给那个决定预埋的坑。
+**先填坑,再谈取值**,那个决定才是安全的。
+
+> 顺带记录一条本轮的元观察:`atr_slip_scale` 全为 0 这件事本身说明 —— §4 的
+> 动态滑点条款目前**在所有已发布 preset 上都未被启用**。这不是代码缺陷(机制已
+> 单源且缺声明即 fail-fast),而是 §8#2 那个待决事项的另一面:机制就绪,**取值待定**。
+
+### 4 · 双向验证
+
+三处一并还原为 `participation = 0.0` ⇒
+`tests/test_unknown_volume_slippage_is_conservative.py` **4 red / 1 green**
+(red:行为层 + 三条结构层;green:成交量充裕的正路径,本就不该受影响);恢复后 5 全绿。
+
+行为层断言直接读成交价:`slip_eff = 0.02 × 1.0 × 0.5 = 1%` ⇒ 成交价必须等于
+`open × 1.01`,且**不得**等于 `open`(后者正是 participation=0 的结果)。
+夹具刻意用 `equal` sizing + 2 个 slot:all-in 时 1% 滑点会把订单顶出 `free_cash`
+而被现金闸门拒单 —— 那是另一条**正确**行为,却会掩盖本用例。
