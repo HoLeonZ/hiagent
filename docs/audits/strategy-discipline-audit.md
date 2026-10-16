@@ -648,6 +648,7 @@ for path in paths:
 | `9992f6e` | **`tools/` 面查完(此前 2/5)**:三处干净(调规范引擎、无硬编码路径、只写 gitignored 目录);但 `run_all_backtests_html.py`(710 行零测试)**把 cycle 的「无法定义」换成 0.0 并带入跨策略排名**、**按 Sharpe 跨引擎排名**(附十一那条)、以及**守卫实测发现的 `width:nan%` 泄漏进 CSS** | 保持 `None`(渲染为「—」且退出排名);`sharpe_kind` 随产物发布 + 写明不可比;加 finite 保护;该工具补 **8 条**守卫(双向验证);并**更正我自己上一轮对 tools 的假阳性死 preset 扫描**;附十四 |
 | `e081a48` | **`dna_data/` 面查完(此前 0/3)**:两个 loader 的 SQL 有因果上界 ✓、无 §1 禁用函数 ✓;但 `dual_price_resolver.execution_open` 的回退链是 `("raw_open","adj_open","open")` —— **执行价缺失时静默变成复权价**,与**同文件两个兄弟函数**注释里写明的「skip the OTHER family」自相矛盾。另:**§1 守卫的 `SCAN_DIRS` 漏掉了 `dna_data` 与 `tools`** —— 而 `dna_data` 是 panel 的生产者 | 回退链改 `("open",)`(与 `execution_close` 对称),缺 raw 即 fail-fast;扫描面补上两个目录(`sql/` 因 AST 限制另行登记);两组守卫双向验证(植入 `bfill` / 还原旧回退链都正确失败);附十五 |
 | `1f30818` | **修复审计 §3.2 HIGH**:`uptrend_pullback/iter_reverse.py` 做默认 **100 次** Monte-Carlo 搜索、排完 TOP-K,却**无 DSR / Bonferroni / n_trials** —— 违反 §5 Penalty Metrics;而**姊妹脚本 `sweep_v33_long.py` 本来就有**。另纠正审计表述:它用的是 22 个滚动窗口,不是"同一窗口" | 量化**已做过的选择**(`observed`=被选中配置的 Sharpe;`n_trials`=**实际评分**的配置数;`n_returns`=21/月,取自仓库既有 126/6 口径)+ 显式 **in-sample** 警告;6 条守卫,**含一条把我自己写空转的第一版守卫修好**的过程;附十六 |
+| `a3c1f43` | **`chase_up/sweep.py` / `sweep_all.py`**:在**单一窗口**上选优并报 DSR,却**不声明这是样本内选择**(而仓库已有滚动窗口版本 `wf_sweep_all.py`,读者没理由当它是 OOS)。核对确认两处**不是**缺陷:`max/n_trials` 成对 ✓、`n_returns=252` 对 12 个月窗口 = `21×12` ✓ | 两脚本各加 in-sample 声明并**指名**滚动窗口版本;守卫含"**max 与 n_trials 必须成对**"的回归项 + 行为项(桩化后断言警示真的被打印,产物写 `tmp_path`);双向验证;附十七 |
 
 **测试层净效果**(失败集合逐条 `diff`,非仅比数量):
 
@@ -684,13 +685,13 @@ for path in paths:
 7. **§3 公司行为**:配股/缩股未建模(全库 1 例),`apply_corporate_action` 已显式告警。
 8. ~~§7 源码内嵌业绩数字清理~~ → **已完成(`5c731cd`)**;~~`chase_up` 金标准基线仍红~~ → **已修复(`e063c43`)**;~~cycle 无成交列表基线~~ → **已补(`4cbc66c`)**;~~审计自认的六个未覆盖面~~ → **已查证(附七)**。
 
-**当前测试状态**(截至 `1f30818`)——**三种条件都跑过**(§6 的验收条件就是 fresh clone 的条件):
+**当前测试状态**(截至 `a3c1f43`)——**三种条件都跑过**(§6 的验收条件就是 fresh clone 的条件):
 
 | 条件 | 结果 |
 |---|---|
-| 有本机行情库 | 1029 passed / 30 skipped / **0 failed** |
-| 无库(路径不存在) | 985 passed / 74 skipped / **0 failed / 0 errors** |
-| 无库(0 字节占位) | 985 passed / 74 skipped / **0 failed / 0 errors** |
+| 有本机行情库 | 1035 passed / 30 skipped / **0 failed** |
+| 无库(路径不存在) | 991 passed / 74 skipped / **0 failed / 0 errors** |
+| 无库(0 字节占位) | 991 passed / 74 skipped / **0 failed / 0 errors** |
 
 基线 `b597d0c` 为 failed 54 / passed 796 / errors 3。改动全程逐条 diff 失败集合,**新增失败 0**。
 30 条有库 skip = 22 条既有的 + 8 条本轮登记(产物边界 7 + cycle 慢 golden 1),全部带
@@ -1530,4 +1531,59 @@ portfolio physical cash mark-to-market"),又与**同一文件里两个兄弟函�
 **检查器不会自己报错 —— 它只会安静地通过。** 一条守卫必须先能"在错误实现上失败",
 才有资格说"在正确实现上通过"。本轮所有新增守卫都做了这一步双向验证;
 而这一条恰恰是**在第一版漏做了这一步之后才发现**的。
+
+---
+
+## 附十七:chase_up 的两个单窗选优脚本 —— 以及"这次我先算再报"
+
+`chase_up/sweep.py` 与 `chase_up/sweep_all.py` 都在**单一窗口**
+(`--start 2025-09-19 → --end 2026-09-19`)上给一批配置排序并报 DSR。
+
+### 先记它们**做对了**的部分(经核对,**不是**缺陷)
+
+- `observed = max(sharpes)` 配 `n_trials = len(sharpes)` —— **max 取 k 项、按 k 折减** ✓
+  同一次选择(附十三/十四/十六同一条原则);
+- `n_returns = 252` —— **核对后确认不是缺陷**:对 **12 个月**窗口而言它等于 `21 × 12`,
+  与 walk-forward 家族的既有口径(6 个月 = 126)**一致**。
+
+第二条值得单独说明:上一轮我在 `tools/` 上做过一次**假阳性**(把 `chase_up`/`v1` 当成
+死 preset)。所以这一轮看到 `252` 时,先算了 `21 × 12 = 252` 才下结论 ——
+**"看起来像缺陷"与"是缺陷"之间隔着一次核对**,而误报的代价是把人引去修没坏的地方。
+
+### 缺的那一步:选优是**样本内**的,而输出里只字未提
+
+§5 要求 "Optimization logic must enforce Walk-Forward Validation (WFV) with strict
+out-of-sample (OOS) testing windows"。DSR 量化的是「从 k 个配置里挑最好」带来的虚高,
+**不能替代**样本外验证 —— 而本仓库**已经有**滚动窗口版本(`chase_up/wf_sweep_all.py`):
+
+> 读者**没有任何理由**把这个单窗榜当成 OOS 结论 —— 但脚本不告诉他这一点。
+
+修:两个脚本在 DSR 之后各打印一段 **in-sample 声明**(写明"本榜是在单一窗口上从 N 个
+配置里选出的"),并**指名**滚动窗口版本与"在未参与选择的窗口上复跑(§5 WFV)"。
+
+### 守卫(6 条,双向验证)
+
+- 两个脚本**都必须**声明 in-sample,**都必须**指向 `wf_sweep_all`;
+- **回归守卫**:`observed = max(sharpes)` 与 `n_trials=len(sharpes)` 必须**成对** ——
+  只改一半就会退化成附十三那种"max 取 N、按 M 折减"的不匹配;
+- **行为守卫**(不只看源码):把预设表与回测桩化,断言警示**真的被打印**。
+  测试产物写进 pytest 的 `tmp_path` —— 测试不得往仓库树里落文件(§7 精神)。
+
+反向验证:移除 `sweep.py` 的披露后,两条对应用例正确失败。
+
+### §5 研究层的覆盖面小结
+
+至此已逐行核对的研究脚本:**25 个 sweep/wf/grid + `iter_reverse` + 这 3 个 chase_up 脚本**。
+修掉的是四类:
+
+| 类别 | 例 |
+|---|---|
+| 分子与分母不是同一次选择 | 14 个 WF 脚本、cycle 的 sweep、`iter_reverse` |
+| 单位错(收益率当 Sharpe) | `chase_up/wf_sweep_all.py` |
+| 完全缺惩罚指标 | `iter_reverse.py` |
+| 选优是样本内却不声明 | 本节两个、`iter_reverse` |
+
+**仍未闭合**(已在各附录登记):`cycle` 的 `n_comparisons` 需迭代记录、
+4 个脚本引用已删除的 preset、以及原文点名的"窗口跨越已声明的 holdout"
+—— 最后这条**需要使用者确认 holdout 边界**才能判定。
 
