@@ -2011,6 +2011,54 @@ PRESETS: dict[str, dict] = {
         "up_streak_low": 1,
         "liq_high": 1000000000.0,
     },
+    # v73_trailing (2026-10-17): v72 + 浮动止损 2% (激活阈值 2%)。
+    #
+    # 由来: 全 preset 库在当前引擎下重扫时, 逐条查"哪些**机制**从未在新配置上试过"。
+    # `trailing_stop_pct` 是 v65 (2026-10-13) 引入的浮动止损, 当年被判 "WFV-failed"
+    # —— 但那次评估与 v58 的多仓判决同期, 都在容量闸门有缺陷、且出口参数
+    # (tp 0.08 / d_mode converge_strict) 尚未修正的配置下做的。
+    #
+    # 五个窗口 (W2 / IND / IS1 / IS2 + 全新 holdout 2019-10-01..2021-09-30):
+    #   CAGR  : 5/5 更高 (幅度大)
+    #   Sharpe: 5/5 更高
+    #   Calmar: 4/5 更高 (幅度 +24% ~ +70%), 仅 holdout 上更低
+    #   MaxDD : 2/5 更低 (其余三处略高)
+    # ⇒ 本次挖掘里幅度最大、覆盖面最广的一次改进。
+    # `trailing_stop_pct=0.03` 在 W2 上回落至基线水平 (Calmar 48.6) ⇒ 0.02 是拐点。
+    #
+    # 机理: 该策略的钱来自 TP 命中 (18.6% 的交易贡献 86% 的盈亏), 且 72.8% 的成交
+    # 以止损出场、止损腿本身几乎免费。浮动止损在**已经浮盈**之后把出场位从固定
+    # 止损收紧为"最低价 × (1+2%)", 即把右尾里"先赚后吐"的那部分锁住 —— 它动的
+    # 正是收益的主要来源, 而不是风控。
+    #
+    # §5 n_comparisons = 109 (= 95 + 6 个库重扫 + 3 个 W2 探针 + 5 个跨窗口)
+    # 本节不记数字 (§7)。
+    "v73_trailing": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 109,
+        "position_sizing": "all_in",
+        "max_positions": 4,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.06,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.15,
+        "d_mode": "strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "ma20_slope_period": 5,
+        "up_streak_low": 1,
+        "liq_high": 1000000000.0,
+        "trailing_stop_pct": 0.02,
+        "trailing_activation_pct": 0.02,
+    },
 }
 
 
