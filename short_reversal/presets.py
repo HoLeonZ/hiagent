@@ -1919,6 +1919,54 @@ PRESETS: dict[str, dict] = {
         "up_streak_low": 1,
         "liq_high": 1000000000.0,
     },
+    # v71_dmode_strict (2026-10-17): v70 + d_mode converge_strict → strict。
+    #
+    # 由来: 逐个查生效条件的最后一站 —— `d_mode` 是仅剩的一条**从未被单变量松绑过**
+    # 的收紧型条件。三个取值试完:
+    #   converge_strict (旧, = v70): |bar| < |prev_bar| × 0.5
+    #   d_only          (最松)     : 只要 DIF < 0
+    #   strict          (中间)     : DIF<0 & DEA<0 & |bar| < |prev_bar|
+    #
+    # 五个窗口 (W2 / IND / IS1 / IS2 + 全新 holdout 2019-10-01..2021-09-30):
+    #   Calmar: strict **5/5 全部更高**, 且幅度大 (holdout 上高出一半)
+    #   MaxDD : strict **5/5 更低**
+    #   CAGR  : 3/5 更高; Sharpe: 3/5 更高
+    # ⇒ 本次挖掘里单项幅度最大的一处改进。
+    #
+    # 且 `d_only` 也优于 `converge_strict` ⇒ 两个方向都比旧值好, 说明错的不是
+    # "多严", 而是**具体那条 ×0.5 的收紧**。DEA<0 与柱收敛这两半仍有价值。
+    #
+    # 值得记一笔: `strict` 本来就是**引擎的默认值** —— 2026-09-21 引入
+    # `converge_strict` 作为"v36 候选"时, 是在没有跨窗口证据的情况下把一个更好的
+    # 默认值换掉了。这是"调参调坏"的一个干净实例, 而且它的判别只需要拿默认值
+    # 本身做对照 —— 代价极低, 却被跳过了十几轮。
+    #
+    # §5 n_comparisons = 86 (= 80 + 2 个 W2 取值 + 4 个跨窗口)
+    # 本节不记数字 (§7)。
+    "v71_dmode_strict": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 86,
+        "position_sizing": "all_in",
+        "max_positions": 4,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.15,
+        "d_mode": "strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "ma20_slope_period": 5,
+        "up_streak_low": 1,
+        "liq_high": 1000000000.0,
+    },
 }
 
 
