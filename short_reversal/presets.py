@@ -1828,6 +1828,51 @@ PRESETS: dict[str, dict] = {
         "up_streak_low": 1,
         "liq_high": 1000000000.0,
     },
+    # v69_liq_wide_n4 (2026-10-17): v68 + max_positions 2 → 4。
+    #
+    # 由来: v67/v68 把信号集扩大了数倍 (命中笔数大幅上升), 而**容量维度的最优点
+    # 依赖于信号集** —— v50_slope 的信号集下 Calmar 峰值在 N=4, 换到 v68 的信号集
+    # 就必须重扫, 不能沿用。重扫结果: Calmar 峰值仍落在 N=4~5, 且 N=4 明显优于
+    # v68 自带的 N=2。
+    #
+    # 五个窗口 (四个常用窗口 + 一个全新 holdout 2019-10-01..2021-09-30):
+    #   Calmar: N=4 **5/5 个窗口全部更高**, 其中四个窗口优势显著
+    #   MaxDD : N=4 **5/5 更低**
+    #   CAGR  : 2/5 更高, 3/5 略低 (差距都很小)
+    #   Sharpe: 5/5 略低 (差距都很小)
+    # 即这是一次纯粹的风险调整改进, 代价是极小的收益与 Sharpe。
+    #
+    # 方法论注记: 这一步是"换了信号集就必须重扫依赖它的维度"的直接应用。
+    # 此前本仓库把 max_positions 当成信号无关的常数, 是错的 —— 容量与信号集交互
+    # (名额饱和度 = 信号数 / 席位数), 信号集变了饱和度就变了。
+    #
+    # §5 Iterative-Tuning Accounting: n_comparisons = 64 + 8
+    #   (64 = v68 累计; 本轮 N=3/4/5 在 W2 + N=4 在 IND/IS1/IS2/HOLD + N=2 在 HOLD)
+    # 本节不记数字 (§7)。
+    "v69_liq_wide_n4": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 72,
+        "position_sizing": "all_in",
+        "max_positions": 4,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "ma20_slope_period": 5,
+        "up_streak_low": 1,
+        "liq_high": 1000000000.0,
+    },
 }
 
 
