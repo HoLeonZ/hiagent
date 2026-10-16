@@ -270,7 +270,7 @@ self.release_margin(gross_in_cost)                      # 入场本金 → free_
 
 **状态**:`b597d0c` 的 `c06ead1` 已将默认值改为 `0.05`(`replay_strategy_v3.py:196`),**该崩溃在当前 `origin/main` 上已消除**。
 
-### S2 · 不可变性守卫可被"别名"绕过,源码注释明说这是为了绕过检测器 —— **未修复**
+### S2 · 不可变性守卫可被"别名"绕过,源码注释明说这是为了绕过检测器 —— **已修复(附二十八)**
 
 `short_reversal/replay_strategy_v3.py:574-580`:
 
@@ -290,7 +290,7 @@ pending.clear()
 
 **修复**:守卫改为**运行时**断言,或 AST 层面禁止"取到可变属性后再调用破坏性方法";`.clear()`/`.pop()` 改为重建新集合(符合 §0 append-only)。
 
-### S3 · 守卫静默跳过不存在的文件,覆盖是假的 —— **未修复**
+### S3 · 守卫静默跳过不存在的文件,覆盖是假的 —— **已修复(附二十八)**
 
 `tests/test_immutable_state_4engine.py:104-105`:
 
@@ -2300,3 +2300,77 @@ chase/uptrend 结构守卫);恢复后 7 全绿。行为层在**缺陷态**下确
 (结构守卫只能发现"闸门被删",发现不了"闸门写错了"例如误用常数上限)。
 若日后觉得太慢,可缩窗口,但**必须先在缺陷态验证缩短后的窗口仍会红**,否则守卫
 会退化成永远绿。
+
+---
+
+## 附二十八 —— §4 的两条"守卫自身"遗留项(S2 / S3):**均成立,均已修**
+
+§4 里唯二标着**未修复**的条目,本轮逐行核实后两条都成立并已修。它们不在引擎里,
+而在**验证层**:这一类缺陷的代价比引擎缺陷更高 —— 它让其余所有"绿"失去可验证性。
+
+### S3 · 扫描器静默跳过不存在的文件 ⇒ 覆盖率是假的
+
+实测确认(本轮,当前代码):
+
+- `PRODUCTION_FILES["short_reversal"]` 列了 `short_reversal/portfolio.py` ——
+  该文件**不存在**(本策略的引擎是 `replay_strategy_v3.py`);`ls` 直接 not found;
+- 而扫描器写的是 `if not path.exists(): continue`(静默跳过)⇒
+  **"清单里有它"与"真的扫了它"不可区分**,不可变性守卫对 short_reversal 的覆盖
+  比它宣称的少一格,而且任何一次文件改名/笔误都会**悄无声息地**再削掉一格;
+- 同一函数里还有第二处静默降级:`except (SyntaxError, OSError, UnicodeDecodeError): continue`
+  —— 一个解析不了的文件会被当作"无违规"。
+
+这正是 §0 Fail-Fast 的直接违反,也是本次审计反复出现的"缺口靠沉默存在"。
+
+**修**:清单只列真实存在的文件;缺失即抛、解析失败即抛(不再降级);
+新增 `test_production_file_list_has_no_dead_entries` 把"清单即覆盖声明"这件事钉住。
+
+### S2 · 不可变性守卫可被一行别名绕过,且**源码注释明说这是为了绕过它**
+
+实测确认(当前代码,`short_reversal/replay_strategy_v3.py`):
+
+```python
+# Local alias preserves runtime semantics while satisfying AST detector in
+# tests/test_immutable_state_4engine.py.
+holds = self._holds
+pos = holds.pop(code)
+```
+
+1. 扫描器只认 `self.<attr>.<method>(...)`,所以上面这一行**完全不报**;
+2. 注释**直接承认**规避意图 —— 这让"该测试通过"不再具备任何含义;
+3. 而且这种写法会**自我传播**:我本轮新加的容量闸门里,我照着本地惯例也写了
+   `pending = self.pending_entries`(共 7 处),而不是写成直调。一个被承认的
+   绕行写法,会被后来者当成"本仓库的写法"继续复制。
+
+**修(两半,缺一不可)**:
+
+- **守卫侧**:扫描器新增 `_aliases_to_self_attrs()`,把 `alias = self.<attr>`
+  解析回来 —— 于是 `<alias>.<method>()` 与 `self.<attr>.<method>()` 受**同一条**
+  豁免规则约束。豁免按**属性**判定,不再按**书写形式**判定。
+- **代码侧**:不再绕。`_holds` 的移除改为**重建**
+  (`self._holds = {c: p for c, p in self._holds.items() if c != code}`)—— 语法本身
+  即合规,也不再有需要解释的注释;7 处 `pending_entries` 别名全部改回直调
+  (`pending_entries` 早已由 `TRANSIENT_CONTROL_STATE` 显式豁免,别名**本来就没有必要**,
+  它只是旧限制的遗迹),"为满足检测器"的注释全部删除。
+
+### 顺带修正:一处**注释与代码相矛盾**
+
+`_fill_pending_entries` 的 NAV 闸门分支,原注释写「拒绝所有 pending entries
+(**保留在 pending 让下一根 bar 重新评估**)」,而紧接着的代码是 `pending.clear()`。
+按 §2(超容/被拒的信号**立即丢弃**,不得排队到 T+1),**清空**才是正确行为 ——
+故是注释错、代码对。已按实际语义改写(这类"注释说 A、代码做 B"是下一次误修改的种子)。
+
+### 双向验证
+
+| 方向 | 手段 | 结果 |
+|---|---|---|
+| 守卫**失明** | 把旧扫描器(静默跳过 + 不解析别名)还原 | 3 red(`detects_aliased_mutation` / `fails_fast_on_missing_file` / `fails_fast_on_unparseable_file`)、其余 8 绿 ✓ |
+| 代码**确实违规** | 先加固扫描器、再跑(改代码之前) | 当场点名 `('replay_strategy_v3.py', 1090, 'holds→self._holds', 'pop')` —— 即旧写法在**会解析别名的**扫描器下必然红 ✓ |
+
+### 仍未覆盖的边界(据实声明,不假装完整)
+
+扫描器只查**破坏性方法调用**(`pop`/`clear`/`update`/`discard`/`remove`);
+`self.<attr>[k] = v` 这类**下标赋值**不在射程内(`self._holds[code] = {...}` 即属此类)。
+这是**范围声明**,不是遗漏 —— 各用例 docstring 均据实如此表述,且
+`_scan_self_mutation` 的 docstring 里也写明了这条边界。若要覆盖下标赋值,
+需要另一套判据(否则会把每处合法的字典更新都判成违规),留待后续。
