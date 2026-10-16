@@ -245,6 +245,11 @@ class Phase3V3Strategy(bt.Strategy):
         # 注意: 此改动会改变 _fill_pending_entries 的 sizing 公式,
         # 通过 self.p.max_positions 路由, 其它模块不变。
         max_positions=1,
+        # L 条件 (2026-10-16): 收盘价相对当日 VWAP 的位置。opt-in, 默认关闭。
+        # close_vwap_buffer: 允许 close 高出 VWAP 的比例 (0.0 = 必须不高于 VWAP;
+        # 负值 = 必须低于 VWAP 若干)。
+        require_close_below_vwap=False,
+        close_vwap_buffer=0.0,
         # v58_mp (2026-10-16, CLAUDE.md §2): 满仓时的成交顺序。
         # 'code' (默认) = feed 顺序 = thscode 字典序 —— 历史行为, 与信号强度无关,
         #   属 §2「predefined tie-breaker」的弱读法。
@@ -1069,6 +1074,25 @@ class Phase3V3Strategy(bt.Strategy):
             if close_pos < self.p.intraday_reversal_threshold:
                 return False
             if self.p.intraday_reversal_require_close_above_open and close_v <= open_v:
+                return False
+
+        # L 条件 (2026-10-16): 收盘价相对当日 VWAP 的位置。
+        # 设计动机: 全仓库此前**没有任何地方用 VWAP** —— 而 amount / volume 就是
+        # 当日 VWAP (同 bar、同原始价域, 无复权错配)。做空死猫跳的核心论点是
+        # 「反弹里卖方仍占优」, 而 close < vwap 正是这条论点的直接微观结构读数:
+        # 收盘价低于当日平均成交价 ⇒ 尾盘卖压压过买盘 ⇒ 反弹更可能无以为继。
+        # 与既有条件是正交维度: F 测多日斜率, I 测多日动量, K 测日内位置 (相对
+        # 当日 high/low), L 测**当日成交均价**意义上的买卖力量对比 —— K 只看价格
+        # 区间不看量, L 只看量价对比不看区间。
+        # opt-in: require_close_below_vwap=True 才启用, 默认 False 保既有 preset 兼容。
+        if self.p.require_close_below_vwap:
+            amt_v = float(d.amount[0]) if d.amount[0] is not None else float("nan")
+            vol_v = float(d.volume[0]) if d.volume[0] is not None else float("nan")
+            # §0 Pessimistic Default: 量价缺失时 fail-closed (拒绝入场), 不得放行。
+            if not (vol_v > 0) or not (amt_v > 0) or np.isnan(amt_v) or np.isnan(vol_v):
+                return False
+            vwap_v = amt_v / vol_v
+            if close_v > vwap_v * (1.0 + self.p.close_vwap_buffer):
                 return False
 
         return True
