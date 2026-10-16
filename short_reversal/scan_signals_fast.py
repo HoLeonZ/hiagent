@@ -11,15 +11,17 @@
 ⚠️ §6/§0 (audit 2026-10-16) —— **本器不是引擎的等价实现**,只有满足下列全部条件的
 preset 才能走这条路,否则 `_scan_preset` 会 fail-fast 拒答:
 
-  1. 未启用 F/G/H/I/J/K 与 market-breadth 这些**引擎会评估、本器不实现**的入场开关
-     （其中 J 与 breadth 还是路径依赖的，单行扫描**原理上**无法复现）；
+  1. 未启用 J 与 market-breadth 这两个**路径依赖**的入场开关（单行扫描**原理上**
+     无法复现：J 取决于运行历史里的 SL 出场时点，breadth 取决于当日全市场宽度）。
+     F/G/H/I/K 已于 2026-10-17(附四十)实现：指标走 `short_reversal.indicators_bt`
+     的 pandas 对偶，且**逐值对拍** backtrader 原件、再经信号集端到端对拍；
   2. 未声明与 `BAKED_IN_PARAMS` 不同的参数 —— 本器把 E/A/B/C/D 的参数**写死在
      代码里**（`_filter_signals` 里直接写 3e7/3e8/3/10/0.6），不读 preset 的同名声明；
   3. 不是多腿集成的 preset（本器不评估 `ensemble_substrategies`）。
 
-实测 75 个 preset 里有 **71 个**不满足（37 个启用未实现开关；70 个 `d_mode`、
-70 个 `below_ratio_60`、70 个 `close_ma60_buffer`、2 个 `up_streak_*`、2 个 `liq_*`、
-1 个 `a_condition` 与写死值不同）。此前的 docstring 曾宣称本器与策略**完全等价**
+实测(2026-10-17):75 个 preset 里 **68 个可信**,余 7 个被拒 =
+J 冷静期 3 条(v57_cd_*)+ 市场宽度 1 条(v66_regime)+ ensemble 3 条。
+(历史:先前 1/75 —— 参数写死 + F–K 未实现。)此前的 docstring 曾宣称本器与策略**完全等价**
 —— 那对**实时交易**工具是危险的：多报的信号就是会去下单的票。（这句夸大的
 等价声明已删；保留此处说明是为了让后来者知道**它曾经存在过**。）
 需要其它 preset 时请用 `python -m short_reversal.scan_signals`（构造真实
@@ -44,6 +46,12 @@ import pandas as pd
 from hiagent_config import DB_PATH
 
 from short_reversal._panel_loader import load_panel_for_signal
+from short_reversal.indicators_bt import (
+    amount_ratio_pandas,
+    ma20_slope_pandas,
+    return_n_pandas,
+    rsi_pandas,
+)
 from short_reversal.presets import get_preset
 from short_reversal.universe import load_universe_asof
 
@@ -98,6 +106,18 @@ def _compute_indicators(panel: pd.DataFrame) -> pd.DataFrame:
         return pd.Series(out, index=s.index)
 
     df["up_streak"] = g["close"].transform(_streak)
+
+    # F/G/H/I 条件所需指标 —— 一律调用 `short_reversal.indicators_bt` 里的 pandas
+    # **对偶**(附四十):那批函数与引擎的 backtrader 原件做过逐值对拍
+    # (`tests/test_indicator_equivalence_pandas_vs_backtrader.py`),
+    # 不是在本文件里另抄一份定义。
+    df["ma20_slope_5d"] = g["ma20"].transform(ma20_slope_pandas)
+    for label, period in (("1m", 21), ("3m", 63), ("6m", 126)):
+        df[f"return_{label}"] = g["close"].transform(
+            lambda s, _p=period: return_n_pandas(s, _p)
+        )
+    df["amount_ratio"] = g["amount"].transform(amount_ratio_pandas)
+    df["rsi"] = g["close"].transform(rsi_pandas)
     return df
 
 
@@ -161,6 +181,39 @@ def _filter_signals(df: pd.DataFrame, preset: dict, signal_date: str) -> pd.Data
         )
 
     mask = cond_e & cond_a & cond_b & cond_c & cond_d
+
+    # F/G/H/I/K —— 与引擎 `_all_conditions` **逐条对应**(附四十)。
+    # NaN 语义一致:引擎遇 NaN 一律 `return False`;pandas 的 NaN 比较亦为 False ✓。
+    if cfg.get("require_ma20_slope_neg", False):
+        # 引擎:`if isnan(slope) or slope > threshold: return False` ⇒ 通过 ⇔ slope <= thr
+        mask &= last_g["ma20_slope_5d"] <= cfg.get("ma20_slope_threshold", 0.0)
+    for label, key, default in (
+        ("1m", "require_weak_1m", "weak_1m_threshold"),
+        ("3m", "require_weak_3m", "weak_3m_threshold"),
+        ("6m", "require_weak_6m", "weak_6m_threshold"),
+    ):
+        if cfg.get(key, False):
+            # 引擎:`if isnan(ret) or ret > thr: return False` ⇒ 通过 ⇔ ret <= thr
+            mask &= last_g[f"return_{label}"] <= cfg.get(
+                default, {"weak_1m_threshold": -0.05, "weak_3m_threshold": -0.10,
+                          "weak_6m_threshold": -0.15}[default]
+            )
+    if cfg.get("require_amount_dryup", False):
+        mask &= last_g["amount_ratio"] <= cfg.get("amount_dryup_threshold", 0.70)
+    if cfg.get("require_rsi_oversold", False):
+        # 引擎:`if isnan(rsi) or rsi >= thr: return False` ⇒ 通过 ⇔ rsi < thr(**严格**)
+        mask &= last_g["rsi"] < cfg.get("rsi_oversold_threshold", 30)
+    if cfg.get("require_intraday_reversal", False):
+        high_v, low_v = last_g["high"], last_g["low"]
+        rng = high_v - low_v
+        # 引擎:`if high <= low: return False`,再比较 close 在日内的相对位置。
+        k_ok = (rng > 0) & (
+            (last_g["close"] - low_v) / rng
+            >= cfg.get("intraday_reversal_threshold", 0.6)
+        )
+        if cfg.get("intraday_reversal_require_close_above_open", True):
+            k_ok &= last_g["close"] > last_g["open"]
+        mask &= k_ok
     out = last_g.loc[mask, ["thscode", "date", "close", "amount"]].copy()
     out = out.rename(columns={"date": "signal_date", "close": "last_close"})
     out["signal_date"] = out["signal_date"].dt.strftime("%Y-%m-%d")
@@ -172,18 +225,13 @@ class FastScannerDivergence(ValueError):
     """快速扫描器对**这个** preset 的结论与引擎不等价 —— 不得出结果。"""
 
 
-#: 引擎 `_all_conditions` 会评估、而本器（单行向量化）**未实现**的入场开关。
-#: 其中 `sl_cooldown_days`(J) 与 `require_market_breadth_bear` 还是**路径依赖**的
-#: （取决于运行历史 / 当日全市场宽度），单行扫描**原理上**无法复现。
+#: 引擎会评估、而本器**未实现**的入场开关 —— 只剩**路径依赖**的两个。
+#: 2026-10-17(附四十):F/G/H/I/K 已实现(指标走 `indicators_bt` 的 pandas 对偶,
+#: 并经逐值对拍);下面这两个**原理上**无法由单行向量化复现:
+#:   · `sl_cooldown_days`(J):取决于**运行历史**中最近一次 SL 出场的时点;
+#:   · `require_market_breadth_bear`:取决于**当日全市场**宽度。
 UNSUPPORTED_ENTRY_SWITCHES = (
-    "require_ma20_slope_neg",   # F
-    "require_weak_1m",          # G
-    "require_weak_3m",
-    "require_weak_6m",
-    "require_amount_dryup",     # H
-    "require_rsi_oversold",     # I
-    "require_intraday_reversal",  # K
-    "sl_cooldown_days",         # J（路径依赖）
+    "sl_cooldown_days",             # J(路径依赖)
     "require_market_breadth_bear",  # 路径依赖
 )
 

@@ -53,7 +53,8 @@ from short_reversal.scan_signals_fast import (  # noqa: E402
     fast_path_divergences,
 )
 
-#: 当前可信的 preset 快照(审计 2026-10-16 实测:参数化后 1 → 35)。
+#: 当前可信的 preset 快照(2026-10-17:参数化 + F/G/H/I/K 实现后 35 → 68;
+#: 余 7 个 = J 冷静期 3 条 + 市场宽度 1 条 + ensemble 3 条,均原理上不可向量化)。
 #: 它不是"期望值",而是"已知范围" —— 变更它必须是一次有意识的操作。
 KNOWN_FAITHFUL = frozenset({
     "v35_agg_pctchg_04_09",
@@ -68,6 +69,37 @@ KNOWN_FAITHFUL = frozenset({
     "v45_ratio01_buf10",
     "v46_sl_0002",
     "v50_mh6",
+    "v50_slope",
+    "v50_slope_strict",
+    "v51_weak_1m",
+    "v51_weak_3m",
+    "v51_weak_6m",
+    "v51_weak_combo",
+    "v52_dryup_05",
+    "v52_dryup_07",
+    "v52_dryup_085",
+    "v52_dryup_combo",
+    "v53_rsi_25",
+    "v53_rsi_30",
+    "v53_rsi_30_slope",
+    "v53_rsi_35",
+    "v54_sl_005",
+    "v54_sl_01",
+    "v54_tp10_sl01",
+    "v55_swap_1m",
+    "v55_swap_3m",
+    "v55_swap_6m",
+    "v55_swap_combo",
+    "v56_mh_03",
+    "v56_mh_07",
+    "v56_mh_10",
+    "v58_mp_2",
+    "v58_mp_3",
+    "v61_k",
+    "v61_kf",
+    "v65_trailing",
+    "v67_broad",
+    "v68_conviction",
     "v69_donly",
     "v69_widec",
     "v70_lowratio",
@@ -85,6 +117,8 @@ KNOWN_FAITHFUL = frozenset({
     "v76_dstrict",
     "v77_b_narrow",
     "v77_e_narrow",
+    "v78_dryup",
+    "v78_weak",
     "v80_conv",
     "v81_adj",
     "v82_buf12",
@@ -107,11 +141,17 @@ def _raises(preset: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_preset_enabling_an_unimplemented_switch_is_refused() -> None:
-    """`v50_slope` 启用 F(require_ma20_slope_neg)—— 本器不实现它。"""
-    msg = _raises("v50_slope")
-    assert "require_ma20_slope_neg" in msg
-    assert "scan_signals" in msg, "必须指明可用的替代入口"
+def test_conditions_implemented_in_this_round_are_now_supported() -> None:
+    """附四十:F/G/H/I/K 已实现 ⇒ 启用它们的 preset **不再**被拒。
+
+    此前这条断言的是"`v50_slope` 启用 F 会被拒"。F 实现之后(指标走
+    `indicators_bt` 的 pandas 对偶、并逐值对拍、再经信号集端到端对拍),该拒绝
+    正是应当消失的东西 —— 故改为钉住**新能力**,而不是删掉这条覆盖。
+    """
+    for preset in ("v50_slope", "v51_weak_1m", "v52_dryup_05", "v53_rsi_30", "v61_k"):
+        assert fast_path_divergences(PRESETS[preset]) == [], (
+            f"{preset} 又变成不可信了 —— 附四十 实现的条件之一是哪些?"
+        )
 
 
 def test_filter_signals_reads_declared_params() -> None:

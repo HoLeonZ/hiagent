@@ -41,6 +41,12 @@ _PRESETS = [
     "v71_liqwide",            # liq_low/high 放宽
     "v76_cascade",            # a_condition=cascade_price
     "v77_b_narrow",           # up_streak 收窄
+    # 附四十:F/G/H/I/K 首次实现 —— 每个条件各挑一条 preset 对拍
+    "v50_slope",              # F require_ma20_slope_neg
+    "v51_weak_1m",            # G require_weak_1m
+    "v52_dryup_05",           # H require_amount_dryup
+    "v53_rsi_30",             # I require_rsi_oversold
+    "v61_k",                  # K require_intraday_reversal
 ]
 _SAMPLE_SIZE = 300  # 真值路径逐股跑 cerebro;300 只约 10s
 
