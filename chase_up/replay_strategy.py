@@ -10,6 +10,7 @@ from __future__ import annotations
 import backtrader as bt
 import pandas as pd
 
+from chase_up.portfolio import LIMIT_UP_THRESHOLD  # §2 单源:涨停阈值只有一处定义
 from core.dual_price import is_limit_up
 
 
@@ -21,7 +22,7 @@ class ChaseUpTradeReplay(bt.Strategy):
         tp_price:    float     — 止盈价
         sl_price:    float     — 止损价
         max_hold:    int       — 最大持仓天数
-        prev_close_limit: float — 涨停阈值(默认 0.098,chase_up 历史 override)
+        prev_close_limit: float — 涨停阈值(取自 chase_up/portfolio.LIMIT_UP_THRESHOLD)
     """
 
     params = dict(
@@ -29,9 +30,11 @@ class ChaseUpTradeReplay(bt.Strategy):
         tp_price=0.0,
         sl_price=0.0,
         max_hold=8,
-        # §4 (audit P1-8, 2026-10-15): 与 uptrend_pullback 同口径,
-        # 默认值与 Phase 1 的 chase_up/portfolio.LIMIT_UP_THRESHOLD 一致。
-        prev_close_limit=0.098,
+        # §4/§2 (audit 2026-10-15): **引用** Phase 1 的常量,而不是再写一份字面量。
+        # 此前这里是 `0.098` 加一句"与 chase_up/portfolio.LIMIT_UP_THRESHOLD 一致"
+        # —— 注释保证不了任何事:两个值分处两文件,改一处不会有任何东西报错,
+        # 而这条阈值决定"涨停封板时能不能买"。同值不同源就是下一次漂移的起点。
+        prev_close_limit=LIMIT_UP_THRESHOLD,
     )
 
     def __init__(self):
