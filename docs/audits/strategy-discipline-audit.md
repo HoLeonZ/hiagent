@@ -593,7 +593,9 @@ for path in paths:
 12. `cycle_price_action` 的入场记账与资金池：统一用 broker 成交价记账；容量约束改为单一资金池。
 
 **P3 —— 验证层与统计严谨**
-13. 修三个空转守卫（`tests/test_reproducibility_audit.py:331`/`:352`、`tests/test_cycle_price_action_sha256_baseline.py:94`、`tests/test_cost_constants_single_source_4engine.py:265`、`tests/test_chase_up_no_lookahead.py:642-656`、`tests/test_backtest_data_integrity.py:58`），并把 61 failed + 3 error 登记 owner 或修绿。
+13. 修空转守卫（`tests/test_reproducibility_audit.py:331`/`:352`、`tests/test_cycle_price_action_sha256_baseline.py:94`、`tests/test_cost_constants_single_source_4engine.py:265`、`tests/test_chase_up_no_lookahead.py:642-656`、`tests/test_backtest_data_integrity.py:58`），并把 61 failed + 3 error 登记 owner 或修绿。
+    → **2026-10-17 更正(附四十三)**:本条此前**只做了一部分** —— 该文件里的无断言 `pass` 当时**仍在**(扫描器也同时在同一文件里误报)。现已修:扫描器改按名字判定、四个用例统一为真断言,并以正/负对照双向验证。
+      教训:修复计划里列了条目 ≠ 条目被修 —— 「账实不符」这是本审计第 6 次。
 14. 补 `tests/golden/short_reversal_*_baseline.json`（先修守卫，否则加了基线也无人执行）。
     → **已完成(附三十九)**：`v50_slope`(28 笔) + `v58_mp_2`(58 笔)，守卫在测试内重算后比对；
       生成时连续两次重算一致才 pin。`test_reproducibility_audit` 里的登记用例随之自然通过。
@@ -3320,3 +3322,81 @@ F 实现之后,这条**拒绝**正是应当消失的东西 —— 已改为钉�
 > 2. **体感估时不可靠。** 我先前把"基准归因两条"估成"约 4 分钟",实测 chase 那条只要
 >    **4.8s**、短反转那条 308s —— 差两个数量级。凡涉及"哪条慢",一律以
 >    `--durations` 为准;这也正是把"估时"写进守卫注释时的风险:一个错的数字比没有数字更坏。
+
+---
+
+## 附四十三 —— 系统扫"空转守卫":粗模式全清,但费率守卫确实是空转的(并修了扫描器自身的误报)
+
+### 1 · 起因:把"检查器本身才是问题"这一类**系统地**扫一遍
+
+此前几次都是**个案**发现(附二十五 的静默 skip、附三十三 拼写匹配的守卫、附四十 的
+"为测试自己的错开后门")。这次写扫描器系统过一遍全库测试:
+
+| 粗模式 | 命中 |
+|---|---|
+| `assert True` / `assert 1 == 1` | **0** |
+| `if False` / `if False else` | **0** |
+| 无理由的 `pytest.skip()` | **0** |
+| `except Exception: pass` | **0** |
+
+> **一条自我纠正**:我的第一版检测器把 **84 个**测试判成"无断言 / 无失败路径",
+> 逐个查看后发现**全是假阳性** —— 本仓库的房规是 `if <bad>: raise AssertionError(...)`,
+> 因为 `python -O` 会剥掉 `assert`(这正是审计自己在 §0/§6 主张的)。检测器只认
+> `ast.Assert`,于是把**主流写法**判成空转。改成同时认 `raise AssertionError` /
+> `pytest.raises` / `_assert*` 助手后降到 **19 条**,再逐条看:其余都是"不抛异常即通过"
+> 的冒烟用例(函数名就写着 `..._does_not_raise`)。
+>
+> **假阳性扫描器比没有扫描器更毒** —— 这条教训这次应验在我自己的工具上。
+
+### 2 · 真缺陷一:四个费率用例里有三个从不失败
+
+`tests/test_cost_constants_single_source_4engine.py`:
+
+```python
+    if chase:
+        # Informational — chase_up has known duplicated cost constants
+        # per Tick 53. This is documented, not a regression.
+        pass                      # ← 扫完不看,永不失败
+```
+
+而同一个函数的 docstring 写着「This test **catches** NEW hardcodes introduced after
+refactor」—— **声明与实现相反**。`uptrend_pullback` 同形;`short_reversal` /
+`cycle_price_action` 稍好(有 `raise`),但只比对**特定错值**(0.0006 / 0.001)⇒
+"值抄对了但重复定义"这个**漂移起点**照样漏过。
+
+**这与台账的关系(第 6 次"账实不符")**:审计的 §3.2/§3.3 与 §8#13 都**点名**了这个文件的
+`:265`(无断言 `pass`),而 §8#13 是"修三个空转守卫"的**修复计划**。也就是说:发现记了、
+计划列了,**这个文件却没被真正修**。附六 当时说「恒真断言早已修」指的是**另一个**
+文件(`test_backtest_data_integrity.py:58`),措辞容易让人以为这一族都清了。
+
+### 3 · 真缺陷二:扫描器自己在误报
+
+`_scan_hardcoded_costs` 只按"数值命中费率表(0.00025 / 0.0005 / 0.0006 …)"判定,
+而它算出来的 `cost_context` 变量**从未被使用** —— 紧接着就是无条件 `append`,
+注释还写着 *"Always flag ... (even without context)"*。后果(实测):
+`short_reversal/replay_strategy_v3.py:185` 的 **`sl_pct=0.0005`**(止损百分比,
+一个策略参数)被报成"印花税重复定义"。
+
+在这条上假阳性尤其毒:它给了"这四个用例本来就抓不准"一个体面的理由,
+从而把真正的费率重复藏进噪声里。
+
+### 4 · 修法
+
+- 扫描器改**按名字**判定:赋值目标 / 关键字实参的名字含
+  `commission|stamp|duty|fee|cost|tax|borrow`,且值**非零**
+  (零值有合法用途:`cerebro.broker.setcommission(commission=0.0)` —— 成本由策略内部扣)。
+- 四个用例统一为**任何非零成本字面量即违规**,共用 `_assert_no_cost_literals`:
+  不再有 `if: pass`,也不再只盯特定错值 —— **值对错都不该出现在引擎里**
+  (同值不同源就是下一次漂移的起点,§2 单源)。
+
+重写后实测:四引擎**都是 0 处**,与审计"费率重复定义**已消失**"的结论一致 ⇒
+这些守卫现在是**为真且为绿**的,而不是"绿是因为什么都没查"。
+
+### 5 · 双向验证(含**负对照**)
+
+| 方向 | 手段 | 结果 |
+|---|---|---|
+| 正对照 | 往 `chase_up/portfolio.py` 注入 `commission_rate = 0.00025` | **变红**,并打印 `chase_up/portfolio.py:208 commission_rate=0.00025` ✓ |
+| **负对照** | 注入 `sl_pct = 0.0005`(旧扫描器误报的那个值) | **保持绿** ✓ —— 假阳性确实修掉了,而不是把守卫放宽成"什么都抓不到" |
+
+恢复后 5 passed,`git diff` 干净。
