@@ -197,3 +197,30 @@ def test_uptrend_pullback_empty_universe_fails_fast(asof_duckdb: Path) -> None:
     with pytest.raises(UptrendPullbackError):
         # fixture 数据从 2024-06-01 开始; 该 asof 早于任何数据
         up_load_universe("mainboard_only", asof_duckdb, asof_date="2020-01-01")
+
+
+def test_chase_up_asof_on_non_trading_day_resolves_to_prior_trading_day(
+    asof_duckdb: Path,
+) -> None:
+    """§3 PIT: chase_up 的 asof 落在非交易日时同样必须解析为前一交易日。
+
+    族内不对称复核: uptrend_pullback 已修, chase_up 的 SQL 仍是
+    `HAVING MAX(date) >= asof` 字面值 → asof 是周末/节假日时返回空集 →
+    回测静默产出 0 笔交易 (违反 §0 Fail-Fast)。
+    """
+    saturday = chase_load_universe("mainboard_only", asof_duckdb, asof_date="2025-04-05")
+    friday = chase_load_universe("mainboard_only", asof_duckdb, asof_date="2025-04-04")
+
+    assert saturday, "asof 落在周六 (2025-04-05) 时不应返回空集"
+    assert set(saturday) == set(friday), (
+        f"非交易日 asof 应解析为前一交易日: 周六 {len(saturday)} 只 vs "
+        f"周五 {len(friday)} 只"
+    )
+
+
+def test_chase_up_empty_universe_fails_fast(asof_duckdb: Path) -> None:
+    """§0 Fail-Fast: chase_up 的空 universe 必须显式失败。"""
+    from chase_up import ChaseUpError
+
+    with pytest.raises(ChaseUpError):
+        chase_load_universe("mainboard_only", asof_duckdb, asof_date="2020-01-01")

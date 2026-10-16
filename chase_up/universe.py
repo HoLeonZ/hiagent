@@ -45,12 +45,16 @@ def _all_thscodes(db_path: Path, asof_date: str | None = None) -> list[str]:
         else:
             # §3 PIT Mandate: 排除 (a) asof_date 之后才上市的票
             # (无 date <= asof_date 数据) AND (b) asof_date 之前已退市的票
-            # (MAX(date) < asof_date)
+            # (MAX(date) < asof_date)。
+            # 判定基准必须是「asof 当日或之前的最后一个交易日」, 而不是 asof 字面值:
+            # 否则 `HAVING MAX(date) >= asof` 在 asof 是周末/节假日时对每只票都不成立
+            # (最后一个交易日 < asof) → 全部被误判为「已退市」→ 空集 → 回测静默产出
+            # 0 笔交易。last_td 在交易日上恒等于 asof, 故交易日行为不变。
             rows = con.execute(
                 "SELECT thscode FROM v_daily "
-                "WHERE date <= ? "
+                "WHERE date <= (SELECT MAX(date) FROM v_daily WHERE date <= ?) "
                 "GROUP BY thscode "
-                "HAVING MAX(date) >= ? "
+                "HAVING MAX(date) >= (SELECT MAX(date) FROM v_daily WHERE date <= ?) "
                 "ORDER BY thscode",
                 [asof_date, asof_date],
             ).fetchall()
@@ -93,4 +97,13 @@ def load_universe(
     excluded = _load_exclude(exclude_path)
     pred = _is_main_board if mode == "mainboard_only" else _is_a_share_ex_bj
 
-    return sorted(c for c in all_codes if pred(c) and c not in excluded)
+    result = sorted(c for c in all_codes if pred(c) and c not in excluded)
+    if not result:
+        # §0 Fail-Fast: 空 universe 必须显式失败。静默返回 [] 会让 engine 跑出一个
+        # 0 笔交易的回测 —— 看起来像「策略没信号」, 实为数据覆盖/参数问题。
+        raise ChaseUpError(
+            f"Empty universe: mode={mode!r}, asof_date={asof_date!r}, db={db_path}. "
+            f"§0 Fail-Fast: 空 universe 会让回测静默产出 0 笔交易。"
+            f"常见原因: asof_date 早于数据覆盖起点。"
+        )
+    return result
