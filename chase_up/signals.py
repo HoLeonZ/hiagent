@@ -1,6 +1,13 @@
 """指标计算 + 追涨入场信号(平台突破 + 动量加速 + 均线金叉 OR 融合)。
 
 compute_indicators — 全部基于历史窗口,信号日 T 收盘后即可算出,无未来函数。
+
+> ⚠️ 与 preset 的出入 (2026-10-17 记): 下面写的是**默认**语义 (OR)。
+> 但 `chase_up/presets.py` 里**每一个 preset 都设了**
+> `signal.require_all_sub_signals=True`, 即实际跑的是 AND 模式 ——
+> 三个子信号必须同时成立。两者结论差别很大 (实测在近两年窗口上 AND 为负、
+> OR 为正, 但在独立期上 OR 显著更差), 所以这里不是笔误, 是一处需要
+> 显式声明的分歧。读本文档时请以 preset 的实际取值为准。
 select_entries     — 任一子信号触发即入选;score = max(子信号强度)。
 
 信号语义:
