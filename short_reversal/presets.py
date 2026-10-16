@@ -649,6 +649,15 @@ PRESETS: dict[str, dict] = {
     # 无显式「趋势斜率」度量。MA20 在 5 日内若 slope > 0, 标的可能处于
     # 反弹中段而非下降趋势, 与 short_reversal 哲学不符, 应排除。
     # 预期: 减少横盘假信号, 提高胜率; n 略减, CAGR 持平或上升。
+    #
+    # ⚠️ 2026-10-16 重估 (CLAUDE.md §5 Iterative-Tuning Accounting):
+    # 本 preset 长期被当作"工程上限", 但那个结论是在**容量闸门有缺陷**时得到的:
+    # 引擎当时每笔按 free_cash / max_positions 下注且份额几何衰减, 现金几乎永不
+    # 耗尽 ⇒ 多仓 preset 声明 2 个实开 24 个 (见 abe7dc7)。闸门修好后重测,
+    # v58_mp_2 在三个窗口 (W2 / IND / IS1) 的 Sharpe 与 Calmar 均优于本 preset,
+    # 最大回撤全部大幅更低; CAGR 只在 IND 一个窗口更优。
+    # 即: **按风险调整口径本 preset 已不是最优, 按纯 CAGR 口径仍是**。
+    # 口径选择登记在案, 未擅自改写"最优"声明。本节不记数字 (§7)。
     "v50_slope": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1465,6 +1474,15 @@ PRESETS: dict[str, dict] = {
     # 数据顺序作为隐式 ranking — 第一个满足 A-I 的 stock 优先, 无显式 score 排序。
     # 风险: data 顺序的随机性会引入选股噪声。
     # v58_mp_2 (2026-10-13): max_positions=2, 单笔 sizing 50% free_cash。
+    # v58_mp_2 (2026-10-13): max_positions 1 → 2, 单笔 sizing = free_cash / 2。
+    #
+    # ⚠️ 2026-10-16 重估: 本 preset 与 v58_mp_3 当初被判「多仓无效」, 但那次评估
+    # 是在容量闸门有缺陷时做的 —— 引擎每笔按 free_cash / max_positions 下注且份额
+    # 几何衰减 (F/2, F/4, …), 现金几乎永不耗尽, 于是声明 2 个实开 24 个 (abe7dc7)。
+    # 修好闸门后重测三个窗口 (W2 / IND / IS1): 本 preset 的 Sharpe 与 Calmar
+    # **三个窗口全部**优于 v50_slope, 最大回撤全部大幅更低; CAGR 在 IND 更高、
+    # 另两个窗口更低。⇒ 按风险调整口径, 本 preset 是当前最优; 按纯 CAGR 口径
+    # 仍是 v50_slope。口径选择登记在案。本节不记数字 (§7)。
     "v58_mp_2": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
