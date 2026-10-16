@@ -246,6 +246,7 @@ def run_backtest_v3(
         max_positions=cfg.get("max_positions", 1),
         fill_order=cfg.get("fill_order", "code"),
         require_close_below_vwap=cfg.get("require_close_below_vwap", False),
+        signal_gap_max=cfg.get("signal_gap_max", None),
         close_vwap_buffer=cfg.get("close_vwap_buffer", 0.0),
         position_fraction=cfg.get("position_fraction", 1.0),
         pct_chg_low=cfg.get("pct_chg_low", 0.02),

@@ -250,6 +250,8 @@ class Phase3V3Strategy(bt.Strategy):
         # 负值 = 必须低于 VWAP 若干)。
         require_close_below_vwap=False,
         close_vwap_buffer=0.0,
+        # M 条件 (2026-10-17): 信号日隔夜跳空上限 (None = 关闭)。
+        signal_gap_max=None,
         # v58_mp (2026-10-16, CLAUDE.md §2): 满仓时的成交顺序。
         # 'code' (默认) = feed 顺序 = thscode 字典序 —— 历史行为, 与信号强度无关,
         #   属 §2「predefined tie-breaker」的弱读法。
@@ -1111,6 +1113,23 @@ class Phase3V3Strategy(bt.Strategy):
                 return False
             vwap_v = amt_v / vol_v
             if close_v > vwap_v * (1.0 + self.p.close_vwap_buffer):
+                return False
+
+        # M 条件 (2026-10-17): 隔夜跳空幅度上限。
+        # 设计动机: **全仓库没有用过"隔夜 / 日内"的收益分解** —— 而信号日的涨幅
+        # 可以被拆成 open/prev_close-1 (隔夜跳空) 与 close/open-1 (日内) 两段。
+        # 两者含义不同: 隔夜跳空多是消息驱动的一次性重定价, 日内段才是买卖盘的
+        # 持续较量。做空死猫跳的论点是"买盘接不住", 因此**跳空驱动**的反弹
+        # (隔夜涨完、日内没接力) 应比**日内驱动**的反弹更值得做空。
+        # opt-in: signal_gap_max 非 None 才启用, 默认 None 保既有 preset 兼容。
+        # 注: v_daily.prev_close 实测 100% 为 NULL (数据层缺口), 故用前一根可用
+        # bar 的收盘价 (d.close[-1]) 作为分母, 与 pct_chg 的口径一致。
+        if self.p.signal_gap_max is not None:
+            prev_c = float(d.close[-1]) if len(d) > 1 else float("nan")
+            open_v = float(d.open[0])
+            if np.isnan(prev_c) or prev_c <= 0 or np.isnan(open_v):
+                return False
+            if (open_v / prev_c - 1.0) > self.p.signal_gap_max:
                 return False
 
         return True
