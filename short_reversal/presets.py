@@ -1781,6 +1781,53 @@ PRESETS: dict[str, dict] = {
         "ma20_slope_period": 5,
         "up_streak_low": 1,
     },
+    # v68_liq_wide (2026-10-17): v67 + E 条件流动性上界 3e8 → 1e9。
+    #
+    # 由来: 与 v67 同一次**参数使用审计** —— `liq_low` / `liq_high` (E 条件的
+    # 流动性带) 从未被任何 preset 设置过, 一直走引擎默认 3e7 ~ 3e8。
+    #
+    # 两个方向都试过:
+    #   liq_low 3e7 → 1e8 (剔除小票): 只在 W2 上更好, IND/IS1/IS2 三处 Calmar
+    #     全线下降 ⇒ **窗口特异, 否定**。
+    #   liq_high 3e8 → 1e9 (放行大票): CAGR 4/4 更高, Calmar 3/4 更高,
+    #     Sharpe 3/4 更高, MaxDD 3/4 更低 ⇒ 采纳。
+    #
+    # **独立 holdout 验证** (2019-10-01..2021-09-30, 该窗口未参与本轮任何选择):
+    #   v58_mp_2 (原最优) → v67 → v68 四级指标逐级改善, Calmar 逐级翻倍。
+    #   即两级改动都不是窗口特异的产物。
+    #
+    # 机理: 上界 3e8 把日成交额 3 亿以上的票整类排除掉了。对大市值票做空死猫跳
+    # 并不比中票差, 而排除它们只是白白丢掉一批信号 —— 与 v67 的结论同向
+    # (原条件里"多余的限制"比"不够严"更伤)。
+    #
+    # §5 Iterative-Tuning Accounting: n_comparisons = 52 + 12
+    #   (52 = v67 累计; 本轮 3 个 W2 流动性探针 + 3 个 liq_low 跨窗口
+    #    + 3 个 liq_high 跨窗口 + 3 个 holdout = 12)
+    # 本节不记数字 (§7)。
+    "v68_liq_wide": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 64,
+        "position_sizing": "all_in",
+        "max_positions": 2,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "ma20_slope_period": 5,
+        "up_streak_low": 1,
+        "liq_high": 1000000000.0,
+    },
 }
 
 
