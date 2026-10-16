@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from core.dual_price import portfolio_nav
 from core.trade_report import render_trade_report, report_filename
 from core.trade_schema import TRADE_COLS
 from short_reversal.engine import run_backtest_v3
@@ -73,8 +74,13 @@ def _write_equity_curve(
     """Write equity_curve.csv + cash_walk.csv (§2/§3 Tick 51).
 
     Accepts the `result_holder["equity_curve"]` list-of-dicts that
-    Phase3V3Strategy populates per-bar. cash_walk defaults to single-pool
-    (free_cash == cash, locked_margin == settling_funds == 0) until H5.1.
+    Phase3V3Strategy populates per-bar (now including the **three pools**).
+
+    §2 (audit 2026-10-15): 此前这里把 `locked_margin` / `settling_funds` 写死为 0、
+    把 `free_cash` 填成 `cash`,理由是"等 H5.1 落地三池"。**但三池早已落地**
+    (策略 `__init__` 里就有 free/locked/settling,并由 `settle()` 维护) ——
+    零值不是简化,是**产出与账本不符的数据**。故改为如实落盘;缺字段即 fail-fast,
+    不再用 0 兜底(§0:不允许静默降级)。
     """
     equity_path.parent.mkdir(parents=True, exist_ok=True)
     cash_walk_path.parent.mkdir(parents=True, exist_ok=True)
@@ -98,15 +104,29 @@ def _write_equity_curve(
         w = csv.DictWriter(f, fieldnames=list(CASH_WALK_COLS))
         w.writeheader()
         for row in rows:
-            cash = float(row.get("cash", 0.0))
+            missing = [k for k in ("free_cash", "locked_margin", "settling_funds")
+                       if k not in row]
+            if missing:
+                raise KeyError(
+                    f"§2: equity row 缺三池字段 {missing}(date={row.get('date')!r})—— "
+                    "无法如实落盘 cash_walk。旧实现在这里补 0,那会让产物与账本不符。"
+                )
+            free_cash = float(row["free_cash"])
+            locked = float(row["locked_margin"])
+            settling = float(row["settling_funds"])
             holdings_value = float(row.get("holdings_value", 0.0))
-            total_equity = float(row.get("equity", cash + holdings_value))
+            total_equity = float(row.get("equity", free_cash + locked + settling
+                                        + holdings_value))
             w.writerow({
                 "date": row.get("date"),
-                "free_cash": cash,
-                "locked_margin": 0.0,
-                "settling_funds": 0.0,
-                "nav": cash + holdings_value,
+                "free_cash": free_cash,
+                "locked_margin": locked,
+                "settling_funds": settling,
+                # §2: NAV 走**规范单源** `portfolio_nav`(= free + settling + 持仓市值)。
+                # ⚠️ `locked_margin` **不计入** —— 它是持仓的**成本基础**,而
+                # holdings_value 是同一持仓的**市值**;两者相加会把仓位计两次
+                # (这正是审计 P0-1 那个缺陷)。三池仍各自如实落盘,只是不进 NAV。
+                "nav": portfolio_nav(free_cash, settling, holdings_value),
                 "total_equity": total_equity,
             })
 

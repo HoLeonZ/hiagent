@@ -637,6 +637,13 @@ class Phase3V3Strategy(bt.Strategy):
                 "holdings_value": holdings_value,
                 "equity": nav,
                 "drawdown": dd,
+                # §2 (audit 2026-10-15): **三池如实入行**。此前 cash_walk.csv 把
+                # locked_margin / settling_funds 写死为 0、free_cash 写成 total_cash,
+                # 于是"三池隔离"在产物层完全不可见 —— 而本策略**确实**在维护这三池
+                # (见 __init__ 与 settle())。写入零不是在简化,是在**产出不实数据**。
+                "free_cash": self.free_cash,
+                "locked_margin": self.locked_margin,
+                "settling_funds": self.settling_funds,
                 # §3 (audit P2-10): 累计已付出分红(空头方向)。
                 # 现金守恒: final == initial + Σnet_pnl − Σcum_dividends
                 "cum_dividends": self._dividends_paid_total,
