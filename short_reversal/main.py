@@ -31,20 +31,25 @@ CASH_WALK_COLS = ("date", "free_cash", "locked_margin",
                   "settling_funds", "nav", "total_equity")
 
 
+#: `*_metrics.json` 里**不得**出现的明细键:每个大列表都有自己的产物
+#: (`trades` → trades.csv;逐 bar 曲线 → equity_curve.csv)。留在这里会让
+#: metrics JSON 变成"又一个明细文件",与 Tick 58 的约定相悖。
+_METRICS_DETAIL_KEYS = ("trades", "equity_curve")
+
+
 def _strip_trades_for_json(metrics: dict) -> dict:
-    """Strip the `trades` per-trade list from metrics before JSON dump.
+    """剥掉 metrics 里的**明细大列表**,只留聚合键,供 JSON dump。
 
-    short_reversal/engine.py _metrics_from_holder includes a full per-trade
-    `trades` list inside the metrics dict. Without stripping, the metrics
-    JSON file becomes huge and unparseable for downstream consumers that
-    only want aggregate metrics.
+    per-preset metrics JSON MUST carry **aggregate keys only**(Tick 58
+    [[backtest-metrics-canonical-schema-2026-09-23]]):明细有自己的产物 ——
+    `trades` 进 trades.csv(14 列规范),逐 bar 曲线进 equity_curve.csv。
 
-    Per [[backtest-metrics-canonical-schema-2026-09-23]] Tick 58:
-    per-preset metrics JSON MUST carry aggregate keys only; per-trade
-    detail lives in the trades.csv (canonical 14-col, see Tick 50).
+    2026-10-17:`equity_curve` 也一并剥掉。它此前不在 metrics 里(付三十八 才把
+    它接进来当 writer 的输入通道),于是**顺手**流进了这个 JSON —— 200 行曲线
+    塞进"聚合指标"文件,正是本条约定要防的事。`_write_equity_curve` 用的是调用方
+    另传的 `eq_rows`,不受影响。
     """
-    safe = {k: v for k, v in metrics.items() if k != "trades"}
-    return safe
+    return {k: v for k, v in metrics.items() if k not in _METRICS_DETAIL_KEYS}
 
 
 def _write_per_preset_metrics(
