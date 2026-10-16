@@ -45,9 +45,24 @@ class ReplayBroker:
         self.atr_slip_scale = atr_slip_scale
         self._open_positions: dict[str, int] = {}
 
-    def _next_trading_date(self, after: date) -> date:
-        # Tick 49: delegate to Control Plane data_provider (DB-free broker).
-        return self._data_provider.next_trading_date(after)
+    def _next_bar_date(self, thscode: str, after: date) -> date:
+        """该股自身下一根可交易 bar 的日期 (§1 停牌语义)。
+
+        旧实现用全市场日历 next_trading_date: 个股停牌时它指向一根不存在的
+        bar, open_bar 直接抛 RuntimeError —— 既没有"顺延到复牌成交",也没有
+        "不成交",而是把整个回测打断。改用个股自身 bar 序列后, 停牌期间的
+        成交顺延到复牌首日开盘, 与 chase_up / uptrend / short_reversal 一致。
+
+        None (数据尾部之外, 非停牌) 仍然是 fail-fast —— 那是数据覆盖缺口,
+        不是停牌, 不得静默成交。
+        """
+        d = self._data_provider.next_bar_date(thscode, after)
+        if d is None:
+            raise RuntimeError(
+                f"no next bar for {thscode} after {after} — data coverage gap "
+                f"(not a suspension); refusing to fabricate a fill date"
+            )
+        return d
 
     def _open_price(self, thscode: str, on_date: date) -> float:
         # Tick 49 + N3: delegate to data_provider.open_price which routes
@@ -93,7 +108,7 @@ class ReplayBroker:
     ) -> Optional[TradeFill]:
         if qty <= 0 or qty % 100 != 0:
             raise ValueError("qty must be positive multiple of 100")
-        fill_date = self._next_trading_date(decision_date)
+        fill_date = self._next_bar_date(thscode, decision_date)
         price = self._open_price(thscode, fill_date)
         fee = self._fee("buy", qty, price, atr_pct=atr_pct, participation=participation)
         self._open_positions[thscode] = self._open_positions.get(thscode, 0) + qty
@@ -116,7 +131,7 @@ class ReplayBroker:
             raise ValueError("cannot sell more than held")
         if qty <= 0 or qty % 100 != 0:
             raise ValueError("qty must be positive multiple of 100")
-        fill_date = self._next_trading_date(decision_date)
+        fill_date = self._next_bar_date(thscode, decision_date)
         price = self._open_price(thscode, fill_date)
         fee = self._fee("sell", qty, price, atr_pct=atr_pct, participation=participation)
         self._open_positions[thscode] -= qty

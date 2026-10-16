@@ -136,6 +136,31 @@ class ReplayDataProvider:
         """
         return self.open_bar(thscode, on_date)["open"]
 
+    def next_bar_date(self, thscode: str, after: date) -> date | None:
+        """该股**自身**的下一根 K 线日期, 无则 None。
+
+        §1 停牌语义: 停牌产生 missing bar。成交必须发生在该股下一根可交易
+        bar 的开盘 (§1「positions in suspended names ... MUST NOT generate
+        fills until trading resumes」), 而**不是**全市场下一交易日 —— 后者在
+        个股停牌时指向一根不存在的 bar, 会让 open_bar 抛 RuntimeError,
+        连"顺延到复牌"这条合法路径都走不到。
+
+        与 chase_up / uptrend_pullback / short_reversal 同口径: 那三个引擎
+        用个股自己的 backtrader feed, "下一根 bar" 天然就是该股下一根可交易
+        bar。cycle 是按股票逐个 adddata 的, 同样应只认自己的 bar 序列。
+        """
+        con = duckdb.connect(self._db_path, read_only=True)
+        try:
+            row = con.execute(
+                "SELECT MIN(date) FROM v_daily WHERE thscode = ? AND date > ?",
+                [thscode, after],
+            ).fetchone()
+        finally:
+            con.close()
+        if row is None or row[0] is None:
+            return None
+        return row[0]
+
 
 def load_universe_data(
     db_path: str, start: date, end: date, *, asof_date: date | None = None,
