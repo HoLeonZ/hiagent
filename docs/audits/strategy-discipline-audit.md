@@ -268,7 +268,12 @@ self.release_margin(gross_in_cost)                      # 入场本金 → free_
 - 而 `scan_signals.py:107` 构造 `Phase3V3Strategy` 时**未传** `min_cash_ratio`(`grep` 零匹配),`lookahead_trade_trace.py:48` 又继承该类;
 - → 走 `scan_signals` 时在首个有 pending entry 的 bar 抛 `TypeError: unsupported operand type(s) for *: 'float' and 'NoneType'`,在测试套件中触发 **10 次失败**。
 
-**状态**:`b597d0c` 的 `c06ead1` 已将默认值改为 `0.05`(`replay_strategy_v3.py:196`),**该崩溃在当前 `origin/main` 上已消除**。
+**状态**:`b597d0c` 的 `c06ead1` 已将默认值改为 `0.05`(`replay_strategy_v3.py:196`),该次崩溃消除。
+
+> **2026-10-16 补充(附三十八)**:该表述**过窄** —— 那次只是补了**一个**参数。同一条生产扫描路径
+> 在 `min_cash_ratio` → `nav_gate_ratio` 改名并改为 fail-fast 之后**再次崩溃**(同一个工具、不同的漏参),
+> 且没有任何测试覆盖它。病根是「策略构造参数清单有两份、靠人手同步」。现已从根上修掉:
+> 抽出 `engine.strategy_kwargs` 单源,回测入口与扫描工具共用 55 项参数。
 
 ### S2 · 不可变性守卫可被"别名"绕过,源码注释明说这是为了绕过检测器 —— **已修复(附二十八)**
 
@@ -594,7 +599,10 @@ for path in paths:
     → **已处理(见附十三)**:键名、`n_trials` 口径、DSR 分子/分母一致性、收益率当 Sharpe 均已修;
     **附三十二再补两处输入口径**:年化常量单源(引擎 243 / dna_stats 曾 252)、
     `n_returns` 不再硬编码(10 处写 252 → 来自本次运行的观测数);
-    **仍未闭合**:4 个脚本引用已删除的 preset(已登记 `KNOWN_DEAD_REFERENCES`)、以及原文点名的
+    **2026-10-16(附三十八)**:`scan_signals_fast` 的参数已改读声明(可信 1→35/75),**对拍已就位**
+    (`tests/test_fast_scanner_matches_engine.py`:6 preset × 真引擎路径逐只比较);
+    **仍未闭合**:F–K 的实现需要先把 backtrader 指标抽成纯函数(否则就是新增重复实现),继续登记。
+    另:4 个脚本引用已删除的 preset(已登记 `KNOWN_DEAD_REFERENCES`)、以及原文点名的
     「窗口跨越已声明的 holdout」(需使用者确认 holdout 边界)。
 16. 补 §5 Attribution Mandate 的实现（基准超额），这是目前完全空缺的一项。
     → **已实现(附三十四)**：基准 = 窗口 PIT 宇宙等权买入持有(实机库无指数数据，§5 允许
@@ -2993,3 +3001,93 @@ if not per_name:
 以及本条"writer 未实现"。它们的共同形态是:
 **台账描述的是"当时观察到的表象",而代码在演化 —— 于是"未实现"可能早已变成
 "无效/不可达/已重命名"。凡引用台账,必须重新落到代码上核一遍。**
+
+---
+
+## 附三十八 —— 实时扫描工具**手抄参数子集 ⇒ 运行期崩溃**;策略构造改为单源
+
+### 1 · 起因:给快速扫描器写对拍,第一次调用"真值路径"就崩了
+
+`附三十一` 把快速扫描器的"与策略 100% 等价"改成"不等价即拒答"之后,我在 `附三十八`
+里把它的参数改为**读 preset 声明**,并打算用**对拍**给出等价性证据 —— 对拍对象是
+`scan_signals._scan_preset`(它逐股构造**真实** `Phase3V3Strategy` 跑 cerebro,即回测引擎本身)。
+
+第一次调用就抛:
+
+```
+§2: nav_gate_ratio 必须由 Control Plane 从 preset 声明解析后注入
+    (engine.run_backtest_v3 → core.preset_contract.resolve_nav_gate_ratio)。
+```
+
+也就是说:**实时扫描工具当时根本跑不起来**。
+
+### 2 · 根因:`scan_signals` 手抄了策略构造参数的**子集**
+
+它写的是 `cerebro.addstrategy(Phase3V3Strategy, tp_pct=…, sl_pct=…, …, result_holder=holder)`
+—— **12 项手抄关键字**,而引擎侧传 **55 项**。漏掉的东西分两类:
+
+| 漏掉的 | 后果 |
+|---|---|
+| `nav_gate_ratio`(§2 要求由声明解析后注入,fail-fast) | **运行期直接崩溃** |
+| F/G/H/I/J/K 开关、`max_positions`、`position_sizing`、`signal_price_domain`、`max_volume_participation`、`intraday_tiebreak`、`window_start/end` … | 即便把崩溃那一项补上,扫描出的信号集也会**比回测宽**(开关全走默认值)——与快速扫描器同一类错,只是方向相反 |
+
+**而这正是我在附三十一/三十八 里推荐给使用者的"可信路径"。** 台账 §4 的 S1 记过一次
+同类事故(`b597d0c` 修的是 `min_cash_ratio` 未传),但那次是**补一个参数**;
+这次换个参数又会崩 —— 说明病根不是"漏了某项",而是**"参数清单有两份,靠人手同步"**。
+
+**为什么没人发现**:`scan_signals._scan_preset` 不被任何测试调用 ⇒ 崩溃对套件不可见。
+
+### 3 · 修法:构造逻辑单源
+
+抽出 `short_reversal/engine.py::strategy_kwargs(cfg, name, *, holder, start, end)`
+——55 项参数**逐字搬过去**,回测入口与扫描工具**都**调它:
+
+```python
+cerebro.addstrategy(Phase3V3Strategy, **strategy_kwargs(cfg, _name, …))
+```
+
+**搬运过程中被抓出的两处作用域泄漏**(值得记一笔):helper 里引用了调用方的局部变量
+`_name` 与 `price_source_for_execution` —— 我不是靠眼看发现的,而是仓库里**已有的**
+两个行为测试(`test_short_reversal_v8_plumbing.py` 里 spy `Phase3V3Strategy.__init__`
+的那两条)立刻变红报 `NameError`。**行为测试在这里替我兜住了手工重构的错。**
+
+### 4 · 快速扫描器:参数改为读声明,覆盖 1 → 35 / 75
+
+`_filter_signals` 此前把 liq(3e7/3e8)、up_streak(3/10)、below_ratio(0.6) **写死**,
+且只实现 `d_mode='strict'`、不看 `close_ma60_buffer`。现一律读声明,并补齐三种
+`d_mode`(`strict` / `d_only` / `converge_strict`,与引擎逐字对应)。
+
+| | 之前 | 之后 |
+|---|---|---|
+| 可信 preset | **1 / 75** | **35 / 75** |
+| 仍拒答 | 74 | 40(F/G/H/I/J/K、市场宽度、ensemble) |
+
+**为什么不顺手把 F–K 也实现了**:引擎把它们算成 **backtrader 指标类**
+(`ReturnN(period=63)`、`AmountRatio(...)`、RSI 等),要在 pandas 侧支持就得**重新推导**
+这些定义 —— 那是**新增一处重复实现**,恰好与本附录在修的东西相反。正确做法仍是
+`附二十二` 的建议:**先把它们抽成纯函数**再由两处共用(继续登记为功能工作)。
+
+### 5 · 对拍(等价性的证据,而不是"说了算")
+
+新增 `tests/test_fast_scanner_matches_engine.py`:同一 preset、同一信号日(2026-09-18),
+**快速扫描器 vs 真引擎路径**逐只比较信号集,6 个 preset 覆盖本轮新读的每一项参数
+(`strict`/`converge_strict`、ratio、buffer、liq 放宽、cascade、up_streak 收窄)。
+子集 = 快扫描命中 ∪ 定序取样 300 只 —— 后者保证"快扫描漏、真值选中"这个方向也在射程内
+(只比命中会自证)。另有一条**非空断言**:六个 preset 至少有一个有命中,防止日期/数据变化后
+整个文件退化成空转。
+
+**它对拍出了我自己的错**:第一版把**未按 universe 过滤**的面板喂给快扫描器,于是报出三只
+非主板票(`301187.SZ` 创业板 / `688816.SH` 科创板 / `920036.BJ` 北交所)。核对后发现
+`scan_signals_fast.main()` 本来就按 preset 的 universe 过滤面板,而且**注释里写的正是这个坑**
+—— 错在测试。**教训:对拍失败时,先核对"真值路径"的前置条件,再指控实现。**
+
+顺带:这条对拍也是**实时扫描路径的回归守卫** —— 第 2 节那个崩溃,它第一次调用就会红。
+
+### 6 · 台账更正
+
+- §4 的 S1(scan 路径崩溃)原记为"已在 `b597d0c` 修复"。**该表述过窄**:那是补了一个参数,
+  2026-10-16 同一个工具因**另一个**参数再次崩溃。现已从**根上**修掉(构造单源),
+  同类问题不再是"记得同步"而是"结构上不可能不同步"。
+- §8#7d("先抽纯函数、再补对拍")**部分兑现**:对拍已就位;**纯函数抽取仍未做**
+  (F–K 的实现前提),继续登记。
+- §8#7c 提到的"信号层"相关登记随之更新:扫描工具的构造已收口到单源。
