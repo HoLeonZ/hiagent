@@ -13,6 +13,7 @@ import backtrader as bt
 import numpy as np
 import pandas as pd
 
+from core.equity_invariants import assert_equity_curve_is_physical
 from chase_up.backtest import INITIAL_CAPITAL, compute_metrics
 from chase_up.data import load_panel
 from chase_up.portfolio import TRADE_COLS, simulate_portfolio
@@ -368,6 +369,13 @@ def run_backtrader_backtest(
         equity_p2["equity"] = eq_arr
     else:
         equity_p2 = equity_p1
+
+    # §2/§0: 上面这个"Phase-1 复利曲线 + 累计常数 delta"的构造不是有效的权益
+    # 重建 (delta 按逐笔固定规模算, 量纲与复利曲线不匹配), 会产出负权益。
+    # 拒绝发布物理上不可能的曲线, 而不是照抄成 headline 数字。
+    assert_equity_curve_is_physical(
+        equity_p2, engine="chase_up", preset=str(preset),
+    )
 
     metrics = compute_metrics(
         trades_p2, equity_p2,

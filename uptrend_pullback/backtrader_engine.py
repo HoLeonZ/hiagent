@@ -31,6 +31,7 @@ import backtrader as bt
 import numpy as np
 import pandas as pd
 
+from core.equity_invariants import assert_equity_curve_is_physical
 from uptrend_pullback.backtest import INITIAL_CAPITAL, compute_metrics
 from uptrend_pullback.portfolio import TRADE_COLS, simulate_portfolio
 from uptrend_pullback.presets import MAX_HOLD_LIMIT, get_preset
@@ -406,6 +407,13 @@ def run_backtrader_backtest(
         equity_p2["cash"] = equity_p2["cash"] + equity_delta
     else:
         equity_p2 = equity_p1
+
+    # §2/§0: "Phase-1 复利曲线 + 累计常数 delta" 不是有效的权益重建
+    # (delta 按逐笔固定规模算, 量纲与复利曲线不匹配), 会产出负权益。
+    # 与 chase_up 同口径 —— 拒绝发布物理上不可能的曲线。
+    assert_equity_curve_is_physical(
+        equity_p2, engine="uptrend_pullback", preset=str(preset),
+    )
 
     metrics = compute_metrics(
         trades_p2, equity_p2,
