@@ -1,0 +1,34 @@
+{
+  "preset": "v50_slope",
+  "window": [
+    "2026-03-01",
+    "2026-08-31"
+  ],
+  "engine": "short_reversal.engine.run_backtest_v3",
+  "trades_csv_sha256": "8731a9499a32aa6c04d50dbde76e67ae3bce228a0bb02aaeb276d071a34fe6f7",
+  "trades_csv_rows": 28,
+  "trades_csv_cols": [
+    "entry_date",
+    "exit_date",
+    "thscode",
+    "exit_reason",
+    "entry_price",
+    "exit_price",
+    "size",
+    "hold_days",
+    "gross_pnl",
+    "fees",
+    "net_pnl",
+    "net_return",
+    "atr_pct",
+    "sub_signal_type",
+    "net"
+  ],
+  "note": "short_reversal 成交列表 sha256 基线。多跑可复现性不变量:同一 preset + DB + 窗口 ⇒ 逐字节相同的成交列表。漂移意味着信号/出场/sizing/容量逻辑发生了改变(§6:须重算基线并说明漂移)。",
+  "pinned": {
+    "date": "2026-10-17",
+    "why": "补齐 §6「Golden-baseline hashes lock trade-list behavior for every engine」——本引擎此前**一条基线都没有**,而它是迭代最频繁的一个(v35→v83)。v50_slope 覆盖单腿生产路径;v58_mp_2 覆盖多仓容量路径(附二十七 修过其 sizing 与容量闸门,必须锁住)。",
+    "window_rationale": "6 个月:足以产生数十笔成交;面板的暖机缓冲主导运行成本(实测 6 个月 ≈3.9 分钟/preset,一年 ≈5.3 分钟),故不再缩短。",
+    "reproducibility_check": "生成时连续重算两次、哈希一致;守卫在测试内**重算**后比对,不读 gitignored 的 results/。"
+  }
+}
