@@ -44,7 +44,16 @@ def main():
               f"TP/SL/T={m['tp_count']}/{m['sl_count']}/{m['time_count']}",
               flush=True)
     if sharpes:
-        observed = max(sharpes)
+        # §5 (audit 2026-10-15): DSR 的输入必须与 n_trials 描述**同一次选择**。
+        # 此前是 `observed = max(sharpes)` —— 对**窗口**取最大,而 n_trials 计的是
+        # **配置**数(n_comparisons)。分子="最好的那一个窗口",分母="试过多少配置",
+        # 两者不是同一次选择,于是**窗口那一层选择完全没有被折减**。
+        # 这与 deflated_sharpe_ratio 的契约直接冲突(docstring 原文:n_trials 是
+        # "selecting the best Sharpe from k trials" 里的 k)。
+        # 现取**跨窗口均值**(WFV 的无偏汇总),n_trials 仍为配置数 —— 分子分母
+        # 描述同一次选择。逐窗口数值在上面已逐行打印,信息不丢失。
+        observed = sum(sharpes) / len(sharpes)
+        best_window_sharpe = max(sharpes)
         _cfg = get_preset(preset) if isinstance(preset, str) else preset
         dsr = deflated_sharpe_ratio(
             observed_sharpe=observed,
@@ -52,7 +61,7 @@ def main():
             n_returns=WINDOW_TRADING_DAYS,
         )
         print(
-            f"\n§5 DSR for v37_liq_3e7_5e8 | observed_sharpe={observed:.3f} | "
+            f"\n§5 DSR for v37_liq_3e7_5e8 | mean_oos_sharpe={observed:.3f} | best_window={best_window_sharpe:.3f}(选中值,不作显著性输入) | "
             f"n_trials={int(_cfg['n_comparisons'])} | "
             f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
             f"expected_max={dsr['expected_max_sharpe']:.3f} | "

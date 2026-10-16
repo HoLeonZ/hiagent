@@ -165,20 +165,28 @@ def main() -> None:
     print(f"   汇总: {summary_path}")
 
     # CLAUDE.md §5 Penalty Metrics: 多 trial sweep 必须报告 DSR
-    # observed = median_return_pct / 100 (粗略 annualized proxy); n_trials = presets
-    if not summary.empty and "median_return_pct" in summary.columns:
-        # median_return_pct 是窗口中位总收益 (近似 annualized via sqrt(time) 简化)
-        # 严格场景下应传入 SharpeRatio of equity curve, 此处仅用于 sweep 排序
-        # 时的 selection bias sanity check
-        sharpes = summary["median_return_pct"].dropna().tolist()
+    if not summary.empty and "mean_sharpe" in summary.columns:
+        # §5 (audit 2026-10-15): DSR 的 `observed_sharpe` 必须是**年化 Sharpe**
+        # —— deflated_sharpe_ratio 的 docstring 原文:"Annualized Sharpe from
+        # backtest (mean/std × sqrt(252))"。
+        #
+        # 此处原为 `median_return_pct / 100`:把**窗口中位总收益**的百分比当成
+        # Sharpe 传进去。这不是数值误差而是**结论错误** —— 收益率(0.1~1)比典型
+        # Sharpe 量级低一到两个数量级,于是 DSR / p 值会系统性地判成"毫无优势",
+        # 而它照样被打印出来,读者会把它当作显著性结论。
+        #
+        # 汇总表里本来就有 `mean_sharpe`(每个 preset 跨窗口的 Sharpe 均值),
+        # 直接用它:max over presets + n_trials = preset 数,正是本函数的契约
+        # (docstring: "selecting the best Sharpe from k trials")。
+        sharpes = summary["mean_sharpe"].dropna().tolist()
         if sharpes:
-            observed = max(sharpes) / 100.0
+            observed = max(sharpes)
             dsr = deflated_sharpe_ratio(
                 observed_sharpe=observed, n_trials=len(sharpes), n_returns=252
             )
             print(
                 f"\n§5 DSR (across-presets sweep) | "
-                f"observed_median_ret={observed*100:+.2f}% | "
+                f"observed_sharpe={observed:.3f} | "
                 f"n_trials={len(sharpes)} | "
                 f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
                 f"p_value={dsr['dsr_p_value']:.4f}"
