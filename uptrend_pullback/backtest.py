@@ -79,6 +79,13 @@ def compute_metrics(
     if trades_df.empty:
         return {
             "trades": 0, "win_rate": 0.0, "final_equity": final_equity,
+        # §5 (audit 2026-10-16): 观察数**随产物发布**。DSR 的 `n_returns` 参数是
+        # "Sharpe 用了多少个收益观测"(T = len(eq) - 1,因为 rets = diff(eq)),
+        # 而此前各 sweep 只能把这个数**硬编码**(多处写 252),窗口实际只有
+        # 242~243 个交易日 ⇒ T 被高估约 4%,标准误被低估约 2%,DSR 系统性偏乐观。
+        # 与 short_reversal 的 `n_trading_days` 是**两个量**:那个是"窗口有多少个
+        # 交易日"(用于年化),这个是"有多少个收益观测"(用于标准误),差一个观测。
+        "n_daily_returns": int(max(len(eq) - 1, 0)),
             "total_return": total_return, "cagr": cagr, "sharpe": sharpe,
             # §2 (audit 2026-10-15): sharpe 的定义随产物发布 —— 与 short_reversal
             # 的 `sharpe` 不是同一个量(那个是逐笔比率的近似)。
@@ -102,6 +109,13 @@ def compute_metrics(
         "trades": int(len(trades_df)),
         "win_rate": float((net > 0).mean()),
         "final_equity": final_equity,
+        # §5 (audit 2026-10-16): 观察数**随产物发布**。DSR 的 `n_returns` 参数是
+        # "Sharpe 用了多少个收益观测"(T = len(eq) - 1,因为 rets = diff(eq)),
+        # 而此前各 sweep 只能把这个数**硬编码**(多处写 252),窗口实际只有
+        # 242~243 个交易日 ⇒ T 被高估约 4%,标准误被低估约 2%,DSR 系统性偏乐观。
+        # 与 short_reversal 的 `n_trading_days` 是**两个量**:那个是"窗口有多少个
+        # 交易日"(用于年化),这个是"有多少个收益观测"(用于标准误),差一个观测。
+        "n_daily_returns": int(max(len(eq) - 1, 0)),
         "total_return": total_return,
         "cagr": cagr,
         "sharpe": sharpe,

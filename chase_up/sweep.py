@@ -133,8 +133,13 @@ def main() -> None:
         sharpes = df["sharpe"].dropna().tolist()
         if sharpes:
             observed = max(sharpes)
+            # §5 (audit 2026-10-16): T 来自**本次窗口**,不是常数。此前写死 252,
+            # 而 chase 的 sharpe 是 `mean/std × sqrt(243)`(T = 日收益数);
+            # 实测窗口 2025-09 起的同类 sweep 只有 242~243 个交易日 ⇒ 高估 T 约 4%,
+            # 低估标准误约 2% ⇒ DSR 偏乐观。panel 就在本函数作用域内。
             dsr = deflated_sharpe_ratio(
-                observed_sharpe=observed, n_trials=len(sharpes), n_returns=252
+                observed_sharpe=observed, n_trials=len(sharpes),
+                n_returns=int(panel["date"].nunique()) - 1,
             )
             print(
                 f"\n§5 DSR | observed_sharpe={observed:.3f} | "

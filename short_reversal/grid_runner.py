@@ -76,6 +76,9 @@ def grid(axis: str, base: dict, values: list, base_name: str) -> list[dict]:
             "value": v,
             "name": name,
             "n": m["trades_count"],
+            # §5 (audit 2026-10-16): 随产物发布观测数 T —— 下面算 DSR 需要它,
+            # 而它此前从不出现在落盘的 CSV 里(于是只能硬编码,见 DSR 调用处)。
+            "n_trading_days": m["n_trading_days"],
             "win%": m["win_rate"] * 100,
             "CAGR%": m["cagr"] * 100,
             "Sharpe": m["sharpe"],
@@ -148,8 +151,20 @@ def main():
                if "Sharpe" in r and r.get("error") is None]
     if sharpes:
         observed = max(sharpes)
+        # §5 (audit 2026-10-16): `n_returns` 是"Sharpe 用了多少个收益观测"(T),
+        # 此前硬编码 252。本窗口实际只有 242 个交易日 ⇒ T 被高估 4.1%,
+        # 标准误被低估约 2%,DSR 系统性偏乐观 —— 而 §5 的惩罚指标恰恰要用在
+        # "看起来不错"的结果上。改为取本次运行的真实交易日数(引擎随 metrics 发布);
+        # **缺它就 fail-fast**,不再用 252 兜底(兜底值正是这个缺陷的形态)。
+        n_obs = max((int(r["n_trading_days"]) for r in all_rows if "n_trading_days" in r),
+                    default=0)
+        if n_obs < 2:
+            raise ValueError(
+                "§5: 无法取得观测数 T(metrics 缺 n_trading_days)—— "
+                "不许用常数兜底,那正是本项要修的缺陷"
+            )
         dsr = deflated_sharpe_ratio(
-            observed_sharpe=observed, n_trials=len(sharpes), n_returns=252,
+            observed_sharpe=observed, n_trials=len(sharpes), n_returns=n_obs,
         )
         print(
             f"\n§5 DSR | observed_sharpe={observed:.3f} | "

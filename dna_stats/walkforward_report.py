@@ -23,6 +23,9 @@ import math
 import numpy as np
 import pandas as pd
 
+# §2/§5 (audit 2026-10-16): 年化常量单源 —— 与四个引擎同源(见 deflated.py 的说明)。
+from core.trade_schema import TRADING_DAYS_PER_YEAR
+
 from dna_stats.deflated import (
     _norm_cdf,                 # internal but acceptable; same module
     deflated_sharpe_ratio,
@@ -34,7 +37,7 @@ def format_walkforward_stats(
     df: pd.DataFrame,
     *,
     n_comparisons: int = 1,
-    trading_days_per_year: int = 252,
+    trading_days_per_year: int = TRADING_DAYS_PER_YEAR,
 ) -> str:
     """Format walkforward result DataFrame with DSR + Bonferroni.
 

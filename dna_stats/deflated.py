@@ -28,6 +28,16 @@ from __future__ import annotations
 
 import math
 
+# §2/§5 (audit 2026-10-16): 年化常量**单源** —— 与四个引擎同源。
+# 此前本层默认 252(美股惯例),而 chase_up/uptrend_pullback/short_reversal 的
+# `sharpe` 都是 `mean/std × sqrt(243)`(A 股交易日/年)。DSR 会把 observed_sharpe
+# **除回逐期**(`sr = observed_sharpe / sqrt(trading_days_per_year)`)再与逐期阈值比,
+# 于是生产者的 243 与消费者的 252 不匹配 ⇒ 逐期 Sharpe 被系统性缩放
+# `sqrt(243/252) ≈ 0.982`(1.8%),DRS 随之偏离。同一层里的 `annualized_sharpe()`
+# 也是 252 —— 即"同一量两处定义",而真正的边界(引擎→DSR)恰恰跨在这两份定义之间。
+from core.trade_schema import TRADING_DAYS_PER_YEAR
+
+
 import numpy as np
 import pandas as pd
 
@@ -81,7 +91,7 @@ def _norm_ppf(p: float) -> float:
 
 def annualized_sharpe(
     daily_returns: pd.Series | np.ndarray,
-    trading_days_per_year: int = 252,
+    trading_days_per_year: int = TRADING_DAYS_PER_YEAR,
 ) -> float:
     """Compute annualized Sharpe (no risk-free rate assumed = 0).
 
@@ -108,12 +118,12 @@ def deflated_sharpe_ratio(
     kurtosis: float = 3.0,
     autocorr_lag1: float = 0.0,
     n_returns: int | None = None,
-    trading_days_per_year: int = 252,
+    trading_days_per_year: int = TRADING_DAYS_PER_YEAR,
 ) -> dict:
     """V7 (CLAUDE.md §5): Deflated Sharpe Ratio.
 
     Args:
-        observed_sharpe:  Annualized Sharpe from backtest (mean/std × sqrt(252)).
+        observed_sharpe:  Annualized Sharpe from backtest (mean/std × sqrt(TRADING_DAYS_PER_YEAR)).
         n_trials:         Number of independent strategy configurations tested.
                           This is the "selection bias" correction — selecting
                           the best Sharpe from k trials inflates the apparent
@@ -128,7 +138,7 @@ def deflated_sharpe_ratio(
                           deflates it.
         n_returns:        Number of return observations used to compute Sharpe.
                           Used for SE adjustment.
-        trading_days_per_year: 252 for daily bars.
+        trading_days_per_year: A 股交易日/年(规范值见 core.trade_schema)。
 
     Returns:
         dict with:
@@ -156,7 +166,7 @@ def deflated_sharpe_ratio(
             expected_max = float("nan")
 
     # 2026-10-13 (§5 单位一致性修复): observed_sharpe 按本函数约定是**年化**值
-    # (见 docstring: mean/std × sqrt(252)), 而下面的 σ̂ 与 expected_max 都是
+    # (见 docstring: mean/std × sqrt(TRADING_DAYS_PER_YEAR)), 而下面的 σ̂ 与 expected_max 都是
     # **逐期**量。两者必须换算到同一频率, 否则相当于拿年化 Sharpe 去比逐期阈值,
     # 对中等 Sharpe 会系统性过度折减 (实测: 年化 Sharpe=0.84 / k=19 / T=1071 被
     # 判成 DSR=0.000, 而正确值约 0.44 —— 把「有边际优势」误读成「毫无优势」;
@@ -227,7 +237,7 @@ def sharpe_significance_pvalue(
     observed_sharpe: float,
     n_returns: int,
     *,
-    trading_days_per_year: int = 252,
+    trading_days_per_year: int = TRADING_DAYS_PER_YEAR,
 ) -> float:
     """V7: one-sided p-value for Sharpe ≠ 0 under normality assumption.
 

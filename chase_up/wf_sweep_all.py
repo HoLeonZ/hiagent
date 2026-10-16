@@ -181,8 +181,17 @@ def main() -> None:
         sharpes = summary["mean_sharpe"].dropna().tolist()
         if sharpes:
             observed = max(sharpes)
+            # §5 (audit 2026-10-16): 本处的 observed 是 preset 跨**多个窗口**的
+            # mean_sharpe,故代表性 T 取各窗口日收益数的均值(每窗一个观测集)。
+            # 此前写死 252 ⇒ 而 WF 窗口实际只有 242~243 个交易日,T 高估约 4%、
+            # 标准误低估约 2% ⇒ DSR 偏乐观。缺字段即 fail-fast,不用常数兜底。
+            if "n_daily_returns" not in df.columns:
+                raise ValueError(
+                    "§5: detail 缺 n_daily_returns,无法确定 DSR 的观测数 T —— 不许用常数兜底"
+                )
             dsr = deflated_sharpe_ratio(
-                observed_sharpe=observed, n_trials=len(sharpes), n_returns=252
+                observed_sharpe=observed, n_trials=len(sharpes),
+                n_returns=int(df["n_daily_returns"].mean()),
             )
             print(
                 f"\n§5 DSR (across-presets sweep) | "

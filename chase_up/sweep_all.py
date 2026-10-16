@@ -107,8 +107,18 @@ def main() -> None:
         sharpes = [r.get("sharpe", 0.0) for r in rows if r.get("sharpe") is not None]
         if sharpes:
             observed = max(sharpes)
+            # §5 (audit 2026-10-16): T 必须来自本次运行 —— 本脚本不持有 panel,
+            # 故取引擎随 metrics 发布的 `n_daily_returns`(见 backtest.compute_metrics)。
+            # 取不到即 fail-fast,不用常数兜底(兜底值正是本项要修的缺陷)。
+            t_obs = [int(r["n_daily_returns"]) for r in rows if "n_daily_returns" in r]
+            if not t_obs:
+                raise ValueError(
+                    "§5: metrics 缺 n_daily_returns,无法确定 DSR 的观测数 T —— "
+                    "不许用常数兜底"
+                )
             dsr = deflated_sharpe_ratio(
-                observed_sharpe=observed, n_trials=len(sharpes), n_returns=252
+                observed_sharpe=observed, n_trials=len(sharpes),
+                n_returns=max(t_obs),
             )
             print(
                 f"\n§5 DSR | observed_sharpe={observed:.3f} | "

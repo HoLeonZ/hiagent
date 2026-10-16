@@ -174,7 +174,7 @@ def main():
         if all_sharpes:
             observed = max(all_sharpes)
             dsr = deflated_sharpe_ratio(
-                observed_sharpe=observed, n_trials=len(all_sharpes), n_returns=252
+                observed_sharpe=observed, n_trials=len(all_sharpes), n_returns=int(panel["date"].nunique())
             )
             print(
                 f"\n§5 DSR | observed_sharpe={observed:.3f} | "
