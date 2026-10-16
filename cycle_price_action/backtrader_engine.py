@@ -20,17 +20,12 @@ import pandas as pd
 import backtrader as bt
 
 from cycle_price_action.signals import (
-    detect_k_patterns,
     entry_signal,
     fuse_scores,
-    k_line_score,
 )
-from cycle_price_action.cycle import phase_score
-from cycle_price_action.time_windows import calendar_score
 from cycle_price_action.portfolio import Portfolio
 from cycle_price_action.replay_broker import ReplayBroker
 from cycle_price_action.data_feed import ReplayDataProvider
-from cycle_price_action.no_lookahead import bars_up_to
 from core.dual_price import (
     LAYOUT_CYCLE_PRICE,
     extract_execution_bar,
@@ -59,6 +54,10 @@ class CyclePriceActionStrategy(bt.Strategy):
         # ReplayDataProvider from db_path and injects it here. Strategy stays
         # DB-free per §6 (no db_path param).
         data_provider=None,
+        # 信号三元组 {date: (k_line_score, phase_score, calendar_score)} —— 由
+        # Control Plane (backtest.run_backtest) 每只票预计算一次后注入。
+        # 逐 bar 重算是 O(n²), 实测占 cycle 回测总耗时的 87%。
+        precomputed_signals=None,
         # Round 15 (2026-09-28, CLAUDE.md §4): preset→strategy plumbing for
         # intraday_tiebreak. Default 'sl_first' preserves pre-R15 behavior。
         intraday_tiebreak="sl_first",
@@ -91,12 +90,19 @@ class CyclePriceActionStrategy(bt.Strategy):
                 "CLAUDE.md §6: Strategy has no direct DB access."
             )
         self._broker_ext = ReplayBroker(self.p.data_provider)
+        # 信号三元组由 Control Plane 预计算后注入 (§6: Control Plane 拥有 PIT
+        # 数据派发)。逐 bar 重算的旧路径是 O(n²) —— 每根 bar 都对"至今为止的
+        # 全部 bar"重跑一次形态识别, 2990 只票的一年窗口实测 86 分钟, 其中
+        # 87% 花在这里。预计算是逐位等价的 (见 backtest._precompute_scores)。
+        self._signals = self.p.precomputed_signals
+        if self._signals is None:
+            raise ValueError(
+                "CyclePriceActionStrategy requires `precomputed_signals` to be "
+                "injected by Control Plane (backtest.run_backtest). "
+                "CLAUDE.md §6: Strategy has no direct DB access."
+            )
         # State for live bar evaluation.
-        self._bar_cache: list[dict] = []
         self._entry_day = None
-
-    def _bars_as_df(self) -> pd.DataFrame:
-        return pd.DataFrame(self._bar_cache)
 
     def next(self):
         bar = {
@@ -107,9 +113,6 @@ class CyclePriceActionStrategy(bt.Strategy):
             "close": self.datas[0].close[0],
             "volume": self.datas[0].volume[0],
         }
-        self._bar_cache.append(bar)
-        df = self._bars_as_df()
-        bars_until_today = bars_up_to(df, bar["date"])
 
         # ---- V6'' (2026-09-22, CLAUDE.md §4): Intraday SL-first check ----
         # If holding a position, evaluate daily-bar worst-case exit BEFORE
@@ -146,9 +149,15 @@ class CyclePriceActionStrategy(bt.Strategy):
                     return
                 # reason == 'time' → fall through to max_hold check below
 
-        kscore = k_line_score(bars_until_today, detect_k_patterns(bars_until_today)).iloc[-1]
-        cyc = phase_score(bars_until_today["date"]).iloc[-1]
-        cal = calendar_score(bars_until_today["date"]).iloc[-1]
+        try:
+            kscore, cyc, cal = self._signals[bar["date"]]
+        except KeyError as exc:
+            # §0 Fail-Fast: 缺失的预计算 key 意味着 feed 与注入的信号不同源,
+            # 静默跳过会变成一根"没有信号"的 bar —— 与"策略不发信号"同形。
+            raise ValueError(
+                f"no precomputed signals for {self.datas[0]._name} on "
+                f"{bar['date']} — feed 与注入的 precomputed_signals 不同源"
+            ) from exc
         sig = entry_signal(
             pd.Series([kscore]), pd.Series([cyc]), pd.Series([cal]),
             threshold=self.p.threshold, min_dim=self.p.min_dim,
