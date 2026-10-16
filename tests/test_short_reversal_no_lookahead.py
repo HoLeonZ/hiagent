@@ -79,6 +79,7 @@ def trace_report() -> dict:
 
 # ---------- LAHEAD-001: no entry before window start -----------------------
 
+@pytest.mark.slow  # trace_report 是 module 级 fixture,setup 约 7 分钟
 def test_pre_window_entry_count_is_zero(trace_report):
     """LAHEAD-001: across all traces, ZERO trades have entry_date < start."""
     assert trace_report["pre_window_entry_trades_count"] == 0, (
@@ -88,6 +89,7 @@ def test_pre_window_entry_count_is_zero(trace_report):
     assert trace_report["pre_window_pnl"] == 0.0
 
 
+@pytest.mark.slow  # trace_report 是 module 级 fixture,setup 约 7 分钟
 def test_pre_window_pnl_contribution_is_zero(trace_report):
     """锁定 LAHEAD-001 的 PnL 侧面: pre-window PnL 必须 = 0。"""
     assert trace_report["pre_window_pnl_contribution_pct"] == 0.0
@@ -95,6 +97,7 @@ def test_pre_window_pnl_contribution_is_zero(trace_report):
 
 # ---------- FINDING-001: post-end entry structural fragility --------------
 
+@pytest.mark.slow  # trace_report 是 module 级 fixture,setup 约 7 分钟
 def test_no_post_window_entries(trace_report):
     """FINDING-001: 即使有 60-day post-buffer,post-window entry 必须 = 0。
 

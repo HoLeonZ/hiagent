@@ -30,6 +30,7 @@ def _real_db() -> Path | None:
 pytestmark = pytest.mark.skipif(_real_db() is None, reason=SKIP_REASON)
 
 
+@pytest.mark.slow  # 真跑一次年度回测(约 5 分钟)
 def test_end_to_end_one_preset():
     db = _real_db()
     assert db is not None
@@ -63,6 +64,7 @@ def test_end_to_end_one_preset():
     assert 0.0 <= m["win_rate"] <= 1.0
 
 
+@pytest.mark.slow  # 真跑一次年度回测(约 5 分钟)
 def test_high_cagr_preset_profitable():
     """v35_agg_pctchg_04_09 preset 应触发交易且 CAGR 为正。"""
     db = _real_db()
