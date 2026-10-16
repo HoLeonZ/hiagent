@@ -818,10 +818,16 @@ class Phase3V3Strategy(bt.Strategy):
                     nav_for_budget = self._nav()
                     target_value = nav_for_budget * self.p.position_fraction
                     size_pre_cap = int(target_value / entry_price / self.p.lot_size) * self.p.lot_size
+                    # §4/§0 (audit 2026-10-16): 成交量**未知**时参与率取模型
+                    # 定义域的上界 1.0,而不是 0.0 —— 取 0.0 会让
+                    # `slip_eff = max(static, atr × participation × scale)`
+                    # 退化成 static(本引擎无 static 参数 ⇒ 0),即**恰好在流动性
+                    # 未知处把滑点归零**,与 §0「对执行价取最坏情形」相反。
+                    # 触发条件:面板无 volume 列(NaN);零成交已在量比闸门被拒单。
                     if bar_vol > 0:
                         participation = min(1.0, size_pre_cap / bar_vol)
                     else:
-                        participation = 0.0
+                        participation = 1.0
                     # §4 (audit P1-B, 2026-10-15): 滑点策略单源(core)。
                     # 本引擎无 static 滑点参数,故等价于 max(0, atr) = atr。
                     slip_eff = effective_slippage(

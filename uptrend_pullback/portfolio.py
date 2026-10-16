@@ -585,10 +585,18 @@ def simulate_portfolio(
                             if not ent_match.empty:
                                 atr_slip_lookup = float(ent_match.iloc[0]["atr_pct"])
                         if atr_slip_lookup is not None and not np.isnan(atr_slip_lookup):
+                            # §4/§0 (audit 2026-10-16): 成交量**未知**时参与率取
+                            # 模型定义域的上界 1.0,而不是 0.0。
+                            # `slip_eff = max(static, atr × participation × scale)`
+                            # —— 取 0.0 会退化成 static(本仓库多为 0),即
+                            # **恰好在流动性未知处把滑点归零**,方向与 §0
+                            # 「对执行价取最坏情形」相反。
+                            # 触发条件:面板无 volume 列(LEFT JOIN miss ⇒ NaN);
+                            # `bar_vol <= 0` 已在上面量比闸门被拒单,到不了这里。
                             if not np.isnan(bar_vol) and bar_vol > 0:
                                 participation = min(1.0, size_pre_cap / bar_vol)
                             else:
-                                participation = 0.0
+                                participation = 1.0
                             # §4 (audit P1-B, 2026-10-15): 滑点策略单源。
                             # 两遍定价(static 估 size → pre-cap size 算
                             # participation)保持不变,只把 max(static, atr)
