@@ -1733,6 +1733,54 @@ PRESETS: dict[str, dict] = {
         "require_ma20_slope_neg": True,
         "ma20_slope_period": 5,
     },
+    # v67_mp2_bounce1 (2026-10-17): 把 B 条件的连涨下限从 3 放宽到 1。
+    #
+    # 由来: 本轮做了一次**参数使用审计** —— 枚举引擎读取的 48 个 param, 找出
+    # 从未被任何 preset 设置过的那些。`up_streak_low/high` 与 `liq_low/high`
+    # 就在其中: 三个条件 (B 连涨 / E 流动性) 的**取值范围**从来没被调过, 一直
+    # 用引擎默认。这否证了上一轮"入口条件空间已穷尽"的表述 —— 条件本身都试过,
+    # 但三个条件的**参数**没试过。
+    #
+    # 实测 (四个窗口, 对 v58_mp_2):
+    #   CAGR   : 4/4 更高, 且幅度大
+    #   Calmar : 4/4 更高, 其中三个窗口优势显著
+    #   Sharpe : 2/4 更高 (另两个仅略低)
+    #   MaxDD  : 2/4 更低
+    # 即风险调整口径出现了一个跨四个窗口一致的改进 —— 这是本次挖掘里除了容量
+    # 维度之外唯一一个。
+    #
+    # 机理: `up_streak >= 1` 其实已被 C 条件 (信号日涨 3%~10% ⇒ 必为上涨日)
+    # 近乎蕴含, 所以把下限设到 1 等价于**释放 B 条件**, 只额外放行「只涨了
+    # 1~2 天」的反弹。数据说明这类短反弹比"连涨 ≥3 天"的更值得做空 —— 与
+    # "等反弹确立"的直觉相反, 与 F 条件 (要求 MA20 仍在下降) 并不冲突。
+    # 注: `up_streak_high` 实测**惰性** —— 没有任何信号连涨超过 10 天。
+    #
+    # §5 Iterative-Tuning Accounting: n_comparisons = 46 + 6
+    #   (46 = v58_mp_4 累计; 本轮新增 3 个 cascade_price 变体 + 3 个 up_streak 取值)
+    # 本节不记数字 (§7)。
+    "v67_mp2_bounce1": {
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 52,
+        "position_sizing": "all_in",
+        "max_positions": 2,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "ma20_slope_period": 5,
+        "up_streak_low": 1,
+    },
 }
 
 
