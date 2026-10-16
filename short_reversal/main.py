@@ -186,6 +186,15 @@ def main() -> int:
     # the per-bar equity_curve list that Phase3V3Strategy populates
     # into result_holder).
     eq_rows = m.get("equity_curve") if isinstance(m, dict) else None
+    if not eq_rows:
+        # §0/§7 (audit 2026-10-16): "不写产物"必须**出声**。此前这里静默跳过,
+        # 于是"没写"与"写了但为空"不可区分 —— 而真实成因是 metrics 里根本没有
+        # `equity_curve` 这个键(已修:单腿路径现在带上了)。集成 preset 会是
+        # 显式 None(多子组合曲线未聚合),那是**已知且可解释**的缺口。
+        logger.warning(
+            "§7: 本次运行没有逐 bar 权益曲线(equity_curve=%r),"
+            "故不写 equity_curve.csv / cash_walk.csv", eq_rows,
+        )
     if eq_rows:
         _write_equity_curve(
             out_path.parent / "equity_curve.csv",

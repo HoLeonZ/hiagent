@@ -145,6 +145,12 @@ def _metrics_from_holder(
         "preset": cfg["_name"],
         "start": start,
         "end": end,
+        # §6/§7 (audit 2026-10-16): 逐 bar 权益曲线**带进 metrics**。
+        # 此前它只活在 `result_holder["equity_curve"]` 里,而 main.py 读的是
+        # `m.get("equity_curve")` —— 该键根本不存在 ⇒ `eq_rows` 恒为 None ⇒
+        # equity_curve.csv / cash_walk.csv 的 writer **永远不执行**(静默空转),
+        # 尽管策略每个 bar 都在往那个列表里写。典型的"已实现但不可达"。
+        "equity_curve": list(holder.get("equity_curve", [])),
         # §2 (audit 2026-10-15): 年化口径随产物发布 —— 拿到 cagr 时旁边就有它
         # 的年数分母(交易日数),而不是让读者猜是交易日还是日历日。
         "n_trading_days": int(n_trading_days),
@@ -264,6 +270,10 @@ def _run_ensemble(
         "start": start,
         "end": end,
         "n_trading_days": int(n_trading_days),
+        # 集成:多个子组合各自的权益曲线尚未聚合,故此处置 None。
+        # **显式 None 而不是"缺键"** —— 缺键会让 main.py 的 `m.get(...)` 与
+        # "字段根本没实现"不可区分(附三十三 的教训);None 可被读取方明确抱怨。
+        "equity_curve": None,
         "benchmark_kind": sub_results[0]["benchmark_kind"],
         "benchmark_return": bench,
         "benchmark_members": n_members,
