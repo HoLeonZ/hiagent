@@ -646,6 +646,7 @@ for path in paths:
 | `5a413d8` | **§5 的执行层在 25 个研究脚本里**(不在引擎里):(a) 14 个 WF 脚本的 DSR **分子是 max(窗口)、分母是配置数** —— 两次不同的选择,窗口那层没被折减;(b) `chase_up/wf_sweep_all.py` 把**收益率**当 Sharpe 传进 DSR(12% 当 0.12 → p=0.966,而真 Sharpe=1.20 → p=0.772);(c) 4 个脚本引用**已删除**的 preset,启动即退出 | (a) 分子改跨窗口均值 + **数值验证**(断言收到 0.9 而非 1.9);(b) 用现成的 `mean_sharpe` 列;(c) **不改名字**(无重命名映射可推断 = 编造记录),改**登记债务** + 登记表必须等于实际集合;11 条守卫均双向验证;附十三 |
 | `a714e64` | **同族缺陷的另一半**:`cycle_price_action/sweep_thresholds.py` 在**展平网格**(阈值×窗口)上取 max,却按**阈值个数**折减 —— 且它**自己打印的表**(逐阈值均值)与它实际传给 DSR 的数**不是同一个**。另:`cycle` 的 `n_comparisons=1` 理由写作「无 sweep」,而其 `sweep_thresholds.py` 的**默认候选恰好包含出厂的 threshold=2.0** | 分子改为「阈值均值的最大」+ **数值验证**(0.9 而非 1.0);注释更正;`n_comparisons` 的**真实值交还给使用者**(无迭代记录即无法据实填写,填 3 是伪精确);新增"max 取几项/n_trials 数几项"守卫(只罚不匹配的那种组合);附十三 §4-6 |
 | `9992f6e` | **`tools/` 面查完(此前 2/5)**:三处干净(调规范引擎、无硬编码路径、只写 gitignored 目录);但 `run_all_backtests_html.py`(710 行零测试)**把 cycle 的「无法定义」换成 0.0 并带入跨策略排名**、**按 Sharpe 跨引擎排名**(附十一那条)、以及**守卫实测发现的 `width:nan%` 泄漏进 CSS** | 保持 `None`(渲染为「—」且退出排名);`sharpe_kind` 随产物发布 + 写明不可比;加 finite 保护;该工具补 **8 条**守卫(双向验证);并**更正我自己上一轮对 tools 的假阳性死 preset 扫描**;附十四 |
+| `e081a48` | **`dna_data/` 面查完(此前 0/3)**:两个 loader 的 SQL 有因果上界 ✓、无 §1 禁用函数 ✓;但 `dual_price_resolver.execution_open` 的回退链是 `("raw_open","adj_open","open")` —— **执行价缺失时静默变成复权价**,与**同文件两个兄弟函数**注释里写明的「skip the OTHER family」自相矛盾。另:**§1 守卫的 `SCAN_DIRS` 漏掉了 `dna_data` 与 `tools`** —— 而 `dna_data` 是 panel 的生产者 | 回退链改 `("open",)`(与 `execution_close` 对称),缺 raw 即 fail-fast;扫描面补上两个目录(`sql/` 因 AST 限制另行登记);两组守卫双向验证(植入 `bfill` / 还原旧回退链都正确失败);附十五 |
 
 **测试层净效果**(失败集合逐条 `diff`,非仅比数量):
 
@@ -678,16 +679,17 @@ for path in paths:
 4. **§7 产物 writer**:`equity_curve.csv` / `cash_walk.csv` / per-preset `backtest.json` 的 writer 尚未实现(相应断言按 §6 skip 登记)。注:`cycle` 的 `cagr/sharpe/max_dd` 返回 `None` 是**诚实**的"横截面无法定义",不是缺口。
 5. **§6 展示层重复**:`tools/render_top5_presets_html.py` 重述逐 bar 指标与 A/B/C 文案(回测本身调用真引擎);消解需引擎暴露逐 bar 指标序列,属重构。
 6. **"有实现、无消费者"的库函数**:`tail_objective.tail_stats`(测试外无调用点)与 `render_top5` 同类;建议统一清理而非逐个顺手改。
+6b. **§1 扫描器的覆盖面**:`sql/` 未被扫(AstScanner 是 Python AST 实现,SQL 视图/迁移需另一套检查)。当前 `sql/` 只有 `migrate_v_daily_dual.sql`,且本机活库的视图定义已人工核验过(附七);但**没有任何自动检查**防它将来被改坏。
 7. **§3 公司行为**:配股/缩股未建模(全库 1 例),`apply_corporate_action` 已显式告警。
 8. ~~§7 源码内嵌业绩数字清理~~ → **已完成(`5c731cd`)**;~~`chase_up` 金标准基线仍红~~ → **已修复(`e063c43`)**;~~cycle 无成交列表基线~~ → **已补(`4cbc66c`)**;~~审计自认的六个未覆盖面~~ → **已查证(附七)**。
 
-**当前测试状态**(截至 `9992f6e`)——**三种条件都跑过**(§6 的验收条件就是 fresh clone 的条件):
+**当前测试状态**(截至 `e081a48`)——**三种条件都跑过**(§6 的验收条件就是 fresh clone 的条件):
 
 | 条件 | 结果 |
 |---|---|
-| 有本机行情库 | 1019 passed / 30 skipped / **0 failed** |
-| 无库(路径不存在) | 975 passed / 74 skipped / **0 failed / 0 errors** |
-| 无库(0 字节占位) | 975 passed / 74 skipped / **0 failed / 0 errors** |
+| 有本机行情库 | 1023 passed / 30 skipped / **0 failed** |
+| 无库(路径不存在) | 979 passed / 74 skipped / **0 failed / 0 errors** |
+| 无库(0 字节占位) | 979 passed / 74 skipped / **0 failed / 0 errors** |
 
 基线 `b597d0c` 为 failed 54 / passed 796 / errors 3。改动全程逐条 diff 失败集合,**新增失败 0**。
 30 条有库 skip = 22 条既有的 + 8 条本轮登记(产物边界 7 + cycle 慢 golden 1),全部带
@@ -1396,4 +1398,84 @@ CAGR 量级会包揽榜单)—— 作者在意这件事,只是不知道更深的
 **未定义不参与排名**(带对照组,防空转)/ `sharpe_kind` 随产物发布 /
 无硬编码绝对路径 / 只写 gitignored 目录 / `nan`·`inf` 不泄漏进 HTML。
 均双向验证:还原旧代码时,"未定义参赛"与"nan/inf 泄漏"各条都正确失败。
+
+---
+
+## 附十五:`dna_data/` 层(从未查过),以及**守卫自己的覆盖漏洞**
+
+`dna_data/` 3 个文件 208 行,此前完全没查过。它是**产出引擎所消费的 panel** 的那一层 ——
+位置决定了:这一层的前视不是"某个引擎的问题",而是**下游每一个回测的问题**。
+
+**先记合规项**:两个 loader 的 SQL 都有因果上界(`WHERE date BETWEEN ? AND ?`)✓,
+`dna_data` 内当前**没有**任何 §1 禁用函数 ✓。
+
+### 1 · §3 **静默跨价域回退**:执行价会悄悄变成复权价
+
+`dna_data/dual_price_resolver.py::execution_open` 的回退链是
+
+```python
+for fallback in ("raw_open", "adj_open", "open"):
+```
+
+即 `raw_open` 缺失时**先落到 `adj_open`** —— 让**执行**价变成**复权**价。这既违反 §3
+("ALWAYS use Raw Prices for evaluating limit order triggers, stop-losses, and
+portfolio physical cash mark-to-market"),又与**同一文件里两个兄弟函数**写在注释里的
+规则**自相矛盾**:
+
+> `# Signal fallback: skip the OTHER family (avoid raw_close when signal is supposed`
+> `# to use adj semantics — they're not interchangeable).`
+
+`signal_close` / `execution_close` 都刻意跳过另一族,**只有 `execution_open` 越界 ——
+而它正是入场成交价 / 跳空判定那个最要命的位置**。后果就是本仓库此前抓过的幻影成交:
+价格被换到另一个价域,**不报错、不留日志**,只体现为一笔"本该拿不到"的成交。
+
+修:回退链改为 `("open",)`(与 `execution_close` 对称),缺 raw 即 fail-fast。
+**目前无生产调用点**(仅有其自有测试)—— 所以这是**潜在陷阱**而非正在发生的错误;
+但它存在的意义就是被调用,而它对外承诺的正是 §3 的分域。
+
+这条值得单独记一笔:**同一个文件里的三条回退链,两条守规矩、一条不守。** 读文档
+(docstring 写着"Same fallback rule as signal_close")会以为三条一致 —— 只有逐条读
+**回退列表本身**才能发现。
+
+### 2 · §1 守卫**自己的覆盖漏洞** —— 缺口是静默的
+
+`tests/test_banned_functions_section1.py` 的 `SCAN_DIRS` 只覆盖
+
+```
+四个引擎 + core + dna_stats
+```
+
+漏掉的是 **`dna_data`**(以及 `tools`)。这是本轮最"元"的一条发现:**检查器自己也有
+覆盖缺口,而覆盖缺口不会报错** —— 它只会让"没被扫到的地方"与"合规"看起来一模一样。
+
+严重性在于位置的组合:`dna_data` 是 panel 的生产者,一个 `bfill` / `shift(-1)` 出现在那里,
+会把前视注入**下游每一个**回测,而**这笔账不会被记到任何引擎头上**。
+
+处置:把 `dna_data` 与 `tools` 加入扫描面。实测两者当前都干净 —— 所以这是
+**潜在缺口,不是正在发生的违规**;补上是因为守卫的价值在防未来。
+`sql/` 未纳入:AstScanner 是 Python AST 实现,**SQL 需要另一套检查**(已登记)。
+
+### 守卫
+
+- **跨价域**:三个解析函数统一钉住"缺本域列必须 `KeyError`,不得改用另一价域",并配
+  **对照组**(raw 在场时正常返回 —— 防"全都失败"式空转)。
+  反向验证时,只有 `execution_open` 那条失败,另两条本就合规 —— 说明这条守卫定位精准。
+- **覆盖**:往 `dna_data` 植入 `df.bfill()` 后守卫**正确失败**,还原后通过。
+
+### 一条贯穿本轮系列的模式
+
+从附五(扫描器的假阳性)到附六(用红灯表达待办)到附十二(测试在 fresh clone 上是红的)
+再到本条(**扫描器漏扫了两个目录**),被查出问题的常常**不是被测代码,而是检查工具本身**:
+
+| 检查器 | 它的失效方式 |
+|---|---|
+| preset→引擎一致性扫描器 | `.get("key")` 盲区 → **假阳性** |
+| silent-except 扫描器 | 漏掉 `return None` → **假阴性** |
+| §1 禁用函数扫描器 | 漏扫 `dna_data`/`tools` → **覆盖缺口**(静默) |
+| 测试套件 | 无库时 fail 而非 skip → **红是常态** |
+| DSR 消费脚本 | 分子分母不同源 → **统计结论错** |
+
+**共同点:它们都不会自己报错。** 一个检查器只能证明"我扫过的地方没问题" ——
+**它证明不了"我没扫的地方没问题"**,而后者恰好是风险所在。故本报告不只记"哪些代码
+违规",也记"哪些地方**从没被看过**"。
 
