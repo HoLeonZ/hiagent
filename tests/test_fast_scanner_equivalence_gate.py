@@ -53,9 +53,45 @@ from short_reversal.scan_signals_fast import (  # noqa: E402
     fast_path_divergences,
 )
 
-#: 当前**唯一**可信的 preset 快照(审计 2026-10-16 实测)。
+#: 当前可信的 preset 快照(审计 2026-10-16 实测:参数化后 1 → 35)。
 #: 它不是"期望值",而是"已知范围" —— 变更它必须是一次有意识的操作。
-KNOWN_FAITHFUL = frozenset({"v35_agg_pctchg_04_09"})
+KNOWN_FAITHFUL = frozenset({
+    "v35_agg_pctchg_04_09",
+    "v36_d_converge",
+    "v38_a_relaxed",
+    "v39_pctchg_03_10",
+    "v40_tp_07",
+    "v40_tp_08",
+    "v42_buf05",
+    "v43_ratio03",
+    "v44_ratio02_buf07",
+    "v45_ratio01_buf10",
+    "v46_sl_0002",
+    "v50_mh6",
+    "v69_donly",
+    "v69_widec",
+    "v70_lowratio",
+    "v70_nob",
+    "v71_buf15",
+    "v71_liqwide",
+    "v72_tp05",
+    "v72_tp12",
+    "v73_mh10",
+    "v73_nosl",
+    "v74_pc_hi",
+    "v74_pc_lo",
+    "v75_broad",
+    "v76_cascade",
+    "v76_dstrict",
+    "v77_b_narrow",
+    "v77_e_narrow",
+    "v80_conv",
+    "v81_adj",
+    "v82_buf12",
+    "v82_ratio05",
+    "v83_donly",
+    "v83_widec",
+})
 
 _EMPTY = pd.DataFrame(columns=["thscode", "date", "close", "volume"])
 
@@ -78,11 +114,35 @@ def test_preset_enabling_an_unimplemented_switch_is_refused() -> None:
     assert "scan_signals" in msg, "必须指明可用的替代入口"
 
 
-def test_preset_with_hardcoded_parameter_divergence_is_refused() -> None:
-    """参数被写死同样算不等价 —— 不只是"没实现开关"这一类。"""
-    msg = _raises("v38_a_relaxed")  # below_ratio_60=0.5 / close_ma60_buffer=0.02
-    assert "below_ratio_60" in msg
-    assert "close_ma60_buffer" in msg
+def test_filter_signals_reads_declared_params() -> None:
+    """§6: 五条件的参数必须**读 preset 声明**,不得再写死。
+
+    此前 `_filter_signals` 把 liq(3e7/3e8)、up_streak(3/10)、below_ratio(0.6) 写死,
+    且只实现 `d_mode='strict'`、不看 `close_ma60_buffer` ⇒ 70/75 个 preset 的结论与
+    引擎不一致。2026-10-16 改为一律读声明,于是"参数被写死"这一条不再构成不等价理由
+    (旧用例断言的正是这个已消失的拒绝类别,故一并替换)。
+
+    **这条是写法级守卫**(按字面量判定),不是行为断言 —— 它的作用是把"又写死回去"
+    挡在门口;真正的等价性证据是 `tests/test_fast_scanner_matches_engine.py`
+    (在真实数据上与真引擎路径对拍)。
+    """
+    src = (REPO_ROOT / "short_reversal" / "scan_signals_fast.py").read_text(encoding="utf-8")
+    body = src[src.index("def _filter_signals("): src.index("def _scan_preset(")]
+    for key in ("liq_low", "liq_high", "up_streak_low", "up_streak_high",
+                "below_ratio_60", "close_ma60_buffer", "d_mode"):
+        assert f'cfg.get("{key}"' in body, (
+            f"§6 VIOLATION: `_filter_signals` 没有读 preset 的 {key} —— 又回到写死口径"
+        )
+    # 变量必须真的进了比较式(否则"读了但没用"—— 与写死同效)。
+    # 注:`cfg.get(..., 3e7)` 里的字面量是**缺省兜底**,是合法的,故不禁止字面量本身。
+    for usage in (">= liq_low", "<= liq_high", ">= us_low", "<= us_high",
+                  ">= ratio_min", "1.0 + ma60_buf"):
+        assert usage in body, (
+            f"§6 VIOLATION: `_filter_signals` 声明了参数却没有用于条件({usage})"
+        )
+    assert 'd_mode == "d_only"' in body and 'd_mode == "converge_strict"' in body, (
+        "§6 VIOLATION: 三种 d_mode 必须都实现(引擎 _all_conditions 逐字对应)"
+    )
 
 
 def test_ensemble_preset_is_refused() -> None:

@@ -79,6 +79,116 @@ def _benchmark_block(panel, total_return: float) -> dict:
     }
 
 
+def strategy_kwargs(cfg: dict, name: str, *, holder: dict, start: str, end: str) -> dict:
+    """构造 `Phase3V3Strategy` 的**全部**参数(§6 单源)。
+
+    生产入口(`engine.run_backtest_v3`)与实时扫描工具(`scan_signals._scan_preset`)
+    必须用**同一份**构造逻辑 —— 否则后者会以默认值评估 opt-in 开关,给出与回测
+    不一致的信号集。2026-10-16 实测:`scan_signals` 只传了参数子集,连 §2 的
+    `nav_gate_ratio`(必须由声明解析后注入)都没传 ⇒ **直接崩溃**;而即便补上那一个,
+    它的 F/G/H/I/J/K 等开关仍全部走默认值 ⇒ 信号集偏多(与快速扫描器同一类错)。
+
+    新增策略参数时**只改这里** —— 两个构造点会同时跟上(附三十八)。
+    """
+    return dict(
+        tp_pct=cfg["tp_pct"],
+        sl_pct=cfg["sl_pct"],
+        max_hold=cfg["max_hold"],
+        # v58 (2026-10-13): 多仓并行。max_positions > 1 时每笔 sizing 改为
+        # free_cash / max_positions, 维持 all-in 总仓位。默认 1 保 v50 兼容。
+        max_positions=cfg.get("max_positions", 1),
+        # §2 (audit 2026-10-15): 经规范契约解析(缺声明/越界 fail-fast),不再
+        # `cfg.get(..., 1.0)` —— 那样「没声明」与「声明为 1.0」不可区分。
+        position_fraction=resolve_position_fraction(cfg, name),
+        # §2 (audit 2026-10-15): 单腿路径只可能是 all_in(集成路径已在上面分流)。
+        position_sizing=resolve_position_sizing(cfg, name, allowed=frozenset({ALL_IN})),
+        # §3 (audit 2026-10-15): 上面已解析(碰库之前),此处只注入。
+        # §3: 在 helper 内部解析(原先是调用方的局部变量) —— 声明不合法即 fail-fast,
+        # 且这一处是**唯一**的价源解析点,扫描工具与回测因此不可能取到不同的域。
+        price_source_for_execution=resolve_execution_price_source(
+            cfg, name, supported=frozenset({EXECUTION_PRICE_SOURCE}),
+        ),
+        pct_chg_low=cfg.get("pct_chg_low", 0.02),
+        pct_chg_high=cfg.get("pct_chg_high", 0.06),
+        a_condition=cfg.get("a_condition", "default"),
+        up_streak_low=cfg.get("up_streak_low", 3),
+        up_streak_high=cfg.get("up_streak_high", 10),
+        liq_low=cfg.get("liq_low", 3e7),
+        liq_high=cfg.get("liq_high", 3e8),
+        below_ratio_60=cfg.get("below_ratio_60", 0.6),
+        close_ma60_buffer=cfg.get("close_ma60_buffer", 0.0),
+        d_mode=cfg.get("d_mode", "strict"),
+        margin_rate=MARGIN_RATE,
+        commission_rate=COMMISSION_RATE,
+        stamp_duty_rate=STAMP_DUTY_RATE,
+        initial_capital=INITIAL_CAPITAL,
+        lot_size=100,
+        # §2 (audit 2026-10-15): NAV 闸门比例经规范契约解析(缺声明/越界 fail-fast),
+        # 不再 `cfg.get("min_cash_ratio", 0.05)` —— 那样「没声明」与「声明为 0.05」
+        # 不可区分,而此处此前 75/75 个 preset 都不声明。
+        nav_gate_ratio=resolve_nav_gate_ratio(cfg, name),
+        # V5' (2026-09-22, CLAUDE.md §4): ATR-aware slippage is opt-in via preset。
+        # 默认 0.0 = baseline parity (无 slippage), preset 可上调启用真实市场摩擦。
+        atr_slip_scale=resolve_atr_slip_scale(cfg, name),
+        # V8 (2026-09-22, CLAUDE.md §4): max_volume_participation 与 intraday_tiebreak
+        # 从 preset 显式 plumb 到 strategy (而非依赖模块常量/默认值)。
+        # 当前 preset 默认 0.10 / 'sl_first', 完整覆盖 11/11 preset。
+        max_volume_participation=cfg.get("max_volume_participation", 0.10),
+        intraday_tiebreak=cfg.get("intraday_tiebreak", "sl_first"),
+        # v50 (2026-10-12): F 条件 — MA20 下降趋势斜率过滤 (opt-in)。
+        require_ma20_slope_neg=cfg.get("require_ma20_slope_neg", False),
+        ma20_slope_period=cfg.get("ma20_slope_period", 5),
+        ma20_slope_threshold=cfg.get("ma20_slope_threshold", 0.0),
+        # v51 (2026-10-12): G 条件 — 弱势股过滤 (1M/3M/6M 累计跌幅, opt-in)。
+        require_weak_1m=cfg.get("require_weak_1m", False),
+        weak_1m_threshold=cfg.get("weak_1m_threshold", -0.05),
+        require_weak_3m=cfg.get("require_weak_3m", False),
+        weak_3m_threshold=cfg.get("weak_3m_threshold", -0.10),
+        require_weak_6m=cfg.get("require_weak_6m", False),
+        weak_6m_threshold=cfg.get("weak_6m_threshold", -0.15),
+        # v52 (2026-10-12): H 条件 — 无成交下跌过滤 (5d/20d 成交金额比率, opt-in)。
+        # v51 测绝对跌幅 (cumret) 失败, 改测资金流衰减: 卖压枯竭 = 死猫跳最佳入场。
+        require_amount_dryup=cfg.get("require_amount_dryup", False),
+        amount_dryup_threshold=cfg.get("amount_dryup_threshold", 0.70),
+        amount_dryup_short=cfg.get("amount_dryup_short", 5),
+        amount_dryup_long=cfg.get("amount_dryup_long", 20),
+        # v53 (2026-10-12): I 条件 — RSI(14) 超卖过滤 (opt-in)。
+        # v52 (H 资金流 dry-up) 失败, 用户选 B 方向: 测价格动量超卖。
+        require_rsi_oversold=cfg.get("require_rsi_oversold", False),
+        rsi_oversold_threshold=cfg.get("rsi_oversold_threshold", 30),
+        rsi_period=cfg.get("rsi_period", 14),
+        # v57 (2026-10-12): J 条件 — SL 之后冷静期 (opt-in)。
+        # 若上一笔以 SL 出场, 强制 N 日全局冷却, 跳过最强信号。
+        # max_positions=1 时 J 是「全局」冷却, 因为单仓策略同一时间只持 1 笔。
+        sl_cooldown_days=cfg.get("sl_cooldown_days", 0),
+        # v61 (2026-10-13): K 条件 — 日内反转 (intraday reversal, opt-in)。
+        # 与 F (多日趋势) 正交: K 测「单日 close 在 day range 中的位置 + 收阳」。
+        # 死猫跳最经典微观结构 → 多仓顺势加码,空仓博弈次日的失败回吐。
+        require_intraday_reversal=cfg.get("require_intraday_reversal", False),
+        intraday_reversal_threshold=cfg.get("intraday_reversal_threshold", 0.6),
+        intraday_reversal_require_close_above_open=cfg.get(
+            "intraday_reversal_require_close_above_open", True
+        ),
+        # v65 (2026-10-13): 浮动止损 (trailing stop, short-side, opt-in)。
+        trailing_stop_pct=cfg.get("trailing_stop_pct", 0.0),
+        trailing_activation_pct=cfg.get("trailing_activation_pct", 0.0),
+        # v66 (2026-10-13): 市场宽度 regime gate (opt-in)。
+        require_market_breadth_bear=cfg.get("require_market_breadth_bear", False),
+        market_breadth_max=cfg.get("market_breadth_max", 0.5),
+        # v68 (2026-10-13, §2): conviction-based 填充选择 (opt-in)。
+        entry_selection=cfg.get("entry_selection", "first"),
+        # v81 (2026-10-14, §3): 信号价格域 ('raw' 默认兼容 / 'adj' §3 合规)。
+        signal_price_domain=cfg.get("signal_price_domain", "adj"),
+        # §1 (audit, 2026-10-15): 窗口上下界显式下发到策略。
+        # 面板向两端扩 buffer 且 feed 不设 fromdate/todate,此前入场不受任何
+        # 窗口约束 —— 「无窗口前入场」只是指标暖机 NaN gate 的偶然结果。
+        # 生产入口必须传真实窗口;策略侧对 None 会打 warn 而非静默放行。
+        window_start=start,
+        window_end=end,
+        result_holder=holder,
+    )
+
+
 def _load_panel(db_path: Path, start: str, end: str, universe: list[str]) -> pd.DataFrame:
     """Thin wrapper delegating to Control Plane panel loader (CLAUDE.md §6).
 
@@ -369,97 +479,7 @@ def run_backtest_v3(
         cerebro.adddata(feed, name=code)
     cerebro.addstrategy(
         Phase3V3Strategy,
-        tp_pct=cfg["tp_pct"],
-        sl_pct=cfg["sl_pct"],
-        max_hold=cfg["max_hold"],
-        # v58 (2026-10-13): 多仓并行。max_positions > 1 时每笔 sizing 改为
-        # free_cash / max_positions, 维持 all-in 总仓位。默认 1 保 v50 兼容。
-        max_positions=cfg.get("max_positions", 1),
-        # §2 (audit 2026-10-15): 经规范契约解析(缺声明/越界 fail-fast),不再
-        # `cfg.get(..., 1.0)` —— 那样「没声明」与「声明为 1.0」不可区分。
-        position_fraction=resolve_position_fraction(cfg, _name),
-        # §2 (audit 2026-10-15): 单腿路径只可能是 all_in(集成路径已在上面分流)。
-        position_sizing=resolve_position_sizing(cfg, _name, allowed=frozenset({ALL_IN})),
-        # §3 (audit 2026-10-15): 上面已解析(碰库之前),此处只注入。
-        price_source_for_execution=price_source_for_execution,
-        pct_chg_low=cfg.get("pct_chg_low", 0.02),
-        pct_chg_high=cfg.get("pct_chg_high", 0.06),
-        a_condition=cfg.get("a_condition", "default"),
-        up_streak_low=cfg.get("up_streak_low", 3),
-        up_streak_high=cfg.get("up_streak_high", 10),
-        liq_low=cfg.get("liq_low", 3e7),
-        liq_high=cfg.get("liq_high", 3e8),
-        below_ratio_60=cfg.get("below_ratio_60", 0.6),
-        close_ma60_buffer=cfg.get("close_ma60_buffer", 0.0),
-        d_mode=cfg.get("d_mode", "strict"),
-        margin_rate=MARGIN_RATE,
-        commission_rate=COMMISSION_RATE,
-        stamp_duty_rate=STAMP_DUTY_RATE,
-        initial_capital=INITIAL_CAPITAL,
-        lot_size=100,
-        # §2 (audit 2026-10-15): NAV 闸门比例经规范契约解析(缺声明/越界 fail-fast),
-        # 不再 `cfg.get("min_cash_ratio", 0.05)` —— 那样「没声明」与「声明为 0.05」
-        # 不可区分,而此处此前 75/75 个 preset 都不声明。
-        nav_gate_ratio=resolve_nav_gate_ratio(cfg, _name),
-        # V5' (2026-09-22, CLAUDE.md §4): ATR-aware slippage is opt-in via preset。
-        # 默认 0.0 = baseline parity (无 slippage), preset 可上调启用真实市场摩擦。
-        atr_slip_scale=resolve_atr_slip_scale(cfg, cfg.get("_name", "short_reversal")),
-        # V8 (2026-09-22, CLAUDE.md §4): max_volume_participation 与 intraday_tiebreak
-        # 从 preset 显式 plumb 到 strategy (而非依赖模块常量/默认值)。
-        # 当前 preset 默认 0.10 / 'sl_first', 完整覆盖 11/11 preset。
-        max_volume_participation=cfg.get("max_volume_participation", 0.10),
-        intraday_tiebreak=cfg.get("intraday_tiebreak", "sl_first"),
-        # v50 (2026-10-12): F 条件 — MA20 下降趋势斜率过滤 (opt-in)。
-        require_ma20_slope_neg=cfg.get("require_ma20_slope_neg", False),
-        ma20_slope_period=cfg.get("ma20_slope_period", 5),
-        ma20_slope_threshold=cfg.get("ma20_slope_threshold", 0.0),
-        # v51 (2026-10-12): G 条件 — 弱势股过滤 (1M/3M/6M 累计跌幅, opt-in)。
-        require_weak_1m=cfg.get("require_weak_1m", False),
-        weak_1m_threshold=cfg.get("weak_1m_threshold", -0.05),
-        require_weak_3m=cfg.get("require_weak_3m", False),
-        weak_3m_threshold=cfg.get("weak_3m_threshold", -0.10),
-        require_weak_6m=cfg.get("require_weak_6m", False),
-        weak_6m_threshold=cfg.get("weak_6m_threshold", -0.15),
-        # v52 (2026-10-12): H 条件 — 无成交下跌过滤 (5d/20d 成交金额比率, opt-in)。
-        # v51 测绝对跌幅 (cumret) 失败, 改测资金流衰减: 卖压枯竭 = 死猫跳最佳入场。
-        require_amount_dryup=cfg.get("require_amount_dryup", False),
-        amount_dryup_threshold=cfg.get("amount_dryup_threshold", 0.70),
-        amount_dryup_short=cfg.get("amount_dryup_short", 5),
-        amount_dryup_long=cfg.get("amount_dryup_long", 20),
-        # v53 (2026-10-12): I 条件 — RSI(14) 超卖过滤 (opt-in)。
-        # v52 (H 资金流 dry-up) 失败, 用户选 B 方向: 测价格动量超卖。
-        require_rsi_oversold=cfg.get("require_rsi_oversold", False),
-        rsi_oversold_threshold=cfg.get("rsi_oversold_threshold", 30),
-        rsi_period=cfg.get("rsi_period", 14),
-        # v57 (2026-10-12): J 条件 — SL 之后冷静期 (opt-in)。
-        # 若上一笔以 SL 出场, 强制 N 日全局冷却, 跳过最强信号。
-        # max_positions=1 时 J 是「全局」冷却, 因为单仓策略同一时间只持 1 笔。
-        sl_cooldown_days=cfg.get("sl_cooldown_days", 0),
-        # v61 (2026-10-13): K 条件 — 日内反转 (intraday reversal, opt-in)。
-        # 与 F (多日趋势) 正交: K 测「单日 close 在 day range 中的位置 + 收阳」。
-        # 死猫跳最经典微观结构 → 多仓顺势加码,空仓博弈次日的失败回吐。
-        require_intraday_reversal=cfg.get("require_intraday_reversal", False),
-        intraday_reversal_threshold=cfg.get("intraday_reversal_threshold", 0.6),
-        intraday_reversal_require_close_above_open=cfg.get(
-            "intraday_reversal_require_close_above_open", True
-        ),
-        # v65 (2026-10-13): 浮动止损 (trailing stop, short-side, opt-in)。
-        trailing_stop_pct=cfg.get("trailing_stop_pct", 0.0),
-        trailing_activation_pct=cfg.get("trailing_activation_pct", 0.0),
-        # v66 (2026-10-13): 市场宽度 regime gate (opt-in)。
-        require_market_breadth_bear=cfg.get("require_market_breadth_bear", False),
-        market_breadth_max=cfg.get("market_breadth_max", 0.5),
-        # v68 (2026-10-13, §2): conviction-based 填充选择 (opt-in)。
-        entry_selection=cfg.get("entry_selection", "first"),
-        # v81 (2026-10-14, §3): 信号价格域 ('raw' 默认兼容 / 'adj' §3 合规)。
-        signal_price_domain=cfg.get("signal_price_domain", "adj"),
-        # §1 (audit, 2026-10-15): 窗口上下界显式下发到策略。
-        # 面板向两端扩 buffer 且 feed 不设 fromdate/todate,此前入场不受任何
-        # 窗口约束 —— 「无窗口前入场」只是指标暖机 NaN gate 的偶然结果。
-        # 生产入口必须传真实窗口;策略侧对 None 会打 warn 而非静默放行。
-        window_start=start,
-        window_end=end,
-        result_holder=holder,
+        **strategy_kwargs(cfg, _name, holder=holder, start=start, end=end),
     )
     cerebro.run()
     # §2 单源 (audit 2026-10-15): 年化用**窗口内的交易日数**(面板去重日期),

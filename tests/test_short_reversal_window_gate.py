@@ -102,9 +102,17 @@ def test_production_entrypoint_passes_window_bounds() -> None:
     否则生产路径会退回到"无窗口约束"，而单测仍然全绿 —— 正是 §3
     `signal_price_domain` 默认 `raw` 那类"修复不可达"的失败模式。
     """
-    src = inspect.getsource(sr_engine.run_backtest_v3)
-    assert "window_start=start" in src, "engine.py 未把窗口起点下发给策略"
-    assert "window_end=end" in src, "engine.py 未把窗口终点下发给策略"
+    # 附三十八:策略构造已抽成单源 `strategy_kwargs`(扫描工具与回测共用),
+    # 故窗口边界的下发点在**那里**。断言两个环节都在:
+    #   (a) helper 把入参映射到 window_start/window_end;
+    #   (b) 生产入口把 start/end 交给 helper。
+    helper_src = inspect.getsource(sr_engine.strategy_kwargs)
+    assert "window_start=start" in helper_src, "strategy_kwargs 未把窗口起点下发给策略"
+    assert "window_end=end" in helper_src, "strategy_kwargs 未把窗口终点下发给策略"
+    entry_src = inspect.getsource(sr_engine.run_backtest_v3)
+    assert "strategy_kwargs(" in entry_src and "start=start" in entry_src, (
+        "生产入口没有把窗口边界交给单源构造 —— 窗口约束会失效"
+    )
 
 
 def test_entry_queue_is_window_gated() -> None:

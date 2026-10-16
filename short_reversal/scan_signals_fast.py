@@ -114,10 +114,20 @@ def _filter_signals(df: pd.DataFrame, preset: dict, signal_date: str) -> pd.Data
     # T-day row = 各 thscode 的最后一行
     last_g = df.groupby("thscode").tail(1).reset_index(drop=True)
 
-    # 5 条件
+    # 5 条件(参数一律取 preset 的**声明值** —— 2026-10-16:此前写死 3e7/3e8、3/10、
+    # 0.6、无 buffer、只实现 strict,于是 70/75 个 preset 的结论与引擎不一致)。
+    # 详见 `_assert_fast_path_equivalent` 与 tests/test_fast_scanner_equivalence_gate.py。
+    liq_low = cfg.get("liq_low", 3e7)
+    liq_high = cfg.get("liq_high", 3e8)
+    us_low = cfg.get("up_streak_low", 3)
+    us_high = cfg.get("up_streak_high", 10)
+    ratio_min = cfg.get("below_ratio_60", 0.6)
+    ma60_buf = cfg.get("close_ma60_buffer", 0.0)
+    d_mode = cfg.get("d_mode", "strict")
+
     # E: 流动性
-    cond_e = (last_g["am60"] >= 3e7) & (last_g["am60"] <= 3e8)
-    # A: 默认 V1 (close < ma60 AND below_ratio ≥ 0.6)
+    cond_e = (last_g["am60"] >= liq_low) & (last_g["am60"] <= liq_high)
+    # A: 默认 V1(close < ma60 ×(1+buffer) AND below_ratio ≥ 声明值)
     if a_cond == "cascade_price":
         cond_a = (
             (last_g["ma5"] < last_g["ma10"])
@@ -127,19 +137,28 @@ def _filter_signals(df: pd.DataFrame, preset: dict, signal_date: str) -> pd.Data
         )
     else:
         cond_a = (
-            (last_g["close"] < last_g["ma60"])
-            & (last_g["below_ma60_ratio_60"] >= 0.6)
+            (last_g["close"] < last_g["ma60"] * (1.0 + ma60_buf))
+            & (last_g["below_ma60_ratio_60"] >= ratio_min)
         )
     # B: 连阳
-    cond_b = (last_g["up_streak"] >= 3) & (last_g["up_streak"] <= 10)
+    cond_b = (last_g["up_streak"] >= us_low) & (last_g["up_streak"] <= us_high)
     # C: 涨跌幅
     cond_c = (last_g["pct_chg"] >= pc_low) & (last_g["pct_chg"] <= pc_high)
-    # D: MACD
-    cond_d = (
-        (last_g["dif"] < 0)
-        & (last_g["dea"] < 0)
-        & (last_g["bar"].abs() < last_g["prev_bar"].abs())
-    )
+    # D: MACD —— 三种模式与引擎 _all_conditions 逐字对应
+    if d_mode == "d_only":
+        cond_d = last_g["dif"] < 0
+    elif d_mode == "converge_strict":
+        cond_d = (
+            (last_g["dif"] < 0)
+            & (last_g["dea"] < 0)
+            & (last_g["bar"].abs() < last_g["prev_bar"].abs() * 0.5)
+        )
+    else:  # 'strict'(默认)
+        cond_d = (
+            (last_g["dif"] < 0)
+            & (last_g["dea"] < 0)
+            & (last_g["bar"].abs() < last_g["prev_bar"].abs())
+        )
 
     mask = cond_e & cond_a & cond_b & cond_c & cond_d
     out = last_g.loc[mask, ["thscode", "date", "close", "amount"]].copy()
@@ -168,18 +187,14 @@ UNSUPPORTED_ENTRY_SWITCHES = (
     "require_market_breadth_bear",  # 路径依赖
 )
 
-#: 本器把 E/A/B/C/D 五条件的**参数写死在代码里**（见 `_filter_signals`），
-#: 并不读 preset 的同名声明。只要 preset 声明了不同的值，两边的条件就不同。
-BAKED_IN_PARAMS = {
-    "liq_low": 3e7,
-    "liq_high": 3e8,
-    "up_streak_low": 3,
-    "up_streak_high": 10,
-    "below_ratio_60": 0.6,
-    "close_ma60_buffer": 0.0,
-    "d_mode": "strict",
-    "a_condition": "default",
-}
+#: 2026-10-16:**参数一律改读 preset 声明**(此前写死 3e7/3e8、3/10、0.6、无 buffer、
+#: 只实现 `d_mode='strict'`,于是 70/75 个 preset 的结论与引擎不一致)。
+#: 因此"参数被写死"这一条已不再构成不等价理由;取代它的是
+#: `test_filter_signals_reads_declared_params`(源码层禁止再写死)与
+#: `tests/test_fast_scanner_equivalence_gate.py` 里的对拍。
+#: 保留这个空集合是为了让 `fast_path_divergences()` 的形状稳定(调用方无需改),
+#: 同时**明确**它现在是空的 —— 而不是删掉后让人以为这里从没有过检查。
+BAKED_IN_PARAMS: dict = {}
 
 
 def fast_path_divergences(cfg: dict) -> list[str]:
