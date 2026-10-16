@@ -645,6 +645,7 @@ for path in paths:
 | (本轮) | **新发现(不在原发现集内)**:把库拿掉再跑 —— **fresh clone 拿到的是红的套件**。无库时 15 failed + 5 errors,0 字节占位时 8 failed + 3 errors,合计 **31 个**用例违反 §6「无库必须 skip,不得 error」 | 单一共享助手 `require_market_db()` / `market_db_available()`(检查**存在且非空** —— 原实现只查存在性,恰好让 0 字节占位漏过);两种缺库形状均跑成 **0 failed / 0 errors**;附十二 |
 | `5a413d8` | **§5 的执行层在 25 个研究脚本里**(不在引擎里):(a) 14 个 WF 脚本的 DSR **分子是 max(窗口)、分母是配置数** —— 两次不同的选择,窗口那层没被折减;(b) `chase_up/wf_sweep_all.py` 把**收益率**当 Sharpe 传进 DSR(12% 当 0.12 → p=0.966,而真 Sharpe=1.20 → p=0.772);(c) 4 个脚本引用**已删除**的 preset,启动即退出 | (a) 分子改跨窗口均值 + **数值验证**(断言收到 0.9 而非 1.9);(b) 用现成的 `mean_sharpe` 列;(c) **不改名字**(无重命名映射可推断 = 编造记录),改**登记债务** + 登记表必须等于实际集合;11 条守卫均双向验证;附十三 |
 | `a714e64` | **同族缺陷的另一半**:`cycle_price_action/sweep_thresholds.py` 在**展平网格**(阈值×窗口)上取 max,却按**阈值个数**折减 —— 且它**自己打印的表**(逐阈值均值)与它实际传给 DSR 的数**不是同一个**。另:`cycle` 的 `n_comparisons=1` 理由写作「无 sweep」,而其 `sweep_thresholds.py` 的**默认候选恰好包含出厂的 threshold=2.0** | 分子改为「阈值均值的最大」+ **数值验证**(0.9 而非 1.0);注释更正;`n_comparisons` 的**真实值交还给使用者**(无迭代记录即无法据实填写,填 3 是伪精确);新增"max 取几项/n_trials 数几项"守卫(只罚不匹配的那种组合);附十三 §4-6 |
+| `9992f6e` | **`tools/` 面查完(此前 2/5)**:三处干净(调规范引擎、无硬编码路径、只写 gitignored 目录);但 `run_all_backtests_html.py`(710 行零测试)**把 cycle 的「无法定义」换成 0.0 并带入跨策略排名**、**按 Sharpe 跨引擎排名**(附十一那条)、以及**守卫实测发现的 `width:nan%` 泄漏进 CSS** | 保持 `None`(渲染为「—」且退出排名);`sharpe_kind` 随产物发布 + 写明不可比;加 finite 保护;该工具补 **8 条**守卫(双向验证);并**更正我自己上一轮对 tools 的假阳性死 preset 扫描**;附十四 |
 
 **测试层净效果**(失败集合逐条 `diff`,非仅比数量):
 
@@ -680,13 +681,13 @@ for path in paths:
 7. **§3 公司行为**:配股/缩股未建模(全库 1 例),`apply_corporate_action` 已显式告警。
 8. ~~§7 源码内嵌业绩数字清理~~ → **已完成(`5c731cd`)**;~~`chase_up` 金标准基线仍红~~ → **已修复(`e063c43`)**;~~cycle 无成交列表基线~~ → **已补(`4cbc66c`)**;~~审计自认的六个未覆盖面~~ → **已查证(附七)**。
 
-**当前测试状态**(截至 `a714e64`)——**三种条件都跑过**(§6 的验收条件就是 fresh clone 的条件):
+**当前测试状态**(截至 `9992f6e`)——**三种条件都跑过**(§6 的验收条件就是 fresh clone 的条件):
 
 | 条件 | 结果 |
 |---|---|
-| 有本机行情库 | 1011 passed / 30 skipped / **0 failed** |
-| 无库(路径不存在) | 967 passed / 74 skipped / **0 failed / 0 errors** |
-| 无库(0 字节占位) | 967 passed / 74 skipped / **0 failed / 0 errors** |
+| 有本机行情库 | 1019 passed / 30 skipped / **0 failed** |
+| 无库(路径不存在) | 975 passed / 74 skipped / **0 failed / 0 errors** |
+| 无库(0 字节占位) | 975 passed / 74 skipped / **0 failed / 0 errors** |
 
 基线 `b597d0c` 为 failed 54 / passed 796 / errors 3。改动全程逐条 diff 失败集合,**新增失败 0**。
 30 条有库 skip = 22 条既有的 + 8 条本轮登记(产物边界 7 + cycle 慢 golden 1),全部带
@@ -1318,4 +1319,81 @@ n_trials = len(thresholds)       # 却只数阈值
   `n_trials=len(all_sharpes)` 是**对的**,不能被误伤。
 - **举证责任倒置**:"参数值 ∈ 自家 sweep 的默认候选,却声明 `n_comparisons=1`"必须
   登记或据实填写 —— 让"这个值不是 sweep 选的"从**默认成立**变成**需要说明**。
+
+---
+
+## 附十四:`tools/` 面(此前只查过 2/5 个文件)
+
+`tools/` 共 5 个文件、2506 行。此前只查过 `update_db_direct.py`(时区)与
+`render_top5_presets_html.py`(CAGR 口径)。剩下三个查完的结果:
+
+**干净的三条**(先记合规项,免得读者以为这一面全是问题):
+- **都调用规范引擎**,没有重实现回测/信号;
+- **都从 `__file__` 推导路径** —— 没有硬编码绝对路径(审计在
+  `tests/_regen_chase_baselines.py` 抓到过这一类,这里没有);
+- **都只写 gitignore 覆盖的 `results/`**(§7)。
+
+### 1 · §0/§2:「无法定义」被换成 0.0,并**带着假数字进入跨策略排名**
+
+`tools/run_all_backtests_html.py`(710 行,**此前零测试**)把
+
+```python
+"cagr":   float(metrics.get("cagr")   or 0.0),
+"sharpe": float(metrics.get("sharpe") or 0.0),
+"max_dd": float(metrics.get("max_dd") or 0.0),
+```
+
+用于 `cycle_price_action` —— 而这三个量在 cycle 上**无法定义**(横截面研究,每股一个
+独立账户)。换成 `0.0` 有两层后果:
+
+- **渲染层**:页面显示 `0.00`,与"真的等于零"无法区分;
+- **排名层**:它带着这个假数字进入「按 Sharpe / CAGR / max_dd 的跨策略 TOP-8 榜」——
+  而**排名榜会被当作结论读**。
+
+改回保持 `None`:该工具的 `_fmt_pct` / `_fmt_num` 本就把 `None` 渲染成「—」,而
+`render_rank` 本就过滤 `None` —— 于是它**自然地退出排名**,而不是以 0 参赛。
+
+值得一提的是,**这个工具原本就写了一条跨策略可比性警告**(提醒 short_reversal 的
+CAGR 量级会包揽榜单)—— 作者在意这件事,只是不知道更深的那一层。
+
+### 2 · §2:该工具**按 Sharpe 给跨策略排名** —— 而附十一已证明它不是同一个量
+
+`chase_up`/`uptrend` 是日收益年化 Sharpe,`short_reversal` 是逐笔比率近似,`cycle` 无定义。
+"按 Sharpe 排序"跨策略**没有意义**。现在每行的 `sharpe_kind` 随产物发布,并在排名区块
+顶部写明不可比。
+
+### 3 · 守卫**实测**发现的一处真 bug:`nan` 泄漏进 CSS
+
+新写的渲染守卫(用 nan / inf 驱动)立刻报出:
+
+```html
+<div class="bar" style="width:nan%"></div>
+```
+
+`bar_pct = abs(cagr) / scale * 100` 此前**绕过了** `_fmt_pct` 的 NaN/None 保护 ——
+而 `_fmt_pct` 的 docstring 明写它的存在就是为了
+
+> 防止引擎 regression 把 "nan%" / "inf%" 写入 HTML
+
+**那条意图有漏洞,而漏洞只在这条路径上。** 这类"同文件里一处防住了、另一处没防住"很难
+靠读代码发现 —— 是**用非法输入驱动渲染**发现的。
+
+### 4 · 更正我自己上一轮的一处**误报**
+
+上一轮我对 `tools/` 跑了死 preset 扫描,报出 `chase_up` / `v1` / `v36_d_converge` /
+`v40_tp_07` 等。复核后**全是扫描器的假阳性**:
+
+- `chase_up` 是**引擎名**不是 preset 名;`v1` 是版本片段;
+- `v36_d_converge` / `v40_*` / `v44_*` / `v45_*` 属于 **short_reversal**,却被我按
+  uptrend_pullback 的集合判定(因为 `render_top5` 同时处理两个引擎,而我按文件推断引擎)。
+
+**`tools/` 没有死 preset 引用。** 这条记在这里,是因为本轮前面刚强调过"假阳性比假阴性
+更毒,它会诱导人去修没坏的地方" —— 我自己的扫描器也踩了同一个坑。
+
+### 守卫
+
+这个 710 行、零测试的工具现在有 **8 条**守卫:导入冒烟 / `None` 不崩 /
+**未定义不参与排名**(带对照组,防空转)/ `sharpe_kind` 随产物发布 /
+无硬编码绝对路径 / 只写 gitignored 目录 / `nan`·`inf` 不泄漏进 HTML。
+均双向验证:还原旧代码时,"未定义参赛"与"nan/inf 泄漏"各条都正确失败。
 
