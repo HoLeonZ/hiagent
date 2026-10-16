@@ -808,13 +808,21 @@ class Phase3V3Strategy(bt.Strategy):
         # 更新持仓期最低价 (lowest_price), 若浮盈 ≥ activation 阈值则把止损
         # 收紧为 lowest_price × (1 + trailing_stop_pct), 取二者较紧者 (min)。
         # 不可变更新: 重建 dict 后 rebind (CLAUDE.md coding-style immutability)。
+        # §1 修正 (2026-10-17): 止损位只能用**截至上一根 bar** 的信息构造。
+        # 旧实现是 `lowest = min(lowest, low)` —— 用**本 bar 的 low** 定出止损位,
+        # 再立刻用**本 bar 的 high** 判它是否被触及。两者同处一根 bar, 等价于
+        # 假设"当日最低价出现在最高价之前", 而日线数据不提供这个次序 —— 这是
+        # 在区间内取**最大有利偏移**。后果可测: 随 trailing_stop_pct → 0, 成交价
+        # 趋近当日最低价, 于是指标**单调**改善 (实测 Calmar 60→63→81→101→116),
+        # 而这个单调性正是模型退化的指纹, 不是优势。
+        # 修正: 触发判定用 prev_lowest (截至上一根 bar 的最低), 本 bar 的 low 只在
+        # 出场判定**之后**并入跟踪价。悲观方向, 与 §4「同一 bar 内不确定次序时取
+        # 最坏情形」同精神。
+        prev_lowest = pos["lowest_price"]
         if self.p.trailing_stop_pct > 0.0:
-            lowest = min(pos["lowest_price"], low)
-            pos = {**pos, "lowest_price": lowest}
-            self._holds[code] = pos
             activation = ep * (1 - self.p.trailing_activation_pct)
-            if lowest <= activation:
-                trail_p = lowest * (1 + self.p.trailing_stop_pct)
+            if prev_lowest <= activation:
+                trail_p = prev_lowest * (1 + self.p.trailing_stop_pct)
                 sl_p = min(sl_p, trail_p)
         reason, price = None, None
         # gap-aware：short 仓 TP/SL
@@ -840,6 +848,13 @@ class Phase3V3Strategy(bt.Strategy):
             reason, price = "time", close
         if reason is not None:
             self._close(d, price, reason)
+            return
+        # §1: 未出场才把本 bar 的 low 并入跟踪最低价 (下一根 bar 才可用于构造止损位)
+        if self.p.trailing_stop_pct > 0.0:
+            self._holds[code] = {
+                **self._holds[code],
+                "lowest_price": min(prev_lowest, low),
+            }
 
     def _close(self, d, price: float, reason: str) -> None:
         code = d._name

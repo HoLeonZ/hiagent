@@ -2014,32 +2014,34 @@ PRESETS: dict[str, dict] = {
     # v73_trailing (2026-10-17): v72 + 浮动止损 2% (激活阈值 2%)。
     #
     # 由来: 全 preset 库在当前引擎下重扫时, 逐条查"哪些**机制**从未在新配置上试过"。
-    # `trailing_stop_pct` 是 v65 (2026-10-13) 引入的浮动止损, 当年被判 "WFV-failed"
-    # —— 但那次评估与 v58 的多仓判决同期, 都在容量闸门有缺陷、且出口参数
-    # (tp 0.08 / d_mode converge_strict) 尚未修正的配置下做的。
+    # `trailing_stop_pct` 是 v65 (2026-10-13) 引入的, 当年被判 "WFV-failed" ——
+    # 但那一次与 v58 的多仓判决同期, 都在容量闸门有缺陷、出口参数未修正的配置下做的。
     #
-    # 五个窗口 (W2 / IND / IS1 / IS2 + 全新 holdout 2019-10-01..2021-09-30):
-    #   CAGR  : 5/5 更高 (幅度大)
-    #   Sharpe: 5/5 更高
-    #   Calmar: 4/5 更高 (幅度 +24% ~ +70%), 仅 holdout 上更低
-    #   MaxDD : 2/5 更低 (其余三处略高)
-    # ⇒ 本次挖掘里幅度最大、覆盖面最广的一次改进。
-    # `trailing_stop_pct=0.03` 在 W2 上回落至基线水平 (Calmar 48.6) ⇒ 0.02 是拐点。
+    # ⚠️ 本 preset 上线时曾报出"幅度最大的一次改进"(W2 Calmar 60.1)。随后发现
+    # 该数字**被一个 §1 缺陷虚增**: 旧实现用**本 bar 的 low** 定出止损位, 又立刻用
+    # **本 bar 的 high** 判触发 —— 等价于假设当日最低价出现在最高价之前。证据是
+    # 它随 trailing_stop_pct → 0 而**单调**改善 (Calmar 60→63→81→101→116, 无拐点),
+    # 这是在区间内取最大有利偏移的指纹, 不是优势。
+    # 已修 (触发判定改用截至上一根 bar 的最低价, 本 bar 的 low 只在出场判定之后并入),
+    # 见 tests/test_short_reversal_trailing_no_lookahead.py (双向验证)。
     #
-    # 机理: 该策略的钱来自 TP 命中 (18.6% 的交易贡献 86% 的盈亏), 且 72.8% 的成交
-    # 以止损出场、止损腿本身几乎免费。浮动止损在**已经浮盈**之后把出场位从固定
-    # 止损收紧为"最低价 × (1+2%)", 即把右尾里"先赚后吐"的那部分锁住 —— 它动的
-    # 正是收益的主要来源, 而不是风控。
+    # **修正后**的五窗口 (W2 / IND / IS1 / IS2 + holdout 2019-10-01..2021-09-30),
+    # 对 v72: CAGR 5/5 更高; Sharpe 5/5 更高; Calmar 4/5 更高 (幅度温和, 非此前
+    # 报出的量级); 仅 holdout 的 Calmar 略低。⇒ 仍然采纳, 但描述改为"温和而一致"。
     #
-    # §5 n_comparisons = 109 (= 95 + 6 个库重扫 + 3 个 W2 探针 + 5 个跨窗口)
-    # 本节不记数字 (§7)。
+    # 机理: TP 命中贡献 86% 的盈亏, 且 72.8% 的成交以止损出场、止损腿几乎免费。
+    # 浮动止损在浮盈之后收紧出场位, 锁的是右尾里"先赚后吐"的部分 —— 动的是收益
+    # 来源而非风控。
+    #
+    # §5 n_comparisons = 109 + 12 (= 95 基线 + 本轮库重扫 6 + W2 探针 9 + 跨窗口 13,
+    # 保守计) ⇒ 121。本节不记数字 (§7)。
     "v73_trailing": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
         "price_source_for_signal": "adj_close",
         "price_source_for_execution": "raw_close",
-        "n_comparisons": 109,
+        "n_comparisons": 121,
         "position_sizing": "all_in",
         "max_positions": 4,
         "position_fraction": 1.0,
