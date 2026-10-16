@@ -156,9 +156,8 @@ def test_real_dual_panel_adj_raw_divergence_enforced():
     真实 A 股历史数据, signal_close() 和 execution_close() 必须返回
     不同值。这是 runtime integration 的 smoke test。
     """
-    from hiagent_config import DB_PATH
-    if not DB_PATH.exists():
-        pytest.skip("需要 hiagent_config.DB_PATH (real DuckDB)")
+    from tests.conftest import require_market_db  # §6: 存在**且非空**
+    require_market_db()
     from dna_data.dual_price_loader import load_dual_price_panel
     panel = load_dual_price_panel("2025-09-01", "2025-09-05")
     if panel.empty:

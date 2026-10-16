@@ -28,11 +28,9 @@ uptrend_pullback 保持 raw_close 执行 + 不做显式 CA 记账。理由:
 """
 from __future__ import annotations
 
-from pathlib import Path
 
 import duckdb
 import pandas as pd
-import pytest
 
 PRESET = "v33_long_reverse_v19"
 START, END = "2024-09-01", "2026-09-01"
@@ -40,12 +38,11 @@ START, END = "2024-09-01", "2026-09-01"
 
 def test_no_position_spans_a_corporate_action_ex_date() -> None:
     """持仓期内不得穿过任何除权日 —— 否则必须实现 §3 的 event-sourced 记账。"""
-    from hiagent_config import DB_PATH as _DB
     from uptrend_pullback.backtest import run_backtest
 
-    db = Path(_DB)
-    if not db.exists():
-        pytest.skip(f"本测试需要本机 DuckDB: {db}")
+    from tests.conftest import require_market_db  # §6: 存在**且非空**
+
+    db = require_market_db()
 
     trades = run_backtest(PRESET, START, END, db)["trades"]
 

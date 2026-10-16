@@ -49,14 +49,19 @@ from short_reversal.replay_strategy_v3 import Phase3V3Strategy
 import backtrader as bt
 
 from hiagent_config import DB_PATH
+from tests.conftest import market_db_available  # §6: 存在**且非空**
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT.parent))
 
 # ---------- skip-on-no-DB ----------------------------------------------------
 
-_REAL_DB = DB_PATH if DB_PATH.exists() else None
-pytestmark = pytest.mark.skipif(_REAL_DB is None, reason="需要 hiagent_config.DEFAULT_DB_PATH")
+# §6 (audit 2026-10-15): 原为 `DB_PATH.exists()` —— 0 字节占位文件(正是 fresh clone
+# 的形状)会漏过去,于是无可用库时这 3 个用例是 ERROR 而不是 skip。
+_REAL_DB = DB_PATH if market_db_available() else None
+pytestmark = pytest.mark.skipif(
+    _REAL_DB is None, reason="§6: 本地行情库不可用(无库或 0 字节占位)"
+)
 
 
 # ---------- fixtures --------------------------------------------------------

@@ -35,6 +35,7 @@ from chase_up.replay_strategy import ChaseUpTradeReplay
 from chase_up.signals import compute_indicators, select_entries
 
 from hiagent_config import DB_PATH
+from tests.conftest import require_market_db  # §6 共享跳过助手
 
 
 # --------------------------------------------------------------------------- #
@@ -399,6 +400,7 @@ def test_phase1_max_hold_exit_uses_close_not_intrabar():
 
 def test_db_schema_v_daily_qfq_has_required_columns():
     """v_daily_qfq 必须包含 [thscode, date, open, high, low, close, volume, amount]。"""
+    require_market_db()  # §6 (audit 2026-10-15): 无库时 skip 而非 fail
     con = duckdb.connect(str(DB_PATH), read_only=True)
     try:
         cols = [c[0] for c in con.execute("DESCRIBE v_daily_qfq").fetchall()]
@@ -455,6 +457,7 @@ def test_load_panel_does_not_include_bars_after_end_date():
 
     验证:panel.max(date) <= end_date,且 panel 不含任何未来日期的 bar。
     """
+    require_market_db()  # §6 (audit 2026-10-15): 无库时 skip 而非 fail
     from chase_up.data import load_panel
     from chase_up.universe import load_universe
 
@@ -485,6 +488,7 @@ def test_v5_e2e_signal_date_conditions_hold():
 
     这等价于证明:每个信号在决策时刻只用 past+current bar 数据,绝无穿越。
     """
+    require_market_db()  # §6 (audit 2026-10-15): 无库时 skip 而非 fail
     from chase_up.data import load_panel
     from chase_up.universe import load_universe
 
@@ -543,6 +547,7 @@ def test_v5_e2e_entry_price_is_entry_bar_open():
     守卫永远 False, entry 静默用 adj_open, 测试看起来 pass 但引擎错误). 修复后真正用 raw_open,
     测试断言也必须更新.
     """
+    require_market_db()  # §6 (audit 2026-10-15): 无库时 skip 而非 fail
     from chase_up.data import load_panel
     from chase_up.universe import load_universe
 
@@ -643,6 +648,7 @@ def _check_golden_baseline(key: str) -> None:
     from chase_up.data import load_panel
     from chase_up.signals import compute_indicators
     from chase_up.universe import load_universe
+    require_market_db()  # §6 (audit 2026-10-15): 无库时 skip 而非 fail
     from hiagent_config import DB_PATH as _DB
 
     baseline_path = Path(__file__).parent / "golden" / f"chase_v{key}_baseline.json"
@@ -728,6 +734,7 @@ def test_phase2_day0_cash_not_polluted_by_total_delta():
 
     验证方法:跑 v18 (一年期,验证 delta 非零),直接看 eq.iloc[0].cash。
     """
+    require_market_db()  # §6 (audit 2026-10-15): 无库时 skip 而非 fail
     name = "chase_v18_pos2_equal_atr_tp6_sl16_mh18_score17_atr035_mom115_ma60buf08_atr082"
     res = run_backtrader_backtest(name, "2025-09-19", "2026-09-19", Path(DB_PATH), verify=True)
     eq = res["equity"]
@@ -746,6 +753,7 @@ def test_phase2_corrections_applied_at_exit_dates_not_uniformly():
     等于 phase-1 同行 cash + (累计到上一个 exit_date 的 delta)。
     不应等于 phase-1 同行 cash + total_delta。
     """
+    require_market_db()  # §6 (audit 2026-10-15): 无库时 skip 而非 fail
     name = "chase_v18_pos2_equal_atr_tp6_sl16_mh18_score17_atr035_mom115_ma60buf08_atr082"
     res_p1 = run_backtrader_backtest(name, "2025-09-19", "2026-09-19", Path(DB_PATH), verify=False)
     res_p2 = run_backtrader_backtest(name, "2025-09-19", "2026-09-19", Path(DB_PATH), verify=True)

@@ -26,6 +26,7 @@ from chase_up.data import load_panel
 from chase_up.signals import compute_indicators
 from chase_up.universe import load_universe
 from hiagent_config import DB_PATH
+from tests.conftest import require_market_db  # §6 共享跳过助手
 
 
 PRESET = "chase_v5_pos2_equal_atr_tp6_sl15_mh10"
@@ -34,6 +35,10 @@ WINDOW = ("2025-07-01", "2026-07-01")
 
 @pytest.fixture(scope="module")
 def panel():
+    # §6 (audit 2026-10-15): 无库时 **skip 而非 error**。此前的 skip 检查写在文件
+    # 中部的一个测试里,而这三个 module 级 fixture 在它之前就先连库了 —— 于是
+    # fresh clone 下 5 个用例是 ERROR,不是 skip。
+    require_market_db()
     universe = set(load_universe("mainboard_only", DB_PATH))
     return load_panel(DB_PATH, WINDOW[0], WINDOW[1], universe=universe)
 

@@ -106,3 +106,37 @@ def synthetic_single_stock_panel() -> pd.DataFrame:
             "amount": 5e7, "volume": 1e6,
         })
     return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+# §6: 需要本机行情库的测试必须 **skip 而非 error**
+# ---------------------------------------------------------------------------
+def market_db_available() -> bool:
+    """本地行情库是否可用 —— 存在**且非空**(供模块级 `skipif` 使用:模块级不能 skip)。
+
+    只查 `exists()` 会让 **0 字节占位文件**漏过去,而那正是 fresh clone 的形状
+    (`data/hiagent.db` 是 0 字节占位,真正的库在用户目录、不在快照里)。实测:
+    只查存在性时,0 字节库下有 8 个用例 FAIL、3 个 ERROR。
+    """
+    from hiagent_config import get_db_path
+
+    db = Path(get_db_path())
+    return db.exists() and db.stat().st_size > 0
+
+
+def require_market_db() -> Path:
+    """返回本地行情库路径;不可用则 `pytest.skip`。
+
+    CLAUDE.md §6 verbatim:
+      "Tests MUST skip (not error) when the local DB or run artifacts are absent."
+
+    **fresh clone 的真实状态就是"没有库"**。若依赖库的测试在此状态下 error 或 fail,
+    新克隆得到的是一套**红的**套件 —— 而"红是常态"正是本仓库已经吃过一次的亏
+    (见审计附六:红成为常态后,一次真实回归被"失败数没变"掩盖过去)。
+    """
+    from hiagent_config import get_db_path
+
+    db = Path(get_db_path())
+    if not market_db_available():
+        pytest.skip(f"§6: 本地行情库不可用({db})—— skip 而非 error")
+    return db

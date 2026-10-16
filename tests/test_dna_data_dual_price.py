@@ -5,6 +5,15 @@ import pandas as pd
 import pytest
 
 from dna_data.dual_price_loader import load_dual_price_panel
+from tests.conftest import require_market_db
+
+
+@pytest.fixture(autouse=True)
+def _require_db() -> None:
+    """§6 (audit 2026-10-15): 本文件**每个**用例都要读行情库(loader 内部解析库路径),
+    故无库时整个文件 skip —— 而不是 fresh clone 下 5 个用例全 FAIL。
+    见 `tests/conftest.require_market_db` 的说明。"""
+    require_market_db()
 
 
 def test_dual_price_panel_returns_all_columns():
