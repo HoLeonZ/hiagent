@@ -2923,3 +2923,73 @@ if not per_name:
 > 下游就一定会把它读成后者 —— 而这在本仓库已经发生过多次
 > (`profit_factor` 的 `Infinity`、DSR 的 `n_returns=252`、`mark_price` 的入场价兜底、
 > `_fetch_name_map` 的空 dict、容量闸门缺失时的"经济约束")。
+
+---
+
+## 附三十七 —— "§7 产物 writer 尚未实现"**不成立**:writer 早就有,缺的是**接线**
+
+### 1 · 台账的说法被推翻
+
+台账有两处写着「`equity_curve.csv` / `cash_walk.csv` / per-preset `backtest.json` 的
+**writer 尚未实现**」(§8 第 4 条、以及"仍未闭合的缺口"一节)。复核结果:**四个
+`main.py` 里都有 `_write_equity_curve`** —— writer 不但存在,而且带 canonical 列名与
+§2 的三池落盘逻辑。
+
+真实缺口完全在别处,而且是**两个不同**的东西:
+
+**(a) `short_reversal`:writer 存在、调用点存在,但链路断在中间 —— 永远不可达。**
+`main.py:188` 读 `eq_rows = m.get("equity_curve")`,而 `run_backtest_v3` 返回的 metrics
+**没有这个键**(实测:22 个键里没有它)。策略每个 bar 都在往
+`result_holder["equity_curve"]` 里写(全年窗口实测 200 行、键名齐全),但这些行
+**从来没有被带进 metrics** ⇒ `eq_rows` 恒为 None ⇒ 产物永远不出现,而且**静默**。
+
+**(b) `cycle_price_action`:`_write_equity_curve` 没有任何调用点。**
+`grep` 计数 1(只有定义)。def 与 call 的区别,在这份台账里此前被记成了"未实现"。
+
+> 这两处合起来说明一件事:**"未实现"与"实现了但不可达"是两种病,修法完全不同**
+> (前者要写代码,后者要接线 + 找断点)。台账把它们记成同一个,于是既低估了
+> short_reversal(其实只差一个键),又高估了 cycle(其实连调用都没有)。
+
+### 2 · 修法
+
+- `_metrics_from_holder` 把逐 bar 曲线**带进 metrics**(`"equity_curve": list(holder.get(...))`);
+- 集成路径**显式置 `None`** —— 多子组合的曲线尚未聚合。用 `None` 而不是"不放这个键":
+  缺键会与"字段根本没实现"不可区分(附三十三 的教训);`None` 可被读取方明确抱怨。
+- `main.py`:取不到曲线时 **`logger.warning`**(此前静默跳过)。"没写产物"必须出声 ——
+  否则"没写"与"写了但为空"同形。
+- `cycle_price_action`:**未代改**(该包正被另一 workstream 改动),改为在守卫里
+  **钉住事实**:测试断言 writer 仍无调用点 —— 谁接上了它,测试就会失败并被迫更新台账。
+
+### 3 · 守卫:把"真空的 skip"换成"自己产出再校验"
+
+那四条产物守卫此前形如「产物在 → 校验;不在 → skip 并登记缺口」。听起来稳妥,实则:
+`results/` 按 §7**必须**不入库 ⇒ fresh clone 下**永远 skip** ⇒ 它们从未校验过任何东西
+(而且 `_GAP` 文本里"缺少 writer"的说法是错的)。
+
+现改为**自己产出产物**:
+
+| 守卫 | 做什么 | 成本 |
+|---|---|---|
+| `test_writer_produces_both_artifacts`(3 引擎) | 合成输入 → 调 writer → 表头 == canonical | 毫秒 |
+| `test_cash_walk_pools_are_written_through_not_zeroed`(3 引擎) | 三池**逐列不同且非全 0**、且 `free_cash != locked_margin`(锁住 §2 P0-2 那个"硬编码 0"的形态) | 毫秒 |
+| `test_short_reversal_metrics_carry_the_equity_curve` | 单元层钉住本轮那个**具体**缺陷(键必须被带出) | 毫秒 |
+| `test_end_to_end_real_run_writes_artifacts`(仅 short_reversal) | 真跑一次 → 一路到文件落盘 | 约 5 分钟 |
+| `test_cycle_writer_is_still_unwired_and_that_is_recorded` | 钉住 cycle 的事实 | 毫秒 |
+
+**取舍记录**:最初做法是三个引擎各真跑一次 = **11 分钟**;而 writer 只需要"形状正确的
+输入",不需要真回测 ⇒ 改为合成输入后 3 分钟内解决,只保留**一条**真跑端到端
+(short_reversal,即本轮修的链路)。实测 5.4 分钟(原为全 skip、0 秒)。
+
+双向验证:回退 metrics 的 `equity_curve` 接入 ⇒ 单元断言以 `KeyError` 变红;恢复后
+9 passed / 4 skipped。
+
+### 4 · 台账更正(第五次"说法比事实重")
+
+已把 §8 与"仍未闭合"两处的「writer 尚未实现」更正为「writer 存在,**接线**问题」,
+并写明 cycle 的具体状态(定义了但无调用点)。
+
+本审计到目前已经推翻/更正过五条"已复核过"的台账说法:§4 Phase-2(自己已撤回)、
+§1 `settle()` 只冲刷正值、§6 信号层子进程(不存在)、§2 按字母序成交(实为合规)、
+以及本条"writer 未实现"。它们的共同形态是:
+**台账描述的是"当时观察到的表象",而代码在演化 —— 于是"未实现"可能早已变成
+"无效/不可达/已重命名"。凡引用台账,必须重新落到代码上核一遍。**
