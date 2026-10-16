@@ -1685,7 +1685,7 @@ assert PRUNED_IN_COMMIT in src        # 查文件
 | §5 DSR 键名 / `n_trials` 口径(MEDIUM×4) | **已修** | 附十三/十四/十六 |
 | `dsr['p_value']` 键名使 DSR 行永不输出 | **已修** | 上同 |
 | 常量重复与口径不一(LOW) | **部分**:黑名单/golden 内嵌业绩已修;**涨停阈值见 §3** | — |
-| §6 信号层发子进程/网络 IO(MEDIUM×3 之一) | **仍开** | `short_reversal/st_filter.py:44` 用 `subprocess` |
+| §6 信号层发子进程/网络 IO(MEDIUM×3 之一) | **定性不成立**;同处的真实缺陷(**静默放行**)已修 | 附二十九:回测路径传递闭包 40 模块零网络边;`st_filter` 的 fail-open 改为 fail-closed |
 | 量比上限在 volume=0/NaN 时整体跳过(MEDIUM×3) | **未复核完** | 下一轮 |
 | cycle 每股独立 1,000,000 账户(MEDIUM×1) | 设计未改,**已加口径标注** | 附八 |
 
@@ -1876,7 +1876,8 @@ P3 轮已改为真断言,原语句留在注释里作记录。顺带核对了另�
 | `.gitignore` 文件名级 | **已修**(本条) |
 | 恒真断言 | **早已修**;另 5 条经核对为真不变量 |
 | WFV 单 asof | **不是缺陷**(保守方向,已文档化) |
-| 信号层子进程 / 滑点侧未知量 | 仍开(§8 的 7c / 7b) |
+| 信号层子进程 | **已闭合**(附二十九:定性不成立 + 静默放行已修) |
+| 滑点侧未知量 | **仍开**(§8 的 7b) |
 | Phase-2 TP-first、限价守卫判在错误 bar(§4 MEDIUM×4) | **未复核** |
 
 还剩两族没逐条看:§4 的 Phase-2 语义分歧,与 §6 的"条件被第二处复制实现"。
@@ -2374,3 +2375,62 @@ pos = holds.pop(code)
 这是**范围声明**,不是遗漏 —— 各用例 docstring 均据实如此表述,且
 `_scan_self_mutation` 的 docstring 里也写明了这条边界。若要覆盖下标赋值,
 需要另一套判据(否则会把每处合法的字典更新都判成违规),留待后续。
+
+---
+
+## 附二十九 —— §3.3「§6 信号层发子进程/网络 IO」:**定性不成立**;但同处有一个真实的 §0 缺陷(已修)
+
+### 1 · 台账的定性被推翻:回测路径根本不触达它
+
+台账把本项记为「§6 信号层发子进程/网络 IO(MEDIUM×3 之一)」,依据是
+`short_reversal/st_filter.py:44` 用 `subprocess`。逐条核对后**不成立**:
+
+- `st_filter` 只被 `scan_signals.py:145` 与 `scan_signals_fast.py:161` 引用 ——
+  两个**实时信号扫描工具**,不是 §6 定义的 Strategy;
+- 用**传递闭包**核对(四个回测入口 `short_reversal.engine` / `chase_up.backtest` /
+  `uptrend_pullback.backtest` / `cycle_price_action.backtest` 出发,解析仓库内 import):
+  可达 **40** 个仓库模块,**没有一条边**通向 `subprocess` / `requests` / `urllib` /
+  `socket` / `st_filter`。§6 的「Strategy … has no network/DB access」在回测路径上成立。
+
+这与本轮已经出现过的形态相同:**台账的措辞比事实重**。前例是 §4 Phase-2 那族(附二十二
+逐条看完后"两族都不需要改"),以及 §1 的"settle() 只冲刷正值"。核对已复核过的族时,
+**最容易被措辞带走** —— 每条都要落到具体的边/行上。
+
+### 2 · 但那个文件里确有一个 §0 缺陷:**风险过滤器静默放行**
+
+```python
+name_map = _fetch_name_map(codes)          # 失败即 continue,返回拿到的那部分
+st_codes = {c: ... for c in codes if _looks_like_st(name_map.get(c, ""))}
+                                          # 取不到 ⇒ "" ⇒ 判定为"非 ST" ⇒ 放行
+```
+
+CLI 不在 / 超时 / 返回非 JSON / `ok=false` / `thscode` 不匹配时,`name_map` 为空或残缺,
+过滤等于没跑 —— 而**输出与"跑过且没有命中"完全同形**。一个**风险控制**输入以
+"没查出问题"的形式失效,方向与 §0 的 Pessimistic Default(「Do not silently bypass」)
+正好相反。这与本仓库已修的同形缺陷同类:`chase_up/universe.py` 的黑名单
+「文件不存在静默返回空集 ⇒『要排除 29 只』与『排除了 0 只』不可区分」。
+
+### 3 · 修法
+
+任何一只取不到名称即抛 `STFilterUnavailable`。要在无过滤下出结果,必须**显式**传
+`--include-st`(两个实时入口都已有该开关)—— 把"放弃风险检查"变成一次明确操作。
+注入点在 `_fetch_name_map` 这一层,故**回测路径完全不受影响**(见 §1 的传递闭包结论)。
+
+同时把一条**PIT 偏离**写进模块 docstring(据实声明,不假装安全):名称取自**当前**时点,
+故对历史的 `--signal-date` 而言,本过滤用的是"今天"的 ST 状态而**不是**该信号日的状态
+—— 它不是 point-in-time 过滤。回测的 PIT 过滤在 `short_reversal/universe.py`,
+不走本模块,故回测 universe 不受此影响。
+
+### 4 · 双向验证
+
+| 方向 | 手段 | 结果 |
+|---|---|---|
+| 旧行为 | 还原"静默 continue + 返回部分结果" | `test_st_filter_fails_closed.py` **4 red / 4 green**(red 恰为四条"失败必响") |
+| 新行为 | 恢复 | 8 全绿 |
+
+**另做了真实端到端核对**(改 fail-fast 最怕把运维工具打死):以真实 CLI 对 5 只真实代码
+(沪深各半)调用,全部解析成功,`*ST萃华` 被正确剔除 ⇒ 正常路径未被破坏。
+
+**并为 fail-fast 配了逃生门守卫**:`test_both_entry_points_offer_an_explicit_opt_out`
+断言两个入口都有 `--include-st` —— 没有逃生门的 fail-fast 会被运维用"改代码绕过"的方式
+绕开,那时守卫就真的失效了。
