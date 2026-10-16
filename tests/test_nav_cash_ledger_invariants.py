@@ -40,21 +40,73 @@ def test_portfolio_nav_excludes_locked_margin() -> None:
     assert portfolio_nav(70.0, 10.0, 30.0) == 110.0
 
 
+def _dates(n: int):
+    """前 n 天的 datetime64 序列(引擎的 bar 轴)。"""
+    import numpy as np
+
+    return np.array(["2025-01-01"], dtype="datetime64[ns]") + np.arange(n).astype(
+        "timedelta64[D]"
+    )
+
+
+def _pi(closes: list[float], raws: list[float] | None = None, n_days: int | None = None):
+    """构造引擎用的列字典。
+
+    §1 (audit HIGH, 2026-10-16): `mark_price` 现在按 `day` 在**股票自身**的
+    bar 序列上定位(缺 bar 时向前回退到 last raw_close),故 `dates` 是必需字段。
+    """
+    n = n_days if n_days is not None else len(closes)
+    pi: dict = {"dates": _dates(n), "close": list(closes)}
+    if raws is not None:
+        pi["raw_close"] = list(raws)
+    return pi
+
+
+def _day(offset: int):
+    """相对 2025-01-01 的第 offset 天(可为负,用于"早于首根 bar")。"""
+    import numpy as np
+
+    return np.datetime64("2025-01-01", "ns") + np.timedelta64(offset, "D")
+
+
 def test_mark_price_is_raw_first() -> None:
     """raw_close 存在且非 NaN 时必须用 raw（与执行域同域）。"""
-    pi = {"close": [16.2422], "raw_close": [23.35]}
-    assert mark_price(pi, 0, 23.04, "raw_close") == pytest.approx(23.35)
+    pi = _pi(closes=[16.2422], raws=[23.35])
+    assert mark_price(pi, _day(0), "raw_close") == pytest.approx(23.35)
     # 未声明 raw 执行域 → 用复权价
-    assert mark_price(pi, 0, 23.04, "adj_close") == pytest.approx(16.2422)
+    assert mark_price(pi, _day(0), "adj_close") == pytest.approx(16.2422)
 
 
 def test_mark_price_falls_back_on_missing_or_nan_raw() -> None:
-    """raw 列缺失 / 为 NaN / 无当日行 → 回退（baseline parity）。"""
-    assert mark_price({"close": [16.24]}, 0, 23.04, "raw_close") == pytest.approx(16.24)
+    """raw 列缺失 / 为 NaN → 回退该行复权价（baseline parity）。"""
+    assert mark_price(_pi(closes=[16.24]), _day(0), "raw_close") == pytest.approx(16.24)
     nan = float("nan")
-    assert mark_price({"close": [16.24], "raw_close": [nan]}, 0, 23.04, "raw_close") == pytest.approx(16.24)
-    # j is None（当日无 bar）→ 回退到调用方给的成本价
-    assert mark_price({"close": [16.24]}, None, 23.04, "raw_close") == pytest.approx(23.04)
+    assert mark_price(
+        _pi(closes=[16.24], raws=[nan]), _day(0), "raw_close"
+    ) == pytest.approx(16.24)
+
+
+def test_mark_price_carries_forward_when_the_bar_is_missing() -> None:
+    """§1: 停牌(当日无 bar)按 **last raw_close** 盯市 —— 不是入场价、不是 0。
+
+    本仓库此前在 `j is None` 时返回调用方给的 `fallback`(= `entry_price`),
+    于是停牌期间浮盈浮亏被抹平、复牌当日再一次性跳回。两条断言互为对照:
+    回退值必须等于**最后一根 bar 的价**,且**不得**等于任何"成本价"。
+    """
+    pi = _pi(closes=[10.0, 11.0, 12.0], raws=[10.0, 11.0, 12.0])
+    # 第 3 天(下标 3)无 bar —— 向前回退到下标 2 的收盘价 12.0
+    assert mark_price(pi, _day(3), "raw_close") == pytest.approx(12.0)
+    # 更靠后的缺失日仍回退到同一根 bar(停牌持续期内价格保持不动,而非漂回成本)
+    assert mark_price(pi, _day(9), "raw_close") == pytest.approx(12.0)
+    assert mark_price(pi, _day(3), "raw_close") != pytest.approx(10.0), (
+        "回退到了入场价(第 0 根 bar)而不是最后一根 bar —— §1 要求 last raw_close"
+    )
+
+
+def test_mark_price_fails_fast_when_no_bar_exists_at_all() -> None:
+    """§1: 一根 bar 都没有 ⇒ fail-fast,不静默回退(持仓必然至少有一根 bar)。"""
+    with pytest.raises(ValueError, match="无法盯市"):
+        mark_price(_pi(closes=[10.0]), _day(-3), "raw_close")
 
 
 # ---------------------------------------------------------------------------
@@ -148,15 +200,23 @@ def test_chase_up_equity_nav_identity_and_cash_conservation() -> None:
     # (b) 现金守恒。§3 (audit P2-10): 分红是**独立于逐笔 P&L 的现金流**
     # (physical cash deposit into Free_Cash),必须计入恒等式 ——
     # 否则实现公司行为之后这条守卫会"正确地"失败,而那是守卫不完整,不是代码错。
+    #
+    # §1 (audit HIGH, 2026-10-16): 窗口末日仍停牌的持仓**不再被强平**(§1 禁止
+    # 在停牌期间产生 fill),故末行可能留有未平仓仓位。此时成交列表里没有它,
+    # 但净值里必须有它 —— 该仓位的净贡献是 `持仓市值 − 成本基础(locked_margin)`
+    # (入场时 free→locked 转出的是 size×entry+fee,而 locked 不属于 NAV)。
+    # 全平仓时 locked_margin == 0,本式退化为原来的 init + Σnet_pnl + 分红。
     init = 1_000_000.0
     realised = float(pd.to_numeric(trades["net_pnl"], errors="coerce").sum())
     assert "cum_dividends" in eq.columns, "权益账本缺少 cum_dividends 列(§3)"
     dividends = float(eq["cum_dividends"].iloc[-1])
-    expected = init + realised + dividends
+    open_net = float(eq["holdings"].iloc[-1]) - float(eq["locked_margin"].iloc[-1])
+    expected = init + realised + dividends + open_net
     assert abs(float(eq["equity"].iloc[-1]) - expected) / init < 1e-4, (
         f"现金守恒不成立: equity={float(eq['equity'].iloc[-1]):,.2f} "
-        f"!= init+Σnet_pnl+Σdividends={expected:,.2f} "
-        f"(Σnet_pnl={realised:,.2f}, Σ分红={dividends:,.2f})"
+        f"!= init+Σnet_pnl+Σdividends+未平仓净额={expected:,.2f} "
+        f"(Σnet_pnl={realised:,.2f}, Σ分红={dividends:,.2f}, "
+        f"未平仓净额={open_net:,.2f})"
     )
 
     # (c) 单 bar 权益收益不得超过涨跌停上界（旧 bug 实测 107.70%）

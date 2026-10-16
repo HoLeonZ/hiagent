@@ -41,6 +41,7 @@ TDD: tests/test_dual_price.py 是本模块的契约锁。
 """
 from __future__ import annotations
 
+import bisect
 from dataclasses import dataclass
 from typing import Mapping
 
@@ -409,32 +410,52 @@ def _is_missing(v: object) -> bool:
 
 def mark_price(
     pi: dict,
-    j: int | None,
-    fallback: float,
+    day,
     price_source_for_execution: str,
 ) -> float:
-    """§3 盯市价 —— 必须与执行价同域(raw-first)。audit P0-1b (2026-10-15)。
+    """§1/§3 盯市价 —— `day` 当日或之前**最后一个可用收盘价**(raw-first)。
 
-    四个引擎都曾用 `size × 复权 close` 给一个以 `raw_open` 建仓的仓位盯市。
-    对有历史分红送股的标的,复权/原始比可达 0.70 量级 —— 于是**持仓期间
-    权益被系统性错算整整一个复权比例**,开仓时凭空出现、平仓时消失。
-    实测(preset `chase_v1_atr_tp4_sl1`, 2025-09-19→2026-09-19):单 bar
-    权益收益最高 **107.70%**,而 A 股 ±10% 涨跌停下物理上限约 ±10%;
-    样本 603585.SH 2026-04-08,entry_price 23.04 == raw_open,盯市所用
-    close 仅 16.24,比值 0.6956。
+    §1 Suspension semantics (audit HIGH, 2026-10-16): 停牌产生的是**缺 bar**,
+    既不是 0 价、也不是入场价。§1 原文:「positions in suspended names are
+    marked at the **last `raw_close`** and MUST NOT generate fills until
+    trading resumes」。
 
-    设计要点:`pi` 是引擎按股票建立的列字典(`close` = 复权域,
-    `raw_close` = 原始域),`j` 为当日行号。raw 列缺失(LEFT JOIN miss →
-    NaN)时回退复权价,与各引擎触发域的既有回退策略一致(baseline parity)。
-    本模块保持零外部依赖,故用 `_is_missing` 而非 numpy。
+    此前签名是 `(pi, j, fallback, price_source_for_execution)`,两个 DataFrame
+    引擎(chase_up / uptrend_pullback)在 `j is None`(当日无 bar)时返回
+    `fallback` = `pos["entry_price"]` —— 于是**停牌期间持仓按入场价盯市**:
+
+      - 停牌期内该仓位的浮盈浮亏**全部消失**(净值曲线被凭空拉平),复牌当日
+        再一次性跳回 —— 一段真实的行情在权益曲线上被抹掉又还回来;
+      - NAV 闸门(§2)用这个假净值判断是否已击穿,停牌股会让闸门看不见亏损;
+      - 窗口末日强平(下方 `t == last_t`)会按 `entry_price` **造出一笔现实中
+        不可能成交的"≈0 盈亏"交易**,并把 §1 明令禁止的 fill 写进成交列表。
+
+    实测暴露面(黄金窗口 2025-09-19→2026-09-19,3159 只票 / 242 个交易日):
+    299 只票有缺口、共 1348 个 (股票, 日) 缺口事件,其中 **10 只在窗口末日
+    仍无 bar** —— 只要窗口末持有其中之一,就会产生上述假成交。
+
+    现在盯市价不再有"调用方给的成本价"这一路输入:缺 bar 时**向前回退**到
+    最后一个真实收盘价(这正是 §1 的要求),故该函数只依赖股票自身的 bar 序列。
+
+    §3:`raw_close` = 原始域,`close` = 复权域;raw 列缺失(LEFT JOIN miss →
+    NaN)时回退该行复权价(baseline parity)。整段无可用价 → fail-fast。
+    本模块保持零外部依赖,故用 `bisect` 而非 numpy。
     """
-    if price_source_for_execution == PRICE_SOURCE_RAW and "raw_close" in pi:
-        raw_px = pi["raw_close"][j] if j is not None else None
-        if not _is_missing(raw_px):
-            return float(raw_px)
-    if j is None:
-        return float(fallback)
-    return float(pi["close"][j])
+    dates = pi["dates"]
+    k = bisect.bisect_right(dates, day) - 1
+    for idx in range(k, -1, -1):
+        if price_source_for_execution == PRICE_SOURCE_RAW and "raw_close" in pi:
+            raw_px = pi["raw_close"][idx]
+            if not _is_missing(raw_px):
+                return float(raw_px)
+        adj_px = pi["close"][idx]
+        if not _is_missing(adj_px):
+            return float(adj_px)
+    raise ValueError(
+        f"§1: {day} 及之前没有任何可用收盘价,无法盯市 —— "
+        "该股票在此窗口内没有任何 bar。持仓必然存在至少一根 bar,"
+        "因此这是调用方的 bug,不是可静默回退的情形。"
+    )
 
 
 def portfolio_nav(

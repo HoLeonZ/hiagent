@@ -404,6 +404,8 @@ def simulate_portfolio(
         })
 
     last_t = len(cal) - 1
+    # §1 (audit HIGH, 2026-10-16): 末日仍停牌(当日无 bar)因而**不得**强平的持仓。
+    _unclosed_at_window_end: list[str] = []
 
     for t, day in enumerate(cal):
         # Round 16 (CLAUDE.md §2): T+1 settlement at start of each bar — move
@@ -525,9 +527,7 @@ def simulate_portfolio(
                 # 策略在反复 gap-down 击穿 SL 后继续 all-in 累积亏损直到穿仓 0。
                 holdings_val = 0.0
                 for code, pos in positions.items():
-                    j = _row_at(pidx[code], day)
-                    px = mark_price(pidx[code], j, pos["entry_price"],
-                                     price_source_for_execution)
+                    px = mark_price(pidx[code], day, price_source_for_execution)
                     holdings_val += pos["size"] * px
                 # §2 (audit P0-1, 2026-10-15): NAV = 可动用现金 + 结算中资金 +
                 # 持仓市值。旧式 `total_cash + holdings_val` 把 locked_margin
@@ -706,23 +706,35 @@ def simulate_portfolio(
                     }
 
         # ---------- 3) 末日强制平仓 ----------
+        # §1 (audit HIGH, 2026-10-16): 停牌股**不得**在末日被强平。
+        # 强平是一笔 fill,而 §1 明令「MUST NOT generate fills until trading
+        # resumes」;此前这条路径按 `entry_price` 成交 —— 既造出假成交,又把
+        # 一笔真实存在的浮亏/浮盈抹成 0。改为:当日无 bar ⇒本金留在持仓里,
+        # 不入成交列表;净值仍按 last raw_close 计入(`holdings` 列的末行
+        # 即该未平仓市值,故 §2 的现金恒等式仍可对账:equity = init + Σnet
+        # + 分红 + holdings)。
         if t == last_t:
             for code in list(positions.keys()):
                 pos = positions[code]
                 pi = pidx[code]
-                j = _row_at(pi, day)
-                px = mark_price(pi, j, pos["entry_price"],
-                                 price_source_for_execution)
+                if _row_at(pi, day) is None:
+                    _unclosed_at_window_end.append(code)
+                    continue
+                px = mark_price(pi, day, price_source_for_execution)
                 pos["bars"] = t - pos["entry_t"]
                 _close_position(code, pos, px, day, "eod")
                 del positions[code]
+            if _unclosed_at_window_end:
+                logger.warning(
+                    "§1: 窗口末日 %s 仍停牌(无 bar)的持仓未强平,按 last "
+                    "raw_close 保留在净值中、不计入成交列表: %s",
+                    pd.Timestamp(day).date(), _unclosed_at_window_end,
+                )
 
         # ---------- 4) 记录净值 ----------
         holdings_val = 0.0
         for code, pos in positions.items():
-            j = _row_at(pidx[code], day)
-            px = mark_price(pidx[code], j, pos["entry_price"],
-                             price_source_for_execution)
+            px = mark_price(pidx[code], day, price_source_for_execution)
             holdings_val += pos["size"] * px
         # §2 (audit P0-1, 2026-10-15): 权益 = 可动用现金 + 结算中资金 + 持仓市值。
         # `cash` 列保持 total_cash(券商侧总现金,兼容既有读者);
