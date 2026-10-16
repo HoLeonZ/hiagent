@@ -647,6 +647,7 @@ for path in paths:
 | `a714e64` | **同族缺陷的另一半**:`cycle_price_action/sweep_thresholds.py` 在**展平网格**(阈值×窗口)上取 max,却按**阈值个数**折减 —— 且它**自己打印的表**(逐阈值均值)与它实际传给 DSR 的数**不是同一个**。另:`cycle` 的 `n_comparisons=1` 理由写作「无 sweep」,而其 `sweep_thresholds.py` 的**默认候选恰好包含出厂的 threshold=2.0** | 分子改为「阈值均值的最大」+ **数值验证**(0.9 而非 1.0);注释更正;`n_comparisons` 的**真实值交还给使用者**(无迭代记录即无法据实填写,填 3 是伪精确);新增"max 取几项/n_trials 数几项"守卫(只罚不匹配的那种组合);附十三 §4-6 |
 | `9992f6e` | **`tools/` 面查完(此前 2/5)**:三处干净(调规范引擎、无硬编码路径、只写 gitignored 目录);但 `run_all_backtests_html.py`(710 行零测试)**把 cycle 的「无法定义」换成 0.0 并带入跨策略排名**、**按 Sharpe 跨引擎排名**(附十一那条)、以及**守卫实测发现的 `width:nan%` 泄漏进 CSS** | 保持 `None`(渲染为「—」且退出排名);`sharpe_kind` 随产物发布 + 写明不可比;加 finite 保护;该工具补 **8 条**守卫(双向验证);并**更正我自己上一轮对 tools 的假阳性死 preset 扫描**;附十四 |
 | `e081a48` | **`dna_data/` 面查完(此前 0/3)**:两个 loader 的 SQL 有因果上界 ✓、无 §1 禁用函数 ✓;但 `dual_price_resolver.execution_open` 的回退链是 `("raw_open","adj_open","open")` —— **执行价缺失时静默变成复权价**,与**同文件两个兄弟函数**注释里写明的「skip the OTHER family」自相矛盾。另:**§1 守卫的 `SCAN_DIRS` 漏掉了 `dna_data` 与 `tools`** —— 而 `dna_data` 是 panel 的生产者 | 回退链改 `("open",)`(与 `execution_close` 对称),缺 raw 即 fail-fast;扫描面补上两个目录(`sql/` 因 AST 限制另行登记);两组守卫双向验证(植入 `bfill` / 还原旧回退链都正确失败);附十五 |
+| `1f30818` | **修复审计 §3.2 HIGH**:`uptrend_pullback/iter_reverse.py` 做默认 **100 次** Monte-Carlo 搜索、排完 TOP-K,却**无 DSR / Bonferroni / n_trials** —— 违反 §5 Penalty Metrics;而**姊妹脚本 `sweep_v33_long.py` 本来就有**。另纠正审计表述:它用的是 22 个滚动窗口,不是"同一窗口" | 量化**已做过的选择**(`observed`=被选中配置的 Sharpe;`n_trials`=**实际评分**的配置数;`n_returns`=21/月,取自仓库既有 126/6 口径)+ 显式 **in-sample** 警告;6 条守卫,**含一条把我自己写空转的第一版守卫修好**的过程;附十六 |
 
 **测试层净效果**(失败集合逐条 `diff`,非仅比数量):
 
@@ -683,13 +684,13 @@ for path in paths:
 7. **§3 公司行为**:配股/缩股未建模(全库 1 例),`apply_corporate_action` 已显式告警。
 8. ~~§7 源码内嵌业绩数字清理~~ → **已完成(`5c731cd`)**;~~`chase_up` 金标准基线仍红~~ → **已修复(`e063c43`)**;~~cycle 无成交列表基线~~ → **已补(`4cbc66c`)**;~~审计自认的六个未覆盖面~~ → **已查证(附七)**。
 
-**当前测试状态**(截至 `e081a48`)——**三种条件都跑过**(§6 的验收条件就是 fresh clone 的条件):
+**当前测试状态**(截至 `1f30818`)——**三种条件都跑过**(§6 的验收条件就是 fresh clone 的条件):
 
 | 条件 | 结果 |
 |---|---|
-| 有本机行情库 | 1023 passed / 30 skipped / **0 failed** |
-| 无库(路径不存在) | 979 passed / 74 skipped / **0 failed / 0 errors** |
-| 无库(0 字节占位) | 979 passed / 74 skipped / **0 failed / 0 errors** |
+| 有本机行情库 | 1029 passed / 30 skipped / **0 failed** |
+| 无库(路径不存在) | 985 passed / 74 skipped / **0 failed / 0 errors** |
+| 无库(0 字节占位) | 985 passed / 74 skipped / **0 failed / 0 errors** |
 
 基线 `b597d0c` 为 failed 54 / passed 796 / errors 3。改动全程逐条 diff 失败集合,**新增失败 0**。
 30 条有库 skip = 22 条既有的 + 8 条本轮登记(产物边界 7 + cycle 慢 golden 1),全部带
@@ -1478,4 +1479,55 @@ portfolio physical cash mark-to-market"),又与**同一文件里两个兄弟函�
 **共同点:它们都不会自己报错。** 一个检查器只能证明"我扫过的地方没问题" ——
 **它证明不了"我没扫的地方没问题"**,而后者恰好是风险所在。故本报告不只记"哪些代码
 违规",也记"哪些地方**从没被看过**"。
+
+---
+
+## 附十六:100 次搜索排完 TOP-K,却**不报任何惩罚指标**
+
+审计 §3.2 的 HIGH 点过 `uptrend_pullback/iter_reverse.py:245`。这一轮逐行核对。
+
+**先纠正审计的表述**(原文不准确):它说该脚本"在**同一窗口**选优并直接报告" ——
+实际用的是 `monthly_windows` 的 **22 个滚动窗口**(2 个月窗 / 1 个月步)。
+**但实质问题成立**:选优与报告用的是**同一批窗口**,没有任何留出。
+
+### 缺陷
+
+该脚本做默认 **100 次** Monte-Carlo(随机采样 preset → 22 窗口评分 → 按综合分排序 →
+打印 TOP-K),而**完全没有** DSR / Bonferroni / n_trials。§5 verbatim:
+
+> "**Penalty Metrics:** Evaluation scripts must output Deflated Sharpe Ratio (DSR)
+> or apply Bonferroni corrections when reporting backtest results from
+> multi-parameter sweeps."
+
+**同仓库的姊妹脚本 `uptrend_pullback/sweep_v33_long.py` 是有的** —— 这个漏了。
+后果不是数字错,而是**读者无法区分**:100 次搜索挑出来的 TOP-K,与"单次评估的结果"
+在输出上长得一模一样。
+
+### 修法(不改研究设计,只把**已经做过的选择**如实量化)
+
+- `observed` = **被选中那个配置**的窗口中位 Sharpe(rank-1 那一行)—— 这样它与
+  `n_trials = 配置数` 描述的是**同一次选择**(与附十三/十四同一条原则);
+- `n_trials` = **实际评分的配置数**(`len(rows)`,而不是 `--iter`:**失败的迭代并没有
+  被评分**,把它算进去会虚增折减);
+- `n_returns` = 单窗交易日数,取 **21/月** —— 这是**仓库既有口径**
+  (walk-forward 家族 6 个月 = 126,即 126 ÷ 6),不是新发明的数;
+- 显式打印 **in-sample selection** 警告:DSR 量化的是"从 k 个里挑最好"的虚高,
+  **不能替代**样本外验证 —— 要下结论须另跑 `wfv_eval.py` 的 train/test 划分。
+
+### ⚠️ 本轮最该记的一条:**我自己的第一版守卫是空转的**
+
+行为守卫的做法:把搜索桩化,断言输出的 `n_trials` 等于**实际评分的配置数**。
+
+第一版我写的是 `--iter 3`,三次迭代**全部成功** —— 于是 `len(rows) == args.iter`,
+把 `n_trials` 从 `len(rows)` 改成 `args.iter` **测试仍然全绿**。
+也就是说,那条守卫**根本无法区分它要防的两种口径**,属于本报告反复批评的"空转守卫"。
+
+修正:让 `--iter 4` 中**第 3 次迭代失败**(返回 `error`)→ 实际评分 3 个。
+两种口径这才真正可分。修正后,两个错误变体(`n_trials=args.iter` 与
+`observed=max(...)`)**都正确失败**。
+
+这与附十五的结论是同一条,只是这次把镜头对准了我自己:
+**检查器不会自己报错 —— 它只会安静地通过。** 一条守卫必须先能"在错误实现上失败",
+才有资格说"在正确实现上通过"。本轮所有新增守卫都做了这一步双向验证;
+而这一条恰恰是**在第一版漏做了这一步之后才发现**的。
 
