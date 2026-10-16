@@ -70,9 +70,19 @@ PRESET_V1 = dict(
     price_source_for_signal="adj_close",
     price_source_for_execution="raw_close",
     # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor 声明。
-    # cycle 单一 preset, 无 sweep; n_comparisons=1 (DSR→PSR)。
-    # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
-    # 自动套 DSR + Bonferroni 校正。
+    #
+    # ⚠️ 2026-10-15 更正:n_comparisons=1 的理由此前写作「cycle 单一 preset,
+    # **无 sweep**」—— 这句话与仓库自身矛盾。`cycle_price_action/sweep_thresholds.py`
+    # 就是为**本 preset 的 `threshold`** 建的 sweep,而它的默认候选列表
+    # `--thresholds 1.5,2.0,2.5` **恰好包含出厂的 threshold=2.0**(正中间那个)。
+    #
+    # 若 2.0 确由该 sweep 选出,则 §5 Iterative-Tuning Accounting 要求把它计入
+    # n_trials,`n_comparisons=1` 即为**低估** —— 报出来的是 PSR 而不是 DSR,
+    # 也就是"不做折减"。**真实的累计试验数只能来自迭代记录**,不是从代码能推出来的量:
+    # 故此处**不改数值**(写成 3 之类的"看起来合理"的数字是伪精确,而且大概率仍低估),
+    # 而是把矛盾显式记在案上,并把本 preset 登记进
+    # `tests/test_research_scripts_reference_live_presets.py::
+    # KNOWN_UNRECORDED_TRIAL_COUNTS`,直到迭代记录补齐。
     n_comparisons=1,
     # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
     # Engine `portfolio.py:65` hardcodes MAX_POSITION_PCT=1.0; 显式声明如下。

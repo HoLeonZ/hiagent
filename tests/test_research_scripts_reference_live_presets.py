@@ -40,6 +40,19 @@ KNOWN_DEAD_REFERENCES = {
     "short_reversal/wf_v41_focused.py": "v41_pctchg_04_10",
 }
 
+#: §5 Iterative-Tuning Accounting 的**未记录试验数**登记。
+#:
+#: 规则:若某 preset 的参数值出现在**该引擎自己 shipped 的 sweep 脚本**的默认候选里,
+#: 那么"这个值不是 sweep 选出来的"就需要证据 —— 否则 `n_comparisons` 应把那次 sweep
+#: 计进去。登记在案的表示"矛盾已被发现,但真实迭代数需要人提供记录"。
+KNOWN_UNRECORDED_TRIAL_COUNTS = {
+    "cycle_price_action/PRESET_V1": (
+        "threshold=2.0 落在 sweep_thresholds.py 默认候选 1.5,2.0,2.5 内,"
+        "但 n_comparisons=1(『无 sweep』的说法与仓库自身矛盾);"
+        "真实累计试验数需迭代记录"
+    ),
+}
+
 #: 研究脚本(sweep / walk-forward / grid)。§5 的执行层就在这些文件里。
 SCRIPT_GLOBS = {
     "short_reversal": ("short_reversal/wf_*.py", "short_reversal/grid*.py",
@@ -124,6 +137,72 @@ def test_registered_scripts_still_exist() -> None:
     assert not missing, f"登记表引用了不存在的脚本:{missing}"
 
 
+# ---------------------------------------------------------------------------
+# §5: preset 的值落在自家 sweep 的默认候选里 → `n_comparisons=1` 需要证据
+# ---------------------------------------------------------------------------
+#: (引擎, preset 属性名, 参数键, 该引擎的 sweep 脚本, 脚本里候选列表的选项名)
+SWEEP_CANDIDATE_SOURCES = [
+    ("cycle_price_action", "PRESET_V1", "threshold",
+     "cycle_price_action/sweep_thresholds.py", "--thresholds"),
+]
+
+
+def _unrecorded_trial_counts() -> dict[str, str]:
+    """检出「参数值 ∈ 自家 sweep 默认候选,却声明 n_comparisons=1」的 preset。"""
+    import importlib
+    import re as _re
+
+    out: dict[str, str] = {}
+    for engine, preset_attr, key, script, opt in SWEEP_CANDIDATE_SOURCES:
+        mod = importlib.import_module(f"{engine}.presets")
+        preset = getattr(mod, preset_attr, None)
+        if preset is None or preset.get("n_comparisons") != 1:
+            continue
+        src = (REPO_ROOT / script).read_text(encoding="utf-8")
+        if f'"{opt}"' not in src:
+            continue
+        seg = src[src.index(f'"{opt}"'):][:400]
+        m = _re.search(r'default="([^"]+)"', seg)
+        if not m:
+            continue
+        try:
+            cands = {float(x) for x in m.group(1).split(",")}
+        except ValueError:
+            continue
+        value = preset.get(key)
+        if isinstance(value, (int, float)) and float(value) in cands:
+            out[f"{engine}/{preset_attr}"] = (
+                f"{key}={value} 落在 {sorted(cands)} 内,但 n_comparisons=1"
+            )
+    return out
+
+
+def test_swept_parameters_have_their_trials_accounted_or_are_registered() -> None:
+    """§5 Iterative-Tuning Accounting:值若可能是 sweep 选出来的,试验数就要记。
+
+    这条惩罚的是**举证责任倒置**:preset 声称"无 sweep",而自家 shipped 的 sweep
+    脚本默认候选里就有这个值 —— 声称需要证据,不是默认成立。
+    """
+    actual = _unrecorded_trial_counts()
+    new = {k: v for k, v in actual.items() if k not in KNOWN_UNRECORDED_TRIAL_COUNTS}
+    assert not new, (
+        "§5 VIOLATION: 以下 preset 的参数值落在自家 sweep 的默认候选内,却声明 "
+        "n_comparisons=1(即『未做过 sweep』):\n  "
+        + "\n  ".join(f"{k}: {v}" for k, v in new.items())
+        + "\n请提供迭代记录据实填写 n_comparisons,或登记到 "
+        "KNOWN_UNRECORDED_TRIAL_COUNTS 并说明为何无从得知。"
+    )
+
+
+def test_registered_unrecorded_trial_counts_are_still_unresolved() -> None:
+    """登记表必须跟着现实走:一旦迭代记录补齐(或数值改了),就要从表里删掉。"""
+    actual = _unrecorded_trial_counts()
+    stale = [k for k in KNOWN_UNRECORDED_TRIAL_COUNTS if k not in actual]
+    assert not stale, (
+        f"以下登记项已不再是问题(n_comparisons 已补或值已改)—— 请从登记表删除:{stale}"
+    )
+
+
 @pytest.mark.parametrize("script,expected", sorted(KNOWN_DEAD_REFERENCES.items()))
 def test_such_a_script_fails_loudly_rather_than_silently(script: str, expected: str) -> None:
     """这些脚本虽然失效,但必须**响亮地**失败(而不是跑出个空结果)。
@@ -175,4 +254,69 @@ def test_no_script_feeds_a_return_percentage_as_observed_sharpe() -> None:
     assert not offenders, (
         "§5 VIOLATION: 以下调用点疑似把**收益率**当作 `observed_sharpe` 传入 DSR"
         f"(DSR 契约要求年化 Sharpe):{offenders}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# §5: `max` 取了几项,n_trials 就必须数几项
+# ---------------------------------------------------------------------------
+def test_dsr_max_and_n_trials_describe_the_same_collection() -> None:
+    """§5: **max 取 N 项就必须按 N 折减**。
+
+    DSR 的契约(docstring):`n_trials` 是 "selecting the best Sharpe from **k
+    trials**" 里的 k。所以「对多少个候选取 max」与「按多少折减」必须同一。
+
+    已修的两种不匹配:
+      · 14 个 WF 脚本:`observed = max(sharpes)`(**窗口**上的最大)而
+        `n_trials = n_comparisons`(**配置**数)→ 窗口那层没被折减;
+      · `cycle_price_action/sweep_thresholds.py`:`observed = max(all_sharpes)`
+        (阈值 × 窗口展平后的每一格)而 `n_trials = len(thresholds)` → 按 T 折减、
+        却取了 T×W 项里的最大。
+
+    正确的是 `uptrend_pullback/sweep_v33_long*.py` 那种:`max(all_sharpes)` 配
+    `n_trials=len(all_sharpes)` —— 取 N 项、折减 N 项 ✓。故本守卫**只**惩罚
+    "展平网格上取 max,却按其中一维的个数折减"这一种组合。
+    """
+    offenders = []
+    for engine, patterns in SCRIPT_GLOBS.items():
+        for pattern in patterns:
+            for raw in sorted(glob.glob(str(REPO_ROOT / pattern))):
+                path = Path(raw)
+                src = path.read_text(encoding="utf-8")
+                code = "\n".join(
+                    l for l in src.splitlines() if not l.strip().startswith("#")
+                )
+                if "deflated_sharpe_ratio(" not in code:
+                    continue
+                flattened_max = "max(all_sharpes)" in code
+                # 按"其中一维"折减:n_trials 取自 thresholds/configs 这类单维集合
+                one_dim_trials = (
+                    "n_trials=len(thresholds)" in code
+                    or "n_trials=len(configs)" in code
+                )
+                if flattened_max and one_dim_trials:
+                    offenders.append(str(path.relative_to(REPO_ROOT)))
+    assert not offenders, (
+        "§5 VIOLATION: 以下脚本在**展平网格**上取 max,却只按其中一维折减 —— "
+        f"max 取 N 项、折减 T 项,窗口那一层选择没被计入:{offenders}"
+    )
+
+
+def test_wf_family_no_longer_selects_the_best_window() -> None:
+    """14 个 WF 脚本不得再用 `max(sharpes)`(跨窗口最大)作 DSR 输入。
+
+    注意:按**去注释后**的代码判断 —— 修复说明里引用旧语句是正常的(spec 中说
+    「此前是 observed = max(sharpes)」),不应被当成回归。
+    """
+    offenders = []
+    for f in sorted(glob.glob(str(REPO_ROOT / "short_reversal" / "wf_v*_focused.py"))):
+        code = "\n".join(
+            l for l in Path(f).read_text(encoding="utf-8").splitlines()
+            if not l.strip().startswith("#")
+        )
+        if "observed = max(sharpes)" in code:
+            offenders.append(str(Path(f).relative_to(REPO_ROOT)))
+    assert not offenders, (
+        "§5 VIOLATION: 以下 WF 脚本又用「最好的那个窗口」当 DSR 输入 —— "
+        f"窗口那层选择不会被任何折减覆盖:{offenders}"
     )

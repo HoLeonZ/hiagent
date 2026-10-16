@@ -103,29 +103,43 @@ def main(argv: list[str] | None = None) -> int:
                   f"total_pnl={summary['total_pnl']:.2f}")
 
     # CLAUDE.md §5 DSR: 在 threshold × window 二维 trial 集合上报告 DSR
-    all_sharpes = [s for r in rows for s in r["sharpes"] if s is not None]
-    if all_sharpes:
-        observed = max(all_sharpes)
-        dsr = deflated_sharpe_ratio(
-            observed_sharpe=observed,
-            # §5 (audit P3, 2026-10-15): 这里 all_sharpes = **阈值 × 窗口**,
-            # 直接把重复计数喂给 n_trials 会系统性过度折减。真正的试验数是**扫过的
-            # 阈值个数**;n_returns 用单个窗口的真实交易日数。
-            n_trials=len(thresholds),
-            n_returns=WINDOW_TRADING_DAYS,
-        )
-        bonferroni_p = bonferroni_correct(
-            p_values=[dsr["dsr_p_value"]],
-            n_comparisons=len(thresholds),
-        )
-        print(
-            f"\n§5 DSR | observed_sharpe={observed:.3f} | "
-            f"n_trials={len(thresholds)} | "
-            f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
-            f"expected_max={dsr['expected_max_sharpe']:.3f} | "
-            f"raw_p={dsr['dsr_p_value']:.4f} | "
-            f"bonferroni_p={float(bonferroni_p[0]):.4f}"
-        )
+    if rows:
+        # §5 (audit 2026-10-15): 被检验的"最优"必须是**候选之一**,而不是任意一格。
+        #
+        # 原为 `observed = max(all_sharpes)`,其中 all_sharpes 是 **阈值 × 窗口**
+        # 展平后的每一格 —— 于是 max 可能落在某个"某个阈值恰好赶上的某个窗口"上,
+        # 而 n_trials 只数**阈值个数**。**max 取 N 项、却按 T < N 折减**,两者描述的
+        # 不是同一次选择(与本轮 WF 家族修的是同一个缺陷,方向相反的那一半)。
+        #
+        # 现在的口径与脚本自己打印的表一致:每个阈值先按窗口**取均值**(窗口是同一
+        # 策略在不同数据上,不是独立 trial),再在 T 个阈值均值里取最大 ——
+        # "max 取 T 项 + n_trials = T" ✓ 同一次选择。
+        per_threshold_mean = {
+            float(r["threshold"]): sum(r["sharpes"]) / len(r["sharpes"])
+            for r in rows
+            if r["sharpes"]
+        }
+        if per_threshold_mean:
+            observed = max(per_threshold_mean.values())
+            dsr = deflated_sharpe_ratio(
+                observed_sharpe=observed,
+                # n_trials = **扫过的阈值个数**(即上面取 max 的那 T 项),
+                # 而不是 阈值 × 窗口 的格数 —— 窗口不是独立试验。
+                n_trials=len(thresholds),
+                n_returns=WINDOW_TRADING_DAYS,
+            )
+            bonferroni_p = bonferroni_correct(
+                p_values=[dsr["dsr_p_value"]],
+                n_comparisons=len(thresholds),
+            )
+            print(
+                f"\n§5 DSR | observed_sharpe={observed:.3f} | "
+                f"n_trials={len(thresholds)} | "
+                f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
+                f"expected_max={dsr['expected_max_sharpe']:.3f} | "
+                f"raw_p={dsr['dsr_p_value']:.4f} | "
+                f"bonferroni_p={float(bonferroni_p[0]):.4f}"
+            )
     return 0
 
 
