@@ -1995,8 +1995,108 @@ P3 轮已改为真断言,原语句留在注释里作记录。顺带核对了另�
 | §5 DSR(HIGH×2) | **已修**(附十三/十六) |
 | §7 golden/源码内嵌业绩(HIGH×3) | **已修**(`5c731cd`) |
 | §1 窗口边界/宇宙 as-of(HIGH×4) | 部分;**"非交易日 asof 静默产出空宇宙"未复核** |
-| §1 停牌/退市按 `entry_price` 盯市(HIGH×1) | **未复核** |
+| §1 停牌/退市按 `entry_price` 盯市(HIGH×1) | **已修**(附二十四;黄金批次零漂移 —— 该窗口从未踩中,故只能靠合成夹具) |
 | §4/§0 cycle 入场按决策 bar 记账(HIGH×2) | **未复核** |
 
-**已闭合 7 / 部分 1 / 未复核 4 / 属研究决策 1。**
+**已闭合 8 / 部分 1 / 未复核 3 / 属研究决策 1。**
 
+
+---
+
+## 附二十四 —— §3.2「§1 停牌/退市按 `entry_price` 盯市」(HIGH×1):**成立**,已修
+
+### 1 · 代码事实(逐行)
+
+`core/dual_price.py` 的 `mark_price` 旧签名是
+`(pi, j, fallback, price_source_for_execution)`,而两个 pandas 引擎
+(`chase_up/portfolio.py` ×3、`uptrend_pullback/portfolio.py` ×3)一律传
+`fallback = pos["entry_price"]`:
+
+```python
+j = _row_at(pi, day)          # 停牌 / 无数据 → None(它自己的 docstring 就这么写)
+px = mark_price(pi, j, pos["entry_price"], price_source_for_execution)
+```
+
+`j is None` 时 `mark_price` 返回 `float(fallback)`。而 `cal` 是**面板日期的并集**
+(chase_up/portfolio.py:324),循环**会**走到这只股票没有 bar 的日子。三条后果:
+
+1. **盯市价 = 入场价** —— 停牌期内该仓位的浮盈浮亏全部消失,复牌当日再一次性
+   跳回:一段真实行情在权益曲线上被抹掉又还回来;
+2. **NAV 闸门(§2)拿假净值判断击穿** —— 停牌股让闸门看不见亏损,防穿仓形同虚设;
+3. **窗口末日强平按 `entry_price` 成交** —— 既造出一笔现实中不可能成交的
+   "≈0 盈亏"交易,又把 §1 明令禁止的 fill 写进成交列表。
+
+§1 原文两句都被违反:「positions in suspended names are marked at the
+**last `raw_close`**」以及「**MUST NOT generate fills until trading resumes**」。
+
+### 2 · 暴露面(实测,只读库;黄金窗口 2025-09-19→2026-09-19)
+
+| 量 | 值 |
+|---|---|
+| universe / 交易日 | 3159 只 / 242 日 |
+| 有缺口的股票数 | **299** |
+| 缺口 (股票, 日) 事件总数 | **1348** |
+| 窗口末日仍无 bar 的股票数 | **10** |
+| **黄金批次 13 preset / 216 笔成交里,持仓区间跨越停牌日的笔数** | **0** |
+
+**最后一行是本条最重要的事实,也是本条的方法论教训。** 缺陷真实、数据里天天发生,
+但**黄金窗口的成交集合从未踩中它**(入场票都是活跃标的、`max_hold` 又只有 10~18 日)。
+于是:
+
+- `tests/golden/*.json` 的 sha256 **修复前后都通过** → **零漂移**,但也**零信号**;
+- 真实数据既不能暴露它,也不能回归它 —— **只能靠合成夹具**。
+
+> 又一次:**基线的绿不能替代守卫**。sha256 锁的是"当前代码重跑出的成交列表",
+> 而不是"符合 §1 的成交列表";它对**盯市价**完全不敏感(只锁 trades.csv,
+> 不锁 equity 曲线)。这与附二十「规则存在 ≠ 规则被应用」是同一条:
+> **锁住一个产物的哈希,不等于锁住它背后的规则。**
+
+### 3 · 修法
+
+`mark_price` 不再接受"调用方给的成本价"这个输入 —— 签名改为
+`mark_price(pi, day, price_source_for_execution)`:按 `day` 在该股票**自己的**
+bar 轴上定位(`bisect`,保持模块零外部依赖),缺 bar 就**向前回退到最后一个可用
+收盘价**(raw-first,raw 缺失回退该行复权价)。一根 bar 都没有 ⇒ fail-fast
+(持仓必然至少有一根 bar,静默回退没有一句话说得通)。
+
+末日强平增加跳过分支:当日无 bar ⇒ **不强平**,持仓留在 `positions` 里,
+不入成交列表,而净值仍按 last raw_close 计入。为此:
+
+- 两个引擎的该分支都 `logger.warning`(不静默吞掉);
+- §2 的现金恒等式随之**一般化**为
+  `equity = 初始 + Σ已实现 + Σ分红 + (持仓市值 − locked_margin)` ——
+  全平仓时退化为原来的形式。`holdings − locked_margin` 恰好就是未平仓仓位的
+  净贡献(入场时 free→locked 转出的是 `size×entry+fee`,而 locked 不属于 NAV),
+  故不需要新增产物字段,`tests/test_nav_cash_ledger_invariants.py` 的守恒式即已覆盖。
+
+### 4 · 双向验证(两个方向都验了"守卫真的会红")
+
+| 方向 | 手段 | 结果 |
+|---|---|---|
+| 盯市 | 把旧语义 monkeypatch 回去(夹具里入场日收盘 == 入场价,故"回退到首根 bar 收盘"精确复现旧数值) | 三个停牌日 `holdings = 999,000`(= size×10),而修好后是 `1,198,800`(= size×12)→ 断言必然 red ✓ |
+| 强平 | 临时删掉跳过分支,跑守卫 | 2 red(`test_position_still_halted_at_window_end_is_not_force_closed` + chase 的结构守卫),8 仍绿 → 恢复后全绿 ✓ |
+
+新增 `tests/test_suspension_mark_and_no_fill.py`(行为层端到端 chase_up + 单元层
+`mark_price` + 结构层两引擎),`tests/test_nav_cash_ledger_invariants.py` 的三处
+调用迁到新签名并补"缺 bar 向前回退 / 无 bar fail-fast"。
+
+夹具本身也踩过一次坑并修正:**第一版 `_panel` 用 `continue` 跳过停牌日时,
+把"作为日历锚点的另一只股票"的 bar 一起跳过了** —— 于是日历里根本没有停牌日,
+前提被静默破坏。已改为无条件先追加锚点股票的 bar。**夹具也是代码,也要守自己的前提。**
+
+### 5 · 结果影响
+
+- 黄金批次(13 chase preset + uptrend 全量 sha256 基线):**零漂移**(修复前后均通过),
+  原因见 §2 —— 该窗口内没有任何持仓跨越停牌日;
+- 因此本次修复**未改变任何已发布结果**,但**移除了一条真实可达的错误路径**;
+- 窗口末持有停牌股的窗口(数据里存在,黄金批次里没有)从此不再产生假成交。
+
+### 6 · 同族但**另行登记**的项(不并入本次修复)
+
+`pos["bars"] = t - pos["entry_t"]`(两个引擎同形)按**日历 bar 序号差**计持仓时长,
+而非按"实际存在的交易日"计。停牌 30 天会让 `bars` 虚增 30 ⇒ 复牌当日立刻触发
+`max_hold`/`time` 出场,`hold_days` 也随之为日历口径。§1 的原话是针对指标滚动窗口
+的("count trading days actually present"),但同一原理可推及持仓时长。
+**不并入本次修复的理由**:它会改变 `hold_days` 的定义与所有 time-exit 时点,
+属**研究决策**(怎么给停牌期计时),与"缺 bar 不得按成本价盯市"这种明确的契约违反
+不同类。已登记,待评估。
