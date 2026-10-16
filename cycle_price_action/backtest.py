@@ -55,7 +55,10 @@ def _extract_trades(
     return out
 
 
-def _precompute_scores(df: pd.DataFrame) -> dict[date, tuple[float, float, float]]:
+def _precompute_scores(
+    df: pd.DataFrame,
+    periods: tuple[int, ...] | None = None,
+) -> dict[date, tuple[float, float, float]]:
     """每只票一次性算出每根 bar 的信号三元组 (§6: Control Plane 负责派发)。
 
     与"逐 bar 对至今为止的 bar 重算"**逐位等价** —— 三个函数都只看当前及
@@ -71,10 +74,10 @@ def _precompute_scores(df: pd.DataFrame) -> dict[date, tuple[float, float, float
     """
     patterns = detect_k_patterns(df)
     ks = k_line_score(df, patterns)
-    cy = phase_score(df["date"])
+    cy = phase_score(df["date"], periods=periods)
     cal = calendar_score(df["date"])
 
-    min_bars = max(DEFAULT_PERIODS)
+    min_bars = max(periods or DEFAULT_PERIODS)
     out: dict[date, tuple[float, float, float]] = {}
     for i, d in enumerate(df["date"]):
         cyc = 0.0 if (i + 1) < min_bars else float(cy.iloc[i])
@@ -104,7 +107,7 @@ def run_backtest(
     # Round 15 (2026-09-28, CLAUDE.md §4): intraday_tiebreak added to the
     # accepted whitelist so cycle preset declarations flow preset → strategy
     # params → Portfolio.__init__ (Tick 39 plumbing)。
-    _accepted = {"threshold", "min_dim", "max_hold", "atr_period", "atr_sl_mult", "tp_pct", "sl_pct", "initial_capital", "intraday_tiebreak"}
+    _accepted = {"threshold", "min_dim", "max_hold", "atr_period", "atr_sl_mult", "tp_pct", "sl_pct", "initial_capital", "intraday_tiebreak", "weight_kline", "weight_cycle", "weight_calendar", "periods"}
     strategy_kwargs = {k: v for k, v in preset.items() if k in _accepted}
 
     # Tick 49 (2026-09-28, CLAUDE.md §6): Control Plane owns DuckDB I/O.
@@ -126,7 +129,9 @@ def run_backtest(
                 cerebro.addstrategy(
                     CyclePriceActionStrategy,
                     data_provider=data_provider,
-                    precomputed_signals=_precompute_scores(slice.df),
+                    precomputed_signals=_precompute_scores(
+                        slice.df, periods=preset.get("periods"),
+                    ),
                     **strategy_kwargs,
                 )
                 cerebro.broker.setcash(cash)

@@ -58,6 +58,16 @@ class CyclePriceActionStrategy(bt.Strategy):
         # Control Plane (backtest.run_backtest) 每只票预计算一次后注入。
         # 逐 bar 重算是 O(n²), 实测占 cycle 回测总耗时的 87%。
         precomputed_signals=None,
+        # V9 (2026-10-16): 三维融合权重。此前已在 PRESET_V1 声明, 但从未被
+        # 读取 —— `next()` 调 entry_signal 时不传 weights, 走的是同一组默认值;
+        # `backtest._accepted` 白名单也把它们过滤掉了。接通后声明才是真的
+        # (默认值与声明值相同 ⇒ 零漂移)。
+        weight_kline=1.0,
+        weight_cycle=0.7,
+        weight_calendar=0.5,
+        # 同一类缺口: PRESET_V1 声明 periods=(3,5,8,13,21), 而 phase_score
+        # 一直走 DEFAULT_PERIODS (同值)。接通后可由 preset 调周期组。
+        periods=(3, 5, 8, 13, 21),
         # Round 15 (2026-09-28, CLAUDE.md §4): preset→strategy plumbing for
         # intraday_tiebreak. Default 'sl_first' preserves pre-R15 behavior。
         intraday_tiebreak="sl_first",
@@ -161,6 +171,11 @@ class CyclePriceActionStrategy(bt.Strategy):
         sig = entry_signal(
             pd.Series([kscore]), pd.Series([cyc]), pd.Series([cal]),
             threshold=self.p.threshold, min_dim=self.p.min_dim,
+            weights=(
+                self.p.weight_kline,
+                self.p.weight_cycle,
+                self.p.weight_calendar,
+            ),
         ).iloc[0]
 
         if self._portfolio.position is None and sig:
