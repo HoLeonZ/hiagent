@@ -148,6 +148,7 @@ _START, _END = "2026-03-01", "2026-08-31"
 
 
 @_NEEDS_DB
+@pytest.mark.slow  # 真跑一次年度回测
 def test_chase_up_publishes_benchmark_and_excess() -> None:
     from chase_up.backtest import run_backtest
 
@@ -158,6 +159,7 @@ def test_chase_up_publishes_benchmark_and_excess() -> None:
 
 
 @_NEEDS_DB
+@pytest.mark.slow  # 真跑一次年度回测
 def test_short_reversal_publishes_benchmark_and_excess() -> None:
     from short_reversal.engine import run_backtest_v3
 

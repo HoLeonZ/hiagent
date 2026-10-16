@@ -98,6 +98,7 @@ def _check_one(preset: str) -> None:
     assert list(df.columns) == baseline["trades_csv_cols"]
 
 
+@pytest.mark.slow  # 两个 preset 各真跑一次年度回测(约 4 分钟/条)
 @pytest.mark.parametrize("preset", PRESETS)
 def test_short_reversal_trades_sha256(preset: str) -> None:
     """§0/§6 PASS baseline:成交列表逐字节可复现。"""

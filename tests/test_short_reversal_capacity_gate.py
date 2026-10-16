@@ -83,6 +83,7 @@ def _peak_concurrency(trades) -> int:
 
 
 @_NEEDS_DB
+@pytest.mark.slow  # 每个 preset 真跑一次(约 2.5 分钟/条)
 @pytest.mark.parametrize("preset,declared", sorted(_PRESETS.items()))
 def test_concurrent_positions_never_exceed_declared_max(preset: str, declared: int) -> None:
     """§2: 实际并发持仓数不得超过 preset 声明的 `max_positions`。

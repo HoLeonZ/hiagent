@@ -238,6 +238,7 @@ def test_cash_walk_pools_are_written_through_not_zeroed(engine: str, tmp_path: P
 
 
 @_NEEDS_DB_FOR_WRITER
+@pytest.mark.slow  # 真跑一次年度回测(约 5 分钟)
 @pytest.mark.parametrize("engine", ["short_reversal"])
 def test_end_to_end_real_run_writes_artifacts(engine: str, tmp_path: Path) -> None:
     """一条**真跑**的端到端(只为 short_reversal 保留 —— 本轮修的正是它的链路)。

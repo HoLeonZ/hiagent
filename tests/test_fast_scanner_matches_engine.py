@@ -97,6 +97,7 @@ def _slow_hits(preset: str, subset: list[str]) -> list[str]:
 
 
 @_NEEDS_DB
+@pytest.mark.slow  # 每个 preset 都要跑一遍逐股 cerebro 的真值路径(约 30 秒/条 × 11)
 @pytest.mark.parametrize("preset", _PRESETS)
 def test_fast_scanner_matches_the_engine_path(preset: str) -> None:
     """同一个 preset、同一个信号日 ⇒ 两条路径的信号集必须**逐只相同**。
@@ -122,6 +123,7 @@ def test_fast_scanner_matches_the_engine_path(preset: str) -> None:
 
 
 @_NEEDS_DB
+@pytest.mark.slow
 def test_the_comparison_is_not_vacuous() -> None:
     """对拍必须**有东西可比** —— 否则它只是两条空集相等的绿。
 
