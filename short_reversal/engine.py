@@ -59,6 +59,20 @@ MARGIN_RATE = BORROW_RATE_ANNUAL
 PANEL_FORWARD_BUFFER_DAYS = PANEL_FORWARD_BUFFER_DAYS
 
 
+def _benchmark_block(panel, total_return: float) -> dict:
+    """§5:基准收益 + 相对超额。见 core/benchmark.py 的选择理由。"""
+    from core.benchmark import BENCHMARK_KIND_EQUAL_WEIGHT, equal_weight_basket_return
+
+    bench, n_members = equal_weight_basket_return(panel)
+    return {
+        # 数字必须带着它的含义一起发布(与 sharpe_kind / n_trading_days 同一原则)。
+        "benchmark_kind": BENCHMARK_KIND_EQUAL_WEIGHT,
+        "benchmark_return": bench,
+        "benchmark_members": n_members,
+        "excess_return": total_return - bench,
+    }
+
+
 def _load_panel(db_path: Path, start: str, end: str, universe: list[str]) -> pd.DataFrame:
     """Thin wrapper delegating to Control Plane panel loader (CLAUDE.md §6).
 
@@ -222,11 +236,27 @@ def _run_ensemble(
     sl_count = sum(1 for t in all_trades if t["exit_reason"] == "SL")
     time_count = sum(1 for t in all_trades if t["exit_reason"] == "time")
 
+    # §5 Attribution Mandate: 集成的基准取自子策略 —— 它们共享同一窗口与(实际
+    # 上相同的)宇宙,故基准应当一致。**不一致即 fail-fast**:那说明子策略的宇宙
+    # 不同,怎么合并基准是个人为决定,不该由这里悄悄取平均或取第一个。
+    bench_values = sorted({round(float(r["benchmark_return"]), 12) for r in sub_results})
+    if len(bench_values) != 1:
+        raise ValueError(
+            f"§5: 集成子策略的基准不一致 {bench_values} —— 子策略宇宙不同,"
+            "基准如何合并需显式决定,不得静默取平均"
+        )
+    bench = bench_values[0]
+    n_members = max(int(r["benchmark_members"]) for r in sub_results)
+
     return {
         "preset": cfg["_name"],
         "start": start,
         "end": end,
         "n_trading_days": int(n_trading_days),
+        "benchmark_kind": sub_results[0]["benchmark_kind"],
+        "benchmark_return": bench,
+        "benchmark_members": n_members,
+        "excess_return": float(total_yield) - bench,
         "trades": all_trades,
         "trades_count": trades_count,
         "win_rate": float(win_rate),
@@ -413,6 +443,9 @@ def run_backtest_v3(
     cerebro.run()
     # §2 单源 (audit 2026-10-15): 年化用**窗口内的交易日数**(面板去重日期),
     # 而不是日历日跨度 —— 与 chase_up / uptrend_pullback 同口径。
-    return _metrics_from_holder(
+    metrics = _metrics_from_holder(
         holder, start, end, cfg, n_trading_days=int(panel["date"].nunique())
     )
+    # §5 Attribution Mandate(此前全库无实现,2026-10-16 补齐)
+    metrics.update(_benchmark_block(panel, float(metrics["total_yield"])))
+    return metrics

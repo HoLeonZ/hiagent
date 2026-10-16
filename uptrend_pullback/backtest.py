@@ -134,6 +134,21 @@ def compute_metrics(
     }
 
 
+def _benchmark_block(panel, total_return: float) -> dict:
+    """§5:基准收益 + 相对超额。见 core/benchmark.py 的选择理由。"""
+    from core.benchmark import BENCHMARK_KIND_EQUAL_WEIGHT, equal_weight_basket_return
+
+    bench, n_members = equal_weight_basket_return(panel)
+    return {
+        # 数字必须带着它的含义一起发布(与 sharpe_kind / n_daily_returns 同一原则):
+        # "超额 +3%"在没说明基准是什么之前,不是一个可引用的结论。
+        "benchmark_kind": BENCHMARK_KIND_EQUAL_WEIGHT,
+        "benchmark_return": bench,
+        "benchmark_members": n_members,
+        "excess_return": total_return - bench,
+    }
+
+
 def run_backtest(
     preset: str | dict,
     start: str,
@@ -212,6 +227,12 @@ def run_backtest(
         trades_df, equity_df, initial_capital=initial_capital, max_hold=p["max_hold"]
     )
     metrics.update({"start": start, "end": end, "signals": int(len(entries))})
+
+    # §5 Attribution Mandate(此前**全库无实现**,2026-10-16 补齐):
+    # 「Headline returns MUST be reported alongside benchmark-relative excess
+    # return (index or style basket)」—— 否则"纯 style beta"会被当成 alpha 呈现。
+    # 基准 = 本窗口 PIT 宇宙的等权买入持有;选择理由与价格域见 core/benchmark.py。
+    metrics.update(_benchmark_block(panel_ind, float(metrics["total_return"])))
     if isinstance(preset, str):
         metrics["preset"] = preset
     return {"metrics": metrics, "trades": trades_df, "equity": equity_df}
