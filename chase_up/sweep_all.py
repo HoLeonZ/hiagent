@@ -117,6 +117,14 @@ def main() -> None:
                 f"expected_max={dsr['expected_max_sharpe']:.3f} | "
                 f"p_value={dsr['dsr_p_value']:.4f}"
             )
+            # §5 (audit 2026-10-15): 同 `sweep.py` —— 单一窗口选优必须显式声明,
+            # 并把读者引向本仓库已有的滚动窗口版本。
+            print(
+                f"  ⚠️ in-sample selection:本榜是在单一窗口 {args.start} → {args.end} 上\n"
+                f"     从 {len(sharpes)} 个配置里选出的。DSR 不能替代样本外验证 ——\n"
+                f"     要把某个 config 当结论,请用滚动窗口的 chase_up/wf_sweep_all.py,\n"
+                f"     或在本榜**未参与选择**的窗口上复跑(§5 WFV)。"
+            )
 
 
 if __name__ == "__main__":

@@ -143,6 +143,16 @@ def main() -> None:
                 f"expected_max={dsr['expected_max_sharpe']:.3f} | "
                 f"p_value={dsr['dsr_p_value']:.4f}"
             )
+            # §5 (audit 2026-10-15): 本脚本在**单一窗口**上选优,必须自己说清楚。
+            # DSR 量化的正是「从 k 个配置里挑最好」带来的虚高,但**它不能替代**
+            # 样本外验证 —— 而本仓库**已经有**滚动窗口版本(`chase_up/wf_sweep_all.py`),
+            # 所以读者没有任何理由把这个榜当成 OOS 结论。
+            print(
+                f"  ⚠️ in-sample selection:本榜是在单一窗口 {args.start} → {args.end} 上\n"
+                f"     从 {len(sharpes)} 个配置里选出的。DSR 不能替代样本外验证 ——\n"
+                f"     要把某个 config 当结论,请用滚动窗口的 chase_up/wf_sweep_all.py,\n"
+                f"     或在本榜**未参与选择**的窗口上复跑(§5 WFV)。"
+            )
 
 
 if __name__ == "__main__":
