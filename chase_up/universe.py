@@ -45,12 +45,25 @@ def _all_thscodes(db_path: Path, asof_date: str | None = None) -> list[str]:
         else:
             # §3 PIT Mandate: 排除 (a) asof_date 之后才上市的票
             # (无 date <= asof_date 数据) AND (b) asof_date 之前已退市的票
-            # (MAX(date) < asof_date)
+            # (MAX(date) < asof_date)。
+            #
+            # §0/§3 (audit HIGH, 2026-10-16): 判定基准必须是「asof 当日或之前的
+            # **最后一个交易日**」,而不是 asof 字面值 —— 否则 `HAVING MAX(date) >= asof`
+            # 在 asof 是周末/节假日时对**每一只票**都不成立(最后一个交易日 < asof),
+            # 于是全部被误判为「已退市」→ 空集 → 回测**静默**产出 0 笔交易。
+            #
+            # 实测(live DB,mainboard_only):asof=2026-01-09(周五)→ 3167 只;
+            # asof=2026-01-10(周六)/ 2026-01-11(周日)/ 2026-10-01(国庆)→ **0 只**。
+            # 端到端:同一 preset 只把窗口起点从周五挪到周六,就从 11 笔 /
+            # 期末 142.6 万 变成 **0 笔 / 100 万 / CAGR 0.0000** —— 一个"看起来很
+            # 干净"的零结果,会被下游 sweep 当成有效样本参与统计。
+            # last_td 在交易日上恒等于 asof,故交易日行为不变。
+            # (uptrend_pullback/universe.py 早已是此形式并带同样注释 —— 本条即两者对齐。)
             rows = con.execute(
                 "SELECT thscode FROM v_daily "
-                "WHERE date <= ? "
+                "WHERE date <= (SELECT MAX(date) FROM v_daily WHERE date <= ?) "
                 "GROUP BY thscode "
-                "HAVING MAX(date) >= ? "
+                "HAVING MAX(date) >= (SELECT MAX(date) FROM v_daily WHERE date <= ?) "
                 "ORDER BY thscode",
                 [asof_date, asof_date],
             ).fetchall()
@@ -105,4 +118,15 @@ def load_universe(
     excluded = _load_exclude(exclude_path)
     pred = _is_main_board if mode == "mainboard_only" else _is_a_share_ex_bj
 
-    return sorted(c for c in all_codes if pred(c) and c not in excluded)
+    result = sorted(c for c in all_codes if pred(c) and c not in excluded)
+    if not result:
+        # §0 Fail-Fast (audit HIGH, 2026-10-16): 空 universe 必须显式失败。
+        # 此前静默返回 [] —— 与 uptrend_pullback/universe.py 的同款守卫不对称,
+        # 于是"asof 是周末 / 数据覆盖不足"这类**输入错误**会伪装成"策略没信号":
+        # 回测跑完、产出 0 笔、CAGR 0.0000,一路无异常。
+        raise ChaseUpError(
+            f"Empty universe: mode={mode!r}, asof_date={asof_date!r}, db={db_path}. "
+            f"§0 Fail-Fast: 空 universe 会让回测静默产出 0 笔交易。"
+            f"常见原因: asof_date 早于数据覆盖起点(或黑名单滤掉了全部标的)。"
+        )
+    return result
