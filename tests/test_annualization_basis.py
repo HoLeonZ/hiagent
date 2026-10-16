@@ -87,7 +87,9 @@ def test_short_reversal_metrics_expose_the_annualization_denominator() -> None:
     from core.trade_schema import TRADING_DAYS_PER_YEAR
     from short_reversal.engine import INITIAL_CAPITAL, _metrics_from_holder
 
-    holder = {"cash": INITIAL_CAPITAL * 1.10, "trades": [], "max_dd": 0.0}
+    # §2: 合成 holder 也要带 final_nav(无未平仓 → nav == cash)
+    holder = {"cash": INITIAL_CAPITAL * 1.10, "final_nav": INITIAL_CAPITAL * 1.10,
+              "trades": [], "max_dd": 0.0}
     cfg = {"_name": "synthetic"}
     n_days = 20
     m = _metrics_from_holder(

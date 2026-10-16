@@ -89,7 +89,18 @@ def _metrics_from_holder(
     `n_trading_days` 是**必填**参数:让"用错口径"在调用点就失败,而不是悄悄
     按日历日年化出一个与别的引擎不可比的数字。
     """
-    final_capital = float(holder["cash"])
+    # §2 (audit 2026-10-15): final_capital 必须用**净值**,不是总现金。
+    # `total_cash` 只含成本基础 + 已实现盈亏 → **期末未平仓的浮盈被抹掉**;
+    # 而 equity_curve 的每行 `equity` 用的是 nav(含浮盈)—— 同一次回测于是
+    # 给出两个互相打架的"期末权益"。stop() 会写 final_nav;缺它即 fail-fast
+    # (合成夹具若只给 cash,就会拿到一个与曲线末行不一致的数)。
+    if "final_nav" not in holder:
+        raise KeyError(
+            "§2: result_holder 缺 final_nav —— final_capital 必须取净值(含期末浮盈),"
+            "不能用 total_cash。生产路径由 Phase3V3Strategy.stop() 写入;"
+            "单元夹具请显式提供 final_nav。"
+        )
+    final_capital = float(holder["final_nav"])
     trades = holder["trades"]
     trades_count = len(trades)
 
@@ -296,7 +307,12 @@ def run_backtest_v3(
     cerebro.broker.setcash(INITIAL_CAPITAL)
     cerebro.broker.setcommission(commission=0.0)  # 成本由 strategy 内扣
 
-    holder: dict = {"cash": INITIAL_CAPITAL, "trades": [], "max_dd": 0.0}
+    # §2 (audit 2026-10-15): `final_nav` 也在此初始化。
+    # 窗口太短/全部被 warmup 门滤掉时**策略根本没跑**,`stop()` 不会被调用 ——
+    # 此时空仓,净值 == 初始资金,初始化值就是**正确**答案(不是占位谎言)。
+    # 真有运行时 `stop()` 会用 `_nav()` 覆盖它。
+    holder: dict = {"cash": INITIAL_CAPITAL, "final_nav": INITIAL_CAPITAL,
+                    "trades": [], "max_dd": 0.0}
 
     for code, feed in feeds:
         cerebro.adddata(feed, name=code)

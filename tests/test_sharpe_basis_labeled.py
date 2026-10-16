@@ -70,6 +70,8 @@ def test_short_reversal_labels_its_sharpe_as_a_per_trade_ratio() -> None:
 
     holder = {
         "cash": INITIAL_CAPITAL * 1.05,
+        # §2: 合成 holder 也要带 final_nav(无未平仓 → nav == cash)
+        "final_nav": INITIAL_CAPITAL * 1.05,
         "max_dd": 0.01,
         "trades": [{"net": 0.01, "hold_days": 3, "exit_reason": "TP"},
                    {"net": -0.004, "hold_days": 2, "exit_reason": "SL"}],

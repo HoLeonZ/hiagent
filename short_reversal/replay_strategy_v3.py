@@ -1348,6 +1348,13 @@ class Phase3V3Strategy(bt.Strategy):
             {
                 # Round 16 (CLAUDE.md §2): use total_cash.
                 "cash": self.total_cash,
+                # §2 (audit 2026-10-15): **净值**单独落盘。
+                # `total_cash` = 成本基础 + 已实现盈亏,**不含期末未平仓的浮盈**;
+                # 而 equity_curve 的每行 `equity` 用的是 `nav`(= `_nav()`,含浮盈)。
+                # 于是同一次回测会给出**两个互相打架的"期末权益"**:曲线末行一个、
+                # metrics 的 final_capital 另一个。故把 nav 一并写出,由
+                # `_metrics_from_holder` 用它算 final_capital。
+                "final_nav": self._nav(),
                 "trades": list(self.trades),
                 "max_dd": self.max_dd,
             }
