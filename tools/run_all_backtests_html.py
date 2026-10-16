@@ -60,6 +60,9 @@ def _run_chase_up(name: str, db_path: Path, start: str, end: str) -> dict[str, A
         "win_rate": float(metrics.get("win_rate", 0.0)),
         "cagr": float(metrics.get("cagr", 0.0)),
         "sharpe": float(metrics.get("sharpe", 0.0)),
+        # §2 (audit 2026-10-15): sharpe 的**定义**随行发布 —— 各引擎不是同一个量
+        # (chase_up/uptrend = 日收益年化 Sharpe;short_reversal = 逐笔比率近似)。
+        "sharpe_kind": metrics.get("sharpe_kind"),
         "max_dd": float(metrics.get("max_dd", 0.0)),
         "final_equity": float(metrics.get("final_equity", 0.0)),
         "total_return": float(metrics.get("total_return", 0.0)),
@@ -87,6 +90,9 @@ def _run_uptrend_pullback(name: str, db_path: Path, start: str, end: str) -> dic
         "win_rate": float(metrics.get("win_rate", 0.0)),
         "cagr": float(metrics.get("cagr", 0.0)),
         "sharpe": float(metrics.get("sharpe", 0.0)),
+        # §2 (audit 2026-10-15): sharpe 的**定义**随行发布 —— 各引擎不是同一个量
+        # (chase_up/uptrend = 日收益年化 Sharpe;short_reversal = 逐笔比率近似)。
+        "sharpe_kind": metrics.get("sharpe_kind"),
         "max_dd": float(metrics.get("max_dd", 0.0)),
         "final_equity": float(metrics.get("final_equity", 0.0)),
         "total_return": float(metrics.get("total_return", 0.0)),
@@ -112,6 +118,7 @@ def _run_short_reversal(name: str, db_path: Path, start: str, end: str) -> dict[
         "win_rate": float(m.get("win_rate", 0.0)),
         "cagr": float(m.get("cagr", 0.0)),
         "sharpe": float(m.get("sharpe", 0.0)),
+        "sharpe_kind": m.get("sharpe_kind"),
         "max_dd": float(m.get("max_dd", 0.0)),
         "final_equity": float(m.get("final_capital", 0.0)),
         "total_return": float(m.get("total_yield", 0.0)),
@@ -141,9 +148,15 @@ def _run_cycle_price_action(name: str, db_path: Path, start: str, end: str) -> d
         "preset": name,
         "trades": int(metrics.get("n_trades", 0)),
         "win_rate": float(metrics.get("win_rate", 0.0)),
-        "cagr": float(metrics.get("cagr") or 0.0),
-        "sharpe": float(metrics.get("sharpe") or 0.0),
-        "max_dd": float(metrics.get("max_dd") or 0.0),
+        # 2026-10-15: cycle 的 cagr / sharpe / max_dd 是 **None**(横截面研究里
+        # 无法定义 —— 见 cycle_price_action/metrics.py 的口径说明)。
+        # 此前用 `or 0.0` 换成 0.0:那会让"算不出"显示成"等于零",并让它带着一个
+        # 假数字进入跨策略排名。现在保持 None —— 渲染层把 None 显示为「—」,
+        # 排名层(`render_rank`)本来就过滤 None。
+        "cagr": metrics.get("cagr"),
+        "sharpe": metrics.get("sharpe"),
+        "max_dd": metrics.get("max_dd"),
+        "sharpe_kind": metrics.get("sharpe_kind"),
         "final_equity": float(initial + total_pnl),
         "total_return": float(total_pnl / initial),
         "avg_hold_days": float(metrics.get("avg_hold_days", 0.0)),
@@ -440,15 +453,22 @@ def _render_table(rows: list[dict[str, Any]]) -> str:
     err_rows = [r for r in rows if "error" in r]
 
     body = []
+    import math
     # Pre-compute CAGR bar scale (positive + negative magnitudes)
+    # 2026-10-15: 跳过 None 与**非有限值**。
+    #   · None:cycle 的 CAGR 是**无法定义**而非 0 —— 横截面研究,见
+    #     cycle_price_action/metrics.py;
+    #   · nan/inf:见下方 bar_pct 的说明(它们会以 `width:nan%` 泄漏进 HTML)。
     max_abs_cagr = max(
-        (abs(r.get("cagr", 0.0)) for r in ok_rows), default=0.0
+        (abs(r["cagr"]) for r in ok_rows
+         if r.get("cagr") is not None and math.isfinite(r["cagr"])),
+        default=0.0,
     ) or 0.01
 
     for r in ok_rows:
-        cagr = r.get("cagr", 0.0)
-        sharpe = r.get("sharpe", 0.0)
-        max_dd = r.get("max_dd", 0.0)
+        cagr = r.get("cagr")
+        sharpe = r.get("sharpe")
+        max_dd = r.get("max_dd")
         win = r.get("win_rate", 0.0)
         n = r.get("trades", 0)
         tp = r.get("tp_count", 0)
@@ -458,8 +478,14 @@ def _render_table(rows: list[dict[str, Any]]) -> str:
         eq = r.get("final_equity", 0.0)
         avg_hold = r.get("avg_hold_days", 0.0)
 
-        bar_pct = (abs(cagr) / max_abs_cagr) * 100
-        bar_cls = "neg" if cagr < 0 else ""
+        # §0 (audit 2026-10-15, 由守卫实测发现): `bar_pct` 此前**绕过了**
+        # `_fmt_pct` 的 NaN/None 保护 —— `abs(nan)/scale*100 == nan` →
+        # `f"{nan:.1f}"` 写成 `width:nan%`,即**非法 CSS 泄漏进 HTML**。
+        # 而 `_fmt_pct` 的 docstring 明写它的存在就是为了"防止引擎 regression 把
+        # 'nan%' / 'inf%' 写入 HTML" —— 这条路径是那个意图的漏洞。
+        finite = cagr is not None and math.isfinite(cagr)
+        bar_pct = (abs(cagr) / max_abs_cagr) * 100 if finite else 0.0
+        bar_cls = "neg" if (finite and cagr < 0) else ""
         bar_html = (
             f'<div class="bar-wrap">'
             f'<div class="bar {bar_cls}" style="width:{bar_pct:.1f}%"></div>'
@@ -552,8 +578,16 @@ def _render_cross_strategy(report: dict[str, Any]) -> str:
 
     return (
         "<section class='strategy'><h2>🏆 跨策略排名(TOP-8)</h2>"
-        "<p class='desc'>⚠ short_reversal 因 CAGR 体量级差异(数千%),"
-        "CAGR/Sharpe 榜会被其包揽; max_dd 升序榜更有跨策略可比性。"
+        "<p class='desc'>⚠ 跨策略可比性(2026-10-15 更正):"
+        "① short_reversal 的 CAGR 量级不同(数千%),CAGR/Sharpe 榜会被其包揽;"
+        "② <b>Sharpe 在三个引擎里不是同一个量</b> —— chase_up / uptrend_pullback 是"
+        "<code>daily_returns_annualized</code>(日收益年化),short_reversal 是"
+        "<code>per_trade_ratio_approx</code>(逐笔比率);"
+        "故「按 Sharpe 排序」<b>跨策略没有意义</b>,只在同一策略内可比"
+        "(每行的 <code>sharpe_kind</code> 已随数据发布);"
+        "③ cycle_price_action 的 Sharpe / CAGR / max_dd 是<b>无法定义</b>"
+        "(横截面研究,按每股独立账户),显示为 — 且不参与排名。"
+        "max_dd 升序榜在策略间可比性最好。"
         "</p>"
         "<h3 style='margin:14px 0 4px;font-size:14px;color:#475569;'>按 CAGR 排序</h3>"
         + cagr_top +
