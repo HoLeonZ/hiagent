@@ -4285,3 +4285,117 @@ def test_phase2_engine_corporate_action_gap_is_registered(module): ...
 `test_corporate_actions_gap.py` 只参数化四个 Phase-1 模块而没有被发现。
 这正是本审计反复记录的那条:**一个共享层/一条规则只有被接线、被守卫覆盖才算数**
 (附四十八"锁一处 ≠ 锁一族"、附五十一"共享层存在但无人接线")。
+
+---
+
+## 附五十五 —— 送股把持仓变成**非整手**,broker 的整手断言让**整轮回测中止**(cycle)
+
+### 1 · 缺陷(在跑一次真实的暴露面测量时被撞出来)
+
+本来只是想量 cycle 的公司行为暴露面,结果回测**直接崩了**:
+
+```
+RuntimeError: backtest failed for 000793.SZ: qty must be positive multiple of 100
+  cycle_price_action/backtrader_engine.py:302  in next   → submit_sell(qty=position.shares)
+  cycle_price_action/replay_broker.py:148      in submit_sell
+```
+
+插桩后拿到完整链条:
+
+| 项 | 值 |
+|---|---|
+| 标的 / 日期 | `000793.SZ` / **2026-06-22** |
+| 该日事件 | `per_share_bonus = 0.0478`(10送0.478) |
+| 除权前持仓 | 330,800 股(整手) |
+| 除权后持仓 | `round(330800 × 1.0478)` = **346,612** 股(非整手) |
+| 引擎动作 | 时间出场 → `submit_sell(qty=346612)` |
+| broker 反应 | `qty % 100 != 0` ⇒ `ValueError` ⇒ 被包成 `RuntimeError` |
+
+而 `backtest.run_backtest` 把这个 RuntimeError 直接抛给调用方 ⇒ **整轮回测中止,
+一个结果都产不出**。也就是说:cycle 在**任何**持仓期内发生送股(比率非 1/N 时)的
+窗口上都跑不完 —— 而送股在 A 股是每年数千起(`raw_adjustment_events` 全库 12,295 起)。
+
+### 2 · 修法:A 股规则本来就是**买入要整手、卖出不必**
+
+> 买入必须是 100 股整数倍;**卖出不必** —— 持股因送股变成零股时,必须以**一笔**
+> 全部卖出。(本引擎只做整仓平仓,唯一的卖出调用传的就是 `position.shares`。)
+
+两处改动:
+
+1. `submit_sell` 不再要求卖出数量是整手;非整手时落 `[odd-lot]` 日志。
+2. 影子账 `_open_positions` 的 `raise ValueError("cannot sell more than held")`
+   **降级为告警**。它有两条**合法**分叉路径(下节),硬断言会把一次合法平仓
+   变成整轮中止;持股数的权威是组合账本,不是 broker 的影子账。
+
+**保留买入侧的整手约束** —— 并专门加了一条对照用例钉住它,防止"把不变量连同
+bug 一起删掉"。
+
+### 3 · 顺带发现的第二条缺陷:影子账从不因 SL/TP 出场减少(**已登记,未改**)
+
+`_open_positions` 只在 `submit_buy` 里 `+=`、只在 `submit_sell` 里 `-=`。而引擎
+**只在时间出场那一条分支**调用 `submit_sell`(`backtrader_engine.py:302`);
+SL/TP 出场走的是 `Portfolio.try_exit_with_intraday_check` → `try_exit`
+(**纯组合层操作,不通知 broker**)⇒ 那些平仓**永不减少影子账**。
+
+实测:崩溃现场 `held = 1,050,900`,而组合实际只持 **346,612** 股。影子账只增不减。
+
+影响:`"cannot sell more than held"` 这条断言在事实上是**空转/误报**的
+(`record_fill` 也是个 no-op 桩)。对**结果**无影响(费用与成交价都不读影子账)。
+**未修**:要让影子账准确,必须把 SL/TP 出场也接到 broker 上 —— 那是跨文件的设计改动,
+且这个包正由另一 workstream 并行开发。故登记。
+
+### 4 · 端到端证据(这才是本条的重量)
+
+崩溃窗口 `2026-01-01 .. 2026-09-01`(PRESET_V1):
+
+| | 修复前 | 修复后 |
+|---|---|---|
+| 结果 | `RuntimeError` —— **零结果** | **COMPLETED**(3,271 秒),**5,715 笔**成交 |
+| 非整手成交 | — | **2 笔**(即此前会中止的那两处) |
+
+即:**同一个窗口,修复前一个结果都产不出,修复后跑完并产出 5,715 笔**。
+(我的插桩脚本在打印明细时因 `exit_reason` 列不存在而 `KeyError` —— 那是**探针自身**
+的字段假设错了,不是引擎问题;故那 2 笔的明细没有留下,只有计数与完成状态。
+如实记在这里,而不是把"2 笔"说成"我核过明细"。)
+
+### 5 · 守卫(4 条,全部双向验证)
+
+| 用例 | 钉住 |
+|---|---|
+| `test_odd_lot_full_liquidation_is_allowed` | 346,612 股必须能**整笔**卖出(带非空转前提:该数必须非整手) |
+| `test_buy_lot_constraint_is_still_enforced` | **对照组**:买入的整手约束不得被一起删掉 |
+| `test_shadow_position_divergence_does_not_abort_the_run` | 影子账落后时必须告警而非中止,且影子账被清空而不是留负数 |
+| `test_bonus_adjusted_position_can_be_liquidated_end_to_end` | **崩溃链条的集成版**:建仓 → 送股 → 全仓平仓整条链走通 |
+
+双向验证:还原 (1) 的整手断言 ⇒ 零股用例红;还原 (2) 的硬断言 ⇒ 分叉用例红;
+恢复 ⇒ **6 passed**。
+
+### 6 · 关于"另一 workstream 的包"
+
+`cycle_price_action` 由 `mine/strategy-potential` 那条线并行开发。本条只做**这一处
+最小崩溃修复**(而且是"跑不完"级别的),其余(影子账、成交口径等)一律只登记不改。
+核对过对方分支:`submit_sell` 的调用点与整仓平仓假设与我这边一致
+(`git show mine/strategy-potential:cycle_price_action/backtrader_engine.py`),
+故合并语义清晰 —— 但仍然需要在合并时对账(附三十五 §3 的老问题)。
+
+零漂移:此前能跑完的窗口(含 `tests/golden/cycle_v1_baseline.json` 那条)行为不变 ——
+两处改动只会把"抛异常"变成"告警/放行",不会改变任何一次**已能完成**的回测的成交。
+
+### 7 · 自查:我的第一版修复被本仓库的 §0 守卫抓住了
+
+第一版把影子账的更新写成 `self._open_positions.pop(thscode, None)`,于是全量套件
+**1 failed**:`tests/test_immutable_state_4engine.py` 判定 cycle 出现
+`self.<attr>.<mutable_method>()` 调用(§0 不可变性)。
+
+这与本审计反复记的那件事是**同一件**:那个扫描器只看 `self.<attr>.<mutable_method>()`,
+所以原来的 `del d[k]`、以及下标赋值 `d[k] = v`,它**看不见** —— 于是"通过"不等于合规。
+处置:**不绕它**,把更新改成"重建一个新 dict 再 rebind"(与 `short_reversal` 在同类
+问题上的写法一致),语法上就合规,也不需要解释性注释。注释里明确写了"不绕扫描器"。
+
+复验:immutability + replay_broker + cycle golden 基线 + broker purity + exit contract
++ cycle portfolio = **44 passed**,cycle golden **零漂移**。随后重跑全量套件取净绿。
+
+> 记这一条是因为它是个**正例**:守卫在正确的一侧("把不变量的写法钉死"),而且它
+> **真的**在新代码上开了火 —— 与附五十二 里那两条"站在错误一侧、把缺陷锁死"的守卫
+> 恰成对照。同一个仓库里两种守卫都有,区别只在于它钉的是**行为/契约**还是
+> **当时那版实现的形状**;而能不能分辨,取决于写它的人有没有先把契约读懂。
