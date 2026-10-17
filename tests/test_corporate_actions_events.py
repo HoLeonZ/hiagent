@@ -58,10 +58,11 @@ def _entries(panel: pd.DataFrame) -> pd.DataFrame:
     }])
 
 
-def _run(panel: pd.DataFrame):
+def _run(panel: pd.DataFrame, *, sl_pct: float = 0.99, tp_pct: float = 0.99,
+         max_hold: int = 3):
     trades, eq = simulate_portfolio(
         _entries(panel), panel,
-        tp_pct=0.99, sl_pct=0.99, max_hold=3, max_positions=1,
+        tp_pct=tp_pct, sl_pct=sl_pct, max_hold=max_hold, max_positions=1,
         start_date=panel.iloc[0]["date"].strftime("%Y-%m-%d"),
         end_date=panel.iloc[-1]["date"].strftime("%Y-%m-%d"),
         initial_capital=100_000.0, position_sizing="all_in",
@@ -103,6 +104,127 @@ def test_stock_bonus_adjusts_quantity_and_keeps_cost_basis() -> None:
     assert float(trades.iloc[0]["entry_price"]) == pytest.approx(5.0), (
         "送股后成本价未按总量不变重新定标"
     )
+
+
+def _bonus_panel_continuous(n: int = 8, ex_bar: int = 2) -> pd.DataFrame:
+    """送股除权后价格**留在**调整后水平(物理场景),而不是弹回原价。
+
+    bar 0-1 raw 10.0;bar 2 起 raw 5.0(10送10)。事件列与 `_panel` 同口径。
+    """
+    dates = pd.date_range("2025-01-01", periods=n, freq="B")
+    rows = []
+    for i, d in enumerate(dates):
+        is_ex = i >= ex_bar
+        raw = 5.0 if is_ex else 10.0
+        rows.append({
+            "thscode": "TEST.SH", "date": d,
+            "open": raw, "high": raw + 0.2, "low": raw - 0.2, "close": raw,
+            "volume": 1e6, "amount": 1e7,
+            "raw_open": raw, "raw_high": raw + 0.2, "raw_low": raw - 0.2,
+            "raw_close": raw, "raw_prev_close": 10.0,
+            "div_per_share": 0.0,
+            "bonus_ratio": 1.0 if i == ex_bar else 0.0,
+            "rights_ratio": 0.0,
+        })
+    return pd.DataFrame(rows)
+
+
+def test_bonus_ex_date_does_not_trigger_a_stale_stop() -> None:
+    """送股除权日不得因**陈旧**止损被强制出场(§4 相对百分比 × §3 除权调整)。
+
+    CLAUDE.md §4 逐字要求 TP/SL 以**相对百分比**传导:
+      "TP/SL and slippage must always be communicated from Strategy to Broker as
+       relative percentages (e.g. sl_pct = 0.05), NEVER as absolute point
+       differences derived from adjusted prices, to guarantee reality mapping on
+       raw execution prices."
+
+    若在入场时把阈值算成**绝对价**存进持仓(sl = 10.0 × 0.95 = 9.5),那么除权日
+    `apply_corporate_action` 把 entry_price 重定为 5.0 之后,阈值**不动** ⇒
+    除权价 5.0 必然穿越 9.5 ⇒ 一笔与真实行情无关的强制出场,且理由被记成 SL。
+    现算(entry_price × 百分比)则由构造自动传导:sl → 5.0 × 0.95 = 4.75,不触发。
+    """
+    panel = _bonus_panel_continuous()
+    ex_date = panel.iloc[2]["date"]
+    stale_sl = 10.0 * (1 - 0.05)
+    # 非空转前提:除权价必须**确实**穿越陈旧止损,否则本用例测不到这条路径
+    assert panel.iloc[2]["open"] <= stale_sl, (
+        f"夹具失效:除权开盘 {panel.iloc[2]['open']} 未穿越陈旧止损 {stale_sl}"
+    )
+
+    trades, _ = _run(panel, sl_pct=0.05, max_hold=4)
+    assert len(trades) == 1, f"应恰好一笔成交,实际 {len(trades)}"
+    t = trades.iloc[0]
+
+    assert pd.Timestamp(t["exit_date"]) != pd.Timestamp(ex_date), (
+        "§4 VIOLATION: 在送股除权日被强制出场 —— 止损阈值是入场时算死的绝对价,"
+        "没有随 entry_price 的除权重定而传导"
+    )
+    assert t["exit_reason"] != "SL", (
+        f"§4 VIOLATION: 出场理由被记成 {t['exit_reason']!r} —— 除权不是止损事件"
+    )
+    # §3 的账本面:数量按 (1+bonus) 调整、总成本基不变 ⇒ 除权不产生盈亏
+    assert float(t["size"]) == pytest.approx(20_000.0), "送股后数量未翻倍"
+    assert float(t["entry_price"]) == pytest.approx(5.0), "送股后成本价未重定"
+    assert float(t["net_pnl"]) == pytest.approx(0.0, abs=1.0), (
+        f"除权日产生了幻影盈亏 {t['net_pnl']:.2f} —— §3 要求除权前后净值连续"
+    )
+
+
+def _position_dict_key_sets(tree) -> list[set]:
+    """持仓字面量的键集合:含 `entry_price` + `atr_pct` + `bars`,且不含 `exit_price`。
+
+    选择器要同时排除两类"长得像"的 dict(两版误报各自踩中一个):
+      * **成交记录 schema** —— 也有 entry_price/atr_pct,但必然带
+        `exit_price`/`exit_reason`;
+      * **kwargs 转发字典** —— 形如 `{"entry_price": …, "size": …}`,没有
+        `atr_pct`/`bars`。
+    """
+    import ast as _ast
+
+    out = []
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.Dict):
+            keys = {k.value for k in node.keys if isinstance(k, _ast.Constant)}
+            if ({"entry_price", "atr_pct", "bars"} <= keys) and "exit_price" not in keys:
+                out.append(keys)
+    return out
+
+
+@pytest.mark.parametrize("module", ["chase_up.portfolio", "uptrend_pullback.portfolio"])
+def test_positions_hold_tp_sl_as_percentages_not_absolute_prices(module: str) -> None:
+    """§4 家族守卫:两个多头引擎的持仓必须存**百分比**、且无人读绝对价键。
+
+    为什么是结构而不是行为:上面那条行为用例建在 chase 的 entries 夹具上
+    (`sig_*` 列),姊妹引擎的 entries schema 不同 ⇒ 同一夹具跑不了两边。
+    故此处钉**结构**(AST 解析持仓字面量 + 扫 `pos["tp"]/["sl"]` 下标读取),
+    行为证据由 chase 那条提供 —— 与 `test_preset_declarations_are_load_bearing`
+    同法。**这是形状守卫,不替代行为证据。**
+    """
+    import ast as _ast
+    import importlib
+
+    from pathlib import Path
+
+    mod = importlib.import_module(module)
+    tree = _ast.parse(Path(mod.__file__).read_text(encoding="utf-8"))
+
+    key_sets = _position_dict_key_sets(tree)
+    assert key_sets, f"{module}: 找不到持仓字面量 —— 本守卫已失效,请修正选择器"
+    for keys in key_sets:
+        assert {"tp_pct", "sl_pct"} <= keys, (
+            f"§4 VIOLATION {module}: 持仓没有 tp_pct/sl_pct(实际键 {sorted(keys)})—— "
+            f"绝对阈值在除权日会失效"
+        )
+        assert "tp" not in keys and "sl" not in keys, (
+            f"§4 VIOLATION {module}: 持仓仍在存绝对价键 tp/sl —— §4 明文禁止 "
+            f"absolute point differences"
+        )
+    # 顺带:模块里不得再出现 `pos["tp"]` / `pos["sl"]` 这类下标读取
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.Subscript) and isinstance(node.slice, _ast.Constant):
+            assert node.slice.value not in ("tp", "sl"), (
+                f"§4 VIOLATION {module}: 仍在读绝对价键 pos[{node.slice.value!r}]"
+            )
 
 
 def test_apply_corporate_action_is_pure_and_reports_rights() -> None:

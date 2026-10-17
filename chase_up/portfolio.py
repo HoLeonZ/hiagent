@@ -479,7 +479,18 @@ def simulate_portfolio(
                 r_c = pi["raw_close"][j]
                 if not np.isnan(r_o) and not np.isnan(r_h) and not np.isnan(r_lo) and not np.isnan(r_c):
                     o, h, lo, c = r_o, r_h, r_lo, r_c
-            tp_p, sl_p = pos["tp"], pos["sl"]
+            # §4 (audit 2026-10-17, 附五十四): TP/SL 由 **entry_price × 百分比** 在
+            # 每根 bar 现算,而不是入场时算成绝对价存起来。
+            # CLAUDE.md §4: "TP/SL and slippage must always be communicated from
+            # Strategy to Broker as relative percentages (e.g. sl_pct = 0.05),
+            # NEVER as absolute point differences derived from adjusted prices,
+            # to guarantee reality mapping on raw execution prices."
+            # 存绝对价的后果:除权日 `apply_corporate_action` 会把 entry_price 重定为
+            # `old_ep × size_old / size_new`,`pos["tp"]/["sl"]` 却不动 ⇒ 送股日
+            # (raw 价 ≈ ×1/(1+bonus))必然穿越**陈旧**止损,造成与真实行情无关的
+            # 强制出场(且出场理由被记成 SL)。现算则由构造自动传导。
+            tp_p = pos["entry_price"] * (1 + pos["tp_pct"])
+            sl_p = pos["entry_price"] * (1 - pos["sl_pct"])
 
             # §4 (audit P1-9, 2026-10-15): 跌停封板**禁止卖出**。
             # CLAUDE.md §4: "a sell/cover on a limit-down-sealed bar MUST be
@@ -721,8 +732,10 @@ def simulate_portfolio(
                         "entry_price": entry_px,
                         "size": size,
                         "entry_fee": fee_in,
-                        "tp": entry_px * (1 + tp_eff),
-                        "sl": entry_px * (1 - sl_eff),
+                        # §4 (附五十四): 存**百分比**,绝对价在出场判定处现算
+                        # (除权日 entry_price 会被重定,绝对值会因此失效)。
+                        "tp_pct": tp_eff,
+                        "sl_pct": sl_eff,
                         "bars": 0,
                         "atr_pct": atr_used,
                         "sub_signal_type": sub_type,

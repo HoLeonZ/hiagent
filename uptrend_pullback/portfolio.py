@@ -444,7 +444,13 @@ def simulate_portfolio(
                 r_c = pi["raw_close"][j]
                 if not np.isnan(r_o) and not np.isnan(r_h) and not np.isnan(r_lo) and not np.isnan(r_c):
                     o, h, lo, c = r_o, r_h, r_lo, r_c
-            tp_p, sl_p = pos["tp"], pos["sl"]
+            # §4 (audit 2026-10-17, 附五十四): TP/SL 每根 bar 由 entry_price ×
+            # 百分比现算,不存绝对价 —— CLAUDE.md §4 明文要求
+            # "NEVER as absolute point differences derived from adjusted prices"。
+            # 存绝对价的后果:除权日 `apply_corporate_action` 重定 entry_price 而
+            # 阈值不动 ⇒ 送股日必然穿越陈旧止损,造成与真实行情无关的强制出场。
+            tp_p = pos["entry_price"] * (1 + pos["tp_pct"])
+            sl_p = pos["entry_price"] * (1 - pos["sl_pct"])
 
             # §4 (audit P1-9, 2026-10-15): 跌停封板**禁止卖出**(与 chase_up
             # 同口径)。长仓出场是 SELL,封板时物理上卖不出去 → 本 bar 不成交,
@@ -656,8 +662,9 @@ def simulate_portfolio(
                         "entry_price": entry_px,
                         "size": size,
                         "entry_fee": fee_in,
-                        "tp": entry_px * (1 + tp_eff),
-                        "sl": entry_px * (1 - sl_eff),
+                        # §4 (附五十四): 存**百分比**,绝对价在出场判定处现算。
+                        "tp_pct": tp_eff,
+                        "sl_pct": sl_eff,
                         "bars": 0,
                         "atr_pct": atr_used,
                     }

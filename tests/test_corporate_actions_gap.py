@@ -113,3 +113,50 @@ def test_engine_has_dividend_or_split_handler(module: str) -> None:
         f"当前以 adj_close 前复权隐式嵌入分红 (设计选项 A), "
         f"需用户确认是否需切换至选项 B (raw_close + 显式 event)."
     )
+
+# ---------------------------------------------------------------------------
+# 附五十四 —— Phase-2(backtrader)引擎的公司行为缺口:**登记**而非"通过"
+# ---------------------------------------------------------------------------
+#
+# 上面那条 `test_engine_has_dividend_or_split_handler` 把**四个 Phase-1 模块**
+# 当作"四个引擎"来判定 —— 于是它宣布 §3 已闭合,而 chase_up 的 CLI **默认引擎**
+# (`chase_up/main.py` 的 `--engine`, default="backtrader")恰恰是**未接入**的那条路径。
+# 又一次"锁一处 ≠ 锁一族"。
+#
+# 事实(逐条可核):
+#   * `chase_up.backtrader_engine` / `uptrend_pullback.backtrader_engine` 里
+#     没有任何公司行为代码路径(AST 判定,见 `_engine_has_event_handler`)。
+#   * 25 个 preset(22 chase + 3 uptrend)**全部**声明
+#     `price_source_for_execution: "raw_close"` ⇒ feed 会重映射到**原始价**
+#     (`backtrader_engine.py:96-103`),除权缺口因此是真实的原始价跳空。
+#   * Phase-2 是**逐笔 replay**:`target_size` 在构造时固定(chase_up/replay_strategy.py),
+#     没有"数量 ×(1+bonus)"或"成本价重定"的通路,也没有分红入账通路。
+#   * 后果:送股除权日会按**原始股数**在**腰斩价**卖出 ⇒ 幻影 ≈ −bonus/(1+bonus) 的亏损;
+#     现金分红日则把缺口记成亏损、分红永不入账。
+#
+# 实测暴露面(2024-09-01..2026-09-01,活库):
+#   chase v8/v10/v19 共 129 笔 + uptrend v21 68 笔 ⇒ 只有 **1 笔**跨越除权日
+#   (002534.SZ,2026-05-29,现金分红 0.1/21.61 = 0.46%),且该笔 Phase-1 与
+#   Phase-2 结果**逐字段一致**(58 笔成交、同价同 net_pnl)。
+#   即:**没有观测到 in-sample 数值背离** —— 本缺口是结构性的,不是已发生的错误。
+#   不做"Phase-2 接公司行为"这件事,是因为它是**新功能**(replay 需引入持仓量/成本
+#   的跨 bar 状态),属研究决策,登记待评估。
+
+_PHASE2_ENGINES = [
+    "chase_up.backtrader_engine",
+    "uptrend_pullback.backtrader_engine",
+]
+
+
+@pytest.mark.parametrize("module", _PHASE2_ENGINES)
+def test_phase2_engine_corporate_action_gap_is_registered(module: str) -> None:
+    """登记:Phase-2 引擎**没有**公司行为路径 = 已知缺口(不是"通过")。
+
+    与 `test_benchmark_data_gap_is_registered` 同形:钉住"现状 = 已登记的缺口"。
+    一旦有人把公司行为接进 Phase-2,本用例**变红**,提示更新审计 附五十四 的登记
+    并改写本守卫 —— 而不是让登记悄悄过期(本仓库吃过"登记逾期"的亏,见附十九)。
+    """
+    assert not _engine_has_event_handler(module), (
+        f"{module} 已接入公司行为 —— 请更新 docs/audits 附五十四 的登记,并把本守卫"
+        f"改成断言「用百分比 / 事件源」(或直接删除)。"
+    )
