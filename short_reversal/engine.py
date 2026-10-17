@@ -122,6 +122,7 @@ def _run_ensemble(
     db_path: Path,
     min_bars: int,
     signal_log: list | None = None,
+    universe_as_of: str | None = None,
 ) -> dict:
     """v63 ensemble: 跑 N 个子策略, 资金等分, 汇总 metrics。
 
@@ -147,7 +148,10 @@ def _run_ensemble(
         sub_cfg["_name"] = name
         # 递归调用 run_backtest_v3 (会跳过 ensemble check, 走标准路径)
         sub_results.append(
-            run_backtest_v3(name, start, end, db_path, min_bars, signal_log=signal_log)
+            run_backtest_v3(
+                name, start, end, db_path, min_bars,
+                signal_log=signal_log, universe_as_of=universe_as_of,
+            )
         )
 
     # 汇总 PnL: 等权 final_capital
@@ -209,6 +213,7 @@ def run_backtest_v3(
     db_path: Path,
     min_bars: int = 200,
     signal_log: list | None = None,
+    universe_as_of: str | None = None,
 ) -> dict:
     """跑 v3 引擎返回 metrics dict。
 
@@ -223,6 +228,14 @@ def run_backtest_v3(
                 "failed_at"} 记录; None (默认) 时完全惰性, 行为逐字节不变。
                 条目里的 preset 标签取自本函数的 preset 形参本身, 所以
                 ensemble 逐腿调用时会自动落成腿名。
+      universe_as_of: universe 的 as-of 日期 (load_universe_asof 语义: 首现日
+                ≤ as-of)。None (默认) 时取 `start` —— 回测路径行为逐字节不变。
+                线上信号作业必须显式传 signal_date: 它用 panel_start =
+                signal_date - 400d 换取 MA60/126 日回报的预热, 若 universe 跟着
+                解析在 panel_start 上, 会把 signal_date 前 400 天内上市的票
+                全部静默排除 (实测 36 只 / 1.13%, 全是最近上市的那批)。
+                那是面板算术的副作用, 不是策略规则 —— 策略只用 min_bars
+                闸门判定暖机不足。
     """
     cfg = dict(get_preset(preset))
     cfg["_name"] = preset
@@ -231,9 +244,14 @@ def run_backtest_v3(
     # OOS-validated (WFV mean +10.9%, holdout 2026-H2 +5.4%) over v50_slope.
     # 实现是 N 个独立 backtest 的 wrapper, 复用 v3 引擎, 行为等价。
     if "ensemble_substrategies" in cfg:
-        return _run_ensemble(cfg, start, end, db_path, min_bars, signal_log=signal_log)
+        return _run_ensemble(
+            cfg, start, end, db_path, min_bars,
+            signal_log=signal_log, universe_as_of=universe_as_of,
+        )
 
-    universe = load_universe_asof(cfg["universe"], start, db_path)
+    universe = load_universe_asof(
+        cfg["universe"], universe_as_of or start, db_path
+    )
     panel = _load_panel(db_path, start, end, universe)
     feeds = build_per_stock_feeds(panel, universe, min_bars=min_bars)
 
