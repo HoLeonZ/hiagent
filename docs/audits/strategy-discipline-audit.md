@@ -4122,3 +4122,131 @@ ChiNext (**300xxx/301xxx**), STAR (**688xxx/689xxx**)」—— **仓库在别处
 的 universe 均为**主板**(`mainboard_only` / `is_main_board`),故 flat 阈值对它们是**正确**的,
 不需要 board-aware —— 只有 `short_reversal` 有 `broad_only`(含创业板+科创板)。
 即:本条的修法不是"给所有引擎加 board 判断",而是**让 short_reversal 的两侧同源**。
+
+---
+
+## 附五十四 —— §4「TP/SL 必须是相对百分比」在两个多头引擎里被违反;并登记 Phase-2 的公司行为缺口
+
+### 0 · 顺带核准的一条(先说合规的)
+
+**§4 T+1**:四引擎都有**显式**的"同日禁出场"门,不靠"出场段先于入场段"这种结构巧合:
+
+| 引擎 | 门 | 位置 |
+|---|---|---|
+| `chase_up` | `if t > 0 and t < last_t:`(入场段)**且**出场段在前 | `portfolio.py:530` |
+| `uptrend_pullback` | 同上 | `portfolio.py:489` |
+| `short_reversal` | `if held < 1: return` | `replay_strategy_v3.py:1010` |
+| `cycle_price_action` | `if bar["date"] > self._entry_day:` # P3: no same-day exit | `backtrader_engine.py:209` |
+
+即:四引擎**都**满足"T 日买入、T+1 前不可卖"。这条此前未被逐引擎核对过,现补上。
+
+---
+
+### 1 · 缺陷:阈值存成**绝对价**,而 CLAUDE.md §4 明文禁止
+
+```python
+# 入场时(chase_up/portfolio.py:735-736;uptrend_pullback/portfolio.py:659-660)
+"tp": entry_px * (1 + tp_eff),
+"sl": entry_px * (1 - sl_eff),
+# 出场时(:482 / :447)
+tp_p, sl_p = pos["tp"], pos["sl"]
+```
+
+§4 逐字:
+
+> TP/SL and slippage must always be communicated from Strategy to Broker as
+> **relative percentages** (e.g. `sl_pct = 0.05`), **NEVER as absolute point
+> differences derived from adjusted prices**, to guarantee reality mapping on
+> raw execution prices.
+
+**为什么"绝对价"在这里真的会坏**:除权日 `apply_corporate_action` 会把 `entry_price`
+重定为 `old_ep × size_old / size_new`(送股 1:1 时**腰斩**),而 `pos["tp"]/["sl"]` 不动。
+于是送股日 raw 价 ≈ 原价 × 1/(1+bonus),**必然**穿越那个陈旧止损 ⇒ 一笔与真实行情
+无关的强制出场,理由还被记成 `SL`。现算(`entry_price × 百分比`)则由构造自动传导。
+
+**两个多头引擎中招,两个没有** —— 又是族内不对称:
+
+| 引擎 | 阈值来源 | |
+|---|---|---|
+| `chase_up` | 入场时算成绝对价 | ✗ 违反 §4 字面 |
+| `uptrend_pullback` | 同上 | ✗ |
+| `short_reversal` | 每 bar `ep × (1 ± pct)` 现算 | ✓ |
+| `cycle_price_action` | 同上 | ✓ |
+
+### 2 · 修法
+
+持仓改存 `tp_pct` / `sl_pct`(百分比),出场判定处现算。这正是 §4 要求的**形态**,
+不是"把别扭写法梳理漂亮" —— §4 给的理由("guarantee reality mapping on raw execution
+prices")说的就是这个场景。
+
+### 3 · 暴露面:实测**几乎为零**(如实说明,不夸大)
+
+活库 2024-09-01..2026-09-01:
+
+| 数据集 | 笔数 | **跨越除权日**的笔数 |
+|---|---|---|
+| chase v8 / v10 / v19 | 129 | **1**(002534.SZ,2026-05-29,现金分红 0.1/21.61 = **0.46%**) |
+| uptrend v21 | 68 | **0** |
+
+那唯一一笔是**小额现金分红**,除权缺口 0.46% 远小于 5% 止损距离 ⇒ 即便阈值陈旧,
+出场判定也不受影响;Phase-1 与 Phase-2 在该笔上**逐字段一致**(58 笔成交、同价同
+`net_pnl`)。全窗口主板 送股(≥10%) 除权日 363 个 / 310 只,但无一笔落在持仓期内。
+
+**结论:契约违反成立;已发生的数值影响 = 0(实测)。** 修复是"拆掉一个尚未触发的陷阱",
+不是"修回一个已经发生的错误"——这两句话不能混。
+
+零漂移验证:chase **13/13** 条 golden(33 passed)+ uptrend **3/3** 条,修复前后
+成交列表**逐条一致**(阈值在没有除权日的窗口里,两种算法给出同一个数)。
+
+### 4 · 守卫(3 条,已双向验证)
+
+| 用例 | 性质 |
+|---|---|
+| `test_bonus_ex_date_does_not_trigger_a_stale_stop` | **行为**:10送10 除权日(原始价 10→5)不得被陈旧止损打出;并断言数量翻倍、成本价腰斩、**净盈亏 ≈ 0**(§3 除权不产生盈亏)。带非空转前提(`除权价 ≤ 陈旧止损`) |
+| `test_positions_hold_tp_sl_as_percentages_not_absolute_prices[chase/uptrend]` | **结构**(AST):持仓字面量必须含 `tp_pct/sl_pct`、不得含 `tp/sl`;且模块内不得再出现 `pos["tp"]` 这类下标读取 |
+
+第二条是**形状守卫**,不替代行为证据 —— 之所以对姊妹引擎只能钉形状:那条行为用例
+建在 chase 的 `entries` 夹具(`sig_*` 列)上,uptrend 的 entries schema 不同,同一夹具
+跑不了两边。这一点写在用例 docstring 里,免得后人以为它证明了行为。
+
+> **自查(本附录的第二个"测量纠正推理")**:这条结构守卫我**写错了两版**,两次都是
+> 选择器抓错了 dict —— 第一版抓到**成交记录 schema**(它也有 `entry_price`),第二版
+> 抓到 **kwargs 转发字典**(`{"entry_price": …, "size": …}`)。两次都在**运行时报错**
+> 而不是"悄悄通过"才被我看见。最终选择器要求 `{entry_price, atr_pct, bars}` 且不含
+> `exit_price`,并**断言恰好选到字面量**(选不到就报"守卫已失效")。
+> 教训与附四十一/四十三 同:**守卫的首要风险是它选错了对象,而它选错时往往还是绿的。**
+
+双向验证:把两处改回绝对价 ⇒ 3 条用例全部变红;恢复 ⇒ 全绿。
+
+### 5 · 登记(未改):Phase-2(backtrader)引擎**没有**公司行为代码路径
+
+查这段时的意外发现,比上面那条严重:
+
+| 事实 | 证据 |
+|---|---|
+| `chase_up.backtrader_engine` / `uptrend_pullback.backtrader_engine` **没有任何**公司行为代码路径 | AST 判定 `_engine_has_event_handler` = **False**(两个 Phase-1 模块为 True) |
+| 而 chase 的 CLI **默认引擎就是它** | `chase_up/main.py` 的 `--engine`, `default="backtrader"` |
+| 25 个 preset(22 chase + 3 uptrend)**全部**声明 `price_source_for_execution: "raw_close"` | `presets.py`;feed 据此重映射到**原始价**(`backtrader_engine.py:96-103`) |
+| Phase-2 是**逐笔 replay**:`target_size` 构造时固定 | `chase_up/replay_strategy.py` —— 没有"数量 ×(1+bonus)""成本价重定""分红入账"的通路 |
+| 后果 | 送股除权日按**原始股数**在**腰斩价**卖出 ⇒ 幻影 ≈ −bonus/(1+bonus);现金分红日把缺口记成亏损、分红永不入账 |
+
+**这条为什么能一直没被发现**:`test_corporate_actions_gap.py::test_engine_has_dividend_or_split_handler`
+把**四个 Phase-1 模块**当作"四个引擎"(参数表里就是 `chase_up.portfolio` 等四个),
+于是它宣布 §3 已闭合 —— 而**CLI 默认走的恰恰是没接的那条**。又一次"锁一处 ≠ 锁一族"
+(附四十八 的同一形态)。
+
+**处置:登记,不实现**。给 Phase-2 接公司行为不是"修一句话":replay 目前没有跨 bar 的
+持仓量/成本状态,引入它等于给这个**验证引擎**加一套账本 —— 属新功能 + 研究决策。
+故与 `test_benchmark_data_gap_is_registered` 同形,加一条**登记守卫**:
+
+```python
+@pytest.mark.parametrize("module", ["chase_up.backtrader_engine",
+                                    "uptrend_pullback.backtrader_engine"])
+def test_phase2_engine_corporate_action_gap_is_registered(module): ...
+```
+
+它钉住"现状 = 已登记的缺口":一旦有人把公司行为接进去,它**变红**,提示更新本附录
+的登记并改写守卫 —— 而不是让登记悄悄过期(本仓库吃过"登记逾期"的亏,见附十九)。
+
+**如实说明**:实测**没有**观测到 in-sample 数值背离(见 §3 那张表 —— 唯一跨越除权日的
+一笔在小额分红上,Phase-1/Phase-2 结果一致)。本缺口是**结构性**的,不是已发生的错误。
