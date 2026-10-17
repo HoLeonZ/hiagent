@@ -3807,3 +3807,62 @@ short_reversal 的 feed **默认价线 = raw**、`adj_close` 线 = adj ⇒ 钉�
 
 故把"价格域类契约"的验收标准定为:**一条真数据断言 + 一条非空转钳制**。
 本条已按此补齐(93% 的样本确实跨域,故这条真数据断言是有牙的)。
+
+---
+
+## 附五十 —— 公司行为 MUST:**未被违反**;但账本分红此前从未被**对账**
+
+### 1 · 覆盖面核对(全部通过)
+
+`core/corporate_actions.py` 的两条 MUST:
+
+> - "Cash dividends must explicitly trigger a physical cash deposit into `Free_Cash`."
+> - "Stock splits must trigger an atomic multiplier adjustment to `Position_Quantity`
+>    and `Average_Cost`."
+
+| 引擎 | 接线 | 行为测试 |
+|---|---|---|
+| `chase_up` | `portfolio.py` ✓ | `test_corporate_actions_events.py` ✓ |
+| `uptrend_pullback` | `portfolio.py` ✓ | `test_uptrend_pullback_corporate_actions_exposure.py` ✓ |
+| `short_reversal` | `replay_strategy_v3.py`(4 处)✓ | `test_short_reversal_dividend_payout.py` ✓(**方向相反:空头付分红**) |
+| `cycle_price_action` | `portfolio.py` ✓ + `backtrader_engine.py` ✓ | `test_cycle_corporate_actions.py` ✓ |
+
+**结论:这一条未被违反** ✓(四引擎都接线、都有行为测试,含做空方向)。
+
+### 2 · 但发现一个**空洞**:分红的真跑断言对分红不敏感
+
+既有的真跑断言(`test_nav_cash_ledger_invariants`)把 `cum_dividends` 放进了守恒恒等式
+`equity = init + Σnet_pnl + Σ分红 + 未平仓净额` —— 而这条**对分红不敏感**:
+**若分红根本没入账,等号两边会同时为 0,等式照样成立。**
+
+> 这与附四十九 里"0 命中分不清『跟随了复权价』与『夹具压根不触发条件』"、
+> 以及附五十 之前的"恒等式在两边同为零时无法察觉缺失"是**同一类空洞**:
+> **一个核对式的断言,只在其两边都可能为非零时才有判别力。**
+
+### 3 · 新增:独立复核(真数据 + 非空转)
+
+`test_booked_dividends_match_real_held_through_events`:真跑引擎,把账本的
+`cum_dividends` 与**独立算出来**的"持仓期内(**非**入场当天)、真发生过的除权事件 ×
+当时持股数"对账。实测:
+
+| 引擎 / preset | 账本 | 独立复核 | 事件数 |
+|---|---|---|---|
+| `chase_v1_atr_tp4_sl1` | **4,340.00** | **4,340.00** ✓ | 1(`002534.SZ` 2026-05-29,每股 0.10 × 43,400 股) |
+| `uptrend v19` | 0.00 | 0.00 | **0** |
+
+第一条带**非空转钳制**(必须 ≥1 条事件);第二条在该窗口实测 0 事件,故**只作一致性检查**,
+并在代码里写明"它的『分红确实入账』由合成用例覆盖" —— **不假装它证明了什么**。
+这正是本会话反复强调的:守卫的价值 = 它实际行使过判别力的次数。
+
+### 4 · 双向验证
+
+把 `apply_corporate_action` 的 `cash_delta` 放大 1% ⇒ chase 那条立刻变红
+(打印账本 vs 复核的差值);恢复后 11 全绿。
+
+### 5 · 登记(未做,如实列出)
+
+- **送股/拆股**的真实数据对账未做:它比分红稀疏(每票数年一次),而合成用例已钉住
+  "送股保总成本不变"的语义 ⇒ 属**可选加固**,登记待评估;
+- `short_reversal` / `cycle_price_action` 的真数据分红对账未做 ——
+  前者方向**相反**(空头付分红),后者是**多账户**结构,两者与 chase/uptrend 口径不同,
+  应各自单独处理(不硬套同一份夹具)。
