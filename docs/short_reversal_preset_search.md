@@ -86,7 +86,7 @@ python3 -m pytest tests/test_compare_ensembles_contract.py -q
 | 不变量 | 改动即变差 / 失效 | 复现方式 |
 |---|---|---|
 | **双价域**:信号用 `adj_close`,执行与 SL/TP 用 `raw_close` | 把 A/B/C 条件与 MA/MACD 混到一个价域 | 见下方「价格域」段 |
-| **`require_intraday_reversal`(K)只能在 `raw` 域启用** | 在 `adj` 域启用 K → K 拿 adj `signal_close` 比 raw high/low/open,恒真(no-op);引擎直接抛错 | 见下方「价格域」段 |
+| **`require_intraday_reversal`(K)当前不可运行(待改写到单一价域)** | 在 `adj` 域启用 K → K 拿 adj `signal_close` 比 raw high/low/open,恒真(no-op);引擎直接抛错。改用 `raw` **不是**补救——那会让 A 条件变 no-op | 见下方「价格域」段 |
 | **`intraday_tiebreak = sl_first`** | 同 bar 内 TP/SL 都破时判 TP | 改 preset 的 tiebreak 后跑 §3(a) |
 | **All-In 入场 + `max_volume_participation = 0.10`(IOC)** | 放松参与率上限 → 流动性幻觉 | 覆盖 `max_volume_participation` |
 | **子账户 `max_positions = 1`(单发子弹)** | 提高并行持仓数 | 覆盖 `max_positions` |
@@ -104,7 +104,12 @@ python3 -m pytest tests/test_compare_ensembles_contract.py -q
 `close_v > bar.open` 也几乎恒真——**K 永不拒绝,静默退化成 no-op**(实测 000001.SZ
 2026-09-01..09-08:close_pos = 13.4 / 28.2 / 15.7 / 26.1 / 16.8 / 24.8)。因此
 `require_intraday_reversal=True` 与 `signal_price_domain='adj'` 的组合被引擎**具名抛错**
-(§0 fail-fast);要启用 K 必须走 `signal_price_domain='raw'`,或先把 K 改写到单一价域。
+(§0 fail-fast)。**切到 `signal_price_domain='raw'` 不是补救**——那正是让 A 条件退化
+(用 adj MA 比 raw close,`close < ma60` 几乎恒真)的那个 §3 缺陷,等于拿 K 的静默 no-op
+去换 A 的静默 no-op。K 必须在**单一价域**上改写(例如改读 adj high/low/open 与 adj
+`signal_close` 同域比较,或整条条件走 raw)之后才能启用;在此之前 `require_intraday_reversal=True`
+的条目 —— `v61_k` / `v61_kf` —— **无法运行**(见 `short_reversal/presets.py` 对应条目的
+UNRUNNABLE 注记)。
 
 **空 universe(§2.9 / F-01 的近亲)**:`raw_kline_daily.min(date)` 是 **2016-10-10**。
 `load_universe_asof` 用「上市日 ≤ as-of」做代理,早于该日期的 as-of 返回**空 universe**。

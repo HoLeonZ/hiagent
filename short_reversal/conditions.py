@@ -130,16 +130,38 @@ def check_conditions(
     # likewise trivial — so K silently degrades to a no-op (§3 violation).
     # Do NOT silently re-point K at adj high/low: that would change the trade
     # list of every K-enabled preset, mid-branch, with no re-validation (§5).
-    # Fail fast instead (§0): enable K only under signal_price_domain='raw', or
-    # re-derive K against a single price domain first.
+    # Fail fast instead (§0): a K-enabled preset CANNOT run as configured, and K
+    # must be re-derived on a SINGLE price domain (adj high/low/open → compare
+    # against adj signal_close; or raw high/low/open → compare against raw
+    # bar.close) before it can be enabled.
+    #
+    # ⚠️ Do NOT prescribe `signal_price_domain='raw'` as the remedy. That is
+    # precisely the configuration that makes gate A a SILENT NO-OP — raw
+    # `bar.close` compared against an SMA of `adj_close` — the §3 violation the
+    # `v81_adj` work removed (raw close sits systematically below adj close, so A's
+    # close<ma60 leg is almost always true; see replay_strategy_v3.py:305-308).
+    # Prescribing 'raw' would just swap one silent no-op (K) for another (A).
+    #
+    # ⚠️ This guard keys on the DECLARED `signal_price_domain`, not the EFFECTIVE
+    # price source. `replay_strategy_v3.py:353` falls back to `d.close` when the
+    # panel carries no `adj_*` columns (legacy/baseline-parity panels), in which
+    # case both domains coincide and K would in fact evaluate correctly — yet the
+    # guard still raises a "mixing two price domains" error. Latent today (the live
+    # panel always carries adj columns), but it is the same declared-vs-effective
+    # confusion this raise exists to police. Keying on the effective source would
+    # require plumbing it through this evaluator's scalar interface (it currently
+    # receives only `bar` + `ind` and has no way to see which source fed
+    # `signal_close`); left as a precise note rather than an interface change.
     if params["require_intraday_reversal"] and params["signal_price_domain"] == "adj":
         raise ValueError(
-            "Gate K (require_intraday_reversal=True) is enabled while "
-            "signal_price_domain='adj': K compares the adjusted `signal_close` "
-            "against the RAW bar high/low/open, mixing two price domains "
-            "(CLAUDE.md §3) and collapsing K to a no-op. Run the preset with "
-            "signal_price_domain='raw', or re-derive K on a single domain "
-            "before enabling it (§0 fail-fast)."
+            "Gate K (require_intraday_reversal=True) is enabled while the "
+            "DECLARED signal_price_domain='adj': K compares the adjusted "
+            "`signal_close` against the RAW bar high/low/open, mixing two price "
+            "domains (CLAUDE.md §3) and collapsing K to a no-op. This preset "
+            "CANNOT run as configured. Do NOT 'fix' it by switching to "
+            "signal_price_domain='raw' — that re-introduces the §3 violation "
+            "that makes gate A a silent no-op. K must be re-derived on a single "
+            "price domain before it can be enabled (§0 fail-fast)."
         )
 
     checks: dict[str, bool] = {}

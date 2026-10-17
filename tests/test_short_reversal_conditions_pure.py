@@ -147,8 +147,12 @@ def test_intraday_reversal_gate_raises_in_the_adj_domain():
     (measured: close_pos 13-28 against a 0.6 threshold). The shared evaluator
     must refuse rather than silently accept a domain-mixing gate.
 
-    'raw' is the supported configuration — K reads raw prices there and is
-    genuinely evaluated; this pins both the refusal and the escape hatch.
+    The second half pins the guard's SCOPE, not an endorsement of 'raw': the
+    raise fires specifically on the DECLARED 'adj' domain, and with the declared
+    domain set to 'raw' the guard does not fire. 'raw' is NOT a valid remedy —
+    it is itself the §3 violation that makes gate A a silent no-op (raw
+    `bar.close` vs an SMA of `adj_close`). A real repair must re-derive K on a
+    SINGLE price domain first; see short_reversal/conditions.py's gate-K comment.
     """
     p = dict(BASE_PARAMS, require_intraday_reversal=True)
     with pytest.raises(ValueError, match="signal_price_domain"):
@@ -156,7 +160,37 @@ def test_intraday_reversal_gate_raises_in_the_adj_domain():
     p_raw = dict(BASE_PARAMS, require_intraday_reversal=True,
                  signal_price_domain="raw")
     r = check_conditions(_bar(), _ind(), p_raw)
-    assert "K" in r.checks  # K was reached and evaluated (no raise)
+    assert "K" in r.checks  # K was reached and evaluated (guard scoped to 'adj')
+
+
+def test_presets_that_enable_gate_k_under_adj_cannot_run():
+    """§0 fail-fast pin (2026-10-18): `v61_k` / `v61_kf` declare
+    require_intraday_reversal=True and do NOT declare signal_price_domain, so the
+    engine default ('adj') applies and check_conditions MUST raise for them.
+
+    Nothing pinned this before — the gate-K guard could be DELETED and every test
+    stayed green while both presets silently reverted to the no-op K they were
+    written to avoid. This asserts the property on the PRESETS (not just on a
+    hand-built param dict), so a preset that quietly dropped
+    require_intraday_reversal would fail here rather than run a dead gate.
+    """
+    from short_reversal.presets import PRESETS
+
+    for name in ("v61_k", "v61_kf"):
+        cfg = PRESETS[name]
+        assert cfg["require_intraday_reversal"] is True, (
+            f"{name} no longer enables Gate K — it would silently run without it"
+        )
+        # No explicit declaration => the engine's `cfg.get("signal_price_domain",
+        # "adj")` default applies, which is the triggering domain.
+        assert "signal_price_domain" not in cfg, (
+            f"{name} now declares signal_price_domain explicitly — re-check "
+            f"whether the gate-K guard still fires for it"
+        )
+        p = dict(BASE_PARAMS, require_intraday_reversal=True,
+                 signal_price_domain="adj")
+        with pytest.raises(ValueError, match="Gate K"):
+            check_conditions(_bar(), _ind(), p)
 
 
 def test_checks_reports_j_when_cooldown_is_enabled():

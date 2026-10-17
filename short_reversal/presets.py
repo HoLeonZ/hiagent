@@ -1580,6 +1580,13 @@ PRESETS: dict[str, dict] = {
     # 假设: 当日内从低点回收 ≥ 60% 区间 + 收阳, 买盘在日内接住卖压
     #   → 但因整体仍下降 (F 确认), 次日大概率回吐 (死猫跳)。
     # 单独启用 (无 F), 测 K 是否独立有效。
+    #
+    # ⚠️ UNRUNNABLE (2026-10-18, §0 fail-fast): 本 preset 未声明
+    #   signal_price_domain → 取引擎默认 'adj'。K 读 raw high/low/open 却比 adj
+    #   `signal_close`, 混两个价域 (§3), 因此 run_backtest_v3 现在**具名抛错**
+    #   (short_reversal/conditions.py 的 gate-K 守卫)。在 K 被改写到单一价域之前,
+    #   本条目无法运行 —— 保留在库中仅为保持历史搜索空间完整 (honest_n_trials 计入它)。
+    #   见 docs/short_reversal_preset_search.md「价格域」段。
     "v61_k": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1607,6 +1614,10 @@ PRESETS: dict[str, dict] = {
     # v61_kf (2026-10-13): F + K 加性堆叠。两者必须同时过。
     # 这是「正交方向: 加性多条件堆叠」的真正测试 — 在 v50 基础上加 K,
     # 测 K 是否能在 F 之上提供独立信息(而不只是替换 F 的子集信号)。
+    #
+    # ⚠️ UNRUNNABLE (2026-10-18, §0 fail-fast): 同 v61_k —— 未声明
+    #   signal_price_domain → 默认 'adj', K 的 raw/adj 混域使 run_backtest_v3
+    #   具名抛错。在 K 被改写到单一价域之前无法运行; 保留仅为完整历史搜索空间。
     "v61_kf": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
