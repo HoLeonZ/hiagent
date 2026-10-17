@@ -28,6 +28,9 @@ from core.dual_price import (
     volume_cap_fill,
 )
 from core.trade_schema import TRADE_COLS
+from short_reversal.conditions import (
+    CONDITION_PARAM_KEYS, BarSnapshot, check_conditions,
+)
 from short_reversal.indicators_bt import (
     Am60,
     AmountRatio,
@@ -973,156 +976,41 @@ class Phase3V3Strategy(bt.Strategy):
     # ----------------------------------------------------------- 5 conditions
 
     def _all_conditions(self, d) -> bool:
-        indi = self.indi[d._name]
+        """§6: thin adapter — collect scalars, delegate to the pure evaluator.
 
-        # J 条件 (v57, 2026-10-12): SL 之后冷静期。
-        # 若 self.p.sl_cooldown_days > 0 且最近一次 SL exit 距今 < 冷却天数,
-        # 拒绝所有入场 (即使 A-I 全过)。最快最便宜, 先做。
-        if self.p.sl_cooldown_days > 0 and self._last_sl_date is not None:
-            today = bt.num2date(d.datetime[0]).date()
-            days_since = (today - self._last_sl_date).days
-            if days_since < self.p.sl_cooldown_days:
-                return False
-
-        # E 流动性（最便宜的先过滤）
-        am60 = indi["am60"][0]
-        if np.isnan(am60) or not (self.p.liq_low <= am60 <= self.p.liq_high):
-            return False
-
-        # A 条件
-        ma60_v = indi["ma60"][0]
-        if np.isnan(ma60_v):
-            return False
-        # v81 (§3): 'adj' 时 close 侧切到 adj_close, 与 ma60 (adj 域) 同域。
-        close_v = (
-            float(indi["_signal_close"][0])
-            if self.p.signal_price_domain == "adj"
-            else float(d.close[0])
+        The evaluation logic lives in short_reversal/conditions.py so the live
+        signal job shares one implementation. Transplanted 2026-10-17; order
+        and short-circuit semantics must not drift.
+        """
+        macd = self.indi[d._name]["macd"]
+        ind = {
+            "am60": self.indi[d._name]["am60"][0],
+            "ma5": self.indi[d._name]["ma5"][0],
+            "ma10": self.indi[d._name]["ma10"][0],
+            "ma20": self.indi[d._name]["ma20"][0],
+            "ma60": self.indi[d._name]["ma60"][0],
+            "signal_close": self.indi[d._name]["_signal_close"][0],
+            "below_ma60_ratio_60": self.indi[d._name]["below_ma60_ratio_60"][0],
+            "up_streak": self.indi[d._name]["up_streak"][0],
+            "pct_chg": self.indi[d._name]["pct_chg"][0],
+            "macd_dif": float(macd.macd[0]),
+            "macd_dea": float(macd.signal[0]),
+            "macd_prev_dif": float(macd.macd[-1]),
+            "macd_prev_dea": float(macd.signal[-1]),
+            "ma20_slope_5d": self.indi[d._name]["ma20_slope_5d"][0],
+            "return_1m": self.indi[d._name]["return_1m"][0],
+            "return_3m": self.indi[d._name]["return_3m"][0],
+            "return_6m": self.indi[d._name]["return_6m"][0],
+            "amount_ratio": self.indi[d._name]["amount_ratio"][0],
+            "rsi": self.indi[d._name]["rsi"][0] if self.p.require_rsi_oversold else float("nan"),
+        }
+        bar = BarSnapshot(
+            open=float(d.open[0]), high=float(d.high[0]),
+            low=float(d.low[0]), close=float(d.close[0]),
+            date=bt.num2date(d.datetime[0]).date(),
         )
-        if self.p.a_condition == "cascade_price":
-            ma5_v = indi["ma5"][0]
-            ma10_v = indi["ma10"][0]
-            ma20_v = indi["ma20"][0]
-            if np.isnan(ma5_v) or np.isnan(ma10_v) or np.isnan(ma20_v):
-                return False
-            if not (ma5_v < ma10_v < ma20_v < ma60_v and close_v < ma20_v):
-                return False
-        else:  # 'default' (V1)
-            ratio = indi["below_ma60_ratio_60"][0]
-            if np.isnan(ratio):
-                return False
-            # close < ma60 (允许 close_ma60_buffer 上浮)
-            if close_v >= ma60_v * (1.0 + self.p.close_ma60_buffer):
-                return False
-            # below_ratio_60: close 在 60 根 bar 中低于 MA60 的比例 (v3 默认 0.6)
-            if ratio < self.p.below_ratio_60:
-                return False
-
-        # B 连阳
-        us = indi["up_streak"][0]
-        if np.isnan(us) or not (self.p.up_streak_low <= us <= self.p.up_streak_high):
-            return False
-
-        # C pct_chg
-        pc = indi["pct_chg"][0]
-        if np.isnan(pc) or not (
-            self.p.pct_chg_low <= pc <= self.p.pct_chg_high
-        ):
-            return False
-
-        # D MACD（backtrader 的 MACD 只有 macd/signal 两条线，histogram = macd - signal）
-        macd = indi["macd"]
-        dif = float(macd.macd[0])
-        dea = float(macd.signal[0])
-        bar = dif - dea
-        prev_dif = float(macd.macd[-1])
-        prev_dea = float(macd.signal[-1])
-        prev_bar = prev_dif - prev_dea
-        if np.isnan(dif) or np.isnan(dea) or np.isnan(prev_bar):
-            return False
-        # D 模式 (2026-09-21 引入参数化):
-        #   'strict'          = DIF<0 & DEA<0 & |bar|<|prev_bar|        (v3 默认)
-        #   'd_only'          = DIF<0 only (放开 DEA 与 bar 收敛)        (v36 候选)
-        #   'converge_strict' = DIF<0 & DEA<0 & |bar|<|prev_bar|*0.5    (v36 候选)
-        if self.p.d_mode == "d_only":
-            if not (dif < 0):
-                return False
-        elif self.p.d_mode == "converge_strict":
-            if not (dif < 0 and dea < 0 and abs(bar) < abs(prev_bar) * 0.5):
-                return False
-        else:  # 'strict' (默认)
-            if not (dif < 0 and dea < 0 and abs(bar) < abs(prev_bar)):
-                return False
-
-        # F 条件 (v50, 2026-10-12): MA20 N 日回归斜率 ≤ 0 (下降趋势过滤)。
-        # 设计动机: short_reversal 5 条件 (A/B/C/D/E) 全部是「区间/布尔」,
-        # 无显式「趋势斜率」度量。当 MA20 在 N 日内仍在上升,
-        # 标的可能处于反弹中段而非下降趋势, 与 short_reversal 哲学不符。
-        # opt-in: require_ma20_slope_neg=True 才启用, 默认 False 保 v44 兼容。
-        if self.p.require_ma20_slope_neg:
-            slope = indi["ma20_slope_5d"][0]
-            if np.isnan(slope) or slope > self.p.ma20_slope_threshold:
-                return False
-
-        # G 条件 (v51, 2026-10-12): 弱势股过滤 (1M/3M/6M 累计跌幅)。
-        # 用户重新定义"下降趋势"为"弱势股": 用过去 N 日累计回报 ≤ 阈值
-        # (e.g. 1M ≤ -5% 意为最近 21 个交易日累计跌了 5% 以上)。
-        # 与 F 互补: F 测「短期动量」(rate), G 测「中期水平」(level)。
-        # 任一启用窗口的 return 必须 ≤ 阈值 (即"过去 N 日累计跌幅超阈值")。
-        # 多个窗口可叠加 (combo) 锁定"持续弱势"。
-        if self.p.require_weak_1m:
-            ret = indi["return_1m"][0]
-            if np.isnan(ret) or ret > self.p.weak_1m_threshold:
-                return False
-        if self.p.require_weak_3m:
-            ret = indi["return_3m"][0]
-            if np.isnan(ret) or ret > self.p.weak_3m_threshold:
-                return False
-        if self.p.require_weak_6m:
-            ret = indi["return_6m"][0]
-            if np.isnan(ret) or ret > self.p.weak_6m_threshold:
-                return False
-
-        # H 条件 (v52, 2026-10-12): 无成交下跌过滤 (5d/20d 成交额比率)。
-        # 设计动机: v51 (G 条件 cumret) 失败 — 测绝对跌幅错把"中段下跌"当入场点,
-        # 实际需要的是"卖压枯竭"的弱势股, 反弹更可能是死猫跳 (空头最佳博弈)。
-        # amount_5d_avg / amount_20d_avg ≤ 阈值 = 资金流衰减 30%+
-        # → 该股的最近 5 日成交显著低于其 20 日平均 → 卖方已放弃 → 反弹无以为继。
-        # opt-in: require_amount_dryup=True 才启用, 默认 False 保 v50 baseline 兼容。
-        if self.p.require_amount_dryup:
-            ar = indi["amount_ratio"][0]
-            if np.isnan(ar) or ar > self.p.amount_dryup_threshold:
-                return False
-
-        # I 条件 (v53, 2026-10-12): RSI(14) 超卖过滤。
-        # 设计动机: v52 (H 资金流 dry-up) 失败 — 测成交萎缩错把"流动性退潮前的
-        # 平静期"当入场点, 实际应测"价格动量超卖"才是经典反转信号。
-        # RSI(14) < 阈值 = 近期 14 日动量极弱 (超卖) = 反弹更可能是死猫跳。
-        # 与 F (slope) 互补: F 测趋势方向, I 测超卖程度; 与 H 正交: H 测资金流。
-        # opt-in: require_rsi_oversold=True 才启用, 默认 False 保 v50/v44 兼容。
-        if self.p.require_rsi_oversold:
-            rsi_v = indi["rsi"][0]
-            if np.isnan(rsi_v) or rsi_v >= self.p.rsi_oversold_threshold:
-                return False
-
-        # K 条件 (v61, 2026-10-13): 日内反转 (intraday reversal)。
-        # (close - low) / (high - low) > 阈值 且 close > open。
-        # close 在 day range 的相对位置, 表征买盘在日内从低点回收的强度。
-        # 与 F/I 正交: F 测多日趋势, I 测多日动量, K 测单日 intraday 形态。
-        if self.p.require_intraday_reversal:
-            open_v = float(d.open[0])
-            high_v = float(d.high[0])
-            low_v = float(d.low[0])
-            if high_v <= low_v:
-                return False
-            day_range = high_v - low_v
-            close_pos = (close_v - low_v) / day_range
-            if close_pos < self.p.intraday_reversal_threshold:
-                return False
-            if self.p.intraday_reversal_require_close_above_open and close_v <= open_v:
-                return False
-
-        return True
+        params = {k: getattr(self.p, k) for k in CONDITION_PARAM_KEYS}
+        return check_conditions(bar, ind, params, self._last_sl_date).passed
 
     # ------------------------------------------------------------------ stop
 
