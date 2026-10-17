@@ -10,7 +10,7 @@ import pytest
 from hiagent_config import get_db_path
 from live.signal_job import (
     SignalRecord, append_record, assert_feeds_nonempty, load_records,
-    panel_end_for_as_of,
+    panel_end_for_as_of, panel_start_for,
 )
 
 AS_OF = "2026-10-16"
@@ -113,50 +113,117 @@ def test_every_ensemble_has_a_uniform_leg_universe():
         )
 
 
-def test_run_signal_job_uses_the_universe_as_of_the_signal_date():
+@pytest.fixture
+def job_run(monkeypatch):
+    """Run the job once, exposing the engine's UNFILTERED signal log.
+
+    `run_signal_job` filters the log to `date == as_of` BEFORE building
+    `candidates` (live/signal_job.py), so the returned record can never expose a
+    future-dated row: asserting anything over `rec.candidates` degrades to
+    `x <= x` and is vacuous when there are no candidates. To check §1 at all we
+    must see the whole log the engine produced. Wrap
+    `live.signal_job.run_backtest_v3` (which the job imported by name) to stash
+    the `signal_log` list it was handed, then delegate to the real engine.
+
+    Returns a dict: `rec` (the job's record), `log` (the raw engine log),
+    `start` / `end` / `kwargs` (what the job actually passed the engine).
+    """
+    db = get_db_path()
+    if not db.exists():
+        pytest.skip(f"local DuckDB not present at {db} (§6: skip, do not error)")
+
+    import tempfile
+
+    import short_reversal.engine as engine_mod
+    from live.signal_job import run_signal_job
+
+    captured: dict = {}
+    real = engine_mod.run_backtest_v3
+
+    def spy(preset, start, end, db_path, **kwargs):
+        captured["start"], captured["end"] = start, end
+        captured["kwargs"] = kwargs
+        try:
+            return real(preset, start, end, db_path, **kwargs)
+        finally:
+            # `signal_log` is the SAME list the strategy appends to during the
+            # run, so after `real` returns it is fully populated.
+            captured["log"] = kwargs["signal_log"]
+
+    monkeypatch.setattr("live.signal_job.run_backtest_v3", spy)
+
+    with tempfile.TemporaryDirectory() as td:
+        rec = run_signal_job(preset="v50_slope", signal_date=AS_OF, db_path=db,
+                             state_dir=Path(td), as_of_time=AS_OF)
+    captured["rec"] = rec
+    return captured
+
+
+def test_run_signal_job_uses_the_universe_as_of_the_signal_date(job_run):
     """The job must resolve the universe as-of signal_date, NOT as-of
     panel_start (= signal_date - 400d).
 
     run_backtest_v3 defaults `universe_as_of` to `start`, and load_universe_asof
     means "first appearance <= as-of". Using the default therefore drops every
     stock listed in the 400 days before the signal date — measured at 36 names
-    (1.13%) for T=2026-10-16, and they are precisely the recently-listed cohort.
-    That narrowing is an artifact of the panel arithmetic, not a strategy rule,
-    so the job must override it.
+    (.001220.SZ and 35 others) for T=2026-10-16, and they are precisely the
+    recently-listed cohort.
+
+    `rec.universe_size` alone does NOT catch a regression here: the job computes
+    it from its OWN `load_universe_asof(mode, signal_date, ...)` call, which is
+    independent of the `universe_as_of` it hands the engine. So this test ALSO
+    pins the log's distinct `thscode` set against what the engine actually saw —
+    the recently-listed names exist only in the as-of-signal_date universe, so
+    excluding them (the mutation) empties the intersection below.
     """
-    db = get_db_path()
-    if not db.exists():
-        pytest.skip(f"local DuckDB not present at {db} (§6: skip, do not error)")
-
     from short_reversal.universe import load_universe_asof
-    from live.signal_job import run_signal_job
-    import tempfile
 
-    expected = len(load_universe_asof("mainboard_only", AS_OF, db))
-    with tempfile.TemporaryDirectory() as td:
-        rec = run_signal_job(preset="v50_slope", signal_date=AS_OF, db_path=db,
-                             state_dir=Path(td), as_of_time=AS_OF)
+    db = get_db_path()
+    rec = job_run["rec"]
     assert rec is not None
+    expected = len(load_universe_asof("mainboard_only", AS_OF, db))
     assert rec.universe_size == expected, (
         f"universe_size={rec.universe_size} but as-of-{AS_OF} is {expected} — "
         f"the job fell back to the as-of-panel_start universe"
     )
 
+    # Behavioural pin: the engine must have SEEN the as-of-signal_date universe.
+    universe_signal = set(load_universe_asof("mainboard_only", AS_OF, db))
+    universe_panel = set(
+        load_universe_asof("mainboard_only", panel_start_for(AS_OF), db)
+    )
+    recent = universe_signal - universe_panel
+    assert recent, (
+        "fixture sanity: expected names listed after panel_start — without them "
+        "this test pins nothing"
+    )
+    log_codes = {e["thscode"] for e in job_run["log"]}
+    assert recent & log_codes, (
+        f"none of the {len(recent)} names listed after panel_start appeared in "
+        f"the engine's log — the job resolved the universe as-of panel_start "
+        f"(run_backtest_v3's default) instead of signal_date"
+    )
 
-def test_run_signal_job_never_reads_a_row_after_the_as_of():
-    """End-to-end §1 check: the engine sees no bar after signal_date, so the
-    signal set for that date cannot depend on the future."""
-    db = get_db_path()
-    if not db.exists():
-        pytest.skip(f"local DuckDB not present at {db} (§6: skip, do not error)")
 
-    from live.signal_job import run_signal_job
-    import tempfile
+def test_run_signal_job_never_reads_a_row_after_the_as_of(job_run):
+    """End-to-end §1 check on the UNFILTERED log: the engine produced no row
+    dated after signal_date, so the signal set for that date cannot depend on
+    the future.
 
-    with tempfile.TemporaryDirectory() as td:
-        rec = run_signal_job(preset="v50_slope", signal_date=AS_OF, db_path=db,
-                             state_dir=Path(td), as_of_time=AS_OF)
-    assert rec is not None
-    assert all(c["date"] <= date.fromisoformat(AS_OF) for c in rec.candidates), (
-        "a candidate dated after the as-of means the panel end was miscomputed"
+    The old form asserted over `rec.candidates`, which `run_signal_job` has
+    already filtered to `date == as_of` — a tautology (`x <= x`), and vacuous
+    when there are no candidates. The raw log is the honest witness. This is what
+    catches the `panel_end_for_as_of` regression (returning signal_date
+    unchanged): run_backtest_v3 then loads 60 days of FUTURE bars, which changes
+    the log rows (different stocks clear min_bars) with `signals.jsonl` still
+    looking normal.
+    """
+    as_of = date.fromisoformat(AS_OF)
+    log = job_run["log"]
+    assert log, "non-vacuity: the engine produced no log rows at all"
+    latest = max(e["date"] for e in log)
+    assert latest <= as_of, (
+        f"the engine logged a row dated {latest} after the as-of {as_of} — the "
+        f"panel end was miscomputed. run_backtest_v3 loads [start-180d, end+60d], "
+        f"so the job must pass end = signal_date - PANEL_POST_BUFFER_DAYS"
     )
