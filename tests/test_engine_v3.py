@@ -106,3 +106,33 @@ def test_short_window_raises_and_names_the_observed_bar_count():
     assert "min_bars=200" in msg
     assert "max observed bars=" in msg
     assert "widen" in msg or "lower min_bars" in msg
+
+
+def test_empty_universe_raises_named_error():
+    """空 universe 必须具名抛错, 不得静默返回 0 笔 (§0, F-01 的近亲, R10)。
+
+    load_universe_asof 用「首现日 ≤ as-of」做代理; as-of 早于数据地板
+    (raw_kline_daily min(date)=2016-10-10) 时返回 []。空 universe → panel 无行
+    → build_per_stock_feeds 的 `if codes and not feeds` 守卫不触发 (codes 为空)
+    → cerebro 无 feed → next() 从不执行 → _metrics_from_holder 直接索引
+    holder["equity_curve"] 抛裸 KeyError。该输出与「市场当天没信号」不可区分,
+    故现在必须在 universe 解析后立刻具名抛错。
+    """
+    db = _real_db()
+    assert db is not None
+    with pytest.raises(ValueError, match="EMPTY universe"):
+        run_backtest_v3("v50_slope", "2016-01-05", "2016-02-05", db, min_bars=150)
+
+
+def test_metrics_from_holder_raises_when_equity_curve_key_missing():
+    """Minor 29 (R10 的另一半): `holder["equity_curve"]` 的直接索引必须对缺键抛错。
+
+    纯单元测试 (无需 DB 也无 backtest)。直接索引是本轮改动之一, 若被改回
+    `.get("equity_curve", [])`, 缺键会静默退化成一条空曲线 —— 正是 R10 描述的
+    静默失效 (`_weighted_equity_curve` 会把空曲线当成「每根 bar 都还没跑」)。
+    """
+    from short_reversal.engine import _metrics_from_holder
+
+    holder = {"cash": 1_000_000.0, "trades": [], "max_dd": 0.0}
+    with pytest.raises(KeyError, match="equity_curve"):
+        _metrics_from_holder(holder, "2025-09-12", "2026-09-12", {"_name": "v50_slope"})

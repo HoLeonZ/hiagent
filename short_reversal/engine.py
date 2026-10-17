@@ -399,15 +399,35 @@ def run_backtest_v3(
             signal_log=signal_log, universe_as_of=universe_as_of,
         )
 
+    asof = universe_as_of if universe_as_of is not None else start
     universe = load_universe_asof(
         cfg["universe"],
         # NOT `universe_as_of or start`: `or` treats an empty string as absent
         # and silently reverts to `start` — the same silent-fallback shape that
         # Task 2 removed from check_conditions. A bogus caller value must fail
         # loudly, not quietly resolve a different universe.
-        universe_as_of if universe_as_of is not None else start,
+        asof,
         db_path,
     )
+    # §0 fail-fast (2026-10-18): 空 universe 不再静默产出 0 笔 (F-01 的近亲, R10)。
+    # load_universe_asof 用「首现日 ≤ as-of」做代理, as-of 早于数据地板
+    # (raw_kline_daily min(date)) 或 DB 缺该日覆盖时返回 []。空 universe →
+    # panel 无行 → build_per_stock_feeds 的 `if codes and not feeds` 守卫**不触发**
+    # (codes 为空) → cerebro 无 feed → next() 从不执行 → 记录器 setdefault 从不运行
+    # → _metrics_from_holder 直接索引 holder["equity_curve"] 抛裸 KeyError("equity_curve")。
+    # 「什么都没评估」与「市场当天没信号」在输出上必须可区分, 故这里具名抛错。
+    if not universe:
+        raise ValueError(
+            f"preset {preset!r} resolved an EMPTY universe (mode "
+            f"{cfg['universe']!r}) as-of {asof} from {db_path}: "
+            f"load_universe_asof returns [] when the as-of predates the data "
+            f"floor (raw_kline_daily min(date)) or the DB lacks coverage for "
+            f"this date. An empty universe evaluates nothing — reporting 0 "
+            f"trades here would be indistinguishable from a quiet market. This "
+            f"is a window/data-coverage problem, not a signal (§0 fail-fast): "
+            f"widen the [start, end] window, sync the DB, or pick an as-of with "
+            f"data coverage."
+        )
     panel = _load_panel(db_path, start, end, universe)
     feeds = build_per_stock_feeds(panel, universe, min_bars=min_bars)
 
