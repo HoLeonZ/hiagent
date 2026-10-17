@@ -38,6 +38,10 @@ COMMISSION_RATE = 0.00025
 STAMP_DUTY_RATE = 0.0005
 MARGIN_RATE = 0.086
 DAYS_PER_YEAR = 365
+# CAGR 分母用的交易日口径。**必须与三个姊妹引擎一致** —— chase_up/backtest.py、
+# uptrend_pullback/backtest.py、cycle_price_action/allocator.py 全部是
+# `len(equity) / TRADING_DAYS`。
+TRADING_DAYS_PER_YEAR = 252
 
 # Re-export for back-compat: tests/golden baselines reference this constant.
 PANEL_FORWARD_BUFFER_DAYS = PANEL_FORWARD_BUFFER_DAYS
@@ -56,16 +60,64 @@ def _load_panel(db_path: Path, start: str, end: str, universe: list[str]) -> pd.
     return load_panel_for_backtest(db_path, start, end, universe)
 
 
+def _evaluated_days(
+    equity_curve: list[dict] | None,
+    trades: list[dict],
+) -> tuple[object | None, object | None, int, str]:
+    """实际被评估的交易日数 —— CAGR 的分母口径。
+
+    §6/§0 (2026-10-17, 第 8 处): 本引擎此前用**请求窗** `(end - start).days / 365`
+    当年数分母, 而 `chase_up` / `uptrend_pullback` / `cycle_price_action` 三个姊妹
+    引擎**全都**用**实际评估期的交易日数**。同一个仓库里同一个 `cagr` 字段被两种口径
+    定义, 本引擎是唯一的少数派 (族内不对称 —— 见 commit `0162de5` 的同类问题)。
+
+    它不是纯口径偏好, 因为本引擎的实测期**可以显著偏离请求窗**。实测 (v58_mp_2,
+    请求 `2018-01-01..2020-12-31`): 权益曲线实际只有 `2019-02-18..2021-03-01`
+    (495 个交易日 = 1.964 年), 而分母按请求窗取 3.000 年 (膨胀 1.527x) ⇒ 同一份
+    累计收益 (−58.06%) 被摊到更长的窗口上, CAGR 由 **−35.75%** 变成 **−25.15%**,
+    **低估亏损 10.60pp**。偏差方向是**美化**, 与 §0「Pessimistic Default」相反,
+    且与 §4 跳空成交口径同族 —— 都在亏损腿上把结果往好处挪。
+
+    起点侧为什么晚 1.13 年**仍未解**(四个假设已被实验否证), 但**不需要解开**:
+    实测期是引擎自己吐出的可观测事实 (`equity_curve` 首末行 / 逐笔成交日), 不是推断。
+    换分母不依赖对机制的猜测。
+
+    回退顺序: 权益曲线 → 逐笔成交日 → (0, "none")。调用方在第三档必须退回请求窗
+    并据 `evaluated_period_source` 披露 —— 什么都没跑出来时, 请求窗是诚实的退化值。
+    """
+    rows = [r.get("date") for r in (equity_curve or []) if r.get("date")]
+    if rows:
+        return min(rows), max(rows), len(rows), "equity_curve"
+    days: list[object] = []
+    for t in trades:
+        for k in ("entry_time", "entry_date", "exit_time", "exit_date"):
+            v = t.get(k)
+            if v:
+                days.append(v)
+    if days:
+        # 无权益曲线时, 交易日数只能由成交日的**不同日期数**下界估计。
+        # 入场与出场都要收 —— 只看出场会把首笔建仓日之前的区间丢掉。
+        return min(days), max(days), len(set(days)), "trades"
+    return None, None, 0, "none"
+
+
+def _years_between(start: str, end: str, n_days: int, source: str) -> float:
+    """把 (交易日数, 来源) 折成年数。`source == "none"` 时退回请求窗。"""
+    if source == "none" or n_days <= 0:
+        return max((pd.Timestamp(end) - pd.Timestamp(start)).days / DAYS_PER_YEAR, 1.0 / DAYS_PER_YEAR)
+    return max(n_days / TRADING_DAYS_PER_YEAR, 1.0 / TRADING_DAYS_PER_YEAR)
+
+
 def _metrics_from_holder(holder: dict, start: str, end: str, cfg: dict) -> dict:
     """从 result_holder + 区间算出最终 metrics dict。"""
     final_capital = float(holder["cash"])
     trades = holder["trades"]
     trades_count = len(trades)
 
-    years = max(
-        (pd.Timestamp(end) - pd.Timestamp(start)).days / DAYS_PER_YEAR,
-        1.0 / DAYS_PER_YEAR,
-    )
+    # §6/§0 (2026-10-17, 第 8 处): 分母取**实际评估期**, 不取请求窗。见 `_evaluated_days`。
+    _eq_span = _evaluated_days(holder.get("equity_curve"), trades)
+    ev_start, ev_end, ev_days, ev_source = _eq_span
+    years = _years_between(start, end, ev_days, ev_source)
     total_yield = final_capital / INITIAL_CAPITAL - 1
     cagr = (final_capital / INITIAL_CAPITAL) ** (1 / years) - 1 if final_capital > 0 else -1.0
 
@@ -107,6 +159,13 @@ def _metrics_from_holder(holder: dict, start: str, end: str, cfg: dict) -> dict:
         "preset": cfg["_name"],
         "start": start,
         "end": end,
+        # §6/§0 (2026-10-17, 第 8 处): `start`/`end` 是**请求窗**, 不是实测期。
+        # 实测期可以偏离请求窗数月到数年 (见 `_evaluated_days` 的实测记录),
+        # 所以凡是要说"这段曲线覆盖了哪段历史"的地方都必须读下面三个字段。
+        "evaluated_start": str(ev_start) if ev_start is not None else None,
+        "evaluated_end": str(ev_end) if ev_end is not None else None,
+        "evaluated_years": float(years),
+        "evaluated_period_source": ev_source,
         "trades": trades,
         "trades_count": trades_count,
         "win_rate": float(win_rate),
@@ -208,10 +267,21 @@ def _run_ensemble(
             all_trades.append(t2)
     all_trades.sort(key=lambda t: t.get("entry_time", ""))
 
-    years = max(
-        (pd.Timestamp(end) - pd.Timestamp(start)).days / DAYS_PER_YEAR,
-        1.0 / DAYS_PER_YEAR,
-    )
+    # §6/§0 (2026-10-17, 第 8 处): 同 `_metrics_from_holder` —— 分母取实际评估期。
+    # 各子策略跑同一窗口, 取最宽的实测期 (合并后的交易集覆盖的就是这个并集)。
+    _sub_spans = [
+        (r.get("evaluated_start"), r.get("evaluated_end"), r.get("evaluated_years"))
+        for r in sub_results
+        if r.get("evaluated_start") and r.get("evaluated_end")
+    ]
+    if _sub_spans:
+        ev_start = min(s for s, _, _ in _sub_spans)
+        ev_end = max(e for _, e, _ in _sub_spans)
+        ev_days = int(round(max(y for _, _, y in _sub_spans) * TRADING_DAYS_PER_YEAR))
+        ev_source = "equity_curve"
+    else:
+        ev_start, ev_end, ev_days, ev_source = _evaluated_days(None, all_trades)
+    years = _years_between(start, end, ev_days, ev_source)
     cagr = (final_capital / INITIAL_CAPITAL) ** (1 / years) - 1
 
     wins = sum(1 for t in all_trades if t["net_pnl"] > 0)  # 见上: 须用含下限的 net_pnl
@@ -228,6 +298,10 @@ def _run_ensemble(
         "preset": cfg["_name"],
         "start": start,
         "end": end,
+        "evaluated_start": ev_start,
+        "evaluated_end": ev_end,
+        "evaluated_years": float(years),
+        "evaluated_period_source": ev_source,
         "trades": all_trades,
         "trades_count": trades_count,
         "win_rate": float(win_rate),

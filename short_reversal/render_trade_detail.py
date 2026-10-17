@@ -740,7 +740,18 @@ def main():
     summary_html = '<div class="summary"><h2>回测摘要</h2><table>'
     summary_html += (
         f'<tr><td>preset</td><td>{m["preset"]}</td></tr>'
-        f'<tr><td>区间</td><td>{m["start"]} → {m["end"]}</td></tr>'
+        f'<tr><td>请求区间</td><td>{m["start"]} → {m["end"]}</td></tr>'
+        # §7 (2026-10-17, 第 8 处): 报"区间"却印请求窗会**误导** —— 实测期可以偏离
+        # 请求窗数月到数年 (v58_mp_2: 请求 3.00 年, 实跑 1.96 年)。凡印窗口的地方
+        # 必须印实测期, 请求窗只作为对照。
+        f'<tr><td>实测区间</td><td>'
+        + (
+            f'{m["evaluated_start"]} → {m["evaluated_end"]}'
+            f'（{m["evaluated_years"]:.2f} 年，来源 {m.get("evaluated_period_source", "?")}）'
+            if m.get("evaluated_start")
+            else '<b>未记录</b>（本次运行的 metrics 缺 evaluated_start）'
+        )
+        + '</td></tr>'
         f'<tr><td>展示笔数</td><td>{len(trades)} / {m["trades_count"]}</td></tr>'
         f'<tr><td>胜率</td><td>{m["win_rate"] * 100:.1f}%</td></tr>'
         f'<tr><td>期末资金</td><td>¥{m["final_capital"]:,.2f}</td></tr>'
