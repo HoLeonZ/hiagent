@@ -100,3 +100,17 @@ def synthetic_single_stock_panel() -> pd.DataFrame:
             "amount": 5e7, "volume": 1e6,
         })
     return pd.DataFrame(rows)
+
+
+def pytest_configure(config):
+    """Register the `golden` marker (the expensive §0 reproducibility re-runs).
+
+    Registered here rather than in a config file this repo does not otherwise
+    have, so `-m golden` / `-m "not golden"` work without an unregistered-marker
+    warning. See tests/test_short_reversal_golden_reproducibility.py.
+    """
+    config.addinivalue_line(
+        "markers",
+        "golden: expensive §0 golden reproducibility re-run "
+        "(~8-10 min per preset); deselect with -m 'not golden'",
+    )
