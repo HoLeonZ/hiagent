@@ -15,6 +15,8 @@ P0–P8 are enforced via no_lookahead helpers + replay_broker.
 """
 from __future__ import annotations
 
+import logging
+
 import pandas as pd
 
 import backtrader as bt
@@ -27,6 +29,8 @@ from cycle_price_action.signals import (
 )
 from cycle_price_action.cycle import phase_score
 from cycle_price_action.time_windows import calendar_score
+logger = logging.getLogger(__name__)
+
 from cycle_price_action.portfolio import Portfolio
 from cycle_price_action.replay_broker import ReplayBroker
 from cycle_price_action.data_feed import ReplayDataProvider
@@ -203,6 +207,14 @@ class CyclePriceActionStrategy(bt.Strategy):
         # computing new signals. This guarantees that an existing position
         # always gets the most pessimistic exit decision (CLAUDE.md §4 "BOTH
         # SL and TP breached within the same bar → SL first").
+        # §1/§4 (附五十六): 前收只算一次 —— 出场侧的**跌停**判定与入场侧的
+        # **涨停**判定用的是同一根 bar 的同一个值。此前只在入场分支里算,于是
+        # 出场侧的跌停门无处可写。
+        try:
+            prev_close = float(self.datas[0].close[-1])
+        except (IndexError, TypeError):
+            prev_close = None
+
         if self._portfolio.position is not None and self._entry_day is not None:
             if bar["date"] > self._entry_day:    # P3: no same-day exit
                 # We must compute SL/TP levels from entry_price × (1 ± pct).
@@ -227,7 +239,16 @@ class CyclePriceActionStrategy(bt.Strategy):
                     close=bar_exec.close,
                     tp_pct=tp_pct_eff,
                     sl_pct=sl_pct_eff,
+                    prev_close=prev_close,
                 )
+                if reason == "limit_down":
+                    # §4: 封板日不能卖 —— 本 bar 的**全部**出场判定(含 max_hold)
+                    # 一并顺延(时间在流逝,但成交不能假装发生)。
+                    logger.info(
+                        "[limit-down] %s 在 %s 跌停封板,卖出不成交,持仓顺延",
+                        self.datas[0]._name, bar["date"],
+                    )
+                    return
                 if reason in ("SL", "TP"):    # exit triggered
                     self._entry_day = None
                     return
@@ -251,10 +272,7 @@ class CyclePriceActionStrategy(bt.Strategy):
             # §6 单层归属要求一条规则只有一处归属,否则两处会各自演化。
             # 这里只负责把 prev_close 传下去(前一根 bar 的收盘;feed 太短则为 None,
             # 由 Portfolio 按 best-effort 处理)。
-            try:
-                prev_close = float(self.datas[0].close[-1])
-            except (IndexError, TypeError):
-                prev_close = None
+            # prev_close 已在出场判定之前算好(见上方),此处复用。
             # §1/§4 (2026-10-15): 先确认次根 bar 可成交,再让 Portfolio 建仓。
             # 顺序反了会让组合持有一个 broker 无从卖出的仓位(停牌 → 买入无成交
             # → 出场 submit_sell 抛 "cannot sell more than held")。
@@ -298,7 +316,15 @@ class CyclePriceActionStrategy(bt.Strategy):
                     f"returned no fill on a bar that can_fill() accepted"
                 )
             self._entry_day = fill.date
-        elif self._portfolio.position is not None and self._portfolio.hold_days(bar["date"]) >= self.p.max_hold:
+        elif (
+            self._portfolio.position is not None
+            and self._portfolio.hold_days(bar["date"]) >= self.p.max_hold
+            # §4 (附五十六): 封板日不做出场**决策**(与 SL/TP 路径同一道门,
+            # 规则实现唯一在 `Portfolio.exit_blocked_by_limit_down`)。
+            and not self._portfolio.exit_blocked_by_limit_down(
+                prev_close, bar["open"]
+            )
+        ):
             fill = self._broker_ext.submit_sell(
                 thscode=self._portfolio.position.thscode,
                 qty=self._portfolio.position.shares,

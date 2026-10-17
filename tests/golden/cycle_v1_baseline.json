@@ -7,7 +7,15 @@
   ],
   "cash": 1000000.0,
   "trades_csv_rows": 492,
-  "trades_csv_sha256": "753c1ef878bf9517b658e1e81c828c59c78158d55424dca59614fbdc8dcd5bd7",
-  "trades_sorted_sha256": "cb9ebb7111df7c2939e200bee862521fd60f02ffb5fee7360276f1eed20de3c7",
-  "note": "§0 完备性基线。原序哈希对 universe 遍历顺序敏感,故消费端优先断言排序哈希(见 trades_sorted_sha256)。重生成: python tests/_regen_cycle_baseline.py。此基线参与 §5 迭代计数:任何为了「让基线过」而改窗口或改策略的迭代,都必须计入 n_trials。"
+  "trades_csv_sha256": "c0cced3be0f790d3614482ad6977d368625631f525433d2b708533b6e6e28641",
+  "trades_sorted_sha256": "b5152cbd77d7bc0a7704408dac9449fa23c6a63eeea3f85e949a76c66b2f3ca7",
+  "note": "§0 完备性基线。原序哈希对 universe 遍历顺序敏感,故消费端优先断言排序哈希(见 trades_sorted_sha256)。重生成: python tests/_regen_cycle_baseline.py。此基线参与 §5 迭代计数:任何为了「让基线过」而改窗口或改策略的迭代,都必须计入 n_trials。",
+  "drift_log": [
+    {
+      "date": "2026-10-18",
+      "change": "§4 卖方跌停 no-fill:出场判定不再在**跌停封板** bar 上成交,持仓顺延到下一根可成交 bar(cycle 此前全包零处 `is_limit_down`)。",
+      "why": "CLAUDE.md §4 逐字:`a sell/cover on a limit-down-sealed bar MUST be rejected (no fill)`。chase_up(:508) 与 uptrend_pullback(:464) 都有这道门,只有 cycle 没有 —— 于是出场阶梯在一个物理上取不到的价位上'卖出'。实测本窗口 5,715 笔出场里有 7 笔落在封板 bar(全部 r ≤ −9.9%)。",
+      "impact": "本窗口 492 笔成交,只有 **1 笔**改变:603359.SH(entry 2026-04-24)出场日 2026-04-28 → 2026-04-30,出场价 4.55 → 4.32,pnl −188,472 → −229,152(合计 −40,679,即 **更悲观**,符合 §0)。2026-04-28 正是封板日(open/prev_close − 1 = −9.9%),故漂移完全由这条 §4 规则解释,不是无关扰动。"
+    }
+  ]
 }

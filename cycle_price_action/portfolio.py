@@ -38,7 +38,7 @@ from typing import Any, Mapping
 # Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical cost rates imported from
 # core/dual_price.py single-source-of-truth. (was 0.001 = 万10 pre-Aug2023).
 from core.corporate_actions import apply_corporate_action
-from core.dual_price import is_limit_up, volume_cap_fill
+from core.dual_price import is_limit_down, is_limit_up, volume_cap_fill
 from core.preset_contract import ALL_IN, EXECUTION_PRICE_SOURCE
 
 logger = logging.getLogger(__name__)
@@ -119,6 +119,9 @@ class Portfolio:
         # 此前它在 strategy 层(backtrader_engine.next 里 inflight 检查),而
         # 另外三个引擎都在 portfolio 层 —— §6 单层归属要求一个规则只有一处归属。
         is_limit_up_threshold: float = 0.095,
+        # §4 (附五十六): 跌停侧**镜像**阈值。A 股主板涨跌停带对称(±10%),
+        # 但语义上必须分名 —— 混用会让两侧在以后某个非对称板上悄悄绑在一起。
+        is_limit_down_threshold: float = 0.095,
         initial_capital: float = 1_000_000.0,
         # R5' (2026-09-23, CLAUDE.md §4): ATR-aware slippage opt-in.
         # When atr_slip_scale > 0, slippage = max(0, atr_pct × participation × scale)
@@ -156,6 +159,7 @@ class Portfolio:
         self.initial_capital = float(initial_capital)
         self.atr_slip_scale = atr_slip_scale
         self.is_limit_up_threshold = float(is_limit_up_threshold)
+        self.is_limit_down_threshold = float(is_limit_down_threshold)
         self.intraday_tiebreak = intraday_tiebreak
         # §4 (audit 2026-10-15): 参与率上限由声明驱动(不再读类常量)。
         self.max_volume_participation = float(max_volume_participation)
@@ -441,6 +445,28 @@ class Portfolio:
         self._pos = None
         return proceeds
 
+    def exit_blocked_by_limit_down(
+        self, prev_close: float | None, open_price: float
+    ) -> bool:
+        """§4 卖方跌停 no-fill:封板日**卖不出去**。
+
+        `a sell/cover on a limit-down-sealed bar MUST be rejected (no fill)`。
+        长仓出场是一次 SELL ⇒ 与入场侧的涨停不可成交(`try_enter` 的 `is_limit_up`)
+        互为镜像,且按 `test_cycle_limit_up_guard_lives_in_the_execution_layer`
+        的 §6 裁定,**同属执行层**,故放在同一个类里、只实现一次。
+
+        此前 cycle 全包**零处** `is_limit_down`,而 chase_up(:508) 与
+        uptrend_pullback(:464) 都有这道门 —— 于是 cycle 的出场阶梯会在一个
+        物理上取不到的价位上"卖出"。
+        """
+        if prev_close is None:
+            return False
+        return is_limit_down(
+            float(prev_close),
+            float(open_price),
+            threshold=self.is_limit_down_threshold,
+        )
+
     def try_exit_with_intraday_check(
         self,
         exit_date: date,
@@ -450,6 +476,9 @@ class Portfolio:
         close: float,
         tp_pct: float,
         sl_pct: float,
+        # §4 (附五十六): 前收。提供时强制**跌停不成交**(与 try_enter 的
+        # prev_close 参数镜像);None → 跳过检查(best-effort,与入场侧同口径)。
+        prev_close: float | None = None,
     ) -> tuple[float, str]:
         """V6'' (2026-09-22, CLAUDE.md §4): Daily-bar SL-first tiebreak exit.
 
@@ -486,6 +515,11 @@ class Portfolio:
                 f"intraday_tiebreak must be 'sl_first' (CLAUDE.md §4), "
                 f"got {self.intraday_tiebreak!r}"
             )
+        # §4 (附五十六): 封板日**不能卖** ⇒ 本 bar 不做任何出场(含 time)。
+        # 返回专用 reason,由引擎据此跳过本 bar 的全部出场判定。
+        if self.exit_blocked_by_limit_down(prev_close, open_price):
+            return 0.0, "limit_down"
+
         entry = self._pos.entry_price
         tp_p = entry * (1 + tp_pct)
         sl_p = entry * (1 - sl_pct)

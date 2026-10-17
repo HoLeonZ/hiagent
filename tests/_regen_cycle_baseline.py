@@ -41,6 +41,26 @@ GOLDEN_PATH = ROOT / "tests" / "golden" / f"cycle_{PRESET_KEY}_baseline.json"
 
 SORT_COLS = ["entry_date", "thscode", "exit_date", "entry_price", "exit_price", "shares"]
 
+#: §6 明文:改写成交列表的逻辑必须**重算基线**并在 PR 里说明漂移。
+#: 落在基线文件里(而不是只留在 PR 描述里),于是看到 pin 的人能立刻知道
+#: 它为何不是第一次被 pin 的值。
+DRIFT_LOG: list[dict[str, str]] = [
+    {
+        "date": "2026-10-18",
+        "change": "§4 卖方跌停 no-fill:出场判定不再在**跌停封板** bar 上成交,"
+                  "持仓顺延到下一根可成交 bar(cycle 此前全包零处 `is_limit_down`)。",
+        "why": "CLAUDE.md §4 逐字:`a sell/cover on a limit-down-sealed bar MUST be "
+               "rejected (no fill)`。chase_up(:508) 与 uptrend_pullback(:464) 都有"
+               "这道门,只有 cycle 没有 —— 于是出场阶梯在一个物理上取不到的价位上"
+               "'卖出'。实测本窗口 5,715 笔出场里有 7 笔落在封板 bar(全部 r ≤ −9.9%)。",
+        "impact": "本窗口 492 笔成交,只有 **1 笔**改变:603359.SH(entry 2026-04-24)"
+                  "出场日 2026-04-28 → 2026-04-30,出场价 4.55 → 4.32,"
+                  "pnl −188,472 → −229,152(合计 −40,679,即 **更悲观**,符合 §0)。"
+                  "2026-04-28 正是封板日(open/prev_close − 1 = −9.9%),故漂移"
+                  "完全由这条 §4 规则解释,不是无关扰动。",
+    },
+]
+
 
 def _digest(df: pd.DataFrame) -> str:
     """与 chase_up / uptrend_pullback 基线同约定:哈希 `to_csv(index=False)`,
@@ -82,6 +102,7 @@ def main() -> int:
             "tests/_regen_cycle_baseline.py。此基线参与 §5 迭代计数:任何为了"
             "「让基线过」而改窗口或改策略的迭代,都必须计入 n_trials。"
         ),
+        "drift_log": DRIFT_LOG,
     }
     GOLDEN_PATH.parent.mkdir(parents=True, exist_ok=True)
     GOLDEN_PATH.write_text(
