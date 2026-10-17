@@ -91,10 +91,9 @@ def load_calendar(
     cache_path: Path,
     provider: Callable[[], list[str]] = _cli_provider,
     today: date,
-    max_staleness_days: int = 1,
+    max_staleness_days: int = 0,
 ) -> TradingCalendar:
-    """Load the calendar, refetching only when the cache is older than
-    `max_staleness_days`.
+    """Load the calendar, refetching when the cache was fetched before `today`.
 
     FRESHNESS IS TIME-BASED, NOT COVERAGE-BASED — deliberately.
 
@@ -106,6 +105,20 @@ def load_calendar(
     read but never used, and the CLI would be shelled out on every call while
     the module claimed to cache: the cache-hit branch would be unreachable in
     production, which an earlier revision of this module actually shipped.
+
+    WHY THE DEFAULT IS 0, NOT 1 — read before changing it.
+
+    A cache fetched on D and served on D+1 is STALE IN THE TAIL: the source
+    always trails by at least one session, so a D-day fetch ends at D-1 (or
+    earlier), and serving it on D+1 hides the session that completed ON D.
+    `is_trading_day(cal, D)` then returns False on D+1 and the navigation
+    helpers are off by one session near the tail. Before this cache was
+    time-based it refetched unconditionally, so the tail was always fresh —
+    i.e. a nonzero default is a window THIS design opens rather than one it
+    inherits. The cache buys repeated-call avoidance WITHIN a day (intraday
+    ticks, a re-run of the 15:30 job), which 0 preserves; serving across a day
+    saves one CLI call and costs tail correctness. Do not raise it without a
+    consumer that needs it.
 
     Consequence for callers: `is_trading_day(cal, today)` is necessarily False
     intraday (today's session has not completed, so it is not listed), and

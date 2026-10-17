@@ -62,7 +62,12 @@ def test_stale_cache_triggers_a_refetch(tmp_path: Path):
     """Freshness is TIME-based, because the remote calendar is trailing: a
     coverage test against `today` is unsatisfiable on every calendar day, so a
     coverage-based cache would be read but never used and the CLI would be
-    shelled out on every call."""
+    shelled out on every call.
+
+    The boundary that matters is Δ=1, and it is pinned explicitly: the source
+    always trails by at least one session, so serving a D-day fetch on D+1 would
+    hide the session that completed ON D.
+    """
     cache = tmp_path / "cal.json"
     calls = []
 
@@ -73,9 +78,20 @@ def test_stale_cache_triggers_a_refetch(tmp_path: Path):
     load_calendar(cache_path=cache, provider=provider, today=date(2026, 10, 17))
     assert len(calls) == 1
 
-    # Same cache, two days later -> stale -> the provider must be called again.
+    # Δ=0 — same day — served from cache.
+    load_calendar(cache_path=cache, provider=provider, today=date(2026, 10, 17))
+    assert len(calls) == 1, "a same-day cache must be served"
+
+    # Δ=1 — the boundary — must NOT be served.
+    load_calendar(cache_path=cache, provider=provider, today=date(2026, 10, 18))
+    assert len(calls) == 2, (
+        "a cache from a previous day must not be served: the source trails, so "
+        "a D-day fetch served on D+1 hides the session that completed on D"
+    )
+
+    # Δ=1 again, from the refreshed cache — still refetches.
     load_calendar(cache_path=cache, provider=provider, today=date(2026, 10, 19))
-    assert len(calls) == 2, "a stale cache must refetch, not be served"
+    assert len(calls) == 3
 
 
 def test_trailing_calendar_cannot_answer_the_present_day():
@@ -100,4 +116,11 @@ def test_empty_calendar_raises_a_usable_message():
         next_trading_day(empty, date(2026, 10, 20))
     assert "calendar" in str(ei.value), (
         f"message must name the calendar, got: {ei.value}"
+    )
+    # The sibling helper needs the same guard — assert it too, or a future edit
+    # can regress it silently.
+    with pytest.raises(ValueError) as ei2:
+        prev_trading_day(empty, date(2026, 10, 20))
+    assert "calendar" in str(ei2.value), (
+        f"message must name the calendar, got: {ei2.value}"
     )
