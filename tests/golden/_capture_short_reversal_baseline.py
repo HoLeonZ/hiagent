@@ -38,6 +38,14 @@ def main() -> int:
 
     for preset in PRESETS:
         m = run_backtest_v3(preset, START, END, db, min_bars=MIN_BARS)
+        if not m["trades"]:
+            raise SystemExit(
+                f"{preset}: 0 trades on {START}..{END} (min_bars={MIN_BARS}) — "
+                f"refusing to write a degenerate golden baseline. A zero-trade "
+                f"result here means the window is too short for min_bars, the "
+                f"universe came back empty, or the F-01 guard was bypassed — "
+                f"investigate before regenerating."
+            )
         payload = {
             "preset": m["preset"],
             "start": m["start"],
