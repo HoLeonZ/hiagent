@@ -61,29 +61,42 @@ logger = logging.getLogger(__name__)
 def _compute_indicators(panel: pd.DataFrame) -> pd.DataFrame:
     """按 thscode 分组计算全部 5 条件需要的指标。"""
     df = panel.sort_values(["thscode", "date"]).reset_index(drop=True)
+
+    # §3 (audit 2026-10-17): **信号域 = 复权价**。引擎在 `signal_price_domain=="adj"`
+    # (shipped 默认)时把 A/B/C/D 与 F–K 的价格源切到 `adj_close`;而本扫描器此前一律
+    # 用 raw `close` ⇒ 两者在**94% 的行**上是不同的价格水平(实测 000001.SZ
+    # 2026-01-12:raw=11.48 vs adj=14.74,差 28%),于是扫描给出的名单与回测会进场的
+    # 名单在**大半个市场**上不同(V5 的"原始 close 与复权 MA60 混域"在引擎侧修好了,
+    # 扫描侧被漏下)。缺 `adj_close`(legacy 面板)时逐行回退 `close` —— 与引擎
+    # `adj_close_src` 的规则同一条。
+    if "adj_close" in df.columns:
+        df["_px"] = df["adj_close"].fillna(df["close"])
+    else:
+        df["_px"] = df["close"]
+
     g = df.groupby("thscode", group_keys=False)
 
     # MA family
-    df["ma5"] = g["close"].transform(lambda s: s.rolling(5, min_periods=5).mean())
-    df["ma10"] = g["close"].transform(lambda s: s.rolling(10, min_periods=10).mean())
-    df["ma20"] = g["close"].transform(lambda s: s.rolling(20, min_periods=20).mean())
-    df["ma60"] = g["close"].transform(lambda s: s.rolling(60, min_periods=60).mean())
+    df["ma5"] = g["_px"].transform(lambda s: s.rolling(5, min_periods=5).mean())
+    df["ma10"] = g["_px"].transform(lambda s: s.rolling(10, min_periods=10).mean())
+    df["ma20"] = g["_px"].transform(lambda s: s.rolling(20, min_periods=20).mean())
+    df["ma60"] = g["_px"].transform(lambda s: s.rolling(60, min_periods=60).mean())
 
     # A: below_ma60_ratio_60
-    df["below_ma60"] = (df["close"] < df["ma60"]).astype(float)
+    df["below_ma60"] = (df["_px"] < df["ma60"]).astype(float)
     df["below_ma60_ratio_60"] = g["below_ma60"].transform(
         lambda s: s.rolling(60, min_periods=60).mean()
     )
 
     # C: pct_chg
-    df["pct_chg"] = g["close"].pct_change()
+    df["pct_chg"] = g["_px"].pct_change()
 
     # E: am60 (60-day rolling mean of amount)
     df["am60"] = g["amount"].transform(lambda s: s.rolling(60, min_periods=60).mean())
 
     # D: MACD dif / dea / bar
-    ema12 = g["close"].transform(lambda s: s.ewm(span=12, adjust=False).mean())
-    ema26 = g["close"].transform(lambda s: s.ewm(span=26, adjust=False).mean())
+    ema12 = g["_px"].transform(lambda s: s.ewm(span=12, adjust=False).mean())
+    ema26 = g["_px"].transform(lambda s: s.ewm(span=26, adjust=False).mean())
     df["dif"] = ema12 - ema26
     df["dea"] = g["dif"].transform(lambda s: s.ewm(span=9, adjust=False).mean())
     df["bar"] = df["dif"] - df["dea"]
@@ -105,7 +118,7 @@ def _compute_indicators(panel: pd.DataFrame) -> pd.DataFrame:
             out.append(cur)
         return pd.Series(out, index=s.index)
 
-    df["up_streak"] = g["close"].transform(_streak)
+    df["up_streak"] = g["_px"].transform(_streak)
 
     # F/G/H/I 条件所需指标 —— 一律调用 `short_reversal.indicators_bt` 里的 pandas
     # **对偶**(附四十):那批函数与引擎的 backtrader 原件做过逐值对拍
@@ -113,11 +126,11 @@ def _compute_indicators(panel: pd.DataFrame) -> pd.DataFrame:
     # 不是在本文件里另抄一份定义。
     df["ma20_slope_5d"] = g["ma20"].transform(ma20_slope_pandas)
     for label, period in (("1m", 21), ("3m", 63), ("6m", 126)):
-        df[f"return_{label}"] = g["close"].transform(
+        df[f"return_{label}"] = g["_px"].transform(
             lambda s, _p=period: return_n_pandas(s, _p)
         )
     df["amount_ratio"] = g["amount"].transform(amount_ratio_pandas)
-    df["rsi"] = g["close"].transform(rsi_pandas)
+    df["rsi"] = g["_px"].transform(rsi_pandas)
     return df
 
 
@@ -153,11 +166,11 @@ def _filter_signals(df: pd.DataFrame, preset: dict, signal_date: str) -> pd.Data
             (last_g["ma5"] < last_g["ma10"])
             & (last_g["ma10"] < last_g["ma20"])
             & (last_g["ma20"] < last_g["ma60"])
-            & (last_g["close"] < last_g["ma20"])
+            & (last_g["_px"] < last_g["ma20"])
         )
     else:
         cond_a = (
-            (last_g["close"] < last_g["ma60"] * (1.0 + ma60_buf))
+            (last_g["_px"] < last_g["ma60"] * (1.0 + ma60_buf))
             & (last_g["below_ma60_ratio_60"] >= ratio_min)
         )
     # B: 连阳
@@ -204,6 +217,8 @@ def _filter_signals(df: pd.DataFrame, preset: dict, signal_date: str) -> pd.Data
         # 引擎:`if isnan(rsi) or rsi >= thr: return False` ⇒ 通过 ⇔ rsi < thr(**严格**)
         mask &= last_g["rsi"] < cfg.get("rsi_oversold_threshold", 30)
     if cfg.get("require_intraday_reversal", False):
+        # K 用 **raw** open/high/low/close —— 与引擎 `_all_conditions` 里
+        # `d.open/high/low/close`(= feed 默认列 = v_daily 原始价)一致,是刻意保留的。
         high_v, low_v = last_g["high"], last_g["low"]
         rng = high_v - low_v
         # 引擎:`if high <= low: return False`,再比较 close 在日内的相对位置。

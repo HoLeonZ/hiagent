@@ -148,7 +148,14 @@ def _pandas_values(panel: pd.DataFrame) -> dict[str, dict[str, float]]:
         row = g[g["date"] == target]
         if row.empty:
             continue
-        close = g["close"].reset_index(drop=True)
+        # §3 (2026-10-17): 信号域 = **复权价**(与引擎 signal_price_domain="adj" 一致)。
+        # 此前这里取 `close`(raw),于是对拍只在**错误的口径**上验证了公式的等价性 ——
+        # 它没能发现"扫描器整体算在 raw 上而引擎算在 adj 上"这个 94% 覆盖的域错误。
+        close = (
+            g["adj_close"].fillna(g["close"]).reset_index(drop=True)
+            if "adj_close" in g.columns
+            else g["close"].reset_index(drop=True)
+        )
         ma20 = sma_pandas(close, 20)
         vals = {
             "ma5": float(sma_pandas(close, 5).iloc[-1]),

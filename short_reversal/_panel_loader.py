@@ -56,11 +56,27 @@ def load_panel_for_signal(
     ).strftime("%Y-%m-%d")
     con = duckdb.connect(str(db_path), read_only=True)
     try:
+        # §3 (audit 2026-10-17): **信号扫描也必须带 adj_* 列**。
+        # 此前这里只 SELECT v_daily(raw),于是 `scan_signals` / `scan_signals_fast`
+        # 的 5 条件(A/B/C/D/E)以及 F–K 全部在**原始价**上评估,而回测引擎
+        # (`load_panel_for_backtest` 有 LEFT JOIN v_daily_hfq)用的是**复权价**
+        # —— V5 在引擎侧修好的"原始 close 与复权 MA60 混域"问题,在扫描侧被漏下。
+        # 实测暴露面:近 250 个交易日内有公司行为的标的有 **3775 只 / 5143 个事件**
+        # (几乎所有 A 股都有分红/送股)⇒ 扫描器给出的名单与回测实际会进场的名单
+        # 在**大半个市场**上不同。
+        # 与 `load_panel_for_backtest` 同一 JOIN 口径(v_daily = raw, v_daily_hfq = adj)。
         df = con.execute(
-            "SELECT thscode, date, open, high, low, close, amount, volume "
-            "FROM v_daily "
-            "WHERE date BETWEEN ? AND ? "
-            "ORDER BY thscode, date",
+            "SELECT v.thscode, v.date, "
+            "       v.open, v.high, v.low, v.close, v.amount, v.volume, "
+            "       h.open  AS adj_open, "
+            "       h.high  AS adj_high, "
+            "       h.low   AS adj_low, "
+            "       h.close AS adj_close "
+            "FROM v_daily v "
+            "LEFT JOIN v_daily_hfq h "
+            "  ON v.thscode = h.thscode AND v.date = h.date "
+            "WHERE v.date BETWEEN ? AND ? "
+            "ORDER BY v.thscode, v.date",
             [start, signal_date],
         ).fetchdf()
     finally:
