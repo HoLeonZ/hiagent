@@ -119,6 +119,29 @@ def check_conditions(
     params: Mapping[str, Any],
     last_sl_date: date | None = None,
 ) -> ConditionResult:
+    # ---- §3 fail-fast: Gate K cannot run in the 'adj' signal domain. ----
+    # Gate K (below) reads the bar's RAW high/low/open but compares them against
+    # `close_v`, which is `signal_close` (= adj_close, v_daily_hfq) whenever
+    # signal_price_domain == 'adj'. adj and raw are different series (measured
+    # ~55% of the universe differs), so `close_pos = (adj_close - raw_low) /
+    # (raw_high - raw_low)` divides across two domains: on 000001.SZ
+    # (2026-09-01..09-08) it measured 13.4 / 28.2 / 15.7 / 26.1 / 16.8 / 24.8
+    # against the 0.6 threshold, and `close_v > bar.open` (15.80 > 11.68) is
+    # likewise trivial — so K silently degrades to a no-op (§3 violation).
+    # Do NOT silently re-point K at adj high/low: that would change the trade
+    # list of every K-enabled preset, mid-branch, with no re-validation (§5).
+    # Fail fast instead (§0): enable K only under signal_price_domain='raw', or
+    # re-derive K against a single price domain first.
+    if params["require_intraday_reversal"] and params["signal_price_domain"] == "adj":
+        raise ValueError(
+            "Gate K (require_intraday_reversal=True) is enabled while "
+            "signal_price_domain='adj': K compares the adjusted `signal_close` "
+            "against the RAW bar high/low/open, mixing two price domains "
+            "(CLAUDE.md §3) and collapsing K to a no-op. Run the preset with "
+            "signal_price_domain='raw', or re-derive K on a single domain "
+            "before enabling it (§0 fail-fast)."
+        )
+
     checks: dict[str, bool] = {}
 
     def fail(tag: str) -> ConditionResult:

@@ -141,6 +141,24 @@ def test_checks_dict_reports_only_evaluated_conditions():
     assert set(r.checks) == {"E"}
 
 
+def test_intraday_reversal_gate_raises_in_the_adj_domain():
+    """§3 fail-fast: Gate K mixes the adj `signal_close` with the RAW bar
+    high/low/open, so enabling K in the 'adj' domain collapses it to a no-op
+    (measured: close_pos 13-28 against a 0.6 threshold). The shared evaluator
+    must refuse rather than silently accept a domain-mixing gate.
+
+    'raw' is the supported configuration — K reads raw prices there and is
+    genuinely evaluated; this pins both the refusal and the escape hatch.
+    """
+    p = dict(BASE_PARAMS, require_intraday_reversal=True)
+    with pytest.raises(ValueError, match="signal_price_domain"):
+        check_conditions(_bar(), _ind(), p)
+    p_raw = dict(BASE_PARAMS, require_intraday_reversal=True,
+                 signal_price_domain="raw")
+    r = check_conditions(_bar(), _ind(), p_raw)
+    assert "K" in r.checks  # K was reached and evaluated (no raise)
+
+
 def test_checks_reports_j_when_cooldown_is_enabled():
     """J is evaluated (and therefore recorded) only when the gate is active."""
     p = dict(BASE_PARAMS, sl_cooldown_days=5)
