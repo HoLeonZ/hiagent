@@ -9,6 +9,15 @@ Transplanted verbatim from Phase3V3Strategy._all_conditions
 (short_reversal/replay_strategy_v3.py:975-1125, 2026-10-17). Any change to the
 evaluation ORDER or short-circuit semantics alters the trade list and MUST
 regenerate tests/golden/sr_*_baseline.json.
+
+NaN convention (CLAUDE.md §0/§4): an `ind` value that could not be computed is
+`float("nan")`, and the gates reject on it pessimistically via `_is_nan`. The A
+gate deliberately carries NO NaN check on the close side — the source method has
+none, `close_v >= ma60_v * (1 + buffer)` is False for NaN, and the default
+branch simply falls through to the ratio check. A NaN signal price is still
+rejected, at gate C, because `pct_chg` and `signal_close` are computed from the
+same price series. Do not re-add a guard there: a check present on one side only
+is exactly where a real divergence from `_all_conditions` can hide.
 """
 from __future__ import annotations
 
@@ -54,8 +63,20 @@ CONDITION_PARAM_KEYS: tuple[str, ...] = (
 )
 
 
-def _is_nan(x: float) -> bool:
-    return x is None or (isinstance(x, float) and np.isnan(x))
+def _is_nan(x) -> bool:
+    """True for None or any NaN, mirroring the source method's direct np.isnan.
+
+    Deliberately NOT `isinstance(x, float)`: numpy scalar types such as
+    np.float32 are not Python float subclasses and would slip through. The
+    None guard is the only addition over the source, which did not need one
+    because its inputs always came from backtrader LineBuffers (C doubles).
+    """
+    if x is None:
+        return True
+    try:
+        return bool(np.isnan(x))
+    except TypeError:
+        return False
 
 
 def check_conditions(
@@ -96,8 +117,9 @@ def check_conditions(
         if params.get("signal_price_domain", "adj") == "adj"
         else float(bar.close)
     )
-    if _is_nan(close_v):
-        return fail("A")
+    # No NaN check on close_v here — the source method has none, and none is
+    # reachable: pct_chg shares this series, so a NaN signal_close is already
+    # rejected at gate C. See the module docstring.
     if params.get("a_condition", "default") == "cascade_price":
         ma5_v, ma10_v, ma20_v = ind["ma5"], ind["ma10"], ind["ma20"]
         if _is_nan(ma5_v) or _is_nan(ma10_v) or _is_nan(ma20_v):

@@ -85,8 +85,20 @@ def test_close_ma60_buffer_is_honoured():
     assert r2.checks.get("A") is True
 
 def test_nan_signal_close_rejects():
-    r = check_conditions(_bar(), _ind(signal_close=math.nan), BASE_PARAMS)
+    """A NaN signal price must never trade.
+
+    The A gate has no NaN check on the close side (the source method has none),
+    so this must be rejected elsewhere. In production it is gate C: `signal_close`
+    and `pct_chg` are computed from the same series (backtrader's PctChg emits
+    NaN whenever the current bar's price is NaN, on the same adj_close_src that
+    feeds A), so a NaN signal_close implies a NaN pct_chg. The fixture has to
+    model that coupling to be meaningful — the adapter, not this helper, is what
+    guarantees it.
+    """
+    r = check_conditions(_bar(), _ind(signal_close=math.nan, pct_chg=math.nan),
+                         BASE_PARAMS)
     assert r.passed is False
+    assert r.failed_at == "C"
 
 def test_d_mode_converge_strict_requires_halving():
     # |bar| = 0.10 ; |prev_bar| = 0.04 -> 0.04*0.5 = 0.02 ; 0.10 > 0.02 -> reject
