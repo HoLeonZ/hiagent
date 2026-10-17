@@ -124,19 +124,32 @@ def panel_start_for(signal_date: str) -> str:
 def assert_feeds_nonempty(universe: list[str], usable: list[str]) -> None:
     """F-01 守卫: universe 非空而当日可用票集合为空 → 抛错, 不得静默返回「无信号」。
 
-    `usable` 是当日旁路日志里出现过的 distinct thscode。它**低于**真实 universe
-    (策略跳过已持仓、已在 pending_entries 的票, breadth 门未过时整根 bar 全跳),
-    差额随当日持仓与 regime 状态浮动 —— 这无妨: 本守卫要抓的是「塌缩到 0」,
-    不是精确计量 universe。空 universe 是合法输入 (合成库 / as_of 早于数据覆盖),
-    此时无事可断, 直接返回。
+    `usable` 是当日旁路日志里出现过的 distinct thscode。它**低于**真实 universe:
+    策略跳过已持仓的票与已在 `pending_entries` 中的票 (差额 = 当日持仓数, ≤
+    `max_positions`)。这无妨: 本守卫要抓的是「塌缩到 0」, 不是精确计量 universe。
+
+    但**空 `usable` 有两个不同成因**, 指向完全不同的排查方向:
+
+    1. `min_bars` / NaN 闸门把每只票都丢了 (窗口或配置问题);
+    2. preset 打开了 `require_market_breadth_bear`, 而当根 bar 的 breadth 门未过时
+       入场循环短路 (`if regime_ok and self._all_conditions(d)`,
+       replay_strategy_v3.py:531), 于是**该日一条日志都不写** —— 这是策略状态,
+       不是数据问题。
+
+    两者都抛错 (不试图自动区分), 但错误信息必须**同时**列出这两个成因, 否则运维
+    会去查一个并不存在的数据问题。实测 75 个 preset 里只有 `v66_regime` 打开该门,
+    本计划的候选都不开 —— 所以这是一条消息质量要求, 不是功能要求。
+
+    空 universe 是合法输入 (合成库 / as_of 早于数据覆盖), 此时无事可断, 直接返回。
     """
     if universe and not usable:
         raise ValueError(
-            f"universe has {len(universe)} symbols but the engine evaluated 0 of "
-            f"them on this date — the feed/log collapsed to zero. That is a "
-            f"data or window problem (DB not synced? signal_date not a trading "
-            f"day? panel window too short for min_bars?), NOT an empty-signal "
-            f"day; the two must never be conflated (§0 F-01)."
+            f"usable universe is empty: 0/{len(universe)} codes produced a log "
+            f"entry for this date. Either the min_bars/NaN gate dropped every "
+            f"stock (a window/config problem), or this preset enables "
+            f"require_market_breadth_bear and the breadth gate was closed on "
+            f"every bar that day (a strategy state, not a data problem). Both "
+            f"must never be conflated with an empty-signal day (§0 F-01)."
         )
     return None
 

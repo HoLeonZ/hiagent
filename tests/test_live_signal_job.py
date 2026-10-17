@@ -22,6 +22,21 @@ def test_assert_feeds_nonempty_raises_when_universe_fully_dropped():
         assert_feeds_nonempty(["600000.SH", "000001.SZ"], [])
 
 
+def test_the_empty_usable_message_names_both_possible_causes():
+    """An empty `usable` has two causes and they point at different investigations:
+    the min_bars/NaN gate dropping every stock (a data/config problem), or a
+    preset with require_market_breadth_bear open whose breadth gate was closed on
+    every bar (a strategy state). Both raise, so the message is what tells an
+    operator which one to chase — if it names only the first, they will go
+    hunting for a data problem that does not exist.
+    """
+    with pytest.raises(ValueError) as ei:
+        assert_feeds_nonempty(["600000.SH"], [])
+    msg = str(ei.value)
+    assert "min_bars" in msg
+    assert "require_market_breadth_bear" in msg
+
+
 def test_assert_feeds_nonempty_allows_empty_universe():
     assert assert_feeds_nonempty([], []) is None
 
@@ -65,6 +80,28 @@ def test_append_record_keeps_two_dates(tmp_path: Path):
 
 def test_load_records_on_missing_file_returns_empty(tmp_path: Path):
     assert load_records(tmp_path / "nope.jsonl") == []
+
+
+def test_every_candidate_ensemble_has_a_uniform_leg_universe():
+    """The job resolves `universe_size` and the F-01 guard from the ENSEMBLE
+    preset's own `universe`, not per leg. That is correct only while every leg
+    of an ensemble declares the same universe — so assert it rather than assume
+    it. A future ensemble mixing leg universes would report a `universe_size` no
+    leg actually used, and gate against the wrong list, with nothing failing.
+    """
+    from short_reversal.presets import get_preset
+
+    for name in ("v63_ensemble", "v64_ensemble_3leg", "v79_ens44"):
+        cfg = get_preset(name)
+        outer = cfg["universe"]
+        leg_modes = {
+            get_preset(leg)["universe"] for leg in cfg["ensemble_substrategies"]
+        }
+        assert leg_modes == {outer}, (
+            f"{name}: legs declare {sorted(leg_modes)} but the preset declares "
+            f"{outer!r} — the job's universe_size would describe a universe no "
+            f"leg used"
+        )
 
 
 def test_run_signal_job_uses_the_universe_as_of_the_signal_date():

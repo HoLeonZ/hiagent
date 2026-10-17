@@ -250,7 +250,13 @@ def run_backtest_v3(
         )
 
     universe = load_universe_asof(
-        cfg["universe"], universe_as_of or start, db_path
+        cfg["universe"],
+        # NOT `universe_as_of or start`: `or` treats an empty string as absent
+        # and silently reverts to `start` — the same silent-fallback shape that
+        # Task 2 removed from check_conditions. A bogus caller value must fail
+        # loudly, not quietly resolve a different universe.
+        universe_as_of if universe_as_of is not None else start,
+        db_path,
     )
     panel = _load_panel(db_path, start, end, universe)
     feeds = build_per_stock_feeds(panel, universe, min_bars=min_bars)
