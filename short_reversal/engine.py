@@ -143,6 +143,7 @@ def _weighted_equity_curve(
     tests/test_short_reversal_daily_equity.py::test_rows_carry_the_three_cash_pools
     记录的那个缺陷, 只是换到了另一条路径上。池的加权和恰等于 `cash` 的加权和
     (每腿都有 free + locked + settling = total), 所以对账关系仍然成立。
+    腿行缺键时直接 KeyError 而不是补默认值 —— 见下方 else 分支的注释。
 
     §1 缺失值语义: 某腿在某日缺行 (该腿 panel 没有该交易日) 时, 该腿当日按
     **前值**参与加权 —— 只向前填充, 绝不向后填充 (`bfill` 是 §1 明令禁止的)。
@@ -193,14 +194,18 @@ def _weighted_equity_curve(
                 leg_settling = 0.0
                 leg_free = INITIAL_CAPITAL
             else:
+                # 直接索引, 不用 .get(...) 兜底: 腿行一旦缺键就 KeyError (fail-fast,
+                # 与 check_conditions 里 params["X"] 同一套推理)。兜底正是本任务要
+                # 消灭的那个缺陷 —— main.py 的 row.get("locked_margin", 0.0) 让缺失
+                # 的池字段静默变成硬编码 0.0, 产出的 CSV 看起来完全正常。而且兜底会
+                # 让本函数自己凑出全部字段, 使 ensemble 那侧的池对账断言变成恒真 ——
+                # 断言就再也测不到任何东西。
                 leg_cash = float(row["cash"])
-                leg_holdings = float(row.get("holdings_value", 0.0))
-                leg_equity = float(row.get("equity", leg_cash + leg_holdings))
-                leg_locked = float(row.get("locked_margin", 0.0))
-                leg_settling = float(row.get("settling_funds", 0.0))
-                leg_free = float(
-                    row.get("free_cash", leg_cash - leg_locked - leg_settling)
-                )
+                leg_holdings = float(row["holdings_value"])
+                leg_equity = float(row["equity"])
+                leg_locked = float(row["locked_margin"])
+                leg_settling = float(row["settling_funds"])
+                leg_free = float(row["free_cash"])
             w = weights[i]
             cash += w * leg_cash
             free_cash += w * leg_free
