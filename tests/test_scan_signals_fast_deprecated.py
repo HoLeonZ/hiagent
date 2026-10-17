@@ -28,3 +28,28 @@ def test_docstring_enumerates_the_documented_divergences():
     for token in ("below_ratio_60", "close_ma60_buffer", "converge_strict",
                   "require_ma20_slope_neg", "signal_price_domain"):
         assert token in doc, f"warning does not mention the {token} divergence"
+
+
+def test_the_withdrawn_claim_does_not_reappear():
+    """The presence checks above guard against the warning being DELETED. They do
+    NOT guard against the old claim being RE-INSERTED alongside it — a docstring
+    could carry both the warning and a fresh equivalence sentence and still pass
+    every assertion above. That is the failure this task exists to prevent.
+
+    A naive `"100% 等价" not in doc` would be WRONG: the warning legitimately
+    quotes the retracted phrasing. So assert the stronger, mechanisable form —
+    the phrase may appear at most once, and that one occurrence must be framed
+    as retracted.
+    """
+    doc = scan_signals_fast.__doc__ or ""
+    hits = [line for line in doc.splitlines() if "100% 等价" in line]
+    assert len(hits) <= 1, (
+        f"the withdrawn claim appears {len(hits)} times; a re-inserted claim "
+        f"alongside the warning would make the docstring contradict itself. "
+        f"Lines: {hits}"
+    )
+    if hits:
+        assert "曾声称" in hits[0], (
+            f"the only mention of the withdrawn claim must be framed as retracted, "
+            f"but reads: {hits[0].strip()!r}"
+        )

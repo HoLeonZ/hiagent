@@ -21,7 +21,8 @@
    （v44_ratio02_buf07 / v50_slope / v50_slope_strict / v45_ratio01_buf10）
    信号数**逐日完全相同** —— 本模块把它们压成了同一个条件集。
 
-   线上信号作业**不得**复用本模块；它走引擎自己的旁路日志（见 Task 3 / Task 6）。
+   线上信号作业**不得**复用本模块；它走引擎自己的逐 bar 信号旁路日志
+   （`run_backtest_v3(..., signal_log=...)`）。
    见 docs/superpowers/specs/2026-10-17-short-reversal-live-monitor-design.md §2.2。
 
    保留本模块仅供人工探查，不作为任何自动化流程的输入。
