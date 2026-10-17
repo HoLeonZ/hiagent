@@ -238,7 +238,14 @@ PRESETS: dict[str, dict] = {
         "max_volume_participation": 0.10,
         "price_source_for_signal": "adj_close",
         "price_source_for_execution": "raw_close",
-        "n_comparisons": 126,
+        # §5 试验记账 (2026-10-17, Iteration 82): +10。
+        # 本轮沿 max_hold 轴对**本 preset** 在 IND/W2 各评估 5 个取值 (18/5/3/2/1) = 10 次
+        # —— 即使结论是"该轴无稳定结构、不改动预设", **看过了就要计**:
+        # §5 明文「Every iteration — including changes to the evaluation window itself —
+        # increments n_trials for DSR/Bonferroni purposes」。
+        # (更早还有几轮对本 preset 的评估 —— Iteration 78 的滑点开关对比 (2 窗口 × 2 设置)
+        #  等 —— 尚未计入; 属**已知欠账**, 记在此处待补齐, 不假装它不存在。)
+        "n_comparisons": 136,
         "tp_pct": 0.2628,
         "sl_pct": 0.021,
         "max_hold": 18,
