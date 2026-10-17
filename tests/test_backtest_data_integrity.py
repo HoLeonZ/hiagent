@@ -23,7 +23,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from chase_up.backtest import run_backtest
+from chase_up.backtest import INITIAL_CAPITAL, run_backtest
 from chase_up.data import load_panel
 from chase_up.signals import compute_indicators
 from chase_up.universe import load_universe
@@ -46,9 +46,13 @@ def panel_ind(panel):
 
 
 @pytest.fixture(scope="module")
-def trades(panel_ind):
-    res = run_backtest(PRESET, WINDOW[0], WINDOW[1], DB_PATH, panel_ind=panel_ind)
-    return res["trades"]
+def result(panel_ind):
+    return run_backtest(PRESET, WINDOW[0], WINDOW[1], DB_PATH, panel_ind=panel_ind)
+
+
+@pytest.fixture(scope="module")
+def trades(result):
+    return result["trades"]
 
 
 def test_layer1_raw_prev_close_coverage(panel):
@@ -158,24 +162,44 @@ def test_layer4_per_trade_math_closure(trades):
     assert not bad, f"{len(bad)} trades 内部数学闭环失败:\n{bad[:5]}"
 
 
-def test_layer5_cash_walk_conservation(trades):
-    """Layer 5: sum(net_pnl) ≈ final_equity - initial_capital (允许小 epsilon).
+def test_layer5_cash_walk_conservation(result):
+    """Layer 5: §2 复式记账 —— `sum(net_pnl)` 必须等于**同一次运行**的权益变化。
 
-    验证 cash walk 守恒: 所有 trade 的 net_pnl 之和应等于最终权益变化.
+    ⚠️ 本测试此前有两个**独立**的缺陷, 且它们的失效方向相反, 所以这条断言在
+    亏损窗口恒红、在盈利窗口形同虚设:
+
+    **(a) 两个不同的运行相比** —— 断言左右两侧根本不是同一次回测:
+            左边: 本次 backtrader 运行        WINDOW   = 2025-07-01 .. 2026-07-01
+            右边: baseline 里的 simulate 运行  window   = 2025-09-19 .. 2026-09-19
+        窗口不同 + 引擎不同 ⇒ 实测 rel_err 184% 且**符号相反**
+        (左 −606,218 / 右 +720,140)。
+
+    **(b) 容差分母写错** —— `rel_err = |net − delta| / max(delta, 1)`:
+            delta > 0 (盈利): 容差 = 30% × delta。实测 W1 的 delta = +720,140
+                              ⇒ **容差上限 ¥216,042**, 连 ¥200,000 的记账回归都放过去;
+            delta < 0 (亏损): `max(delta, 1)` 塌成 1 ⇒ 分子再小也超 30%
+                              ⇒ **无论记账对不对都恒红**。
+        即 **盈利时形同虚设, 亏损时恒红** —— 两个方向都不提供信息。
+
+    现金走账守恒是**单次运行**的不变量 (`chase_up/portfolio.py` 把每笔 `net_pnl`
+    记进 cash ⇒ 逐笔净额之和 == 权益变化, §2 双分录), 所以必须拿本次运行的
+    `final_equity` 去比; 容差收到 ¥1.00 —— 实测**残差 0.00, 相对误差 0.0000%**,
+    该不变量是**构造性成立**的。
+
+    §6 双向验证 (注入, 逐条实测):
+        盈利 regime (delta=+720,140):  ¥5,000 误差  新 FAIL / 旧 PASS
+                                        ¥200,000 误差 新 FAIL / 旧 PASS   ← (b) 的洞
+        亏损 regime (delta=−606,218):  记账正确     新 PASS / 旧 FAIL   ← (b) 的恒红
+    修好后本文件由 4 passed / 1 failed 变为 **5 passed**。
+
+    (`chase_v5_baseline.json` 仍然有用 —— 它锁的是 W1 的历史基线; 只是**不该被
+    用来验证另一个窗口的守恒**, 那是把"两个运行的差异"当成了"记账误差"。)
     """
-    net_total = float(trades["net_pnl"].sum())
-    # 假设 initial_capital=1_000_000, 取 baseline 中 final_equity
-    initial = 1_000_000.0
-    # 从 baseline 拿 final_equity
-    import json
-    baseline_path = ROOT / "tests" / "golden" / "chase_v5_baseline.json"
-    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
-    final_equity = baseline["metrics"]["final_equity"]
-    delta = final_equity - initial
-    # 容许 30% epsilon: cash walk 含分红 / 利息 / 闲置资金收益, 不等于 sum(net_pnl)
-    # 但 abs(delta - net_total) 不应超过 delta 绝对值的 30%. 实测 v5 当前 ~22%.
-    rel_err = abs(net_total - delta) / max(delta, 1)
-    assert rel_err < 0.30, (
-        f"cash walk 不守恒: sum(net_pnl)={net_total:.2f} "
-        f"vs final_equity-initial={delta:.2f} (rel_err={rel_err:.4%})"
+    net_total = float(result["trades"]["net_pnl"].sum())
+    final_equity = float(result["metrics"]["final_equity"])
+    delta = final_equity - INITIAL_CAPITAL
+    residual = abs(net_total - delta)
+    assert residual < 1.0, (
+        f"§2 现金走账不守恒: sum(net_pnl)={net_total:,.2f} vs "
+        f"final_equity-initial={delta:,.2f} (残差 {residual:,.4f}, 容差 ¥1.00)"
     )
