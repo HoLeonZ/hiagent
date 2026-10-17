@@ -4752,3 +4752,109 @@ phantom ratio: 0.00%          ← 读起来像"审过、且干净"
   附五十七(第一版判据仍可被同文件另一处 raise 满足)、附五十八(工具 headline 的静默零)。
   —— 这五处都是**测量/验证方法本身**出问题,而不是结论出问题;记下来是为了让下一个人
   少走一遍。
+
+---
+
+## 附六十 —— §5 的 DSR 观测数 T:`short_reversal` 的 walk-forward **家族**把它写成常数(16 处);而家族守卫**要求**那个常数存在
+
+### 1 · 发现路径(不是"搜出来的",是"修一族"修出来的)
+
+起点是 `cycle_price_action/sweep_thresholds.py`:
+
+```python
+WINDOW_TRADING_DAYS = 126   # 注释:"窗口真实交易日数"
+...
+n_returns=WINDOW_TRADING_DAYS,
+```
+
+而 CLI 的 `--test-months` 默认是 **12 个月** —— 实测默认两个窗口的真实 T 是
+**243 / 242**,即 T 被低估 **1.92 倍** ⇒ DSR 的 `sqrt(T-1)` 变小 ⇒ **DSR 偏悲观**。
+
+修完这一处后我去加强该族的守卫(当时它只拦"字面量常量"),守卫**当场列出 16 个新命中**,
+全部在 `short_reversal`。**"修一处 ⇒ 顺手核对一族"再次直接产出发现。**
+
+### 2 · `short_reversal` 这一族:方向是**危险的那一侧**
+
+```python
+WINDOW_TRADING_DAYS = 126        # 注释:"窗口真实交易日数(6 个月)"
+def build_windows(..., window_months: int = 2, ...)   # ← 默认 **2 个月**
+n_returns=WINDOW_TRADING_DAYS,
+```
+
+2 个月 ≈ **42** 个交易日,常数却是 **126** ⇒ T 被**高估约 3 倍** ⇒ `sqrt(T-1)` 放大
+**≈1.75 倍** ⇒ **DSR 系统性偏乐观**(与附三十二 那次同族、同方向)。
+14 个 `wf_v*_focused.py` 各自**复制**了同一个常数(不是 import),同一个错被复制 14 份。
+
+> 那处**用法**旁边的注释还写着「n_returns 亦改为该窗口的真实交易日数,而非硬编码 252」——
+> 而实现只是把 `252` 换成 `126`,**还是常数**。**注释声称修过的,实现没修**
+> (与附四十六 的契约禁令、附五十四 的 presets 引用同形)。
+
+### 3 · 三个守卫盲点,其中一个是**守卫在要求缺陷存在**
+
+**(a) 只拦字面量。** `test_n_returns_is_never_a_hardcoded_literal` 的判据是
+`isinstance(kw.value, ast.Constant)` —— 而 `n_returns=WINDOW_TRADING_DAYS` 是
+`ast.Name`。于是"常数换个名字"从它眼皮下走过 **16** 次。
+→ 新增 `test_n_returns_is_never_a_module_level_constant`(+元测试)。
+
+**(b) 家族守卫本身把常数钉成了要求。** `tests/test_dsr_trial_basis.py`:
+
+```python
+assert re.search(r"^WINDOW_TRADING_DAYS = 126\b", src, re.M), \
+    "§5 VIOLATION: … 的窗口交易日数应为 126(6 个月);硬编码 252(全年)会低估 SE 项"
+```
+
+它的**意图**是"不许硬编码全年 252",**实现**却是"必须存在那个常数,而且必须是 126"。
+后果是双向的:它一边**放过**全部 16 个「T 与窗口长度不符」的脚本(它们都有那个常数),
+一边让"把 T 改成来自本次运行"的修复**变红**(实测:我改完后这一条以
+`15 failed` 的形式拦住了我)。
+—— 前面各条说的都是"守卫站在错误的一侧、把缺陷锁死";这一条更直接:
+**它不是没拦住,它是在要求缺陷存在。** 已按**性质**重写:不得有该常量、不得有字面量 T、
+且必须**真的**从 metrics 读取 `n_trading_days`。
+
+**(c) 扫描器静默跳过"无法解析的文件"。** `_dsr_call_sites()` 里
+`except (SyntaxError, UnicodeDecodeError): continue` —— 带语法错误的文件对**全套**
+DSR 守卫不可见(既不能说它违规,也不能说它干净)。这条是**我自己踩出来的**:
+第二次两向验证时我把常数插错缩进 ⇒ 语法错误 ⇒ 守卫全绿。现在扫描器把无法解析的
+文件报出来,由 `test_there_are_call_sites_to_guard` 断言为空。
+
+### 4 · 我在本条的验证过程里错了**四**次(逐条记账)
+
+| 第几次 | 我做了什么 | 守卫表现 | 为什么这个结果不构成证据 |
+|---|---|---|---|
+| 1 | 加模块级常数,但调用点仍传局部变量 | 绿 | **没复现缺陷的形状** —— 调用点不是那个常数 |
+| 2 | 复现了形状,但常数缩进写错 ⇒ 文件语法错误 | 绿 | **扫描器跳过了该文件**(盲点 c) |
+| 3 | 复现形状且语法正确 | **红**(精确到 `wf_v34_focused.py:82`) | ✓ 有效 |
+| 4 | 新守卫的"必须消费 n_trading_days"分支:我用 `"n_trading_days" in src` 判词 | 绿 | **我自己插入的注释里就有那个词** —— 把消费那一行删掉仍然通过 |
+
+第 4 次尤其值得记:我在同一批里刚写完"判词不判行为"的批评,转头就写了一条判词的断言。
+已改成 AST 判 `m["n_trading_days"]` 这个**读取**。至此该家族守卫的三条分支各有一次
+"删掉对应实现 ⇒ 必红"的实测。
+
+> 结论固化:**两向验证要成立,必须同时满足两件事 —— 复现出缺陷的**形状**,
+> 且确认**工具看得见**这个文件/调用点。少任何一件,"它没红"都不构成证据。**
+
+### 5 · 改动
+
+| 文件 | 改动 |
+|---|---|
+| `cycle_price_action/sweep_thresholds.py` | 删常数;新增 `_oos_trading_days(db_path, start, end)`(库日历 `count(DISTINCT date)`,**自成一体、单独可测**);按窗口取真实 T、缺则 fail-fast;打印带 `T=` |
+| `short_reversal/walkforward.py` | 删常数;`RESULT_COLS` 增 `n_trading_days`;DSR 用窗口均值,缺则 fail-fast;更正那处"声称已修"的注释 |
+| `short_reversal/wf_v34..v46, v56_focused.py`(14) | 机械变换(每条锚点先断言命中 1 次、`ast.parse` 通过才落盘):`t_days.append(int(m["n_trading_days"]))` + `_observed_t` 均值 + `n_returns=_observed_t` |
+| `tests/test_dsr_trial_basis.py` | 家族守卫按**性质**重写(原版在要求常数存在) |
+| `tests/test_dsr_inputs_single_source.py` | 新增模块级常数守卫 + 元测试;扫描器不再静默跳过无法解析的文件 |
+| `tests/test_sweep_thresholds_oos_compliance.py` | 夹具把 T 的来源一并 mock(`:memory:` 库没有 `v_daily`);该用例的主题是「哪两个日期转给 run_backtest」,与 T 无关 —— T 由上面两条守卫钉住 |
+
+口径**未变**:仍是"**一个**窗口的交易日数"(test 窗口之间可能重叠,`--roll-months`
+默认 6 < `--test-months` 默认 12,故不把各窗口相加当作独立观测)——
+只是把"常数"换成"事实"。
+
+### 6 · 没做的事(如实标注)
+
+* **那些脚本本身没有重跑**。每窗一次完整回测,wf 家族跑一遍是**小时级**;本条的验证
+  在单元/测量层面(T 的来源与取值、守卫三向、全文件 AST 绿),**不是**"重跑后 DSR
+  数字变了多少"。
+* 因此:**若此前有引用过这些脚本的 DSR 数字,应重算后再引用** ——
+  `short_reversal` 家族的 T 错了 3 倍(**偏乐观**),cycle sweep 的 T 错了 1.92 倍
+  (**偏悲观**)。处置与附三十二 一致(那次也只修口径并标注)。
+* 从今往后:任何把 `n_returns` 写成常数(字面量**或**模块级变量)或不再从运行取 T 的
+  脚本,这套守卫都会红。
