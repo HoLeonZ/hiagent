@@ -9,15 +9,6 @@ Transplanted verbatim from Phase3V3Strategy._all_conditions
 (short_reversal/replay_strategy_v3.py:975-1125, 2026-10-17). Any change to the
 evaluation ORDER or short-circuit semantics alters the trade list and MUST
 regenerate tests/golden/sr_*_baseline.json.
-
-NaN convention (CLAUDE.md §0/§4): an `ind` value that could not be computed is
-`float("nan")`, and the gates reject on it pessimistically via `_is_nan`. The A
-gate deliberately carries NO NaN check on the close side — the source method has
-none, `close_v >= ma60_v * (1 + buffer)` is False for NaN, and the default
-branch simply falls through to the ratio check. A NaN signal price is still
-rejected, at gate C, because `pct_chg` and `signal_close` are computed from the
-same price series. Do not re-add a guard there: a check present on one side only
-is exactly where a real divergence from `_all_conditions` can hide.
 """
 from __future__ import annotations
 
@@ -62,14 +53,57 @@ CONDITION_PARAM_KEYS: tuple[str, ...] = (
     "intraday_reversal_require_close_above_open",
 )
 
+# Defaults for every key above, mirroring Phase3V3Strategy.params exactly.
+#
+# Why this table exists: `check_conditions` indexes `params["X"]` with NO .get()
+# fallback (see the Step 5 note), so every consumer must supply all 27 keys.
+# The strategy's adapter can, because they are all declared params. The live
+# consumer (Task 6) needs a defaults source and must not invent one, so it takes
+# this. `tests/test_short_reversal_conditions_pure.py` asserts this table equals
+# the strategy's declared defaults, so the two can never silently diverge.
+#
+# Do NOT convert these back into `.get(key, default)` calls inside
+# `check_conditions`: a missed key would then silently fall back instead of
+# raising, and `intraday_reversal_require_close_above_open` defaults to True —
+# i.e. the omitted gate would ENABLE ITSELF on the live path.
+CONDITION_PARAM_DEFAULTS: dict[str, object] = {
+    "sl_cooldown_days": 0,
+    "liq_low": 30_000_000.0,
+    "liq_high": 300_000_000.0,
+    "signal_price_domain": "adj",
+    "a_condition": "default",
+    "close_ma60_buffer": 0.0,
+    "below_ratio_60": 0.6,
+    "up_streak_low": 3,
+    "up_streak_high": 10,
+    "pct_chg_low": 0.02,
+    "pct_chg_high": 0.07,
+    "d_mode": "strict",
+    "require_ma20_slope_neg": False,
+    "ma20_slope_threshold": 0.0,
+    "require_weak_1m": False,
+    "weak_1m_threshold": -0.05,
+    "require_weak_3m": False,
+    "weak_3m_threshold": -0.1,
+    "require_weak_6m": False,
+    "weak_6m_threshold": -0.15,
+    "require_amount_dryup": False,
+    "amount_dryup_threshold": 0.7,
+    "require_rsi_oversold": False,
+    "rsi_oversold_threshold": 30,
+    "require_intraday_reversal": False,
+    "intraday_reversal_threshold": 0.6,
+    "intraday_reversal_require_close_above_open": True,
+}
+
 
 def _is_nan(x) -> bool:
     """True for None or any NaN, mirroring the source method's direct np.isnan.
 
     Deliberately NOT `isinstance(x, float)`: numpy scalar types such as
-    np.float32 are not Python float subclasses and would slip through. The
-    None guard is the only addition over the source, which did not need one
-    because its inputs always came from backtrader LineBuffers (C doubles).
+    np.float32 are not Python float subclasses and would slip through. The None
+    guard is the only addition over the source, which did not need one because
+    its inputs always came from backtrader LineBuffers (C doubles).
     """
     if x is None:
         return True
@@ -95,11 +129,11 @@ def check_conditions(
         checks[tag] = True
 
     # ---- J: SL cooldown (must stay first — cheapest, and blocks everything)
-    if params.get("sl_cooldown_days", 0) > 0 and last_sl_date is not None:
+    if params["sl_cooldown_days"] > 0 and last_sl_date is not None:
         days_since = (bar.date - last_sl_date).days
         if days_since < params["sl_cooldown_days"]:
             return fail("J")
-    if params.get("sl_cooldown_days", 0) > 0:
+    if params["sl_cooldown_days"] > 0:
         ok("J")
 
     # ---- E: liquidity
@@ -114,13 +148,16 @@ def check_conditions(
         return fail("A")
     close_v = (
         float(ind["signal_close"])
-        if params.get("signal_price_domain", "adj") == "adj"
+        if params["signal_price_domain"] == "adj"
         else float(bar.close)
     )
     # No NaN check on close_v here — the source method has none, and none is
-    # reachable: pct_chg shares this series, so a NaN signal_close is already
-    # rejected at gate C. See the module docstring.
-    if params.get("a_condition", "default") == "cascade_price":
+    # reachable: PctChg.next() emits NaN whenever the current bar's price is NaN
+    # on the same adj_close_src, so a NaN signal_close is already rejected at
+    # gate C. Adding a guard here would be a semantic delta from the engine
+    # (see Fix 1 in the Task 2 report), and a guard present on one side only is
+    # exactly where a real divergence can hide later.
+    if params["a_condition"] == "cascade_price":
         ma5_v, ma10_v, ma20_v = ind["ma5"], ind["ma10"], ind["ma20"]
         if _is_nan(ma5_v) or _is_nan(ma10_v) or _is_nan(ma20_v):
             return fail("A")
@@ -130,7 +167,7 @@ def check_conditions(
         ratio = ind["below_ma60_ratio_60"]
         if _is_nan(ratio):
             return fail("A")
-        if close_v >= ma60_v * (1.0 + params.get("close_ma60_buffer", 0.0)):
+        if close_v >= ma60_v * (1.0 + params["close_ma60_buffer"]):
             return fail("A")
         if ratio < params["below_ratio_60"]:
             return fail("A")
@@ -155,7 +192,7 @@ def check_conditions(
     prev_bar = prev_dif - prev_dea
     if _is_nan(dif) or _is_nan(dea) or _is_nan(prev_bar):
         return fail("D")
-    d_mode = params.get("d_mode", "strict")
+    d_mode = params["d_mode"]
     if d_mode == "d_only":
         if not (dif < 0):
             return fail("D")
@@ -168,7 +205,7 @@ def check_conditions(
     ok("D")
 
     # ---- F: MA20 regression slope
-    if params.get("require_ma20_slope_neg", False):
+    if params["require_ma20_slope_neg"]:
         slope = ind["ma20_slope_5d"]
         if _is_nan(slope) or slope > params["ma20_slope_threshold"]:
             return fail("F")
@@ -180,35 +217,35 @@ def check_conditions(
         ("G3", "require_weak_3m", "return_3m", "weak_3m_threshold"),
         ("G6", "require_weak_6m", "return_6m", "weak_6m_threshold"),
     ):
-        if params.get(flag, False):
+        if params[flag]:
             ret = ind[key]
             if _is_nan(ret) or ret > params[thr]:
                 return fail(tag)
             ok(tag)
 
     # ---- H: amount dry-up
-    if params.get("require_amount_dryup", False):
+    if params["require_amount_dryup"]:
         ar = ind["amount_ratio"]
         if _is_nan(ar) or ar > params["amount_dryup_threshold"]:
             return fail("H")
         ok("H")
 
     # ---- I: RSI oversold
-    if params.get("require_rsi_oversold", False):
+    if params["require_rsi_oversold"]:
         rsi_v = ind["rsi"]
         if _is_nan(rsi_v) or rsi_v >= params["rsi_oversold_threshold"]:
             return fail("I")
         ok("I")
 
     # ---- K: intraday reversal
-    if params.get("require_intraday_reversal", False):
+    if params["require_intraday_reversal"]:
         high_v, low_v = float(bar.high), float(bar.low)
         if high_v <= low_v:
             return fail("K")
         close_pos = (close_v - low_v) / (high_v - low_v)
         if close_pos < params["intraday_reversal_threshold"]:
             return fail("K")
-        if params.get("intraday_reversal_require_close_above_open", True) and \
+        if params["intraday_reversal_require_close_above_open"] and \
                 close_v <= float(bar.open):
             return fail("K")
         ok("K")

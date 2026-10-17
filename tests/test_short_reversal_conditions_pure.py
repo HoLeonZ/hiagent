@@ -4,6 +4,8 @@ from __future__ import annotations
 import math
 from datetime import date
 
+import pytest
+
 from short_reversal.conditions import BarSnapshot, check_conditions
 
 BASE_PARAMS = {
@@ -85,18 +87,18 @@ def test_close_ma60_buffer_is_honoured():
     assert r2.checks.get("A") is True
 
 def test_nan_signal_close_rejects():
-    """A NaN signal price must never trade.
+    """A NaN signal_close is rejected — but at gate C, not gate A.
 
-    The A gate has no NaN check on the close side (the source method has none),
-    so this must be rejected elsewhere. In production it is gate C: `signal_close`
-    and `pct_chg` are computed from the same series (backtrader's PctChg emits
-    NaN whenever the current bar's price is NaN, on the same adj_close_src that
-    feeds A), so a NaN signal_close implies a NaN pct_chg. The fixture has to
-    model that coupling to be meaningful — the adapter, not this helper, is what
-    guarantees it.
+    The real adapter CANNOT produce `signal_close=nan` with a non-NaN `pct_chg`:
+    `PctChg.next()` (indicators_bt.py:26-38) emits NaN whenever the current bar's
+    price is NaN on the same `adj_close_src`, and that line is what feeds
+    `_signal_close`. So the fixture must set both, and the rejection must be
+    attributed to C. Setting them independently would test a state the engine
+    cannot reach, and would only pass if a non-source A-gate guard existed.
     """
-    r = check_conditions(_bar(), _ind(signal_close=math.nan, pct_chg=math.nan),
-                         BASE_PARAMS)
+    r = check_conditions(
+        _bar(), _ind(signal_close=math.nan, pct_chg=math.nan), BASE_PARAMS
+    )
     assert r.passed is False
     assert r.failed_at == "C"
 
@@ -152,3 +154,47 @@ def test_checks_reports_j_when_cooldown_is_enabled():
                           last_sl_date=date(2026, 6, 1))
     assert r2.checks.get("J") is True
     assert r2.passed is True
+
+
+def test_param_defaults_match_the_strategy_exactly():
+    """CONDITION_PARAM_DEFAULTS is hand-maintained. Lock it to the strategy's
+    declared params so the two cannot silently diverge, and so a key added to
+    the strategy but forgotten here fails HERE rather than in production.
+
+    Why this matters more than it looks: the adapter builds `params` with
+    `getattr(self.p, k) for k in CONDITION_PARAM_KEYS`. A key in the tuple that
+    the strategy does not declare raises AttributeError for EVERY preset — all
+    75 of them — not just the one being run.
+    """
+    from short_reversal.conditions import CONDITION_PARAM_DEFAULTS
+    from short_reversal.replay_strategy_v3 import Phase3V3Strategy
+
+    for key, default in CONDITION_PARAM_DEFAULTS.items():
+        assert hasattr(Phase3V3Strategy.params, key), (
+            f"{key} is in CONDITION_PARAM_DEFAULTS but is not a declared "
+            f"parameter of Phase3V3Strategy"
+        )
+        actual = getattr(Phase3V3Strategy.params, key)
+        assert type(actual) is type(default) and actual == default, (
+            f"{key}: strategy default {actual!r} != conditions default {default!r}"
+        )
+
+
+def test_param_keys_and_defaults_describe_the_same_set():
+    from short_reversal.conditions import (
+        CONDITION_PARAM_DEFAULTS, CONDITION_PARAM_KEYS,
+    )
+    assert set(CONDITION_PARAM_KEYS) == set(CONDITION_PARAM_DEFAULTS)
+
+
+def test_check_conditions_raises_on_a_missing_param_instead_of_defaulting():
+    """The fail-fast property the `.get()`-free body buys us. A consumer that
+    omits a key must fail loudly: `intraday_reversal_require_close_above_open`
+    defaults to True, so a silent fallback would ENABLE that gate rather than
+    disable it — the opposite of a safe default."""
+    from short_reversal.conditions import CONDITION_PARAM_KEYS
+
+    partial = {k: BASE_PARAMS[k] for k in CONDITION_PARAM_KEYS if k != "d_mode"}
+    with pytest.raises(KeyError):
+        check_conditions(_bar(), _ind(), partial)
+
