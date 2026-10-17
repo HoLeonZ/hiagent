@@ -186,11 +186,15 @@ class ReplayBroker:
         fee = self._fee("sell", qty, price, atr_pct=atr_pct, participation=participation)
         # 影子账可能已落后于组合(见上方分叉说明)⇒ 不能直接 -=,否则会变负
         # 且永不清除。夹到 0 即视为清空。
+        # §0 (不可变性):**重建**一个新 dict 再 rebind,而不是原地 `pop` ——
+        # 原地 `pop` 会被 `tests/test_immutable_state_4engine.py` 的扫描器命中
+        # (该扫描器只看 `self.<attr>.<mutable_method>()`,所以 `del d[k]` 与
+        # 下标赋值不被它看见;**不绕它,改成语法上就合规的写法**)。
         _remaining = max(0, self._open_positions.get(thscode, 0) - qty)
+        _book = {c: n for c, n in self._open_positions.items() if c != thscode}
         if _remaining:
-            self._open_positions[thscode] = _remaining
-        else:
-            self._open_positions.pop(thscode, None)
+            _book[thscode] = _remaining
+        self._open_positions = _book
         return TradeFill(fill_date, thscode, "sell", qty, price, fee)
 
 
