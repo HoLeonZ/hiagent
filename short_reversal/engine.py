@@ -84,10 +84,14 @@ def _metrics_from_holder(holder: dict, start: str, end: str, cfg: dict) -> dict:
 
     # §5 日净值口径: 逐 bar 净值序列由 Phase3V3Strategy 在 next() 第 5 步写入
     # result_holder["equity_curve"] (replay_strategy_v3.py 的 recorder), stop()
-    # 用 update() 合并保留, 所以这里一定拿得到。原实现把它丢掉了, main.py
-    # 读 m.get("equity_curve") 恒为 None → equity_curve.csv 从未产出, 没有日
-    # 净值就没有日频 Sharpe, 也就没有可信的 DSR。纯透传: 不排序、不改 date 类型
-    # (记录器存的是 datetime.date), 也不在这里新建第二个记录器。
+    # 用 update() 合并保留。原实现把它丢掉了, main.py 读 m.get("equity_curve")
+    # 恒为 None → equity_curve.csv 从未产出, 没有日净值就没有日频 Sharpe, 也就没有
+    # 可信的 DSR。纯透传: 不排序、不改 date 类型 (记录器存的是 datetime.date),
+    # 也不在这里新建第二个记录器。
+    # 直接索引 holder["equity_curve"] 而不是 .get("equity_curve", []): 该键由策略
+    # next() 的 setdefault 建立, 跑过一根 bar 就一定在; 没跑过则由 F-01 守卫在上游
+    # 拦下。写成 .get(..., []) 会把"记录器停止了记录"降级成"一条空曲线", 而空曲线在
+    # _weighted_equity_curve 里会被当成"该腿每根 bar 都还没跑", 静默编造平坦贡献。
     return {
         "preset": cfg["_name"],
         "start": start,
@@ -105,7 +109,7 @@ def _metrics_from_holder(holder: dict, start: str, end: str, cfg: dict) -> dict:
         "tp_count": tp_count,
         "sl_count": sl_count,
         "time_count": time_count,
-        "equity_curve": holder.get("equity_curve", []),
+        "equity_curve": holder["equity_curve"],
     }
 
 
@@ -155,11 +159,29 @@ def _weighted_equity_curve(
     """
     legs = [
         sorted(
-            [row for row in (curve or []) if row.get("date") is not None],
+            [row for row in curve if row.get("date") is not None],
             key=lambda row: row["date"],
         )
         for curve in curves
     ]
+    # 空曲线绝不是合法状态, 必须显式抛错 —— 这是「该腿没有可用行」的真正拦截点。
+    # 直接索引只堵住「键不存在」这一个入口; 「键在但列表为空」是第二个入口, 少了这道
+    # 闸, 该腿会在下面每一天都落进 row is None 分支, 凭空合成 w_i · INITIAL_CAPITAL
+    # —— 一条 keys 齐全、首行 1M、对账也成立的**假曲线**, 而同 dict 的 final_capital
+    # 却是按真实腿算的。生产中真正能走到的触发点是「该腿所有行的 date 都是 None」:
+    # 记录器的 append 是无条件的且写在 try 之外, 所以 next() 只要跑过就一定有行; 而
+    # 日期提取 (replay_strategy_v3.py:557-562) 捕获过宽, 会把 date 存成 None, 于是被
+    # 上面的过滤器清空。所以这道闸必须在**过滤器之后** —— 挪到前面, 全 None 的腿在
+    # 过滤前非空、会绕过闸门, 过滤后却变空, 正好回到上面那条假曲线。
+    for i, leg in enumerate(legs):
+        if not leg:
+            raise ValueError(
+                f"leg {i} produced an empty equity curve: no row survived with a "
+                f"date (the recorder appends one row per bar unconditionally, so "
+                f"this means every row of that leg had date=None and was filtered "
+                f"out). Aggregating it would fabricate a flat "
+                f"w_i * INITIAL_CAPITAL contribution."
+            )
     dates = sorted({row["date"] for leg in legs for row in leg})
     if not dates:
         return []

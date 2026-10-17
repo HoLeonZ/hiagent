@@ -146,6 +146,50 @@ def test_equity_curve_reaches_the_end_of_the_requested_window(metrics: dict):
     )
 
 
+def test_an_empty_leg_curve_is_rejected_not_fabricated():
+    """Direct indexing only catches a MISSING key. A leg with no USABLE rows is
+    worse: the aggregator would treat it as `row is None` on every date and
+    invent a flat `w_i · INITIAL_CAPITAL` contribution — an ensemble curve that
+    looks entirely healthy (keys present, first row 1M, reconciliation holds)
+    while its level is fabricated.
+
+    What production can actually reach is not "the leg recorded no bars": the
+    recorder's append is unconditional and sits outside its try, so any bar
+    yields a row. It is "every row had `date=None`" — the extraction is the
+    `try: bar_date = bt.num2date(...) / except (IndexError, Exception): bar_date
+    = None` block in the equity recorder — which `_weighted_equity_curve`'s
+    `row.get("date") is not None` filter then collapses into an empty leg. (Cite
+    the expression, not a line number: a range rots on every edit, and this one
+    already did.) So the guard must sit AFTER that filter: validating inputs
+    before it would let an all-None leg through, the filter would empty it, and
+    every date would fall into the fabricating `row is None` branch. Both
+    orderings are pinned below — the literal `[]` case alone cannot tell them
+    apart, since `[]` is empty either way.
+    """
+    from short_reversal.engine import _weighted_equity_curve
+
+    real = [{
+        "date": dt.date(2026, 1, 1), "cash": 1_000_000.0,
+        "free_cash": 1_000_000.0, "locked_margin": 0.0,
+        "settling_funds": 0.0, "holdings_value": 0.0,
+        "equity": 1_000_000.0, "drawdown": 0.0,
+    }]
+    with pytest.raises(ValueError, match="empty"):
+        _weighted_equity_curve([real, []], [0.5, 0.5])
+
+    # The reachable trigger: the leg DID record rows, but every `date` is None,
+    # so it is non-empty BEFORE the filter and empty after it.
+    undated = [{**real[0], "date": None} for _ in range(3)]
+    with pytest.raises(ValueError, match="empty"):
+        _weighted_equity_curve([real, undated], [0.5, 0.5])
+
+    # Positive control: two healthy legs aggregate normally, so the raises above
+    # are about the empty leg, not the guard firing unconditionally.
+    ok = _weighted_equity_curve([real, [dict(real[0])]], [0.5, 0.5])
+    assert len(ok) == 1
+    assert ok[0]["equity"] == pytest.approx(1_000_000.0)
+
+
 def test_ensemble_path_also_carries_equity_curve():
     """_run_ensemble returns EARLY from run_backtest_v3 (engine.py:224-225) and
     builds its own result dict (engine.py:181-199), so it never passes through
