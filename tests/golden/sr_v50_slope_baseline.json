@@ -5,5 +5,6 @@
   "min_bars": 150,
   "trades_sha256": "c695cb8da65a3063453ca6fa69aada277b377a1fffc52c096b720df6d3111453",
   "trades_rows": 74,
-  "note": "§6 golden baseline for short_reversal. Any change to the trade list MUST regenerate this file and justify the drift in the PR. §7: no metrics/performance block may be committed here — only the behaviour lock (sha256 + row count) belongs in git."
+  "equity_sha256": "3a867eb430033787227dca33ce173bd91cd203ad344c06c50e2de7e36566c9f5",
+  "note": "§6 golden baseline for short_reversal. Any change to the trade list OR the per-bar equity curve MUST regenerate this file and justify the drift in the PR. §7: no metrics/performance block may be committed here — only the behaviour locks (trades sha256 + row count, and the equity-curve sha256) belong in git."
 }

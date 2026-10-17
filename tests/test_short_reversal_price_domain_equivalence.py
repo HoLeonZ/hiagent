@@ -51,10 +51,41 @@ def test_the_pair_is_captured_on_the_same_window_and_gate(baselines: tuple[dict,
     assert (a["start"], a["end"], a["min_bars"]) == (b["start"], b["end"], b["min_bars"])
 
 
+def test_v44_and_v81_adj_have_identical_equity_paths(baselines: tuple[dict, dict]):
+    """The TRADE LIST does not lock the equity path.
+
+    `max_dd` is tracked in the strategy's per-bar NAV update (holdings marked at
+    the current close, `replay_strategy_v3.py`) and `final_capital` comes from
+    `holder["cash"]` (`engine.py:61`) — a different path from the fills that
+    build the trade list. So a change to the mark-to-market price source leaves
+    every fill byte-identical (`trades_sha256` still matches) while this path
+    moves. `equity_sha256` locks it. v44 and v81_adj are the same strategy, so
+    their per-bar equity series must be identical too.
+    """
+    a, b = baselines
+    assert "equity_sha256" in a and "equity_sha256" in b, (
+        "a baseline predates the equity lock (no `equity_sha256`) — regenerate "
+        "the baselines via tests/golden/_capture_short_reversal_baseline.py"
+    )
+    assert a["equity_sha256"] == b["equity_sha256"], (
+        "the per-bar equity paths diverged between v44 and v81_adj. Both are the "
+        "same strategy (engine default signal_price_domain is 'adj'), so their "
+        "NAV series — which feeds max_dd, cagr and the ensemble Sharpe/DSR — must "
+        "match. Do not regenerate the baselines to silence this; investigate first."
+    )
+
+
 # NOTE: the former `test_v44_and_v81_adj_have_identical_metrics` was removed with
 # the §7 fix that dropped the committed `metrics` block from the baselines (it
-# carried historical performance numbers). It is not a coverage loss: every
-# metric in that block is a PURE function of the trade list and the per-bar
-# equity curve (`_metrics_from_holder`), so `trades_sha256` equality above
-# already implies metrics equality. Reading it back would have required
-# re-introducing the very block §7 forbids.
+# carried historical performance numbers). The replacement is NOT the earlier
+# claim that "`trades_sha256` equality already implies metrics equality" — that
+# was FALSE, and is exactly the gap this review closed. `max_dd` comes from the
+# per-bar NAV tracker (holdings marked at the current close) and `final_capital`
+# from `holder["cash"]` (`engine.py`), a DIFFERENT path from the fills that build
+# the trade list; a change to the mark-to-market price source leaves every fill
+# byte-identical while max_dd/cagr and the per-bar curve that feeds the ensemble
+# Sharpe and the gate's DSR all move. What is actually locked here is:
+#   - the TRADE LIST, by `trades_sha256` (tests above),
+#   - the EQUITY PATH, by `equity_sha256` (test directly above).
+# Neither the curve nor any metric VALUE is committed (§7) — a hash is not a
+# performance number.

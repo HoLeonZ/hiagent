@@ -32,6 +32,7 @@ list changed and MUST be justified in the PR (§6).
 """
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import importlib.util
 import json
@@ -50,6 +51,27 @@ def trades_sha256(trades: list[dict]) -> str:
     pins that parity so the two cannot drift.
     """
     canon = json.dumps(trades, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(canon.encode("utf-8")).hexdigest()
+
+
+def equity_sha256(equity_curve: list[dict]) -> str:
+    """Canonical, order-stable hash of the per-bar `(date, equity)` series.
+
+    The trade list does NOT lock the equity path: `max_dd` is tracked in the
+    strategy's per-bar NAV update (holdings marked at the current close) and
+    `final_capital` comes from `holder["cash"]` (`engine.py`) — a different path
+    from the fills that build the trade list. A change to the mark-to-market
+    price source therefore leaves `trades_sha256` byte-identical while moving
+    `max_dd` / `cagr` and the per-bar curve that feeds the ensemble Sharpe and
+    the gate's DSR. This hash locks that second path (CLAUDE.md §0/§6).
+
+    MUST stay byte-identical to `tests/golden/_capture_short_reversal_baseline.py`;
+    `test_hash_matches_the_capture_script` pins that parity.
+    """
+    canon = json.dumps(
+        [[str(r["date"]), float(r["equity"])] for r in equity_curve],
+        sort_keys=True, ensure_ascii=False, default=str,
+    )
     return hashlib.sha256(canon.encode("utf-8")).hexdigest()
 
 
@@ -103,13 +125,36 @@ def test_hash_matches_the_capture_script():
         "baselines would be compared with the wrong algorithm (a false green)"
     )
 
+    eq_sample = [
+        {"date": dt.date(2026, 1, 5), "equity": 1_000_000.0, "cash": 1.0},
+        {"date": dt.date(2026, 1, 6), "equity": 1_012_345.67, "cash": 2.0},
+        {"date": None, "equity": 999_999.0},  # recorder may store a None date
+    ]
+    assert equity_sha256(eq_sample) == module.equity_sha256(eq_sample), (
+        "the runtime runner's equity hash differs from the capture script's — "
+        "the equity path would be compared with the wrong algorithm (a false green)"
+    )
+
+    # The equity hash must observe WHAT THE TRADE LIST CANNOT: a pure
+    # mark-to-market change (same trades, different NAV series) must move it.
+    moved = [dict(r) for r in eq_sample]
+    moved[1]["equity"] = 1_012_345.68
+    assert equity_sha256(moved) != equity_sha256(eq_sample), (
+        "equity_sha256 is insensitive to an equity value — it would not lock the "
+        "mark-to-market path it exists to lock"
+    )
+
 
 @pytest.mark.golden
 @pytest.mark.parametrize("baseline_name", [p.name for p in _baseline_paths()])
 def test_rerun_reproduces_the_committed_trade_list(baseline_name: str):
     """§0: re-run the preset on the golden window; the COMPUTED trade-list hash
-    must equal the committed one. ~8-10 min per preset — see the module cost
-    note; deselect with `-m "not golden"`.
+    AND the per-bar equity-curve hash must equal the committed ones. ~8-10 min
+    per preset — see the module cost note; deselect with `-m "not golden"`.
+
+    Both locks are needed: the equity path is a DIFFERENT code path from the
+    fills (see `equity_sha256`), so a mark-to-market change can pass the
+    trade-list check alone.
     """
     base = json.loads((GOLDEN / baseline_name).read_text(encoding="utf-8"))
     from hiagent_config import get_db_path
@@ -121,6 +166,7 @@ def test_rerun_reproduces_the_committed_trade_list(baseline_name: str):
     )
     actual_rows = len(m["trades"])
     actual_hash = trades_sha256(m["trades"])
+    actual_equity_hash = equity_sha256(m["equity_curve"])
 
     assert actual_rows == base["trades_rows"], (
         f"{base['preset']}: trade COUNT drifted on "
@@ -135,4 +181,16 @@ def test_rerun_reproduces_the_committed_trade_list(baseline_name: str):
         f"  re-run:    {actual_hash}\n"
         f"A different trade list means some engine behaviour changed; justify it "
         f"in the PR before regenerating (§6)."
+    )
+    # The equity path is a DIFFERENT code path from the fills (see
+    # `equity_sha256`): a mark-to-market change leaves the trade list identical.
+    # Without this assertion that change would pass every other check here.
+    assert actual_equity_hash == base["equity_sha256"], (
+        f"{base['preset']}: per-bar EQUITY sha256 drifted on "
+        f"[{base['start']}..{base['end']}] min_bars={base['min_bars']} while the "
+        f"trade list may have matched:\n"
+        f"  committed: {base['equity_sha256']}\n"
+        f"  re-run:    {actual_equity_hash}\n"
+        f"The equity path (NAV mark-to-market) changed — this feeds max_dd, cagr "
+        f"and the ensemble Sharpe/DSR. Justify it in the PR before regenerating (§6)."
     )

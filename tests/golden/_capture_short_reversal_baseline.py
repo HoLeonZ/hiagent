@@ -31,6 +31,28 @@ def trades_sha256(trades: list[dict]) -> str:
     return hashlib.sha256(canon.encode("utf-8")).hexdigest()
 
 
+def equity_sha256(equity_curve: list[dict]) -> str:
+    """Canonical, order-stable hash of the per-bar `(date, equity)` series.
+
+    The equity path is SEPARATE from the fills that produce the trade list:
+    `max_dd` comes from the per-bar NAV tracker (`replay_strategy_v3.py` marks
+    holdings at the current close) and `final_capital` from `holder["cash"]`
+    (`engine.py`). So a change to the mark-to-market price source leaves the
+    trade list — and therefore `trades_sha256` — byte-identical while moving
+    `max_dd`/`cagr` and the per-bar curve that feeds the ensemble Sharpe and the
+    gate's DSR. This hash is what locks that second path (CLAUDE.md §0/§6).
+
+    A hash is not a performance number, so committing it satisfies §7 (we do NOT
+    commit the curve or any metric value). MUST stay byte-identical to
+    `tests/test_short_reversal_golden_reproducibility.py::equity_sha256`.
+    """
+    canon = json.dumps(
+        [[str(r["date"]), float(r["equity"])] for r in equity_curve],
+        sort_keys=True, ensure_ascii=False, default=str,
+    )
+    return hashlib.sha256(canon.encode("utf-8")).hexdigest()
+
+
 def main() -> int:
     db = get_db_path()
     if not db.exists():
@@ -54,18 +76,27 @@ def main() -> int:
             # §7: NO `metrics` block. results/, trades.csv and metrics JSON are
             # run artifacts and must stay gitignored — a committed metrics block
             # is a historical performance claim a fresh clone would carry. Only
-            # the BEHAVIOUR lock (trades_sha256 + trades_rows) belongs here (§6).
+            # the BEHAVIOUR lock (trades_sha256 + trades_rows + equity_sha256)
+            # belongs here (§6). The equity hash locks the MARK-TO-MARKET path,
+            # which the trade list does not observe (see equity_sha256 docstring).
             "trades_sha256": trades_sha256(m["trades"]),
             "trades_rows": len(m["trades"]),
+            "equity_sha256": equity_sha256(m["equity_curve"]),
             "note": (
-                "§6 golden baseline for short_reversal. Any change to the trade list "
-                "MUST regenerate this file and justify the drift in the PR. §7: no "
-                "metrics/performance block may be committed here — only the behaviour "
-                "lock (sha256 + row count) belongs in git."
+                "§6 golden baseline for short_reversal. Any change to the trade "
+                "list OR the per-bar equity curve MUST regenerate this file and "
+                "justify the drift in the PR. §7: no metrics/performance block "
+                "may be committed here — only the behaviour locks (trades sha256 "
+                "+ row count, and the equity-curve sha256) belong in git."
             ),
         }
         out = OUT_DIR / f"sr_{preset}_baseline.json"
-        out.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        # Trailing newline so the file is byte-identical to what a fresh capture
+        # produces (§0 reproducibility) and to the committed baselines.
+        out.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
         print(f"WROTE {out.name}: trades={m['trades_count']} "
               f"final={m['final_capital']:,.2f} max_dd={m['max_dd']:.4f}")
     return 0
