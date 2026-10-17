@@ -100,3 +100,63 @@ python3 -m short_reversal.walkforward --preset v58_mp_2 --preset v50_slope \
 
 `n_trials` 会计按 §5 逐轮累加在 preset 的 `n_comparisons` 字段上;
 **新增一个候选 preset 时必须同时加上本轮的试验数。**
+
+---
+
+## 6. 已登记但**未修**的事项 (按 CLAUDE.md §7: 只写"怎么复现", 数字在 commit log 里)
+
+这一节的存在理由与本文档开头相同: **不记下来, 同一个坑会被重新踩。**
+下面每一条都是"已知有问题、但改动属结果变更/口径选择, 故只登记不擅自动"。
+
+### 6.1 `tests/golden/chase_v{5,8..14}_baseline.json` 已陈旧 (§6 待重生成)
+
+**症状**: `tests/test_chase_up_no_lookahead.py` 里 8 条 `*_trades_csv_matches_golden_baseline`
+恒红。
+
+**已查明的结构** (复现见下): 漂移来自**两个可分离的来源**, 不要当成一件事:
+
+| 环节 | 来源 | 判定 |
+|---|---|---|
+| baseline 锁定的笔数 → 用**当前引擎**跑 **V7 前配置**的笔数 | **引擎漂移** (V6 intraday tiebreak / V3a 双价格解耦) | **未验证** |
+| 上述 → 用**当前配置**跑当前引擎的笔数 | **配置漂移** (V7: `equal`/`max_positions=2` → `all_in`/`max_positions=1`) | 可归因 |
+
+⇒ **第二段可以归因, 第一段只能"有记录可循"而未被验证。** 所以在第一段被验证之前
+**不得重生成 baseline** —— 重生成会把一段未验证的漂移**锁成金标准**, 把一个真问题
+变成永久绿。这正是本文档开头说的"把失效方向重新当成机会评估过两次"的近亲。
+
+**另有一个断开的过程指针**: baseline 的 `v7_change_note` 指向
+`docs/claudemd_preset_audit_2026_09_22.md` 里的 "§2 re-baseline plan" ——
+**该文件已不在仓库中** (README 记明"历史审计报告已从 docs/ 移除")。
+⇒ 规定动作只以**指向已删除文档的引用**形式存在, 无人能照做。
+
+**复现** (两段各自跑一次即可分离):
+```python
+from chase_up.presets import get_preset
+from chase_up.backtest import run_backtest
+from chase_up.data import load_panel
+from chase_up.signals import compute_indicators
+from chase_up.universe import load_universe
+from hiagent_config import DB_PATH
+
+W0, W1 = "2025-09-19", "2026-09-19"          # 取该 baseline 自己的 window
+panel = compute_indicators(load_panel(DB_PATH, W0, W1,
+                          universe=set(load_universe("mainboard_only", DB_PATH))))
+
+for label, ov in [("现配置", {}),
+                  ("V7 前配置", {"position_sizing": "equal", "max_positions": 2})]:
+    p = dict(get_preset("chase_v5_pos2_equal_atr_tp6_sl15_mh10")); p.update(ov)
+    print(label, run_backtest(p, W0, W1, DB_PATH, panel_ind=panel)["metrics"]["trades"])
+```
+**验证后再谈重生成** —— 且重生成属结果变更, 须在 PR 里逐条说明漂移。
+
+### 6.2 其余已登记项
+
+| 项 | 说明 |
+|---|---|
+| `short_reversal` 权益曲线**起点漂移** | 请求窗起点与实测期起点可差 1.13 年; 四个机制假设已被实验否证, **机制未解**。终点侧由 `PANEL_POST_BUFFER_DAYS=60` 解释 |
+| `_approx_sharpe` 的**无权平均** | 一笔残仓与一笔满仓同等计入; 已披露加权版本, 未改 |
+| `TRADING_DAYS` **243 vs 252** | `chase_up`/`uptrend_pullback` 用 243, `cycle_price_action` 用 252 |
+| `sharpe` **口径不统一** | `short_reversal` 是逐笔口径, 其余三个是日权益口径; **不可跨族比较**。已披露 `sharpe_equity_basis` |
+| ATR 滑点值 | `§8#2`, 全部预设仍为 0 |
+| `presets.py` 内的历史 CAGR 注释 | 成片的 §7 违规 (代码注释里嵌历史指标) |
+| Layer 5 之外的 `test_backtest_data_integrity.py` | 见 6.1; 该文件的 Layer 1/Layer 5 已于 2026-10-17 修真 |
