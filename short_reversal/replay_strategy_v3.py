@@ -711,11 +711,25 @@ class Phase3V3Strategy(bt.Strategy):
                 self.pending_entries.pop(code, None)
                 continue
             entry_price = float(d.open[0])
-            # 防穿仓 (R5, 2026-09-22, CLAUDE.md §4): ATR-aware slippage。
-            # short 仓的 entry_price 是 sell price, slippage 上调 sell price
-            # (即收到的 sale proceeds 减少) —— pessimistic 假设"卖得更贵"。
+            # §4/§0 (2026-10-17 修正): ATR-aware slippage, short 仓方向取**负号**。
+            #
+            # ⚠️ 此处原为 `entry_price × (1 + slip_eff)`, 与自己的注释互相矛盾:
+            #    注释写 "slippage 上调 sell price (即收到的 sale proceeds 减少) ——
+            #    pessimistic 假设'卖得更贵'", 但**上调卖出价恰恰是收到更多**。
+            #    short 的 entry 是**卖出**; 对卖出腿而言, 冲击成本应当让成交价
+            #    **更低**(卖得更便宜)才是悲观。原式把执行成本记成了执行收益,
+            #    方向与 §0「Pessimistic Default」相反。
+            #
+            # 为什么现在才修: 该分支只在 `atr_slip_scale > 0` 时执行, 而
+            # **全部 55 个 short_reversal preset 都是 0** (默认, 见 engine 的
+            # `cfg.get("atr_slip_scale", 0.0)`) ⇒ 此分支今天**不可达**,
+            # 修它**不产生任何结果漂移**; 但它是一个陷阱: 谁一旦为落实 §4 打开
+            # 滑点, 就会**静默地把 short 的成交记成更有利**。
+            #   对偶: `chase_up`/`uptrend_pullback` 是**多头**, entry 是买入,
+            #   `×(1 + slip)` = 买得更贵 = 悲观 ⇒ **那边是正确的**, 不要一起改。
+            #
             #   slip_eff = max(0, atr_pct × participation × scale)
-            #   entry_price_sold = entry_price × (1 + slip_eff)
+            #   entry_price_sold = entry_price × (1 − slip_eff)
             # 当 atr_slip_scale = 0, 沿用旧行为 (保持 baseline parity)。
             if self.p.atr_slip_scale > 0:
                 indi = self.indi.get(code, {})
@@ -734,7 +748,8 @@ class Phase3V3Strategy(bt.Strategy):
                         participation = 0.0
                     atr_slip = atr_pct * participation * self.p.atr_slip_scale
                     if atr_slip > 0:
-                        entry_price = entry_price * (1.0 + atr_slip)
+                        # 卖出腿: 冲击让成交价**更低** = 悲观 (§4/§0)。见上方注释。
+                        entry_price = entry_price * (1.0 - atr_slip)
             # CLAUDE.md §2 Margin Gatekeeper: budget base MUST be Free_Cash
             # (T+0 可用), 绝不用 NAV (含未实现浮盈) / settling_funds (T+1 才到)。
             # 旧 R4 (2026-09-21) 用 NAV 作 sizing basis 是 §2 violation 的根因:

@@ -229,8 +229,14 @@ def atr_slippage(
     - scale: 策略级参数, 默认 1.0; V33 baseline parity 时 = 0 → 无 slippage。
 
     用于 chase_up (long): entry_price = raw_open × (1 + slip)
-    用于 short_reversal (short): entry_price = raw_open × (1 + slip)
-        (做空方向 slip 上调 sell price = 收到更少 sale proceeds = 悲观)
+    （买入腿: 冲击让成交价更**高** = 悲观 ✓）
+    用于 short_reversal (short): entry_price = raw_open × (1 − slip)
+    （**卖出**腿: 冲击让成交价更**低** = 悲观 ✓）
+
+    ⚠️ 2026-10-17 修正: 此处原文写 `short: × (1 + slip)` 并注为"悲观",
+    是**自相矛盾**的 —— 上调卖出价是收到**更多**。short 的 entry 是卖出,
+    取负号才悲观。该分支当时因 `atr_slip_scale=0` 全部 preset 而不可达,
+    故修正无结果漂移; 详见 short_reversal/replay_strategy_v3.py 的对应注释。
     """
     if atr_pct <= 0 or participation <= 0 or scale <= 0:
         return 0.0
