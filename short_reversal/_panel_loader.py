@@ -65,20 +65,44 @@ def load_panel_for_signal(
         # (几乎所有 A 股都有分红/送股)⇒ 扫描器给出的名单与回测实际会进场的名单
         # 在**大半个市场**上不同。
         # 与 `load_panel_for_backtest` 同一 JOIN 口径(v_daily = raw, v_daily_hfq = adj)。
-        df = con.execute(
-            "SELECT v.thscode, v.date, "
-            "       v.open, v.high, v.low, v.close, v.amount, v.volume, "
-            "       h.open  AS adj_open, "
-            "       h.high  AS adj_high, "
-            "       h.low   AS adj_low, "
-            "       h.close AS adj_close "
-            "FROM v_daily v "
-            "LEFT JOIN v_daily_hfq h "
-            "  ON v.thscode = h.thscode AND v.date = h.date "
-            "WHERE v.date BETWEEN ? AND ? "
-            "ORDER BY v.thscode, v.date",
-            [start, signal_date],
-        ).fetchdf()
+        # 复权视图存在才 JOIN —— 合成夹具(只建 v_daily)里没有它。
+        # 缺它时给出 **NULL 的 adj_*** 而不是报错:列形状保持一致,而策略侧
+        # ("adj_close 全 NaN ⇒ 回退 d.close")与扫描器侧("逐行回退 close")
+        # 都已定义好这条回退,所以"没有复权数据"是一个**已声明**的状态,不是崩溃。
+        has_hfq = bool(
+            con.execute(
+                "SELECT COUNT(*) FROM information_schema.tables "
+                "WHERE table_name = 'v_daily_hfq'"
+            ).fetchone()[0]
+        )
+        if has_hfq:
+            df = con.execute(
+                "SELECT v.thscode, v.date, "
+                "       v.open, v.high, v.low, v.close, v.amount, v.volume, "
+                "       h.open  AS adj_open, "
+                "       h.high  AS adj_high, "
+                "       h.low   AS adj_low, "
+                "       h.close AS adj_close "
+                "FROM v_daily v "
+                "LEFT JOIN v_daily_hfq h "
+                "  ON v.thscode = h.thscode AND v.date = h.date "
+                "WHERE v.date BETWEEN ? AND ? "
+                "ORDER BY v.thscode, v.date",
+                [start, signal_date],
+            ).fetchdf()
+        else:
+            df = con.execute(
+                "SELECT v.thscode, v.date, "
+                "       v.open, v.high, v.low, v.close, v.amount, v.volume, "
+                "       CAST(NULL AS DOUBLE) AS adj_open, "
+                "       CAST(NULL AS DOUBLE) AS adj_high, "
+                "       CAST(NULL AS DOUBLE) AS adj_low, "
+                "       CAST(NULL AS DOUBLE) AS adj_close "
+                "FROM v_daily v "
+                "WHERE v.date BETWEEN ? AND ? "
+                "ORDER BY v.thscode, v.date",
+                [start, signal_date],
+            ).fetchdf()
     finally:
         con.close()
     if not df.empty:
