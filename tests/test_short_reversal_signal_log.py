@@ -11,6 +11,7 @@ Skips (not errors) when the local DuckDB is absent — CLAUDE.md §6.
 from __future__ import annotations
 
 import datetime as dt
+import json
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,18 @@ from hiagent_config import get_db_path
 PRESET = "v50_slope"
 ENSEMBLE = "v63_ensemble"
 START, END, MIN_BARS = "2025-09-12", "2026-09-12", 150
+
+
+def _canonical(trades: list) -> str:
+    """NaN-safe canonical form.
+
+    Do NOT compare trade lists with `==`: the trade dict carries
+    `atr_pct = float("nan")` produced FRESH per trade (replay_strategy_v3.py:135),
+    and two distinct NaN objects compare UNEQUAL under `==`. A `==` comparison
+    fails for every implementation, including a perfectly inert one. This is the
+    same canonicalisation Task 1's capture script hashes.
+    """
+    return json.dumps(trades, sort_keys=True, ensure_ascii=False, default=str)
 
 
 @pytest.fixture(scope="module")
@@ -61,7 +74,9 @@ def test_log_hook_is_inert_when_unused(plain_run: dict, logged_run: tuple):
     """§0: a diagnostic outlet must not perturb the run."""
     m, log = logged_run
     assert log, "the hook produced no entries — it is not wired through"
-    assert plain_run["trades"] == m["trades"], "the signal log perturbed the run"
+    assert _canonical(plain_run["trades"]) == _canonical(m["trades"]), (
+        "the signal log perturbed the trade list"
+    )
     assert plain_run["final_capital"] == m["final_capital"]
     assert plain_run["max_dd"] == m["max_dd"]
 
@@ -102,14 +117,32 @@ def test_passed_and_failed_at_are_consistent(logged_run: tuple):
     assert not bad, f"{len(bad)} inconsistent entries, e.g. {bad[:3]}"
 
 
-def test_log_covers_the_buffered_panel_not_just_the_window(logged_run: tuple):
-    """The engine sets no feed.fromdate/todate, so it evaluates the whole panel
-    `[start-180d, end+60d]`. The log inherits that span — assert it is wide,
-    NOT that it is bounded by [START, END]."""
+def test_log_reaches_the_end_of_the_requested_window(logged_run: tuple):
+    """The log must still be live at the end of the requested window — Task 6
+    reads the entry for `signal_date`, so a log that stops short of END would
+    silently return nothing for late signal dates.
+
+    This deliberately asserts NOTHING about `dates[0]`. An earlier version
+    asserted `dates[0] <= START`, inferring that because no feed.fromdate/todate
+    is set, the engine evaluates the buffered panel from its first bar. It does
+    not: `next()` is only called once `len(self) >= minperiod`, and the SMA(60)
+    wiring puts the strategy's minperiod at 60. Worse, `len(self)` is the
+    MINIMUM across ~3161 desynchronised feeds while each `d.datetime[0]` is that
+    feed's own bar — so the first evaluated bar tracks the newest listing in the
+    panel, not the panel's first bar. Measured on v50_slope/2025-09-12..2026-09-12
+    (min_bars=150): the first logged date is 2025-11-19, ~45 trading days AFTER
+    START, so `dates[0] <= START` was false by construction. Do NOT re-add it.
+    """
     _, log = logged_run
     dates = sorted({e["date"] for e in log})
-    assert dates[0] <= dt.date.fromisoformat(START)
-    assert dates[-1] >= dt.date.fromisoformat(END)
+    assert dates[-1] >= dt.date.fromisoformat(END), (
+        f"the log stops at {dates[-1]}, before END={END} — Task 6 would read "
+        f"nothing on the requested signal date"
+    )
+    assert len(dates) >= 150, (
+        f"the log spans only {len(dates)} distinct dates — implausibly narrow "
+        f"for a full-year run"
+    )
 
 
 def test_ensemble_log_entries_carry_the_leg_name(ensemble_log: list):
