@@ -15,7 +15,7 @@ Run:
         --start 2024-01-02 --end 2026-10-16
 
 Output: `<out>/compare.json` (gitignored, §7). See `reproduce_2016_2023.py` for
-the independent-window reproduction gate; the two scripts are launched
+the cross-window reproduction gate; the two scripts are launched
 CONCURRENTLY against the same `--out` dir, so they must not share a filename.
 """
 from __future__ import annotations
@@ -272,10 +272,11 @@ def _db_min_date(db_path: Path) -> object:
 def guard_universes(presets: list[str], asof: str, db_path: Path) -> None:
     """Guard 1: every window's universe must be non-empty.
 
-    `run_backtest_v3` does NOT trip the F-01 feed guard on an empty universe (an
-    empty code list is a legal input) — it just returns 0 trades. Without this
-    assertion the whole gate silently no-ops and the output *looks like* "the
-    candidates don't work early", a false conclusion (spec §2.9).
+    `run_backtest_v3` now RAISES a named `ValueError` on an empty universe
+    (§0 fail-fast), so this is the OUTER, pre-flight version: it fires before
+    any candidate runs (a candidate is a multi-hour batch) and prints the as-of
+    and the DB's earliest date — the diagnosis an operator needs. Without it the
+    gate would spend hours and only then abort inside the engine.
     """
     modes = sorted({PRESETS[p]["universe"] for p in presets})
     for mode in modes:
@@ -293,14 +294,18 @@ def guard_universes(presets: list[str], asof: str, db_path: Path) -> None:
 def guard_trades(preset: str, result: dict) -> None:
     """Guard 2: every candidate must produce > 0 trades.
 
-    The three distinguishable zero-trade causes — empty universe, the `min_bars`
-    cliff, and an F-01 feed guard trip — must not be collapsed into one silent 0.
+    A 0-trade result still has distinguishable causes — the `min_bars` cliff
+    (window too short for the universe) and an F-01 feed guard trip — and they
+    must not be collapsed into one silent 0. An empty universe no longer reaches
+    here: `guard_universes` (pre-flight) and `run_backtest_v3` itself both raise
+    on it first.
     """
     if int(result.get("trades_count", 0)) == 0:
         raise SystemExit(
             f"F-01 guard: preset {preset!r} produced 0 trades (min_bars={MIN_BARS}). "
-            f"Distinguish the cause: empty universe (see the universe guard line "
-            f"above), a min_bars cliff, or an F-01 feed guard trip."
+            f"Distinguish the cause: a min_bars cliff (window too short for the "
+            f"universe) or an F-01 feed guard trip (an empty universe is caught "
+            f"earlier — see the universe guard line above)."
         )
 
 

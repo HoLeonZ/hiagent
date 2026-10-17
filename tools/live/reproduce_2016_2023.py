@@ -1,17 +1,25 @@
-"""2017-2023 reproduction gate (spec §5.6; CLAUDE.md §5).
+"""2017-2023 cross-window reproduction gate (spec §5.6; CLAUDE.md §5).
 
-Re-runs the SAME candidates as `compare_ensembles` on an independent window and
+Re-runs the SAME candidates as `compare_ensembles` on a SECOND window and
 records a `verdict`, because `presets.py:1645-1658` warns that the 2024-2026
 baseline window is prone to overfitting: a candidate that is only good on
 2024-2026 and NOT significant on 2017-2023 must not be adopted.
 
+This window is a CROSS-WINDOW CONSISTENCY check, NOT an out-of-sample holdout.
+`presets.py:712-713` records the v44 ablation on `2017-H2 / 2022-H2 / 2019-H2 /
+2021-H1 / 2018-H2` — all inside `[2017-06-01, 2023-12-29]` — and `:531` records
+a "2016-2023 mean delta Calmar +0.75 (7 windows)". So these legs' selection
+already used this window, and CLAUDE.md §5's "a holdout window that participated
+in no iteration" is NOT satisfiable with the available data (the floor is
+`2016-10-10`). Do NOT describe this gate as out-of-sample / independent / 样本外.
+
 Window start is `2017-06-01` and MUST NOT be earlier. `raw_kline_daily.min(date)`
 is 2016-10-10; any earlier as-of makes `load_universe_asof` return an EMPTY
-universe, and `run_backtest_v3` does not trip the F-01 guard on an empty code
-list — it silently returns 0 trades, so the gate would no-op while looking like
-"the candidates don't work early" (a false conclusion). 2017-06-01 additionally
-gives the buffered panel `[start-180d, end+60d]` a warm-up landing after
-2016-12-03 (enough data for MA60) and a non-empty universe.
+universe. `run_backtest_v3` NOW RAISES a named `ValueError` on an empty universe
+(§0 fail-fast), so an earlier start is a hard error rather than a silent no-op
+that looks like "the candidates don't work early". 2017-06-01 additionally gives
+the buffered panel `[start-180d, end+60d]` a warm-up landing after 2016-12-03
+(enough data for MA60) and a non-empty universe.
 
 Writes its OWN `repro.json` (isomorphic to `compare.json` + `verdict`). It MUST
 NOT write `compare.json`: the two scripts are launched concurrently against the
@@ -62,7 +70,8 @@ def decide(payload: dict) -> str:
     Rule (spec §5.6, hardening presets.py:1645-1658): a candidate that is only
     strong on 2024-2026 and NOT significant on 2017-2023 must not be adopted.
     The gate adopts iff at least one decision candidate is significant on this
-    independent window. The reference candidate never decides — it is water-mark.
+    cross-window check (NOT an out-of-sample holdout — see the module docstring).
+    The reference candidate never decides — it is water-mark.
     """
     qualified = []
     for cand in payload["candidates"]:

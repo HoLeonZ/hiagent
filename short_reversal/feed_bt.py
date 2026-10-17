@@ -120,6 +120,10 @@ def build_per_stock_feeds(
         feeds.append((code, feed))
 
     # 全部被丢 = 配置错误, 必须 fail-fast 而不是返回空 feed 列表。
+    # 注意 `if codes`: **空** codes (空 universe) 不走这里 —— 那是另一类失败,
+    # 由 run_backtest_v3 在解析 universe 后具名抛 ValueError (§0 fail-fast); 本
+    # 函数对空 codes 返回 [] 是它的纯函数契约
+    # (见 tests/test_feed_min_bars_silent_drop.py 的 TestEmptyUniverseInputIsFine)。
     if codes and not feeds:
         max_bars = max((n for _, n in dropped), default=0)
         span = ""

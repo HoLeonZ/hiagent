@@ -145,7 +145,9 @@ def assert_feeds_nonempty(universe: list[str], usable: list[str]) -> None:
     也保持纯函数可离线单测), 拿不到 `signal_date`; 而调用方本来就知道自己传的是哪
     一天。**不要**为此加一个日期参数。
 
-    空 universe 是合法输入 (合成库 / as_of 早于数据覆盖), 此时无事可断, 直接返回。
+    空 universe 对本函数 (纯函数, 接口就是 `(universe, usable)`) 是合法输入:
+    此时无事可断, 直接返回。线上路径走不到这一支 —— `run_backtest_v3` 现在对空
+    universe 具名抛错 (§0), 而 `_resolve_universe` 在此之前就已抛错。
     """
     if universe and not usable:
         raise ValueError(
@@ -284,7 +286,9 @@ def _resolve_universe(cfg: dict, signal_date: str, db_path: Path) -> list[str]:
 
     空 universe 对 `assert_feeds_nonempty` 是合法输入 (合成库场景), 但对**线上
     作业**它一定是数据问题: `raw_kline_daily` 的 min(date) 是 2016-10-10,
-    早于它的 as-of 会返回空 universe, 而空 universe 会让整个作业静默产出零候选。
+    早于它的 as-of 会返回空 universe。空 universe **不再**静默产出零候选 ——
+    `run_backtest_v3` 现在会对它具名抛 `ValueError` (§0 fail-fast); 本函数在
+    更前面就拦下, 好让错误信息直指「DB 覆盖 / as-of」而不是落进引擎。
     """
     mode = cfg["universe"]
     universe = load_universe_asof(mode, signal_date, db_path)
