@@ -45,18 +45,16 @@ def test_v44_and_v81_adj_have_identical_trade_lists(baselines: tuple[dict, dict]
     )
 
 
-def test_v44_and_v81_adj_have_identical_metrics(baselines: tuple[dict, dict]):
-    a, b = baselines
-    # Compare canonically, NOT with `==`: JSON round-trips a NaN as `NaN` and
-    # two distinct NaN objects compare unequal, so `a["metrics"] == b["metrics"]`
-    # would fail spuriously the day any metric becomes undefined. (Today none
-    # can — `_approx_sharpe` guards the empty case and returns 0.0 — but the
-    # comparison should not depend on that staying true.)
-    assert json.dumps(a["metrics"], sort_keys=True, default=str) == \
-        json.dumps(b["metrics"], sort_keys=True, default=str)
-
-
 def test_the_pair_is_captured_on_the_same_window_and_gate(baselines: tuple[dict, dict]):
     """Equivalence is only meaningful on one window and one min_bars."""
     a, b = baselines
     assert (a["start"], a["end"], a["min_bars"]) == (b["start"], b["end"], b["min_bars"])
+
+
+# NOTE: the former `test_v44_and_v81_adj_have_identical_metrics` was removed with
+# the §7 fix that dropped the committed `metrics` block from the baselines (it
+# carried historical performance numbers). It is not a coverage loss: every
+# metric in that block is a PURE function of the trade list and the per-bar
+# equity curve (`_metrics_from_holder`), so `trades_sha256` equality above
+# already implies metrics equality. Reading it back would have required
+# re-introducing the very block §7 forbids.

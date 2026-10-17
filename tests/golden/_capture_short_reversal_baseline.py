@@ -51,18 +51,17 @@ def main() -> int:
             "start": m["start"],
             "end": m["end"],
             "min_bars": MIN_BARS,
-            "metrics": {
-                k: m[k] for k in (
-                    "trades_count", "win_rate", "final_capital", "total_yield",
-                    "cagr", "sharpe", "max_dd", "avg_pnl", "avg_hold_days",
-                    "tp_count", "sl_count", "time_count",
-                )
-            },
+            # §7: NO `metrics` block. results/, trades.csv and metrics JSON are
+            # run artifacts and must stay gitignored — a committed metrics block
+            # is a historical performance claim a fresh clone would carry. Only
+            # the BEHAVIOUR lock (trades_sha256 + trades_rows) belongs here (§6).
             "trades_sha256": trades_sha256(m["trades"]),
             "trades_rows": len(m["trades"]),
             "note": (
                 "§6 golden baseline for short_reversal. Any change to the trade list "
-                "MUST regenerate this file and justify the drift in the PR."
+                "MUST regenerate this file and justify the drift in the PR. §7: no "
+                "metrics/performance block may be committed here — only the behaviour "
+                "lock (sha256 + row count) belongs in git."
             ),
         }
         out = OUT_DIR / f"sr_{preset}_baseline.json"
