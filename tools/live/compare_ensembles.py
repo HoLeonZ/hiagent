@@ -101,29 +101,40 @@ def _as_date(value) -> dt.date:
     return pd.Timestamp(value).date()
 
 
-def _windowed_returns(rows: list[dict], start: str, end: str) -> list[float]:
-    """Simple daily returns `equity[t]/equity[t-1] - 1` inside `[start, end]`.
+def _window_years(start: str, end: str) -> float:
+    """Elapsed years over `[start, end]` — the ONE horizon annualization uses.
+
+    Both the benchmark CAGR and every candidate's CAGR/stats enumerate over this
+    same span, so `benchmark_excess_cagr = cagr - bench_cagr` subtracts two
+    returns annualized over an identical horizon (CLAUDE.md §0 reproducibility).
+    """
+    return max(
+        (pd.Timestamp(end) - pd.Timestamp(start)).days / 365.25, 1.0 / 365.25
+    )
+
+
+def _sliced_equity(rows: list[dict], start: str, end: str) -> list[tuple[dt.date, float]]:
+    """Sorted `(date, equity)` pairs inside `[start, end]`.
 
     The engine's `equity_curve` spans the BUFFERED panel window
     `[start-180d, end+60d]` (the engine sets no `feed.fromdate/todate` and
-    `_metrics_from_holder` passes the recorder rows through unfiltered), so the
-    slice to `[start, end]` is what makes the reported Sharpe match the window it
-    is labelled with. Mixing the warm-up / in-flight tail into the series would
-    dilute the denominator with flat (no-position) days and inflate the Sharpe —
-    precisely the §5 mis-labelling this guards against.
+    `_metrics_from_holder` passes the recorder rows through unfiltered), so this
+    slice is what makes EVERY stat reported here (Sharpe, CAGR, max_dd, Calmar)
+    match the window the record is labelled with. The engine's own
+    `result["cagr"]` annualizes the cash at the panel's LAST bar (`= end + 60d`)
+    but divides by `(end - start)` — a horizon mismatch this slice removes.
 
     `date` may be `None` on the plain-preset path (`_metrics_from_holder` passes
     the recorder rows through; the recorder's date extraction catches broadly and
     can store `None`), while the ensemble path already filtered those out. A
     `None` is dropped EXPLICITLY and COUNTED here — "a day went missing with no
     one knowing" and "a day went missing and the log says so" are two different
-    systems.
+    systems. Computed ONCE per candidate and reused for every derived stat.
     """
     lo = _as_date(start)
     hi = _as_date(end)
     kept: list[tuple[dt.date, float]] = []
     dropped_none = 0
-    out_of_window = 0
     for row in rows:
         raw_date = row.get("date")
         if raw_date is None:
@@ -132,17 +143,50 @@ def _windowed_returns(rows: list[dict], start: str, end: str) -> list[float]:
         d = _as_date(raw_date)
         if lo <= d <= hi:
             kept.append((d, float(row["equity"])))
-        else:
-            out_of_window += 1
     if dropped_none:
         print(
-            f"[daily_sharpe] WARNING: dropped {dropped_none} equity row(s) with "
-            f"date=None (the plain-preset recorder path can store None); the "
-            f"Sharpe is computed on the rows that survived.",
+            f"[equity slice] WARNING: dropped {dropped_none} equity row(s) with "
+            f"date=None (the plain-preset recorder path can store None); every "
+            f"stat is computed on the rows that survived.",
             file=sys.stderr, flush=True,
         )
     kept.sort(key=lambda t: t[0])
-    return [b[1] / a[1] - 1.0 for a, b in zip(kept, kept[1:])]
+    return kept
+
+
+def _returns_from_slice(sliced: list[tuple[dt.date, float]]) -> list[float]:
+    """Simple daily returns `equity[t]/equity[t-1] - 1` from a sorted slice."""
+    return [b[1] / a[1] - 1.0 for a, b in zip(sliced, sliced[1:])]
+
+
+def _windowed_returns(rows: list[dict], start: str, end: str) -> list[float]:
+    """Daily returns inside `[start, end]` (slice then difference)."""
+    return _returns_from_slice(_sliced_equity(rows, start, end))
+
+
+def _window_cagr_max_dd(
+    sliced: list[tuple[dt.date, float]], years: float,
+) -> tuple[float, float]:
+    """CAGR and max drawdown from the SAME sliced equity series.
+
+    CAGR from first/last of the slice, annualized over `years`; max_dd from the
+    running peak. Everything a record reports then shares one horizon. Returns
+    `(nan, nan)` when the slice has fewer than two points (undefined).
+    """
+    if len(sliced) < 2:
+        return float("nan"), float("nan")
+    first = sliced[0][1]
+    last = sliced[-1][1]
+    cagr = (last / first) ** (1.0 / years) - 1.0 if first > 0 and years > 0 \
+        else float("nan")
+    peak = sliced[0][1]
+    max_dd = 0.0
+    for _, eq in sliced:
+        if eq > peak:
+            peak = eq
+        if peak > 0:
+            max_dd = max(max_dd, (peak - eq) / peak)
+    return cagr, max_dd
 
 
 def daily_sharpe_from_equity(rows: list[dict], start: str, end: str) -> float:
@@ -162,25 +206,20 @@ def candidate_record(
     preset: str,
     legs: list[str],
     is_reference: bool,
-    equity_rows: list[dict],
-    start: str,
-    end: str,
     cagr: float,
     max_dd: float,
+    daily_sharpe: float | None,
     dsr: float,
     bonferroni_p: float,
     benchmark_excess_cagr: float,
 ) -> dict:
-    """Build one `candidates[]` record.
+    """Assemble one `candidates[]` record from already-computed stats.
 
-    Extracted as a standalone function so the JSON schema can be unit-tested
-    offline without running the multi-hour comparison batch.
+    A pure assembler: every numeric field is computed by `_build_record` from the
+    ONE sliced equity series, so the record shares a single horizon. Extracted so
+    the JSON schema can be unit-tested offline without running the multi-hour
+    comparison batch.
     """
-    daily_sharpe = daily_sharpe_from_equity(equity_rows, start, end)
-    if math.isnan(daily_sharpe):
-        # `annualized_sharpe` returns NaN for an undefined Sharpe; the schema
-        # says `daily_sharpe` may be null, so NaN -> None (not 0.0).
-        daily_sharpe = None  # type: ignore[assignment]
     calmar = (cagr / max_dd) if max_dd > 0 else float("nan")
     return {
         "preset": preset,
@@ -299,9 +338,7 @@ def benchmark_cagr(db_path: Path, start: str, end: str) -> float:
             f"[{start}, {end}] — cannot report §5 benchmark-relative excess."
         )
     mean_ret = sum(rets) / len(rets)
-    years = max(
-        (pd.Timestamp(end) - pd.Timestamp(start)).days / 365.25, 1.0 / 365.25
-    )
+    years = _window_years(start, end)
     if mean_ret <= -1.0:
         return -1.0
     return (1.0 + mean_ret) ** (1.0 / years) - 1.0
@@ -313,15 +350,30 @@ def _build_record(
     preset: str, result: dict, start: str, end: str,
     bench_cagr: float, n_trials: int,
 ) -> dict:
-    cagr = float(result["cagr"])
-    max_dd = float(result["max_dd"])
+    # ONE slice of the ensemble's aggregated equity, reused for every §5 field.
+    # The engine's `result["cagr"]`/`result["max_dd"]` are NOT used: they mark the
+    # cash at the panel's LAST bar (`= end + PANEL_POST_BUFFER_DAYS`) but divide by
+    # `(end - start)`, so they mix two horizons. Deriving from the slice makes
+    # `benchmark_excess_cagr = cagr - bench_cagr` an in-window-vs-in-window figure.
     equity_rows = result["equity_curve"]
-    rets = _windowed_returns(equity_rows, start, end)
+    sliced = _sliced_equity(equity_rows, start, end)
+    rets = _returns_from_slice(sliced)
     daily_sharpe = annualized_sharpe(rets)
     n_returns = len(rets)
+    cagr, max_dd = _window_cagr_max_dd(sliced, _window_years(start, end))
 
     if math.isfinite(daily_sharpe):
-        p = sharpe_significance_pvalue(daily_sharpe, n_returns)
+        # `sharpe_significance_pvalue`'s SE = 1/sqrt(T-1) is PER-PERIOD (its
+        # docstring: "for daily returns") while `annualized_sharpe` returns an
+        # ANNUALIZED Sharpe. Feeding the annualized value inflates z by sqrt(252)
+        # and saturates p to 0.0 — "unconditionally family-wise significant" for a
+        # series this same record's `dsr` can call insignificant. De-annualize at
+        # the call site; this is the same §5 unit-consistency fix
+        # `deflated_sharpe_ratio` already applies internally
+        # (dna_stats/deflated.py:158-165). `deflated_sharpe_ratio` keeps the
+        # annualized input because it de-annualizes internally.
+        period_sharpe = daily_sharpe / math.sqrt(252)
+        p = sharpe_significance_pvalue(period_sharpe, n_returns)
         dsr = deflated_sharpe_ratio(
             daily_sharpe, n_trials, n_returns=n_returns
         )["deflated_sharpe"]
@@ -333,15 +385,17 @@ def _build_record(
         dsr = float("nan")
         bonferroni_p = float("nan")
 
+    # `annualized_sharpe` returns NaN for an undefined Sharpe; the schema says
+    # `daily_sharpe` may be null, so NaN -> None (not 0.0).
+    daily_sharpe_json = None if math.isnan(daily_sharpe) else float(daily_sharpe)
+
     return candidate_record(
         preset=preset,
         legs=legs_of(preset),
         is_reference=(preset == REFERENCE_PRESET),
-        equity_rows=equity_rows,
-        start=start,
-        end=end,
         cagr=cagr,
         max_dd=max_dd,
+        daily_sharpe=daily_sharpe_json,
         dsr=dsr,
         bonferroni_p=bonferroni_p,
         benchmark_excess_cagr=cagr - bench_cagr,
