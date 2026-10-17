@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -92,6 +92,72 @@ def test_stale_cache_triggers_a_refetch(tmp_path: Path):
     # Δ=1 again, from the refreshed cache — still refetches.
     load_calendar(cache_path=cache, provider=provider, today=date(2026, 10, 19))
     assert len(calls) == 3
+
+
+def test_a_trailing_provider_hides_the_session_that_just_completed(tmp_path: Path):
+    """The tail-lag made concrete, with a provider that actually TRAILS.
+
+    A fixed provider cannot demonstrate this: it returns the same list under
+    every default, so the invocation counts move while nothing is hidden. The
+    provider here advances its newest session with `today`, which is what the
+    real source does.
+
+    Under `max_staleness_days=0` the D+1 call must refetch, so the served
+    calendar contains D. Under any larger default it would be served the D-day
+    cache and D would be missing. This test pins the first half; the second half
+    is why the default is 0 and is recorded in the docstring.
+    """
+    cache = tmp_path / "cal.json"
+
+    def trailing_provider(today: date) -> list[str]:
+        # Completed sessions only: the newest is the last weekday strictly
+        # before `today`. range(4, -1, -1) makes the list END at `last`.
+        last = today - timedelta(days=1)
+        while last.weekday() >= 5:          # back off weekends
+            last -= timedelta(days=1)
+        return [(last - timedelta(days=n)).isoformat() for n in range(4, -1, -1)]
+
+    seen: list[date] = []
+
+    def provider_factory(day: date):
+        def _p():
+            seen.append(day)
+            return trailing_provider(day)
+        return _p
+
+    d = date(2026, 10, 19)                  # a Monday
+    cal_d = load_calendar(cache_path=cache, provider=provider_factory(d), today=d)
+    assert max(cal_d.days) == d - timedelta(days=3)   # Friday: D-1 is a weekend
+
+    n_after_first = len(seen)
+    cal_d1 = load_calendar(cache_path=cache,
+                           provider=provider_factory(d + timedelta(days=1)),
+                           today=d + timedelta(days=1))
+    assert len(seen) == n_after_first + 1, "the D+1 call must refetch, not be served the D cache"
+    # The session that completed ON d must now be present.
+    assert d in cal_d1.days, (
+        "serving the D-day cache on D+1 would hide the session that completed on D"
+    )
+
+
+def test_force_refresh_bypasses_a_fresh_cache(tmp_path: Path):
+    """The escape hatch for a consumer that needs a calendar including the
+    just-completed session: `max_staleness_days` bottoms out at 0 (same-day
+    served), so it cannot express 'always refetch'."""
+    cache = tmp_path / "cal.json"
+    calls = []
+
+    def provider():
+        calls.append(1)
+        return DAYS
+
+    load_calendar(cache_path=cache, provider=provider, today=date(2026, 10, 17))
+    assert len(calls) == 1
+    load_calendar(cache_path=cache, provider=provider, today=date(2026, 10, 17))
+    assert len(calls) == 1, "same-day cache is served by default"
+    load_calendar(cache_path=cache, provider=provider, today=date(2026, 10, 17),
+                  force_refresh=True)
+    assert len(calls) == 2, "force_refresh must bypass even a same-day cache"
 
 
 def test_trailing_calendar_cannot_answer_the_present_day():

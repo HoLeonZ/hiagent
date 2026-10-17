@@ -92,6 +92,7 @@ def load_calendar(
     provider: Callable[[], list[str]] = _cli_provider,
     today: date,
     max_staleness_days: int = 0,
+    force_refresh: bool = False,
 ) -> TradingCalendar:
     """Load the calendar, refetching when the cache was fetched before `today`.
 
@@ -127,9 +128,29 @@ def load_calendar(
     `market.snapshot` returning rows proves today is a session), not from this
     calendar. Do NOT synthesise future sessions — §0/§1 forbid fabricating data.
 
+    RESIDUAL WINDOW, AND WHEN TO PASS `force_refresh=True`.
+
+    `max_staleness_days=0` closes the CROSS-DAY lag, but a SAME-DAY window
+    remains and is bounded only by an assumption this module cannot verify:
+    whether the remote source republishes a session at/near the 15:00 close.
+
+    If it does, then on a trading day D a 09:25 fetch caches `days` ending at
+    D-1, and a 15:30 call the same day is served that cache — so `max(days)` is
+    D-1 when it should be D. Same off-by-one, compressed into one day.
+
+    No consumer in this design needs tail freshness: the 15:30 signal job takes
+    `signal_date` as a parameter and does not gate on this calendar, and the
+    intraday monitor's "is today a session" question is answered by the live
+    source (see above), because this calendar cannot answer it at all. So the
+    window is documented rather than worked around. A future consumer that DOES
+    need a calendar including the just-completed session must pass
+    `force_refresh=True` (or call `_cli_provider` directly) — the same-day cache
+    will otherwise be served, and `max_staleness_days` cannot express "always
+    refetch" because its floor is 0.
+
     Reference: spec §3.1 and risk R8.
     """
-    if cache_path.exists():
+    if cache_path.exists() and not force_refresh:
         try:
             blob = json.loads(cache_path.read_text(encoding="utf-8"))
             if not isinstance(blob, dict):
