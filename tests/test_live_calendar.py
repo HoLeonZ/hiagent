@@ -56,3 +56,48 @@ def test_next_beyond_calendar_raises_not_silently_wraps():
 
 def test_session_times_are_the_agreed_set():
     assert SESSION_TIMES == ("09:25", "10:30", "13:30", "14:45", "14:57")
+
+
+def test_stale_cache_triggers_a_refetch(tmp_path: Path):
+    """Freshness is TIME-based, because the remote calendar is trailing: a
+    coverage test against `today` is unsatisfiable on every calendar day, so a
+    coverage-based cache would be read but never used and the CLI would be
+    shelled out on every call."""
+    cache = tmp_path / "cal.json"
+    calls = []
+
+    def provider():
+        calls.append(1)
+        return DAYS
+
+    load_calendar(cache_path=cache, provider=provider, today=date(2026, 10, 17))
+    assert len(calls) == 1
+
+    # Same cache, two days later -> stale -> the provider must be called again.
+    load_calendar(cache_path=cache, provider=provider, today=date(2026, 10, 19))
+    assert len(calls) == 2, "a stale cache must refetch, not be served"
+
+
+def test_trailing_calendar_cannot_answer_the_present_day():
+    """A property of the REMOTE SOURCE, asserted so that a future change making
+    this True is recognised as either a source change or synthesised data — not
+    as a fix.
+
+    DAYS ends at 2026-10-16; a caller asking about 2026-10-17 gets False.
+    Intraday this is the whole point: today's session has not completed, so it
+    is not listed. The present-day question must come from a live source.
+    """
+    cal = TradingCalendar(frozenset(date.fromisoformat(d) for d in DAYS), None)
+    assert is_trading_day(cal, date(2026, 10, 17)) is False
+
+
+def test_empty_calendar_raises_a_usable_message():
+    """`min()` on an empty set raises "min() arg is an empty sequence", which is
+    not an operator-facing message. `load_calendar` cannot produce an empty
+    calendar, but `TradingCalendar` is public, so the guard belongs here."""
+    empty = TradingCalendar(frozenset(), None)
+    with pytest.raises(ValueError) as ei:
+        next_trading_day(empty, date(2026, 10, 20))
+    assert "calendar" in str(ei.value), (
+        f"message must name the calendar, got: {ei.value}"
+    )

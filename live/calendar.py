@@ -5,6 +5,15 @@ The repo has no calendar; engines infer the next trading day from kline dates
 current day's bar does not exist yet. This module sources the calendar from the
 hithink-finance CLI and caches it locally.
 
+TRAILING SOURCE — READ BEFORE USING `today`. `market.calendar` lists only
+COMPLETED sessions: it contains no present or future date and takes no window
+parameter (`one-year` is the lookback length). So `is_trading_day(cal, today)`
+is necessarily False intraday (today's session has not completed) and
+`next_trading_day(cal, today)` runs off the end and raises. The present-day
+question must be answered from a LIVE source (`market.auction-snapshot` /
+`market.snapshot` returning rows proves today is a session) — never from
+synthesised dates (§0/§1 forbid fabricating data). See spec §3.1 and risk R8.
+
 The provider is INJECTED so tests never touch the network.
 """
 from __future__ import annotations
@@ -21,8 +30,8 @@ logger = logging.getLogger(__name__)
 
 SESSION_TIMES: tuple[str, ...] = ("09:25", "10:30", "13:30", "14:45", "14:57")
 
-# A one-year capability window (market.calendar); refresh when the cache does
-# not cover today.
+# A one-year capability window (market.calendar). The cache is refreshed on TIME
+# staleness, not on coverage — see load_calendar for why coverage cannot work.
 _CACHE_VERSION = 1
 
 
@@ -52,6 +61,9 @@ def _cli_provider() -> list[str]:
     The row's date field is keyed ``"date"`` (NOT ``trade_date`` /
     ``trading_day``) and formatted basic-ISO ``YYYYMMDD``; the rows live under
     ``data.item`` rather than directly under ``data``.
+
+    The source is TRAILING: it lists only completed sessions and ends at the
+    last completed trading day (e.g. 2026-10-17 returned rows ending 2026-10-16).
     """
     out = subprocess.run(
         ["hithink-finance", "market", "calendar", "--format", "json"],
@@ -79,21 +91,51 @@ def load_calendar(
     cache_path: Path,
     provider: Callable[[], list[str]] = _cli_provider,
     today: date,
+    max_staleness_days: int = 1,
 ) -> TradingCalendar:
-    """Load the cached calendar, refetching only when today is not covered."""
+    """Load the calendar, refetching only when the cache is older than
+    `max_staleness_days`.
+
+    FRESHNESS IS TIME-BASED, NOT COVERAGE-BASED — deliberately.
+
+    The remote source is TRAILING: `market.calendar` lists only COMPLETED
+    sessions and contains no present or future date (the capability takes no
+    window parameter; `one-year` is the lookback length). A coverage test such
+    as `max(days) >= today` is therefore unsatisfiable on EVERY calendar day —
+    intraday, at a weekend, or on a holiday. A coverage-based cache would be
+    read but never used, and the CLI would be shelled out on every call while
+    the module claimed to cache: the cache-hit branch would be unreachable in
+    production, which an earlier revision of this module actually shipped.
+
+    Consequence for callers: `is_trading_day(cal, today)` is necessarily False
+    intraday (today's session has not completed, so it is not listed), and
+    `next_trading_day(cal, today)` runs off the end and raises. The present-day
+    question must be answered from a LIVE source (`market.auction-snapshot` /
+    `market.snapshot` returning rows proves today is a session), not from this
+    calendar. Do NOT synthesise future sessions — §0/§1 forbid fabricating data.
+
+    Reference: spec §3.1 and risk R8.
+    """
     if cache_path.exists():
         try:
             blob = json.loads(cache_path.read_text(encoding="utf-8"))
+            if not isinstance(blob, dict):
+                raise TypeError(f"cache is not a JSON object: {type(blob).__name__}")
             if blob.get("version") == _CACHE_VERSION:
-                cal = TradingCalendar(
-                    frozenset(date.fromisoformat(d) for d in blob["days"]),
-                    datetime.fromisoformat(blob["fetched_at"]),
+                fetched_on = date.fromisoformat(blob["fetched_on"])
+                if (today - fetched_on).days <= max_staleness_days:
+                    return TradingCalendar(
+                        frozenset(date.fromisoformat(d) for d in blob["days"]),
+                        datetime.fromisoformat(blob["fetched_at"]),
+                    )
+                logger.info(
+                    "calendar cache fetched on %s is stale for today=%s; refetching",
+                    fetched_on, today,
                 )
-                if cal.covers(today):
-                    return cal
-                logger.info("calendar cache does not cover %s; refetching", today)
-        except (json.JSONDecodeError, KeyError, ValueError):
-            logger.warning("calendar cache unreadable at %s; refetching", cache_path)
+        except (json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
+            logger.warning(
+                "calendar cache unreadable at %s (%s); refetching", cache_path, exc
+            )
 
     days = provider()
     if not days:
@@ -101,8 +143,14 @@ def load_calendar(
     fetched_at = datetime.now()
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(
-        json.dumps({"version": _CACHE_VERSION, "days": days,
-                    "fetched_at": fetched_at.isoformat()}, indent=2),
+        json.dumps({
+            "version": _CACHE_VERSION,
+            "days": days,
+            "fetched_at": fetched_at.isoformat(),
+            # Freshness is decided on THIS (the injected `today`), not on the
+            # wall clock, so the decision stays testable and reproducible.
+            "fetched_on": today.isoformat(),
+        }, indent=2),
         encoding="utf-8",
     )
     return TradingCalendar(frozenset(date.fromisoformat(d) for d in days), fetched_at)
@@ -115,16 +163,20 @@ def is_trading_day(cal: TradingCalendar, d: date) -> bool:
 def next_trading_day(cal: TradingCalendar, d: date) -> date:
     later = [x for x in cal.days if x > d]
     if not later:
-        raise ValueError(
-            f"calendar exhausted: no trading day after {d} in [{min(cal.days)}..{max(cal.days)}]"
+        span = (
+            f"[{min(cal.days)}..{max(cal.days)}]" if cal.days
+            else "the calendar is empty"
         )
+        raise ValueError(f"calendar exhausted: no trading day after {d} in {span}")
     return min(later)
 
 
 def prev_trading_day(cal: TradingCalendar, d: date) -> date:
     earlier = [x for x in cal.days if x < d]
     if not earlier:
-        raise ValueError(
-            f"calendar exhausted: no trading day before {d} in [{min(cal.days)}..{max(cal.days)}]"
+        span = (
+            f"[{min(cal.days)}..{max(cal.days)}]" if cal.days
+            else "the calendar is empty"
         )
+        raise ValueError(f"calendar exhausted: no trading day before {d} in {span}")
     return max(earlier)
