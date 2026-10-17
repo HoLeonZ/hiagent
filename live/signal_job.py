@@ -128,28 +128,36 @@ def assert_feeds_nonempty(universe: list[str], usable: list[str]) -> None:
     策略跳过已持仓的票与已在 `pending_entries` 中的票 (差额 = 当日持仓数, ≤
     `max_positions`)。这无妨: 本守卫要抓的是「塌缩到 0」, 不是精确计量 universe。
 
-    但**空 `usable` 有两个不同成因**, 指向完全不同的排查方向:
+    空 `usable` 有**三个**可达成因, 指向完全不同的排查方向, 消息必须把三条都列出来
+    (三条都抛错, 不写分支去自动区分 —— 归因完整才是本函数的价值):
 
     1. `min_bars` / NaN 闸门把每只票都丢了 (窗口或配置问题);
     2. preset 打开了 `require_market_breadth_bear`, 而当根 bar 的 breadth 门未过时
        入场循环短路 (`if regime_ok and self._all_conditions(d)`,
-       replay_strategy_v3.py:531), 于是**该日一条日志都不写** —— 这是策略状态,
-       不是数据问题。
+       replay_strategy_v3.py:531), 于是**该日一条日志都不写** —— 策略状态, 不是
+       数据问题。实测 75 个 preset 里只有 `v66_regime` 打开该门, 本计划候选都不开,
+       所以这是小概率成因;
+    3. **当日不是交易日** —— 本作业**不判交易日历** (由调用方保证), 而 universe 的
+       as-of 语义对非交易日仍返回**非空**列表, 于是 `on_date` 为空、守卫抛错。
+       这是三者里最常见的误用。
 
-    两者都抛错 (不试图自动区分), 但错误信息必须**同时**列出这两个成因, 否则运维
-    会去查一个并不存在的数据问题。实测 75 个 preset 里只有 `v66_regime` 打开该门,
-    本计划的候选都不开 —— 所以这是一条消息质量要求, 不是功能要求。
+    成因 3 的措辞不带具体日期: 本函数的接口就是 `(universe, usable)` (与 spec 一致,
+    也保持纯函数可离线单测), 拿不到 `signal_date`; 而调用方本来就知道自己传的是哪
+    一天。**不要**为此加一个日期参数。
 
     空 universe 是合法输入 (合成库 / as_of 早于数据覆盖), 此时无事可断, 直接返回。
     """
     if universe and not usable:
         raise ValueError(
             f"usable universe is empty: 0/{len(universe)} codes produced a log "
-            f"entry for this date. Either the min_bars/NaN gate dropped every "
-            f"stock (a window/config problem), or this preset enables "
-            f"require_market_breadth_bear and the breadth gate was closed on "
-            f"every bar that day (a strategy state, not a data problem). Both "
-            f"must never be conflated with an empty-signal day (§0 F-01)."
+            f"entry for the as-of date. One of:\n"
+            f"  * the min_bars/NaN gate dropped every stock (a window/config "
+            f"problem);\n"
+            f"  * this preset enables require_market_breadth_bear and the "
+            f"breadth gate was closed on every bar that day (a strategy state, "
+            f"not a data problem);\n"
+            f"  * the as-of date is not a trading day — this job does NOT check "
+            f"the calendar, so the caller must ensure signal_date is a session."
         )
     return None
 
