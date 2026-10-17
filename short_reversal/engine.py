@@ -75,6 +75,21 @@ def _metrics_from_holder(holder: dict, start: str, end: str, cfg: dict) -> dict:
     # 可能被记成胜。实测 (cap50/W2): 844 笔里有 3 笔两字段符号相反, 报告 win_rate
     # 因此高 0.4pp。`net_pnl` / `net_return` 走的是含下限的 cash walk, 是权威口径。
     wins = sum(1 for t in trades if t["net_pnl"] > 0)
+
+    # §0 (2026-10-17): `avg_pnl` 是**无权**平均 —— 一笔 ¥300 的残仓与一笔 ¥100 万的
+    # 仓位同等计入。实测 (v50_slope/W2): 63 笔残仓只占**名义额的 0.052%**, 却把
+    # avg_pnl 从 -0.226% 拉到 -0.972% (t 从 -0.43 拉到 -2.39) —— **它会改变结论**。
+    # 保留 avg_pnl 的既有定义 (它已发布), 但**同时给出按名义额加权的版本**与
+    # 残仓占比, 让失真无法再隐形。
+    _notional = [(t["entry_price"] * t["size"]) for t in trades]
+    _tot_n = sum(_notional)
+    _w = [(n / _tot_n) for n in _notional] if _tot_n > 0 else []
+    avg_pnl_w = float(sum(w * t["net_return"] for w, t in zip(_w, trades)))
+    # 残仓判据: 名义额 < 初始资金的 5% —— 这些是量能上限/现金闸门裁出来的残余仓位
+    _MICRO = INITIAL_CAPITAL * 0.05
+    _micro = [n for n in _notional if n < _MICRO]
+    micro_count = len(_micro)
+    micro_notional_share = (sum(_micro) / _tot_n) if _tot_n > 0 else 0.0
     win_rate = wins / trades_count if trades_count > 0 else 0.0
     # 同上: 用含下限的 `net_return` (逐笔收益率), 而非 rate-only 的 `net`。
     avg_pnl = float(np.mean([t["net_return"] for t in trades])) if trades_count > 0 else 0.0
@@ -110,6 +125,10 @@ def _metrics_from_holder(holder: dict, start: str, end: str, cfg: dict) -> dict:
         #  光看文件名分不出是谁的。)
         "equity_curve": holder.get("equity_curve", []),
         "avg_pnl": avg_pnl,
+        # 无权 vs 按名义额加权 —— 两者差异即"残仓污染"的量度 (§0)
+        "avg_pnl_notional_weighted": avg_pnl_w,
+        "micro_trade_count": micro_count,
+        "micro_trade_notional_share": micro_notional_share,
         "avg_hold_days": avg_hold,
         "tp_count": tp_count,
         "sl_count": sl_count,
