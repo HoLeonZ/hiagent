@@ -224,7 +224,10 @@ def run_backtest_v3(
     if "ensemble_substrategies" in cfg:
         return _run_ensemble(cfg, start, end, db_path, min_bars)
 
-    universe = load_universe_asof(cfg["universe"], start, db_path)
+    universe = load_universe_asof(
+        cfg["universe"], start, db_path,
+        exclude_suspected_st=cfg.get("exclude_suspected_st", False),
+    )
     panel = _load_panel(db_path, start, end, universe)
     feeds = build_per_stock_feeds(panel, universe, min_bars=min_bars)
 
