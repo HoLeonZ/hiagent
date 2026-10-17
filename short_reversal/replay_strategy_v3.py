@@ -560,6 +560,12 @@ class Phase3V3Strategy(bt.Strategy):
                 "date": bar_date,
                 # Round 16 (CLAUDE.md §2): equity row uses total_cash.
                 "cash": self.total_cash,
+                # §2 三池: main.py 的 cash_walk.csv 逐池报告需要这三个键。
+                # 记录器此前只写汇总 total_cash, 导致 main.py 的
+                # row.get("locked_margin", 0.0) 永远走 fallback。
+                "free_cash": self.free_cash,
+                "locked_margin": self.locked_margin,
+                "settling_funds": self.settling_funds,
                 "holdings_value": holdings_value,
                 "equity": nav,
                 "drawdown": dd,

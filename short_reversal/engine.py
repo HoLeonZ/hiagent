@@ -137,6 +137,13 @@ def _weighted_equity_curve(
     `equity == cash + holdings_value` (逐项线性组合 ⇒ 恒等式仍然成立), 而这是
     唯一与「当日是否持仓」无关的结构性断言。
 
+    §2 三池 (`free_cash` / `locked_margin` / `settling_funds`) 同样按权重合成:
+    ensemble 行必须与单腿行 **schema 完全一致**。少了这三个键, main.py 的
+    cash_walk.csv 在 ensemble 路径上又会静默回落到硬编码的 0.0 —— 也就是
+    tests/test_short_reversal_daily_equity.py::test_rows_carry_the_three_cash_pools
+    记录的那个缺陷, 只是换到了另一条路径上。池的加权和恰等于 `cash` 的加权和
+    (每腿都有 free + locked + settling = total), 所以对账关系仍然成立。
+
     §1 缺失值语义: 某腿在某日缺行 (该腿 panel 没有该交易日) 时, 该腿当日按
     **前值**参与加权 —— 只向前填充, 绝不向后填充 (`bfill` 是 §1 明令禁止的)。
     某腿首行之前的日期, 该腿尚未产生任何成交, 按 `w_i · INITIAL_CAPITAL` 计:
@@ -164,6 +171,9 @@ def _weighted_equity_curve(
 
     for day in dates:
         cash = 0.0
+        free_cash = 0.0
+        locked_margin = 0.0
+        settling_funds = 0.0
         holdings_value = 0.0
         equity = 0.0
         for i in range(n_legs):
@@ -175,15 +185,27 @@ def _weighted_equity_curve(
             row = latest[i]
             if row is None:
                 # 该腿当日尚无记录 → 尚未交易的初始资金 (不是未来信息)。
+                # 未动用的现金全在 free 池, 另两池为 0。
                 leg_cash = INITIAL_CAPITAL
                 leg_holdings = 0.0
                 leg_equity = INITIAL_CAPITAL
+                leg_locked = 0.0
+                leg_settling = 0.0
+                leg_free = INITIAL_CAPITAL
             else:
                 leg_cash = float(row["cash"])
                 leg_holdings = float(row.get("holdings_value", 0.0))
                 leg_equity = float(row.get("equity", leg_cash + leg_holdings))
+                leg_locked = float(row.get("locked_margin", 0.0))
+                leg_settling = float(row.get("settling_funds", 0.0))
+                leg_free = float(
+                    row.get("free_cash", leg_cash - leg_locked - leg_settling)
+                )
             w = weights[i]
             cash += w * leg_cash
+            free_cash += w * leg_free
+            locked_margin += w * leg_locked
+            settling_funds += w * leg_settling
             holdings_value += w * leg_holdings
             equity += w * leg_equity
 
@@ -192,6 +214,9 @@ def _weighted_equity_curve(
         out.append({
             "date": day,
             "cash": cash,
+            "free_cash": free_cash,
+            "locked_margin": locked_margin,
+            "settling_funds": settling_funds,
             "holdings_value": holdings_value,
             "equity": equity,
             "drawdown": drawdown,

@@ -20,12 +20,6 @@ from hiagent_config import get_db_path
 
 PRESET = "v50_slope"
 START, END, MIN_BARS = "2025-09-12", "2026-09-12", 150
-# The row schema keeps `date` as a `datetime.date` (do not stringify it — see
-# test_equity_curve_has_the_keys_the_reporting_path_reads), so the window bound
-# must be a date too: `datetime.date >= str` raises TypeError in Python 3, and
-# the earlier revision of the assertion below could never have passed. Same
-# bound, same intent, comparable type.
-END_DATE = dt.date.fromisoformat(END)
 
 
 @pytest.fixture(scope="module")
@@ -74,6 +68,26 @@ def test_equity_curve_has_the_keys_the_reporting_path_reads(metrics: dict):
         )
 
 
+def test_rows_carry_the_three_cash_pools(metrics: dict):
+    """`main.py`'s cash_walk.csv reports the pools per row.
+
+    This test exists because of a defect that shipped once: main.py read
+    `row.get("locked_margin", 0.0)` while NO producer emitted that key, so the
+    fallback always fired and the "fix" reproduced the hardcoded 0.0 it claimed
+    to remove — with a different appearance. Assert the keys are produced, and
+    that they reconcile with `cash`.
+    """
+    for row in metrics["equity_curve"]:
+        assert {"free_cash", "locked_margin", "settling_funds"} <= set(row), (
+            "the recorder must emit the three pools, or main.py's per-pool "
+            "reporting silently falls back to the hardcoded zeros"
+        )
+        assert row["cash"] == pytest.approx(
+            row["free_cash"] + row["locked_margin"] + row["settling_funds"],
+            rel=1e-9, abs=1e-4,
+        ), "the three pools must reconcile to total_cash (replay_strategy_v3.py:445)"
+
+
 def test_equity_curve_reaches_the_end_of_the_requested_window(metrics: dict):
     """The curve must COVER the requested window's end — a curve ending before
     END means the metrics were computed over a different span than they are
@@ -95,7 +109,13 @@ def test_equity_curve_reaches_the_end_of_the_requested_window(metrics: dict):
     """
     dates = [row["date"] for row in metrics["equity_curve"]]
     assert dates, "equity curve is empty"
-    assert dates[-1] >= END_DATE, f"curve ends {dates[-1]}, before END={END}"
+    # `dates` holds datetime.date objects while END is a "YYYY-MM-DD" string.
+    # Comparing them directly raises TypeError — it does not merely fail — so
+    # convert one side. Do NOT "fix" this by comparing strings: the recorder's
+    # date type is deliberate (see the schema test above).
+    assert dates[-1] >= dt.date.fromisoformat(END), (
+        f"curve ends {dates[-1]}, before END={END}"
+    )
     assert len(set(dates)) >= 150, (
         f"only {len(set(dates))} distinct dates on the curve; a year-scale "
         f"window should record most trading days"
