@@ -12,8 +12,12 @@ adj open/high/low/close, baseline parity 保留。
 """
 from __future__ import annotations
 
+import logging
+
 import backtrader as bt
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 class AShareData(bt.feeds.PandasData):
@@ -87,6 +91,15 @@ def build_per_stock_feeds(
     feeds: list[tuple[str, AShareData]] = []
     # V3a: 检测 panel 是否含 adj_* 列, 缺则补 NaN 占位
     needs_adj = "adj_close" not in panel.columns
+
+    # F-01 (2026-10-17, CLAUDE.md §0 fail-fast): 不再静默丢弃。
+    # 面板窗口 [start-180d, end+60d] 若短于 min_bars, 会把**整个 universe**
+    # 丢空, run_backtest_v3 随后返回一个格式完好、trades=0 的结果 —— 与
+    # 「市场当天没信号」无法区分。实机复现 (end=2026-10-16):
+    #   start=2026-07-01 面板 188 bars → 3190 只全丢 → 0 笔 (5.9 秒跑完)
+    #   start=2025-09-12 面板 385 bars → 3161 只全留 → 80 笔
+    dropped: list[tuple[str, int]] = []
+
     for code in codes:
         sub = (
             panel[panel["thscode"] == code]
@@ -94,6 +107,7 @@ def build_per_stock_feeds(
             .reset_index(drop=True)
         )
         if len(sub) < min_bars:
+            dropped.append((code, len(sub)))
             continue
         if needs_adj:
             for col in ("adj_open", "adj_high", "adj_low", "adj_close"):
@@ -104,4 +118,31 @@ def build_per_stock_feeds(
         # 会抛 TypeError;若需 windowed run,需用 bt.date2num(float) 替代。
         feed = AShareData(dataname=sub, plot=False)
         feeds.append((code, feed))
+
+    # 全部被丢 = 配置错误, 必须 fail-fast 而不是返回空 feed 列表。
+    if codes and not feeds:
+        max_bars = max((n for _, n in dropped), default=0)
+        span = ""
+        if len(panel):
+            span = (
+                f", panel spans {panel['date'].min():%Y-%m-%d}"
+                f"..{panel['date'].max():%Y-%m-%d}"
+            )
+        raise ValueError(
+            f"build_per_stock_feeds built 0/{len(codes)} feeds: every requested "
+            f"stock has fewer than min_bars={min_bars} bars "
+            f"(max observed bars={max_bars}{span}). This is a window/config "
+            f"problem, not a quiet market — widen the [start, end] window "
+            f"(the panel covers start-180d..end+60d) or lower min_bars."
+        )
+
+    # 部分被丢是正常的, 但必须可观测。
+    if dropped:
+        sample = ", ".join(f"{c}({n})" for c, n in dropped[:20])
+        more = f" (+{len(dropped) - 20} more)" if len(dropped) > 20 else ""
+        logger.warning(
+            "build_per_stock_feeds dropped %d/%d stocks below min_bars=%d: %s%s",
+            len(dropped), len(codes), min_bars, sample, more,
+        )
+
     return feeds

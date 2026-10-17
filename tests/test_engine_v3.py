@@ -74,12 +74,35 @@ def test_high_cagr_preset_profitable():
     assert m["final_capital"] > 1_000_000.0
 
 
-def test_short_window_returns_empty():
-    """窗口太短（5 天）→ 不会有交易（MA60 warmup 都不够）。"""
+def test_short_window_raises_instead_of_silently_returning_empty():
+    """窗口短于 min_bars → 抛 ValueError，而不是返回一个空结果。
+
+    F-01 (2026-10-17, CLAUDE.md §0 fail-fast): 面板窗口是 [start-180d, end+60d]。
+    原来 len(sub) < min_bars 时静默 continue, 于是短窗口把**整个 universe**
+    丢空, run_backtest_v3 返回格式完好、trades=0 / final_capital=initial 的
+    结果 —— 与「市场当天没信号」在输出上完全不可区分。
+
+    公共契约变更: 结构上不可能完成的窗口现在是 ValueError, 不是空结果。
+    实机来源: end=2026-10-16 时 start=2026-07-01 的面板只有 188 bars,
+    min_bars=200 把 3190 只全丢, 5.9 秒跑完、0 笔交易。
+    """
     db = _real_db()
     assert db is not None
-    m = run_backtest_v3(
-        "v35_agg_pctchg_04_09", "2025-09-12", "2025-09-19", db
-    )
-    assert m["trades_count"] == 0
-    assert m["final_capital"] == pytest.approx(1_000_000.0, abs=1.0)
+    with pytest.raises(ValueError, match="min_bars"):
+        run_backtest_v3(
+            "v35_agg_pctchg_04_09", "2025-09-12", "2025-09-19", db
+        )
+
+
+def test_short_window_raises_and_names_the_observed_bar_count():
+    """错误信息必须给出实际 bar 数, 好让运维区分「配置错」与「行情静」。"""
+    db = _real_db()
+    assert db is not None
+    with pytest.raises(ValueError) as ei:
+        run_backtest_v3(
+            "v35_agg_pctchg_04_09", "2025-09-12", "2025-09-19", db
+        )
+    msg = str(ei.value)
+    assert "min_bars=200" in msg
+    assert "max observed bars=" in msg
+    assert "widen" in msg or "lower min_bars" in msg
