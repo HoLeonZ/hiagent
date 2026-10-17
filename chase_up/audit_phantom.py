@@ -73,7 +73,7 @@ def audit_trades_csv(csv_path: Path) -> dict:
     }
 
 
-def main():
+def main() -> int:
     """审计所有 chase_up/results/*_trades.csv。"""
     results_dir = ROOT / "chase_up" / "results"
     csv_files = sorted(results_dir.glob("*_trades.csv"))
@@ -109,7 +109,15 @@ def main():
 
     print("=" * 80)
     print(f"总计: trades={total_trades} phantom={total_phantom}")
-    print(f"phantom ratio: {100*total_phantom/max(total_trades,1):.2f}%")
+    if total_trades == 0:
+        # §0 非空转钳制(附五十八):**0 个输入 ≠ "0% phantom"**。
+        # 此前这里写 `100*total_phantom/max(total_trades,1)` —— `max(...,1)` 正是
+        # 那个"静默的零":它把"没有数据可审"变成一个看起来干净的成功率,而
+        # `results/` 按 §7 必须 gitignored ⇒ **fresh clone 里它恒为 0.00%**。
+        print("phantom ratio: **N/A** —— 没有可审计的成交表,本工具**未做任何审计**。")
+        print("这不是通过:先用 `--save-trades` 产出 *_trades.csv 再跑。")
+    else:
+        print(f"phantom ratio: {100*total_phantom/total_trades:.2f}%")
 
     # 也检查没 CSV 的 preset
     all_presets = [
@@ -124,6 +132,11 @@ def main():
         for p in missing:
             print(f"  - {p}")
 
+    # 退出码:0=审过且干净;1=**没有输入**(空转,不得当作通过);2=审出 phantom
+    if total_trades == 0:
+        return 1
+    return 0 if total_phantom == 0 else 2
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
