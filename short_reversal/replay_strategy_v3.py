@@ -838,7 +838,17 @@ class Phase3V3Strategy(bt.Strategy):
         ep = pos["entry_price"]
         tp_p = ep * (1 - self.p.tp_pct)
         sl_p = ep * (1 + self.p.sl_pct)
-        held = len(self) - 1 - pos["entry_bar"]
+        # §?: `entry_bar` 存的是**计数** (成交时 `entry_bar = len(self)`), 不是索引。
+        # 旧实现写成 `len(self) - 1 - entry_bar`, 把计数当索引用 ⇒ `held` 在成交
+        # 当日为 **-1** 而非 0 ⇒ `held >= max_hold` 首次成立是在入场后第 **max_hold+1**
+        # 根 bar —— 即 `max_hold=N` 实际持有 N+1 根。
+        # 实测 (max_hold=5): 入场 2024-12-27 → 出场 2025-01-07 (第 6 根),
+        # 而非 2025-01-06 (第 5 根)。样本 3/3 一致。
+        # 族内对照: chase_up / uptrend 用 `bars = t - entry_t` (入场日=0), 语义正确
+        # ⇒ 只有本引擎差一根 (族内不对称的又一例)。
+        # 同文件 984 行 `hold_days = len(self) - pos["entry_bar"]` 用的是**计数**口径 ——
+        # 两者本应相等, 旧实现自相矛盾, 其中 `held` 是错的一方。
+        held = len(self) - pos["entry_bar"]
         # CRITICAL: exit 必须滞后 entry → 至少 1 完整 bar 后才允许出场
         # (CLAUDE.md P3: exit_date > entry_date, ≥ 1 日历日 / ≥ 1 bar)
         if held < 1:
