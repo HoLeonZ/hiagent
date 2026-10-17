@@ -4533,3 +4533,93 @@ max_hold 出场在 cycle 里是**次根 bar 开盘**成交(`submit_sell` → `_n
 若恰好也封板则不再复查(次根的无 bar 情形由 broker 的停牌分支处理)。
 这属 cycle 的**成交口径**问题 —— 审计附二十六 已把它登记为待决策(方向由 §0 + 三引擎
 先例决定,但属全量结果变更),故此处**不顺手改**,只写明边界。
+
+---
+
+## 附五十七 —— `cycle` 的**审计工具自己是空转的**:一条盯错文件的守卫、一条**与审计修复相反**的判据、一条过期前提
+
+`cycle_price_action/audit_phantom.py` 是"Layout C 结构性 phantom-free"的检查工具,
+共 11 条 check,并与 `tests/test_cycle_price_action_layout_c_invariants.py` "同步"
+(测试文件头部原话)。逐条核对后发现三处问题,而**它一次都没跑过**(全库检索:没有任何
+测试或脚本调用 `audit_cycle_price_action_invariants` / 该模块;只有文档字符串提到它)。
+
+### 1 · 那条守卫**盯错了文件**,而且判词不判行为(恒绿)
+
+```python
+checks["replay_broker_fail_fast"] = "RuntimeError" in broker_text   # replay_broker.py
+```
+
+`replay_broker.py` 里**没有任何 `raise RuntimeError`** —— 仅有的两处 "RuntimeError"
+都在**注释**里(一处讲停牌路径的历史,一处是我附五十五 的修复说明)。真正的 fail-fast 在
+**另一个文件**:`data_feed.ReplayDataProvider.open_price`(库里**一行都没有**的标的抛错,
+而已知标的当日缺 bar(停牌)返回 `None`,由 `has_any_bar` 区分)。
+
+于是这条守卫有两层毛病,而它一直是 ✓:
+(a) 把 raise 从 `data_feed.py` 删掉,它**仍然绿**;
+(b) 注释里出现该词就够 —— 它判的是词。
+
+**镜像的测试** `test_replay_broker_fail_fast()` 一字不差地犯了同样的错。
+
+### 2 · 那条判据**要的与审计自己的修复相反**
+
+```python
+checks["data_feed_no_raw_adj_split"] = "raw_" not in text.replace("raw_close","").replace("adj_close","") and ...
+```
+
+实测这一条**一直是 ✗**(工具跑到最后会打印"⚠️ Layout C 结构性契约被破坏"),而套件全绿 ——
+两边**互相矛盾**,却没人发现,因为工具没人跑。它为什么 ✗:
+
+* 表名 **`raw_adjustment_events`**(§3 公司行为事件源,必需)含 `raw_`;
+* 散文里的 **`raw_only`**(raw-only 降级分支的说明)含 `raw_`;
+
+**更要紧的是它想要的东西与审计的修复方向相反**:审计 P2-10b 恰恰**要求** feed
+`LEFT JOIN v_daily_hfq`,把 `adj_close` 交给信号层(§3「指标必须用复权价」)。也就是说,
+这条判据会把审计自己的修复判成"Layout C 违约"。
+
+**真实属性**是:`Layout C` 的**执行**域必须单一(不得出现 `raw_*/adj_*` 的**价格列**),
+而**信号**域用 `adj_close` 是允许且必需的。已按**列名**精确重写
+(`raw_open/high/low/close/prev_close` + `adj_open/high/low/prev_close` 八个 token)。
+
+### 3 · 那条"数据 ETL 挡路"的前提**已不成立**
+
+原文(docstring 与 `main()` 的输出里都有):
+
+> 「由于 backtest 在真实 panel 上反复触发 fail-fast 数据缺口(000695.SZ@2025-04-30 /
+>   多次股票数据 NULL),trade-level 审计需要先打通数据 ETL。」
+
+实测:
+
+| 主张 | 实测 |
+|---|---|
+| "多次股票数据 NULL" | `v_daily` 全表 **10,364,755 行,OHLC 为 NULL 的行 = 0** |
+| `000695.SZ@2025-04-30` 是"数据缺口" | 该股 **04-25/04-28/04-29 有行,04-30 没有行**,05-06 又有 —— 那是**缺 bar = 停牌**,属 §1 的**合法市场状态**,引擎按设计处理(不成交、持仓顺延) |
+| "trade-level 审计做不了" | 已经在跑:`tests/golden/cycle_v1_baseline.json`(492 笔哈希基线,每次套件重算比对)+ 2026-01-01..2026-09-01 的 **5,715 笔**端到端回测 |
+
+即"登记逾期"的又一例(附十九 立过这条):**记录当初是诚实的,但它依赖的前提消失后没人回来改**。
+已把该前提删除,并写明本工具只做结构性检查、**不是** trade-level 审计的替代品,
+权威门禁是那个测试文件。
+
+### 4 · 自查:我第一次改的那版判据**仍然是可绕过的**
+
+把 check 8 改成 `"raise RuntimeError" in data_feed_text and "has_any_bar" in data_feed_text`
+之后,我做两向验证(把 `open_price` 的 fail-fast 整个删掉,看它是否变 ✗)—— 结果它
+**仍然 ✓**:因为同一文件里 `next_trading_date` 也有一处 `raise RuntimeError`
+(「no trading date after …」)。判据又被另一个无关的同类词满足了。
+
+改成**切出函数体再判**(与同文件 `sl_first_in_intraday_check` 的既有手法一致)后:
+删掉 fail-fast ⇒ `[✗] data_provider_fail_fast_on_unknown_symbol`(10 pass / 1 fail);
+恢复 ⇒ 11 pass / 0 fail。
+
+> 这是本轮第三次栽在同一处(附四十三 扫描器误报、附五十六 恒假对照、这里词法判据):
+> **写守卫时最该问的不是"它会红吗",而是"我把被测的东西删掉,它会不会红"。**
+> 前两次我靠"结果可疑"发现,这一次靠**主动两向验证**发现 —— 后者才是应该固化的习惯。
+
+### 5 · 改动清单
+
+| 文件 | 改动 |
+|---|---|
+| `cycle_price_action/audit_phantom.py` | check 7b 按列名精确重写;check 8 改盯 `data_feed.open_price` 的**函数体**;docstring 与 `main()` 输出里的过期前提删除 |
+| `tests/test_cycle_price_action_layout_c_invariants.py` | **删除**空转的 `test_replay_broker_fail_fast`(原地留注释说明为何删、为何不许加回来);**新增** `test_data_gap_fail_fast_versus_suspension_is_distinguished` —— 两向钉住「未知标的 ⇒ 抛错」「已知标的缺 bar(停牌)⇒ 返回 None」 |
+
+**没有**把工具挂进套件当门禁 —— 它的判据仍是文本型,而文本型判据会误报(本附录 §2 就是
+实证)。它作为**可读诊断**保留,门禁在测试文件里(含行为断言)。这一点写进了工具的文档字符串。
