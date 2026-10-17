@@ -252,7 +252,14 @@ PRESETS: dict[str, dict] = {
         # increments n_trials for DSR/Bonferroni purposes」。
         # (更早还有几轮对本 preset 的评估 —— Iteration 78 的滑点开关对比 (2 窗口 × 2 设置)
         #  等 —— 尚未计入; 属**已知欠账**, 记在此处待补齐, 不假装它不存在。)
-        "n_comparisons": 136,
+        # §5 试验记账 (2026-10-19, Iteration 114): +8。
+        # 本轮沿 `regime.min_breadth` 轴在 IND / W2(截至 09-18) 各评估 4 档
+        # (无 gate / 0.35 / 0.45 / 0.55) = 8 次。结论是"该轴非单调、默认点是窗口特异的",
+        # **不改动预设** —— 但看过了就要计 (§5: every iteration increments n_trials)。
+        # 更早还有几轮对本 preset 的评估 (Iteration 78 的滑点开关对比 = 2 窗口 × 2 设置)
+        # **尚未计入**; 属**已知欠账**, 记在此处待补齐, 不假装它不存在。
+        # (上面那条 Iteration 82 的 +10 已经包含在 136 里, 不重复计。)
+        "n_comparisons": 144,
         "tp_pct": 0.2628,
         "sl_pct": 0.021,
         "max_hold": 18,
