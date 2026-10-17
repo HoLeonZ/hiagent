@@ -44,7 +44,7 @@ def test_append_record_is_idempotent_on_same_signal_id(tmp_path: Path):
         signal_id="2026-10-16|v50_slope", signal_date="2026-10-16",
         preset="v50_slope", leg="v50_slope", candidates=[],
         universe_size=3190, engine_git_sha="deadbeef",
-        n_trials_at_generation=78, generated_at="2026-10-16T15:30:00",
+        n_trials_at_generation=78, as_of_time="2026-10-16",
     )
     p = tmp_path / "signals.jsonl"
     assert append_record(p, rec) is True
@@ -59,7 +59,7 @@ def test_append_record_keeps_two_dates(tmp_path: Path):
             signal_id=f"{d}|v50_slope", signal_date=d, preset="v50_slope",
             leg="v50_slope", candidates=[], universe_size=1,
             engine_git_sha="x", n_trials_at_generation=78,
-            generated_at=f"{d}T15:30:00"))
+            as_of_time=d))
     assert [r.signal_date for r in load_records(p)] == ["2026-10-15", "2026-10-16"]
 
 

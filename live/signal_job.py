@@ -86,9 +86,10 @@ _CANDIDATE_KEYS = ("thscode", "date", "preset", "failed_at")
 class SignalRecord:
     """某日某 preset (ensemble 时为某条腿) 的真值信号。
 
-    `generated_at` 取调用方声明的 `as_of_time` (而非墙上时钟), 因此整条记录是
-    其输入的纯函数 —— 相同输入重跑产生的行逐字节相同 (§0 可复现)。CLI 应把
-    运行时刻 (如 "2026-10-16T15:30:00") 作为 as_of_time 传入。
+    `as_of_time` 是**调用方传入的 as-of 戳, 也是本记录唯一的时间字段** —— 不另设
+    墙上时钟的生成时刻字段。因此一条记录是它输入的纯函数: 相同输入重跑产生的行
+    逐字节相同 (§0 可复现), 而「何时跑的」不属于信号本身。`as_of_time` 必须不早于
+    `signal_date` (否则就是用未来当作过去, 违反 §1), 由 `run_signal_job` 强制。
     """
 
     signal_id: str
@@ -99,7 +100,7 @@ class SignalRecord:
     universe_size: int
     engine_git_sha: str
     n_trials_at_generation: int
-    generated_at: str
+    as_of_time: str
 
 
 def panel_end_for_as_of(signal_date: str) -> str:
@@ -238,8 +239,11 @@ def _leg_plan(preset: str, cfg: dict, tags: set[str]) -> list[str]:
         expected = {preset}
         planned = [preset]
     else:
-        # v64_ensemble_3leg 把 v50_slope 申报了两次; 日志只有腿名字段, 同名腿
-        # 无法区分, 故去重 (保留首次出现顺序) —— 这是 Task 3 日志的信息上限。
+        # 去重 (保留首次出现顺序) 是**潜在**保护, 不是当前库的性质: 三个候选
+        # ensemble (v63_ensemble / v64_ensemble_3leg / v79_ens44) 申报的腿名
+        # 两两互异, 此处不会触发。但若将来某个 preset 把同名腿申报两次, 因为
+        # Task 3 的日志只带腿名字段, 那两条腿在日志里无法区分, 去重至少能避免
+        # 同一 signal_id 被写两遍。
         planned = list(dict.fromkeys(legs_declared))
         expected = set(planned)
 
@@ -290,10 +294,10 @@ def run_signal_job(
       db_path: DuckDB 路径 (DB sync 必须已完成; 数据里没有这一天时本函数抛错)。
       state_dir: 状态目录, 由调用方给 (spec §4.1: 绝不放仓库内)。记录落
                  `state_dir / "signals.jsonl"`。
-      as_of_time: 调用方声明的 as-of 时刻 (如 "2026-10-16" 或
-                 "2026-10-16T15:30:00")。它既作为 `generated_at` 落盘, 也用于
-                 §1 下限校验: as-of 早于 signal_date 意味着本作业会读到 as-of
-                 之后的行, 直接抛错。
+      as_of_time: 调用方声明的 as-of 戳 (如 "2026-10-16" 或 "2026-10-16T15:30:00")。
+                 它是记录里唯一的时间字段 (见 `SignalRecord`), 并受一条 §1 下限
+                 校验: 早于 signal_date 的 as-of 意味着本作业会读到 as-of 之后
+                 的行, 直接抛错。
 
     返回: 声明顺序中第一条腿的 `SignalRecord` (非 ensemble 时即该 preset 的唯一
           一条); ensemble 的其余腿已写入 `signals.jsonl`, 用 `load_records` 读回。
@@ -354,7 +358,7 @@ def run_signal_job(
                 universe_size=len(universe),
                 engine_git_sha=sha,
                 n_trials_at_generation=n_trials,
-                generated_at=as_of_time,
+                as_of_time=as_of_time,
             )
         )
 
