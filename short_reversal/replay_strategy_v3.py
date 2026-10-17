@@ -59,29 +59,38 @@ UP_STREAK_HIGH = 10
 # 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION。超出部分丢弃(不挂单)。
 MAX_VOL_PARTICIPATION = 0.10
 
-# v67 (2026-10-13, CLAUDE.md §4): board-and-date-aware 跌停阈值。
-# 主板 ±10% (0.095 容差); 创业板 300.SZ 2020-08-24 起 ±20% (之前 ±10%);
-# 科创板 688.SH ±20% (2019-07-22 开板)。20% 板的票用 10% 阈值会误判跌停,
-# 导致本可成交的空头 entry 被错误跳过。broad_only universe 必须走此逻辑。
+# v67 (2026-10-13, CLAUDE.md §4): board-and-date-aware **涨跌停**阈值。
+# 主板 ±10% (0.095 容差); 创业板 300/301/302.SZ 2020-08-24 起 ±20% (之前 ±10%);
+# 科创板 688/689.SH ±20% (2019-07-22 开板)。20% 板的票用 10% 阈值会误判封板,
+# 导致本可成交的空头 entry(跌停侧)与 cover(涨停侧)被错误跳过。
+# **两侧都必须走 `_board_limit_threshold`**(附五十三:回补侧曾漏掉,前缀也曾漏 301/302/689)。
 _CHINEXT_20PCT_START = (2020, 8, 24)
 _LIMIT_THRESHOLD_20PCT = 0.195
 
 
 def _board_limit_threshold(code: str, bar_date, default: float) -> float:
-    """按板 + 日期返回跌停阈值 (CLAUDE.md §4)。主板返回 default (保持兼容)。"""
+    """按板 + 日期返回**涨跌停**阈值 (CLAUDE.md §4)。主板返回 default(保持兼容)。
+
+    入场侧(跌停)与回补侧(涨停)必须**都**走这里 —— 一侧走、一侧不走就是族内
+    不对称:20% 板的票套上 10% 阈值会把 +9.5%…+19.5% 的**合法**开盘误判成封板。
+    """
     if code.endswith(".SH"):
         body = code.split(".", 1)[0]
-        if body.startswith("688"):
-            return _LIMIT_THRESHOLD_20PCT  # 科创板 ±20%
+        if body.startswith(("688", "689")):
+            # 科创板 ±20%(688);689 = 科创板 CDR,同一交易规则。
+            # 附五十三:此前只认 "688",689 被漏掉。
+            return _LIMIT_THRESHOLD_20PCT
     elif code.endswith(".SZ"):
         body = code.split(".", 1)[0]
-        if body.startswith("300"):
+        if body.startswith(("300", "301", "302")):
+            # 创业板 ±20%(2020-08-24 起)。301/302 是创业板后续代码段,
+            # 附五十三:此前只认 "300"。
             if bar_date is not None and (
                 bar_date.year,
                 bar_date.month,
                 bar_date.day,
             ) >= _CHINEXT_20PCT_START:
-                return _LIMIT_THRESHOLD_20PCT  # 创业板 2020-08-24 起 ±20%
+                return _LIMIT_THRESHOLD_20PCT
     return default
 
 # §2 (audit P2-11, 2026-10-15): 规范费率从 core.dual_price **导入**(并再导出 ——
@@ -1018,11 +1027,20 @@ class Phase3V3Strategy(bt.Strategy):
         # 用 raw 域(d.close/d.open 即 v_daily 原始价,与执行域同域)。
         # NAV-gate 强制平仓一并顺延:封板时同样是买不进 —— 方向保守(亏损可能
         # 继续扩大),符合 §0 Pessimistic Default。
+        # 附五十三 (audit 2026-10-17): 阈值必须走**与入场侧同源**的 board-aware 逻辑。
+        # 本行此前直接用 self.p.limit_up_threshold(0.095),于是 300/301/302/688/689
+        # (±20% 板)上 +9.5%…+19.5% 的**合法**开盘被误判成封板 ⇒ 无谓推迟回补。
+        # 本文件 v67 的注释早已写明「20% 板的票用 10% 阈值会误判…broad_only
+        # universe 必须走此逻辑」,而只有入场侧走了 —— 同族不对称(且这条不对称
+        # 恰好把**合法**成交挡在门外,不是保守)。
         prev_close = float(d.close[-1]) if len(d) > 1 else None
+        bar_date = bt.num2date(d.datetime[0]).date()
         if is_limit_up(
             prev_close=prev_close,
             open_price=float(d.open[0]),
-            threshold=self.p.limit_up_threshold,
+            threshold=_board_limit_threshold(
+                code, bar_date, self.p.limit_up_threshold
+            ),
         ):
             logger.debug(
                 "[limit-up] skip short cover: %s open=%.2f prev_close=%.2f",
