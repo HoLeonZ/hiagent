@@ -45,6 +45,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pandas as _pd
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -72,6 +73,31 @@ def _regenerate_trades(preset: str, start: str, end: str) -> pd.DataFrame:
     return pd.DataFrame(run_backtest_v3(preset, start, end, Path(DB_PATH))["trades"])
 
 
+
+# ---------------------------------------------------------------------------
+# 附四十四:交易层不变量(借用 `test_short_reversal_trade_math_consistency.py` 的
+# **SHORT 方向语义**检查)。那个文件靠 `results/*_trades.csv` 驱动 ⇒ fresh clone 里
+# **永远 skip**(11 条),而它守的正是"幻影出场"那一族(审计 §4 的实锤缺陷)。
+# 本文件本来就要重算成交列表,于是顺手把该不变量跑在**重算出来的**数据上 ——
+# 零额外成本,且不再依赖产物。
+# ---------------------------------------------------------------------------
+
+
+def short_direction_violations(trades: _pd.DataFrame, *, sl_pct: float, tp_pct: float,
+                               tol: float = 0.003) -> list[str]:
+    """做空语义:SL 必须 xp > ep×(1+sl_pct−tol);TP 必须 xp < ep×(1−tp_pct+tol)。
+
+    违反即"幻影出场"(出场价与出场原因对不上,典型成因是跨价格域或落在错误 bar)。
+    """
+    out: list[str] = []
+    for _, t in trades.iterrows():
+        ep, xp, reason = float(t["entry_price"]), float(t["exit_price"]), t["exit_reason"]
+        if reason == "SL" and xp < ep * (1 + sl_pct - tol):
+            out.append(f"SL 方向错: {t['thscode']} ep={ep:.4f} xp={xp:.4f}")
+        elif reason == "TP" and xp > ep * (1 - tp_pct + tol):
+            out.append(f"TP 方向错: {t['thscode']} ep={ep:.4f} xp={xp:.4f}")
+    return out
+
 def _check_one(preset: str) -> None:
     baseline_path = GOLDEN_DIR / f"short_reversal_{preset}_baseline.json"
     if not baseline_path.exists():
@@ -97,9 +123,40 @@ def _check_one(preset: str) -> None:
     assert len(df) == baseline["trades_csv_rows"]
     assert list(df.columns) == baseline["trades_csv_cols"]
 
+    # 附四十四:顺便在**重算出来的**成交列表上跑做空方向语义(零额外成本)。
+    from short_reversal.presets import get_preset
+
+    cfg = get_preset(preset)
+    violations = short_direction_violations(
+        df, sl_pct=cfg["sl_pct"], tp_pct=cfg["tp_pct"]
+    )
+    assert not violations, (
+        f"{preset}: {len(violations)}/{len(df)} 笔违反 SHORT 方向语义(幻影出场):\n  "
+        + "\n  ".join(violations[:5])
+    )
+
 
 @pytest.mark.slow  # 两个 preset 各真跑一次年度回测(约 4 分钟/条)
 @pytest.mark.parametrize("preset", PRESETS)
 def test_short_reversal_trades_sha256(preset: str) -> None:
     """§0/§6 PASS baseline:成交列表逐字节可复现。"""
     _check_one(preset)
+
+
+def test_direction_checker_flags_a_planted_phantom() -> None:
+    """**双向验证的单元版**:植入一笔方向相反的出场 ⇒ 检查器必须报出来。
+
+    没有这条,"方向语义检查恒绿"就无法区分"数据干净"与"检查器不工作"。
+    """
+    good = _pd.DataFrame([
+        {"thscode": "A", "entry_price": 10.0, "exit_price": 10.5, "exit_reason": "SL"},
+        {"thscode": "B", "entry_price": 10.0, "exit_price": 9.4, "exit_reason": "TP"},
+    ])
+    assert short_direction_violations(good, sl_pct=0.05, tp_pct=0.06) == []
+
+    phantom = _pd.DataFrame([
+        {"thscode": "C", "entry_price": 10.0, "exit_price": 9.4, "exit_reason": "SL"},
+        {"thscode": "D", "entry_price": 10.0, "exit_price": 10.5, "exit_reason": "TP"},
+    ])
+    flagged = short_direction_violations(phantom, sl_pct=0.05, tp_pct=0.06)
+    assert len(flagged) == 2, f"植入的两笔幻影应各报一条,实际 {flagged}"

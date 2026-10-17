@@ -56,7 +56,14 @@ def test_short_reversal_exit_direction_matches_short_semantics(preset_name: str)
     """
     csv_path = ROOT / "short_reversal" / "results" / f"{preset_name}_trades.csv"
     if not csv_path.exists():
-        pytest.skip(f"{preset_name} csv not generated yet — backlog")
+        # 附四十四:本条依赖 gitignored 的 results/*.csv ⇒ fresh clone 里必然 skip,
+        # 是"真空覆盖"。同一不变量(SHORT 方向语义 / 幻影出场)已由
+        # tests/test_short_reversal_sha256_baseline.py **在重算出来的成交列表上**执行
+        # (零额外成本、不依赖产物),并有植入幻影的单元对照证明检查器有牙。
+        pytest.skip(
+            f"{preset_name} csv not generated yet — 本条的覆盖已由 "
+            "tests/test_short_reversal_sha256_baseline.py 承担(附四十四)"
+        )
 
     p = get_preset(preset_name)
     sl_pct, tp_pct = p["sl_pct"], p["tp_pct"]

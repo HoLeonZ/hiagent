@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from dataclasses import asdict
 from datetime import date
 from pathlib import Path
@@ -47,7 +46,6 @@ GOLDEN_DIR = REPO_ROOT / "tests" / "golden"
 BASELINE_PATH = GOLDEN_DIR / "cycle_v1_baseline.json"
 
 #: 显式开启开关。见模块 docstring —— 一次重跑是分钟级,不能进默认路径。
-SLOW_GOLDEN_ENV = "DNA_RUN_SLOW_GOLDENS"
 
 
 def _baseline() -> dict:
@@ -66,16 +64,19 @@ def test_cycle_price_action_has_pinned_baseline_files() -> None:
         assert key in payload, f"基线缺字段 {key!r}"
 
 
+@pytest.mark.slow  # 重跑 cycle 全主板回测,实测约 7 分钟
 def test_cycle_trades_list_matches_the_pinned_baseline() -> None:
-    """§0: 重跑引擎,成交列表的 sha256 必须与 pin 一致 —— 否则就是漂移。"""
-    if os.environ.get(SLOW_GOLDEN_ENV) != "1":
-        pytest.skip(
-            "§6 SKIP(默认): 本守卫需重跑 cycle 全主板回测,单次约 4–7 分钟 —— "
-            "放进默认套件会让整体不可用。显式开启:"
-            f"`{SLOW_GOLDEN_ENV}=1 pytest <本文件>`。基线已 pin 且由 "
-            "tests/_regen_cycle_baseline.py 可重生成,故漂移在显式运行时仍会被抓到。"
-        )
+    """§0: 重跑引擎,成交列表的 sha256 必须与 pin 一致 —— 否则就是漂移。
 
+    2026-10-17:此前用**环境变量**默认跳过(`DNA_RUN_SLOW_GOLDENS=1` 才跑),
+    理由是"放进默认套件会让整体不可用"。那个理由在**没有 marker 机制**时成立,
+    但现在有了 `slow` marker ⇒ 改用 marker:
+      · **默认执行**(CI 与本地全量都覆盖 cycle 的成交列表);
+      · 本地快速迭代用 `-m "not slow"` 显式排除。
+
+    为什么值得默认跑:默认跳过重型守卫,会让"覆盖"在一片绿里消失 ——
+    而这一条正是四个引擎里**唯一**锁住 cycle 成交列表的守卫。
+    """
     from hiagent_config import DB_PATH
 
     if not Path(DB_PATH).exists() or Path(DB_PATH).stat().st_size == 0:

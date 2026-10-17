@@ -160,6 +160,9 @@ def build_trade_dates(trades: list[dict], klines: dict,
         sl_p = xp if reason == "SL" else None
         df = klines.get(code)
         signal_date, entry_date, exit_date = None, None, None
+        # 默认**不是** verified:凡没被显式确认过的路径都不许自称可信
+        # (fail-safe 方向:漏标记只会让状态更保守,不会更乐观)。
+        date_status = "unknown"
         if df is not None and not df.empty:
             # 主匹配：open ≈ entry_price（容差 0.001 防 float round）
             mask = (df["open"] >= ep - 0.001) & (df["open"] <= ep + 0.001)
@@ -196,15 +199,26 @@ def build_trade_dates(trades: list[dict], klines: dict,
                         break
                 if picked is not None:
                     entry_date, exit_date = picked
+                    date_status = "verified"
                 else:
-                    # 所有候选都不通过校验 → 退化选最早的 in_window 候选 (兜底)
+                    # §0/§7 (audit 2026-10-17): 所有候选都通不过校验 ⇒ **标记为
+                    # unverified**,而不是静默挑一个。
+                    # 本文件的模块 docstring 第 4 条早就写着「必须报 "unverified"
+                    # (而不是任意挑一个错的)」—— 而实现里**从来没有** "unverified"
+                    # 这个词:它退化取最早候选,并**凭空推一个** exit_date
+                    # (`entry + BDay(hd)`,那个 bar 可能根本不存在)。
+                    # 于是报告里会出现一个"看起来正常、实际是编出来的"日期 ——
+                    # 正是这个文件当初要防的那个 bug 的变体。
+                    # 仍给回退日期(报告不至于渲染不出),但**状态随行发布**。
                     fallback = pool.sort_values("date").iloc[0]
                     entry_date = fallback["date"]
                     exit_date = entry_date + pd.tseries.offsets.BDay(hd)
+                    date_status = "unverified"
             if entry_date is None:
                 # 没有任何 open ≈ ep 的候选 → fallback 按 index 推
                 unmatched += 1
                 entry_date = start + pd.tseries.offsets.BDay(i)
+                date_status = "no_kline_match"
             signal_date = entry_date - pd.tseries.offsets.BDay(1)
             if exit_date is None:
                 exit_date = entry_date + pd.tseries.offsets.BDay(hd)
@@ -213,10 +227,21 @@ def build_trade_dates(trades: list[dict], klines: dict,
             entry_date = start + pd.tseries.offsets.BDay(i)
             signal_date = entry_date - pd.tseries.offsets.BDay(1)
             exit_date = entry_date + pd.tseries.offsets.BDay(hd)
+            date_status = "no_kline_match"
         out.append({**t, "_signal_date": signal_date.strftime("%Y-%m-%d") if signal_date is not None else "N/A",
                     "_entry_date": entry_date.strftime("%Y-%m-%d") if entry_date is not None else "N/A",
                     "_exit_date": exit_date.strftime("%Y-%m-%d") if exit_date is not None else "N/A",
+                    # §0/§7: 日期映射是**推**出来的,可信度必须随行发布 ——
+                    # "verified" = 有某个候选 bar 让 exit_price 落在其 [low, high]
+                    # (SL 的 gap-up 例外也算 verified);"unverified" /
+                    # "no_kline_match" = 上面那些回退路径,数字不可当真。
+                    "_date_status": date_status,
                     "_idx": i})
+    n_unverified = sum(1 for r in out if r.get("_date_status") != "verified")
+    if n_unverified > 0:
+        print(f"WARN: {n_unverified}/{len(trades)} trades 的日期映射**未通过校验**"
+              f"(unverified={sum(1 for r in out if r.get('_date_status') == 'unverified')}, "
+              f"no_kline_match={unmatched});这些日期是按回退规则推的,不可当真")
     if unmatched > 0:
         print(f"WARN: {unmatched}/{len(trades)} trades could not be matched to K-lines, "
               f"using fallback dates")
