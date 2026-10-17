@@ -3545,3 +3545,78 @@ lines;raw_* 缺失 → fallback 到 adj …」。实测:
 合计把**4 条永远 skip 的守卫换成真覆盖**(cycle 基线 + 3 条 render_html),
 外加把 11 条依赖 gitignored csv 的不变量并入已有的重算测试 ——
 全套件因此 **skip 30 → 26、passed 1183 → 1190**,两个方向同时动,方向正确。
+
+---
+
+## 附四十六 —— 契约模块的**禁令**在代码里被违反 14 处,其中一处**真的在生效**
+
+### 1 · 方法:拿模块自己的禁令去核代码
+
+`core/preset_contract.py` 的模块 docstring 有一条**明文禁令**:
+
+> 引擎不得再用 `p.get(key, <看起来合理的默认值>)` —— 那正是让缺口靠沉默存在的写法。
+
+于是把六个契约键(`max_positions` / `position_fraction` / `position_sizing` /
+`nav_gate_ratio` / `max_volume_participation` / `atr_slip_scale`)对四个引擎逐条核了一遍
+—— 注意**要覆盖 Phase-1 与 Phase-2 两条路径**(审计早先发现过两条路径语义分歧,
+只核一条会漏掉另一半,也会放大分歧)。
+
+### 2 · 结果:14 处仍在用被禁的写法;其中一处**不是潜在风险,而是真的在生效**
+
+| 文件 | 被禁写法 |
+|---|---|
+| `chase_up/backtest.py` | position_sizing / max_volume_participation / nav_gate_ratio |
+| `chase_up/backtrader_engine.py` | 同上三处 |
+| `uptrend_pullback/backtest.py` | 上述三处 + position_fraction |
+| `uptrend_pullback/backtrader_engine.py` | 同上四处 |
+| `short_reversal/engine.py` | max_positions / max_volume_participation |
+
+**真正在生效的那一处**:`uptrend_pullback` 的**三个 preset(v19 / v20 / v21 —— 即全部)
+从未声明 `nav_gate_ratio`**,而引擎 `p.get("nav_gate_ratio", 0.05)` 静默兜底 ⇒
+它们一直跑在一个**没有任何人声明过**的 0.05 上。"没声明"与"声明为 0.05"不可区分 ——
+正是契约模块要防的那件事,也正是本审计在别处反复修的形态
+(附五「被声明却无人读取」的**镜像**:这里是"未声明却有人默认")。
+
+### 3 · 修法
+
+1. **补声明**:uptrend 三个 preset 写上 `nav_gate_ratio: 0.05` —— 就是**当时实际生效**的值
+   ⇒ **零行为变化**(这类"把隐式默认写成显式声明"的修法是最干净的一种:它让契约为真,
+   而不动任何数字)。
+2. **14 处全部改走 `resolve_*`**(缺声明即 fail-fast),两条路径一起改。
+3. **`resolve_max_positions` 增加 `capacity=None`**:该参数原先**必填**(给"单仓引擎恒 1"用),
+   但 chase / uptrend / short_reversal 的引擎**都支持任意 N**(按 `free_cash / N` 分散,
+   容量闸门逐 bar 约束)—— 给它们编一个"物理上限"是**假事实**。`None` 的含义是
+   "**无物理上限,但仍强制必须声明**":把契约的本意(声明必须到达引擎)留下,
+   把虚构的上界去掉。三档行为都验过(声明=2 通过 / 声明=2 且 capacity=1 报错 / 未声明报错)。
+
+### 4 · 行为中性:用基线验证,不是靠推理
+
+所有涉及的键在三个引擎的**全部 preset** 里都已声明(实测)⇒ `resolve_*` 返回的正是
+原先 `.get` 读到的同一个值 ⇒ 结果不变。验证(全部通过):
+
+- chase 黄金基线 **8/8**;
+- uptrend 基线 **3/3**;
+- short_reversal 基线(哈希 + 方向语义)**3/3**(7m34s)。
+
+### 5 · 守卫(附四十六)
+
+`tests/test_preset_declarations_are_load_bearing.py` 增一条 AST 判定:
+**关键字实参名是契约键、而值是 `.get(...)`** ⇒ 违规。
+边界的处理是刻意的:`p["max_positions"]` **直接索引不算**(缺键 KeyError 是响亮的,符合契约);
+`resolve_*` 自然不算。另含"植入一处静默兜底必须被报出"的**自检**
+(否则这组断言恒绿也无人知道)。双向验证:把 uptrend 的 nav_gate_ratio 还原成 `.get`
+⇒ 立刻报 `uptrend_pullback/backtest.py:205 nav_gate_ratio`;恢复后 19 全绿。
+
+### 6 · 两次自我纠错(记录,因为都是本会话反复出现的类型)
+
+1. **锚点只看"字符串唯一",没看缩进/上下文**:给 `uptrend_pullback/backtrader_engine.py`
+   插入模块级 import 时,我锚到了 `from uptrend_pullback.universe import load_universe`
+   —— 而它在这个文件里位于**函数体内**(缩进 4 空格)。于是模块级 import 被塞进函数体 ⇒
+   IndentationError。而且我的脚本是**先写盘后解析**,坏内容当场落盘,只能 `git checkout` 恢复。
+   两条修复:**锚定顶格导入**;**先 `ast.parse` 再 `write`**。
+2. **重新引入了我自己修过的作用域泄漏**:在 `short_reversal/engine.py` 里写
+   `resolve_max_positions(cfg, _name)`,而那几行位于附三十八 抽出的
+   `strategy_kwargs` helper 内 —— 该作用域的形参叫 `name`,不是 `_name` ⇒ NameError。
+   修复后按附三十八 的老办法复查 helper 内自由名字,确认只剩模块级常量/resolver。
+   **教训**:抽出的 helper 改变了"局部变量从哪来",而按文件全局 grep 是看不出这一点的 ——
+   编辑前要先确认**目标行属于哪个作用域**。
