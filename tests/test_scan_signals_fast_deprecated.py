@@ -42,14 +42,24 @@ def test_the_withdrawn_claim_does_not_reappear():
     as retracted.
     """
     doc = scan_signals_fast.__doc__ or ""
-    hits = [line for line in doc.splitlines() if "100% 等价" in line]
-    assert len(hits) <= 1, (
-        f"the withdrawn claim appears {len(hits)} times; a re-inserted claim "
-        f"alongside the warning would make the docstring contradict itself. "
-        f"Lines: {hits}"
+
+    # Count OCCURRENCES, not matching lines. A line-based scan
+    # (`[l for l in doc.splitlines() if phrase in l]`) reports one hit for a line
+    # holding two occurrences, so `... 但这不代表等价，实际上结果与策略 100% 等价。`
+    # appended to the warning's own line would slip through the "at most once"
+    # contract this test states.
+    occurrences = doc.count("100% 等价")
+    assert occurrences <= 1, (
+        f"the withdrawn claim appears {occurrences} times; a re-inserted claim "
+        f"alongside the warning would make the docstring contradict itself"
     )
-    if hits:
-        assert "曾声称" in hits[0], (
+
+    if occurrences:
+        line = next(l for l in doc.splitlines() if "100% 等价" in l)
+        # Accept any retraction marker, not one literal token: a legitimate
+        # future rewording ("旧文档写着…该说法已撤回") must not trip a false
+        # positive, or the guard punishes the cleanup it is meant to protect.
+        assert any(tok in line for tok in ("曾声称", "曾", "撤回", "retracted")), (
             f"the only mention of the withdrawn claim must be framed as retracted, "
-            f"but reads: {hits[0].strip()!r}"
+            f"but reads: {line.strip()!r}"
         )
