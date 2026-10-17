@@ -17,6 +17,10 @@
     - 复用 Phase3V3Strategy (与 v3 回测引擎同一份代码,零复刻风险)
     - 跑完后读 strategy.pending_entries → 即「T+1 open 会下成交单」的标的集合
     - 对每只候选拉 09-21 当日的最新价,展示预期 entry price
+
+.. note::
+   与 scan_signals_fast 不同，本模块通过 cerebro 调用真实策略，条件判定等价。
+   但它无机器可读产物契约（只打 stdout），线上信号作业不直接复用它。
 """
 from __future__ import annotations
 

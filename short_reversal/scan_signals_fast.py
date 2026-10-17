@@ -1,4 +1,30 @@
-"""向量化信号扫描 — 直接在 DuckDB+pandas 上重算策略 5 条件,秒级出结果。
+"""向量化信号扫描 — 直接在 DuckDB+pandas 上重算 5 条件,秒级出结果。
+
+.. warning::
+   **NOT EQUIVALENT to the strategy. Do not use for production signals.**
+
+   本模块曾声称「结果与策略 100% 等价」。2026-10-17 实测为假，共 8 处不等价，
+   误差双向且不抵消：
+     * A 的 ``below_ratio_60`` 硬编码 0.6，忽略 preset 声明值（腿为 0.1/0.2）
+     * A 的 ``close_ma60_buffer`` 完全忽略
+     * B 的 ``up_streak`` 区间硬编码 3–10，不读 cfg
+     * D 只实现 ``|bar| < |prev_bar|``，而四条 ensemble 腿均为 ``converge_strict``
+       （``|bar| < |prev_bar| * 0.5``，更严）
+     * E 的流动性窗口硬编码 3e7–3e8，不读 cfg
+     * F 条件（``require_ma20_slope_neg``）未实现 —— 而它是 v50_slope /
+       v50_slope_strict 的**定义条件**
+     * G/H/I/J/K 全部未实现
+     * 价格域用 raw close（``load_panel_for_signal`` 只 SELECT ``v_daily``），
+       而引擎默认 ``signal_price_domain="adj"``
+
+   实机证据：2026-03-02..2026-10-16 共 154 个交易日，四条 ensemble 腿
+   （v44_ratio02_buf07 / v50_slope / v50_slope_strict / v45_ratio01_buf10）
+   信号数**逐日完全相同** —— 本模块把它们压成了同一个条件集。
+
+   线上信号作业**不得**复用本模块；它走引擎自己的旁路日志（见 Task 3 / Task 6）。
+   见 docs/superpowers/specs/2026-10-17-short-reversal-live-monitor-design.md §2.2。
+
+   保留本模块仅供人工探查，不作为任何自动化流程的输入。
 
 策略的 5 条件 (replay_strategy_v3.Phase3V3Strategy._all_conditions):
   E 流动性: am60 ∈ [3e7, 3e8]
@@ -10,7 +36,7 @@
 
 回测引擎 (run_backtest_v3) 是 per-stock cerebro 单跑,这里向量化版本
 只对 T 日 close 这一行做 5 条件,所以不重复 warmup 逻辑、也不进出场。
-结果与策略 100% 等价(LAHEAD-001 信号层 vs 执行层已经解耦)。
+但这**不代表等价** —— 见上方 warning 列出的 8 处结构性不等价。
 
 §6 architecture (Tick 40, 2026-09-28): panel loading moved to Control Plane
 helper `short_reversal._panel_loader`. _scan_preset / _filter_signals are
