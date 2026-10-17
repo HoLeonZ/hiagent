@@ -82,6 +82,12 @@ def _metrics_from_holder(holder: dict, start: str, end: str, cfg: dict) -> dict:
     sl_count = sum(1 for t in trades if t["exit_reason"] == "SL")
     time_count = sum(1 for t in trades if t["exit_reason"] == "time")
 
+    # §5 日净值口径: 逐 bar 净值序列由 Phase3V3Strategy 在 next() 第 5 步写入
+    # result_holder["equity_curve"] (replay_strategy_v3.py 的 recorder), stop()
+    # 用 update() 合并保留, 所以这里一定拿得到。原实现把它丢掉了, main.py
+    # 读 m.get("equity_curve") 恒为 None → equity_curve.csv 从未产出, 没有日
+    # 净值就没有日频 Sharpe, 也就没有可信的 DSR。纯透传: 不排序、不改 date 类型
+    # (记录器存的是 datetime.date), 也不在这里新建第二个记录器。
     return {
         "preset": cfg["_name"],
         "start": start,
@@ -99,6 +105,7 @@ def _metrics_from_holder(holder: dict, start: str, end: str, cfg: dict) -> dict:
         "tp_count": tp_count,
         "sl_count": sl_count,
         "time_count": time_count,
+        "equity_curve": holder.get("equity_curve", []),
     }
 
 
@@ -113,6 +120,83 @@ def _approx_sharpe(trades: list[dict]) -> float:
         return 0.0
     # 假设 ~250 笔/年，按交易频率缩放
     return float(mean / std * math.sqrt(min(len(arr), 250)))
+
+
+def _weighted_equity_curve(
+    curves: list[list[dict]], weights: list[float]
+) -> list[dict]:
+    """按腿加权合成 ensemble 的日净值曲线 (CLAUDE.md §1/§2)。
+
+    口径必须与 `_run_ensemble` 的 `final_capital = Σ w_i · final_capital_i`
+    一致: `equity_ens(d) = Σ w_i · equity_i(d)`。各腿都跑在**同一条主时钟**
+    (同一 panel / 同一 calendar) 上, 所以按 `date` 对齐即可; 换了别的合成方式,
+    曲线末端就会与该函数自己报的 final_capital 对不上。
+
+    `cash` 与 `holdings_value` 用**同样的权重**逐日合成 —— 只合成 equity 而让
+    这两个字段缺省会破坏记录器自身的恒等式
+    `equity == cash + holdings_value` (逐项线性组合 ⇒ 恒等式仍然成立), 而这是
+    唯一与「当日是否持仓」无关的结构性断言。
+
+    §1 缺失值语义: 某腿在某日缺行 (该腿 panel 没有该交易日) 时, 该腿当日按
+    **前值**参与加权 —— 只向前填充, 绝不向后填充 (`bfill` 是 §1 明令禁止的)。
+    某腿首行之前的日期, 该腿尚未产生任何成交, 按 `w_i · INITIAL_CAPITAL` 计:
+    那是它当时的真实状态 (现金未动、无持仓), 不含任何未来信息。
+
+    `drawdown` 不做腿间加权 —— 各腿的峰值不同, 加权平均没有意义。它由合成后的
+    净值的 running peak 算出, 即该组合自身的当日回撤 (与单腿记录器同一定义)。
+    """
+    legs = [
+        sorted(
+            [row for row in (curve or []) if row.get("date") is not None],
+            key=lambda row: row["date"],
+        )
+        for curve in curves
+    ]
+    dates = sorted({row["date"] for leg in legs for row in leg})
+    if not dates:
+        return []
+
+    n_legs = len(legs)
+    cursor = [0] * n_legs
+    latest: list[dict | None] = [None] * n_legs
+    peak = 0.0
+    out: list[dict] = []
+
+    for day in dates:
+        cash = 0.0
+        holdings_value = 0.0
+        equity = 0.0
+        for i in range(n_legs):
+            leg = legs[i]
+            # 只向前推进游标: 取该腿上 date <= day 的最后一行 (ffill)。
+            while cursor[i] < len(leg) and leg[cursor[i]]["date"] <= day:
+                latest[i] = leg[cursor[i]]
+                cursor[i] += 1
+            row = latest[i]
+            if row is None:
+                # 该腿当日尚无记录 → 尚未交易的初始资金 (不是未来信息)。
+                leg_cash = INITIAL_CAPITAL
+                leg_holdings = 0.0
+                leg_equity = INITIAL_CAPITAL
+            else:
+                leg_cash = float(row["cash"])
+                leg_holdings = float(row.get("holdings_value", 0.0))
+                leg_equity = float(row.get("equity", leg_cash + leg_holdings))
+            w = weights[i]
+            cash += w * leg_cash
+            holdings_value += w * leg_holdings
+            equity += w * leg_equity
+
+        peak = max(peak, equity)
+        drawdown = (peak - equity) / peak if peak > 0 else 0.0
+        out.append({
+            "date": day,
+            "cash": cash,
+            "holdings_value": holdings_value,
+            "equity": equity,
+            "drawdown": drawdown,
+        })
+    return out
 
 
 def _run_ensemble(
@@ -185,6 +269,14 @@ def _run_ensemble(
     sl_count = sum(1 for t in all_trades if t["exit_reason"] == "SL")
     time_count = sum(1 for t in all_trades if t["exit_reason"] == "time")
 
+    # §5 日净值口径: run_backtest_v3 对 ensemble 提前 return, 走不到
+    # _metrics_from_holder, 所以 ensemble 必须自己合成净值曲线 —— 否则三个候选
+    # ensemble 全都没有 equity_curve (Task 8 的对比 + 日频 Sharpe 直接卡死)。
+    # 合成口径与上面的 final_capital 完全一致 (Σ w_i · x_i)。
+    equity_curve = _weighted_equity_curve(
+        [r.get("equity_curve") or [] for r in sub_results], weights
+    )
+
     return {
         "preset": cfg["_name"],
         "start": start,
@@ -203,6 +295,7 @@ def _run_ensemble(
         "sl_count": sl_count,
         "time_count": time_count,
         "ensemble_subs": sub_names,
+        "equity_curve": equity_curve,
     }
 
 

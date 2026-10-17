@@ -73,8 +73,14 @@ def _write_equity_curve(
     """Write equity_curve.csv + cash_walk.csv (§2/§3 Tick 51).
 
     Accepts the `result_holder["equity_curve"]` list-of-dicts that
-    Phase3V3Strategy populates per-bar. cash_walk defaults to single-pool
-    (free_cash == cash, locked_margin == settling_funds == 0) until H5.1.
+    Phase3V3Strategy populates per-bar.
+
+    §2 三池: cash_walk.csv 直接读记录器给出的池值 (free_cash / locked_margin /
+    settling_funds), 不再把 locked_margin / settling_funds 写死成 0.0。记录器
+    目前只落三池**合计** (`cash` = free + locked + settling), 池拆分留在策略内部
+    (三池现金账本见后续的 live/paper_account.py), 所以缺字段时退回单池口径:
+    free_cash = 合计 - 已给出的另两池, locked = settling = 0。这是缺省值, 不是
+    对真实池值的覆盖 —— 记录器一旦给出池值就按真实值写。
     """
     equity_path.parent.mkdir(parents=True, exist_ok=True)
     cash_walk_path.parent.mkdir(parents=True, exist_ok=True)
@@ -98,15 +104,21 @@ def _write_equity_curve(
         w = csv.DictWriter(f, fieldnames=list(CASH_WALK_COLS))
         w.writeheader()
         for row in rows:
-            cash = float(row.get("cash", 0.0))
+            # §2: `cash` 是 free + locked + settling 的合计。
+            total_cash = float(row.get("cash", 0.0))
             holdings_value = float(row.get("holdings_value", 0.0))
-            total_equity = float(row.get("equity", cash + holdings_value))
+            total_equity = float(row.get("equity", total_cash + holdings_value))
+            locked_margin = float(row.get("locked_margin", 0.0))
+            settling_funds = float(row.get("settling_funds", 0.0))
+            free_cash = float(
+                row.get("free_cash", total_cash - locked_margin - settling_funds)
+            )
             w.writerow({
                 "date": row.get("date"),
-                "free_cash": cash,
-                "locked_margin": 0.0,
-                "settling_funds": 0.0,
-                "nav": cash + holdings_value,
+                "free_cash": free_cash,
+                "locked_margin": locked_margin,
+                "settling_funds": settling_funds,
+                "nav": total_cash + holdings_value,
                 "total_equity": total_equity,
             })
 
