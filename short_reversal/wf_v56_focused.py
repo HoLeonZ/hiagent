@@ -17,9 +17,10 @@ from dna_stats.deflated import deflated_sharpe_ratio  # noqa: E402
 from hiagent_config import DB_PATH  # noqa: E402
 from short_reversal.presets import get_preset  # §5: 取 n_comparisons
 
-# §5 (audit P3, 2026-10-15): 6 个月窗口 ≈ 126 个交易日(参照 wf_v56 的既有取值)。
-# 原实现硬编码 252(全年),与窗口长度不符 —— SE 项因此被低估。
-WINDOW_TRADING_DAYS = 126
+# §5 (附六十): 这里曾有一个 `WINDOW_TRADING_DAYS = 126` 常数(注释写"6 个月窗口 ≈ 126 个交易日")。
+# 但本脚本的窗口长度是 **2 个月**(见 WINDOWS 的构造),126 与之不符 ⇒ T 被高估约 3 倍,
+# DSR 的 `sqrt(T-1)` 随之变大 ⇒ **DSR 系统性偏乐观**(危险方向)。
+# 现改为取**每个窗口实际跑出来的** `n_trading_days`(引擎随 metrics 发布),缺则 fail-fast。
 
 WINDOWS = [
     ("2024-09-18", "2025-03-18"),
@@ -36,6 +37,7 @@ def main():
         raise SystemExit(f"preset {preset!r} not in PRESETS")
     print(f"=== {preset} walk-forward ===")
     sharpes: list[float] = []
+    t_days: list[int] = []   # §5: 每个窗口的**真实**收益观测数 T
     yields: list[float] = []
     dds: list[float] = []
     for s, e in WINDOWS:
@@ -44,6 +46,7 @@ def main():
         dt = time.time() - t0
         yield_actual = m["total_yield"] * 100
         sharpes.append(float(m["sharpe"]))
+        t_days.append(int(m["n_trading_days"]))   # §5 fail-fast:缺即 KeyError
         yields.append(yield_actual)
         dds.append(m["max_dd"] * 100)
         print(f"  [{dt:>5.1f}s] {s} → {e}  n={m['trades_count']:>4} "
@@ -67,10 +70,12 @@ def main():
         # 已声明 `n_comparisons=31` —— 同一个数两处维护,必然漂移;该字段此前被声明
         # 却无消费者,正是本文件在给它的用途打补丁。
         _cfg = get_preset(preset) if isinstance(preset, str) else preset
+        # §5 (附六十): T 必须来自本次运行,不许用常数兜底。
+        _observed_t = int(round(sum(t_days) / len(t_days)))
         dsr = deflated_sharpe_ratio(
             observed_sharpe=observed,
             n_trials=int(_cfg["n_comparisons"]),
-            n_returns=WINDOW_TRADING_DAYS,
+            n_returns=_observed_t,
         )
         avg_yield = sum(yields) / len(yields)
         max_dd_peak = max(dds)

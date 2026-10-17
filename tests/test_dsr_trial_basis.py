@@ -87,12 +87,43 @@ def test_walkforward_uses_configuration_count_not_window_count(path: Path) -> No
 
 
 @pytest.mark.parametrize("path", WF_FAMILY, ids=lambda p: p.name)
-def test_walkforward_window_length_is_not_hardcoded_annual(path: Path) -> None:
+def test_walkforward_observation_count_comes_from_the_run(path: Path) -> None:
+    """§5: 观测数 T 必须由**本次运行**算出 —— 既不得是字面量,也不得是模块级常量。
+
+    附六十:本用例原来的断言是
+
+        assert re.search(r"^WINDOW_TRADING_DAYS = 126\b", src, re.M)
+
+    —— 判据是"**必须存在**那个常数",而不是"不许把 T 写死"。它把当时那版实现的
+    形状钉成了要求,于是:一边**放过** 16 个「T 与窗口长度不符」的脚本(它们都有那个
+    常数:窗口默认 2 个月 ≈42 天,常数却是 126,DSR 因而系统性**偏乐观**),
+    一边让"把 T 改成来自本次运行"的修复**变红**。
+
+    这是本审计反复记录的那一类守卫("断言的是当时实现的形状"),只不过这一次它
+    站在**缺陷那一侧**:它不是没拦住,而是**在要求缺陷存在**。
+    现按**性质**断言:没有该常量、没有字面量 T、且确实消费了来自运行的 `n_trading_days`。
+    """
     src = path.read_text(encoding="utf-8")
-    assert re.search(r"^WINDOW_TRADING_DAYS = 126\b", src, re.M), (
-        f"§5 VIOLATION: {path.name} 的窗口交易日数应为 126(6 个月);"
-        "硬编码 252(全年)会低估 SE 项"
+    assert not re.search(r"^WINDOW_TRADING_DAYS\s*[:=]", src, re.M), (
+        f"§5 VIOLATION: {path.name} 仍有 WINDOW_TRADING_DAYS 常量 —— "
+        "它与 CLI 的窗口长度无关,T 会与实际观测数不符"
     )
-    assert "n_returns=252" not in src, (
-        f"§5 VIOLATION: {path.name} 仍硬编码 n_returns=252"
+    for bad in ("n_returns=252", "n_returns=365", "n_returns=126"):
+        assert bad not in src, f"§5 VIOLATION: {path.name} 仍硬编码 {bad}"
+    # (c) 必须**真的**从 metrics 里读 T —— 用 AST 判,不用词。
+    # 我第一次写的是 `assert "n_trading_days" in src`,而我刚插入的**注释**里就
+    # 正好提到这个词 ⇒ 把消费那一行整个删掉,断言**仍然通过**(实测)。
+    # 这就是本审计反复记录的"判词不判行为";不能自己再犯一次。
+    import ast as _ast
+
+    tree = _ast.parse(src)
+    reads = [
+        n for n in _ast.walk(tree)
+        if isinstance(n, _ast.Subscript)
+        and isinstance(n.slice, _ast.Constant)
+        and n.slice.value == "n_trading_days"
+    ]
+    assert reads, (
+        f"§5 VIOLATION: {path.name} 没有**读取**来自运行的观测数"
+        "(应消费引擎发布的 metrics['n_trading_days'])"
     )

@@ -67,8 +67,14 @@ def test_sweep_thresholds_calls_run_backtest_with_test_window() -> None:
         from types import SimpleNamespace
         return SimpleNamespace(metrics={"sharpe": 0.5, "total_pnl": 100.0})
 
+    # 附六十:`_sweep_one_threshold` 现在还会去库日历取该窗口的**真实观测数 T**
+    # (§5 DSR 的 n_returns;此前是常数 126)。本用例的**主题**是"哪两个日期被转发给
+    # run_backtest",与 T 的来源无关,而夹具用的是 `:memory:` 库(没有 v_daily)。
+    # 故把 T 的来源一并 mock 掉 —— T 本身由
+    # tests/test_dsr_trial_basis.py / test_dsr_inputs_single_source.py 钉住。
     with patch.object(sweep_thresholds, "walkforward_windows",
                        return_value=[fixed_window]), \
+         patch.object(sweep_thresholds, "_oos_trading_days", return_value=243), \
          patch.object(sweep_thresholds, "run_backtest", side_effect=fake_run_backtest):
         sweep_thresholds._sweep_one_threshold(
             threshold=2.0,

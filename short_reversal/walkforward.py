@@ -28,11 +28,17 @@ RESULT_COLS = [
     "sharpe", "max_dd", "avg_pnl", "avg_hold_days",
     "tp_count", "sl_count", "time_count",
     "final_capital",
+    # §5 (附六十): 每个窗口的**真实**收益观测数 T —— 由引擎随 metrics 发布
+    # (与 short_reversal/engine.py 的 n_trading_days 同源)。
+    "n_trading_days",
 ]
 
 
-# §5 (audit P3): 窗口真实交易日数(6 个月 ≈ 126;原硬编码 252 为全年)
-WINDOW_TRADING_DAYS = 126
+# §5 (附六十): 这里曾有 `WINDOW_TRADING_DAYS = 126`(注释写"窗口真实交易日数"),
+# 而**用法**处的注释还写着「n_returns 亦改为该窗口的真实交易日数,而非硬编码 252」——
+# 于是"注释声称已修、实现只是把 252 换成另一个常数"。而 `--window-months` 默认是
+# **2 个月**(≈42 交易日),126 与之不符 ⇒ T 被高估约 3 倍,DSR 系统性**偏乐观**。
+# 现改为按每个窗口的真实 `n_trading_days` 取均值,缺则 fail-fast。
 
 def build_windows(
     start: str,
@@ -175,6 +181,13 @@ def main() -> None:
         if not sharpes:
             continue
         observed = max(sharpes)
+        # §5 (附六十): T 必须来自本次运行(不许常数兜底 —— 附三十二 立的规矩)。
+        t_days = sub["n_trading_days"].dropna().astype(int).tolist()
+        if not t_days:
+            raise ValueError(
+                "§5: 取不到任何窗口的交易日数 T —— 不许用常数兜底,那正是本项要修的缺陷"
+            )
+        _observed_t = int(round(sum(t_days) / len(t_days)))
         # §5 (audit P3, 2026-10-15): n_trials 必须是**试过的配置数**(仓库记录在
         # preset 的 n_comparisons),而不是 walk-forward 的**窗口数**。原实现传
         # len(sharpes) —— 本文件自己的输出标签就写着 `n_windows=`,与参数矛盾。
@@ -183,7 +196,7 @@ def main() -> None:
         dsr = deflated_sharpe_ratio(
             observed_sharpe=observed,
             n_trials=int(_cfg["n_comparisons"]),
-            n_returns=WINDOW_TRADING_DAYS,
+            n_returns=_observed_t,
         )
         print(
             f"\n§5 DSR for {preset} | observed_sharpe={observed:.3f} | "

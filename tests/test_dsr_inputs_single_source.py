@@ -93,16 +93,25 @@ def test_the_constant_actually_matters() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _dsr_call_sites() -> list[tuple[Path, ast.Call]]:
-    """所有调用 `deflated_sharpe_ratio(...)` 的位置(排除 dna_stats 自身与 tests)。"""
+def _dsr_call_sites() -> tuple[list[tuple[Path, ast.Call]], list[str]]:
+    """所有调用 `deflated_sharpe_ratio(...)` 的位置(排除 dna_stats 自身与 tests)。
+
+    返回 (调用点, **无法解析的文件**)。附六十:此前无法解析的文件被**静默跳过**
+    (`except SyntaxError: continue`)⇒ 任何带语法错误的文件对全套 DSR 守卫**不可见**
+    (我自己的一次两向验证就因此变成了空转 —— 模拟出来的"违规"根本没被扫到,守卫全绿,
+    看起来像"守卫放过了它")。现在把无法解析的文件**报出来**,由
+    `test_there_are_call_sites_to_guard` 断言为空。
+    """
     out: list[tuple[Path, ast.Call]] = []
+    unparseable: list[str] = []
     for path in sorted(REPO_ROOT.rglob("*.py")):
         rel = path.relative_to(REPO_ROOT)
         if rel.parts[0] in {"tests", "dna_stats"} or "__pycache__" in rel.parts:
             continue
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (SyntaxError, UnicodeDecodeError):
+        except (SyntaxError, UnicodeDecodeError) as e:
+            unparseable.append(f"{rel}: {type(e).__name__}")
             continue
         for node in ast.walk(tree):
             if (
@@ -111,12 +120,16 @@ def _dsr_call_sites() -> list[tuple[Path, ast.Call]]:
                 and node.func.id == "deflated_sharpe_ratio"
             ):
                 out.append((path, node))
-    return out
+    return out, unparseable
 
 
 def test_there_are_call_sites_to_guard() -> None:
     """守卫自身:若一处都没扫到,下面的断言就是真空的绿。"""
-    sites = _dsr_call_sites()
+    sites, unparseable = _dsr_call_sites()
+    assert not unparseable, (
+        "§0: 以下文件**无法解析**,对全套 DSR 守卫不可见(静默跳过 = 静默失去覆盖):\n  "
+        + "\n  ".join(unparseable)
+    )
     assert len(sites) >= 5, f"只扫到 {len(sites)} 个 DSR 调用点,扫描面可能已失效"
 
 
@@ -127,7 +140,7 @@ def test_n_returns_is_never_a_hardcoded_literal() -> None:
     T 被高估约 4%,标准误被低估约 2%,DSR 偏乐观。
     """
     offenders: list[str] = []
-    for path, call in _dsr_call_sites():
+    for path, call in _dsr_call_sites()[0]:
         for kw in call.keywords:
             if kw.arg in {"n_returns", "trading_days_per_year"} and isinstance(
                 kw.value, ast.Constant
@@ -139,4 +152,94 @@ def test_n_returns_is_never_a_hardcoded_literal() -> None:
     assert not offenders, (
         "§5 VIOLATION: DSR 的输入被写成字面量 —— 它必须来自本次运行:\n  "
         + "\n  ".join(offenders)
+    )
+
+
+# ---------------------------------------------------------------------------
+# 附六十 —— 上面那条守卫只拦**字面量**,于是"常数伪装成变量"从它眼皮下走过
+# ---------------------------------------------------------------------------
+#
+# 实测:`cycle_price_action/sweep_thresholds.py` 曾写
+#     n_returns=WINDOW_TRADING_DAYS      # 模块级 = 126
+# 而 CLI 的 `--test-months` 默认 **12**(≈243 交易日)⇒ T 被低估 **1.92 倍**
+# (实测默认两个窗口 T = 243 / 242)。DSR 里 `sqrt(T-1)` 随之变小 ⇒ DSR 系统性
+# **偏悲观**。这与附三十二 修的那个(252 vs 242,偏乐观)是**同一个缺陷**,
+# 只是形状从 `ast.Constant` 变成了 `ast.Name` —— 而守卫只检查前者,所以它一直绿。
+#
+# 判据改成"**不得来自模块级常量**":`n_returns` 要么是字面量(现任守卫已拦),
+# 要么必须是函数内的**局部**名字(由本次运行算出);若它解析到一个**模块级**变量,
+# 那就还是常数,只是被起了个名字。
+
+
+def _module_level_names(tree: ast.Module) -> set[str]:
+    out: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Name):
+                    out.add(t.id)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            out.add(node.target.id)
+    return out
+
+
+def _names_assigned_inside_functions(tree: ast.Module) -> set[str]:
+    """所有函数体内被赋值过的名字(粗粒度:不区分作用域,偏宽松以免误报)。"""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Assign):
+                    for t in sub.targets:
+                        if isinstance(t, ast.Name):
+                            names.add(t.id)
+                elif isinstance(sub, ast.AnnAssign) and isinstance(sub.target, ast.Name):
+                    names.add(sub.target.id)
+                elif isinstance(sub, ast.For) and isinstance(sub.target, ast.Name):
+                    names.add(sub.target.id)
+    return names
+
+
+def test_n_returns_is_never_a_module_level_constant() -> None:
+    """§5: `n_returns` 不得解析到**模块级常量** —— 常数换个名字还是常数。"""
+    offenders: list[str] = []
+    for path, call in _dsr_call_sites()[0]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        module_names = _module_level_names(tree)
+        assigned_in_funcs = _names_assigned_inside_functions(tree)
+        for kw in call.keywords:
+            if kw.arg != "n_returns" or not isinstance(kw.value, ast.Name):
+                continue
+            name = kw.value.id
+            if name in module_names and name not in assigned_in_funcs:
+                offenders.append(
+                    f"{path.relative_to(REPO_ROOT)}:{call.lineno} "
+                    f"n_returns={name}(模块级常量)"
+                )
+    assert not offenders, (
+        "§5 VIOLATION: DSR 的观测数 T 解析到模块级常量 —— 它必须来自本次运行:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def test_the_module_level_constant_rule_actually_bites() -> None:
+    """**元测试**:合成一个"常数伪装成变量"的调用点 ⇒ 判据必须认出来。
+
+    没有这条,"规则恒绿"就无法区分"代码干净"与"规则不工作"。
+    """
+    src = (
+        "WINDOW_TRADING_DAYS = 126\n"
+        "def f():\n"
+        "    return deflated_sharpe_ratio(observed_sharpe=1.0, n_trials=3,\n"
+        "                                 n_returns=WINDOW_TRADING_DAYS)\n"
+    )
+    tree = ast.parse(src)
+    module_names = _module_level_names(tree)
+    assigned_in_funcs = _names_assigned_inside_functions(tree)
+    call = next(n for n in ast.walk(tree) if isinstance(n, ast.Call))
+    kw = next(k for k in call.keywords if k.arg == "n_returns")
+    assert isinstance(kw.value, ast.Name), "夹具失效:不是 Name 节点"
+    name = kw.value.id
+    assert name in module_names and name not in assigned_in_funcs, (
+        "元测试夹具失效:构造出的调用点没有命中判据"
     )
