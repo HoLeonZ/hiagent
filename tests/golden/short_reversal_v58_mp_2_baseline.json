@@ -5,7 +5,7 @@
     "2026-08-31"
   ],
   "engine": "short_reversal.engine.run_backtest_v3",
-  "trades_csv_sha256": "d0c4a4437c78408dc1652107859219b1e24431d9313edfad83daeb872f8ef478",
+  "trades_csv_sha256": "015787f072fbe8b87cdc20c9cb11bfdf1994f7e87dbc11c8fb88c69fd4f5ec30",
   "trades_csv_rows": 58,
   "trades_csv_cols": [
     "entry_date",
@@ -30,5 +30,13 @@
     "why": "补齐 §6「Golden-baseline hashes lock trade-list behavior for every engine」——本引擎此前**一条基线都没有**,而它是迭代最频繁的一个(v35→v83)。v50_slope 覆盖单腿生产路径;v58_mp_2 覆盖多仓容量路径(附二十七 修过其 sizing 与容量闸门,必须锁住)。",
     "window_rationale": "6 个月:足以产生数十笔成交;面板的暖机缓冲主导运行成本(实测 6 个月 ≈3.9 分钟/preset,一年 ≈5.3 分钟),故不再缩短。",
     "reproducibility_check": "生成时连续重算两次、哈希一致;守卫在测试内**重算**后比对,不读 gitignored 的 results/。"
-  }
+  },
+  "drift_log": [
+    {
+      "date": "2026-10-17",
+      "change": "§4 Gap-Through-Stop:做空跳空向上穿过止损时,成交价由 sl_p 改为 open_p(short_reversal/replay_strategy_v3.py::_check_exit)。",
+      "why": "原实现违反 §4 的无条件 MUST(「开盘越过止损 ⇒ 按开盘价成交(悲观),绝不用止损价」)且逆 §0 Pessimistic Default,方向为**乐观**;三姊妹引擎在同一位置都按开盘价成交,只有本引擎相反。实测:修复前 **100%**(16/16、34/34)的 SL 成交 `net` 恒为 -0.0015 —— 损失被钉在 sl_pct(0.0005)+费用,与当天真实跳空(最大 -11.6%)无关。",
+      "impact": "v50_slope: 28→30 笔;final_capital 2,398,274→1,403,968 (-41.5%);sharpe 4.09→1.12;win_rate 42.9%→33.3%。v58_mp_2: 58→58 笔;final_capital 2,526,943→1,407,028 (-44.3%);sharpe 5.66→1.55;win_rate 41.4%→37.9%。两窗口共有入场中 exit_price 改变 36.8% / 39.6%,**全部**是 SL 出场;入场集合也有小幅变化(提前释放现金改变后续候选),属容量/现金耦合的连带效应。"
+    }
+  ]
 }

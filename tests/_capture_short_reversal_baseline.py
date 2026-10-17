@@ -28,6 +28,34 @@ WINDOW = ("2026-03-01", "2026-08-31")
 PRESETS = ["v50_slope", "v58_mp_2"]
 GOLDEN_DIR = ROOT / "tests" / "golden"
 
+#: §6 明文:改写成交列表的逻辑必须**重算基线**并在 PR 里说明漂移。
+#: 这份日志就是那个"说明" —— 落在基线文件里(而不是只留在 PR 描述里),
+#: 于是任何看到 pin 的人都能立刻知道它为何不是第一次被 pin 的值。
+DRIFT_LOG: list[dict[str, str]] = [
+    {
+        "date": "2026-10-17",
+        "change": (
+            "§4 Gap-Through-Stop:做空跳空向上穿过止损时,成交价由 sl_p 改为 open_p"
+            "(short_reversal/replay_strategy_v3.py::_check_exit)。"
+        ),
+        "why": (
+            "原实现违反 §4 的无条件 MUST(「开盘越过止损 ⇒ 按开盘价成交(悲观),"
+            "绝不用止损价」)且逆 §0 Pessimistic Default,方向为**乐观**;"
+            "三姊妹引擎在同一位置都按开盘价成交,只有本引擎相反。"
+            "实测:修复前 **100%**(16/16、34/34)的 SL 成交 `net` 恒为 -0.0015 "
+            "—— 损失被钉在 sl_pct(0.0005)+费用,与当天真实跳空(最大 -11.6%)无关。"
+        ),
+        "impact": (
+            "v50_slope: 28→30 笔;final_capital 2,398,274→1,403,968 (-41.5%);"
+            "sharpe 4.09→1.12;win_rate 42.9%→33.3%。"
+            "v58_mp_2: 58→58 笔;final_capital 2,526,943→1,407,028 (-44.3%);"
+            "sharpe 5.66→1.55;win_rate 41.4%→37.9%。"
+            "两窗口共有入场中 exit_price 改变 36.8% / 39.6%,**全部**是 SL 出场;"
+            "入场集合也有小幅变化(提前释放现金改变后续候选),属容量/现金耦合的连带效应。"
+        ),
+    },
+]
+
 
 def _hash(df) -> str:
     return hashlib.sha256(df.to_csv(index=False).encode()).hexdigest()
@@ -83,6 +111,7 @@ def main() -> int:
                             "不读 gitignored 的 results/。"
                         ),
                     },
+                    "drift_log": DRIFT_LOG,
                 },
                 ensure_ascii=False,
                 indent=2,

@@ -1054,19 +1054,30 @@ class Phase3V3Strategy(bt.Strategy):
                 trail_p = lowest * (1 + self.p.trailing_stop_pct)
                 sl_p = min(sl_p, trail_p)
         reason, price = None, None
-        # gap-aware：short 仓 TP/SL
-        # CLAUDE.md P5 要求 SL-first (self.p.intraday_tiebreak='sl_first'):
+        # CLAUDE.md §4 要求 SL-first (self.p.intraday_tiebreak='sl_first'):
         # 开盘同时穿越 TP/SL 时优先 SL（保 loss cap）。
-        # 此实现已对齐 P5；保留 v33 baseline parity 的"gap SL 用 sl_p, gap TP 用 open_p"
-        # 由 _run_single_stock_scenario 测试 (test_short_reversal_no_lookahead.py
-        # :131/:160) 锁定，不允许 flip 到 open_p（参 presets.py 注释 "SL gap 不放
-        # 大单笔损失" 的设计选择）。
+        #
+        # §4 Gap-Through-Stop (audit 2026-10-17, 原 BLOCKER 族 6 —— 此前**未修**):
+        # 「If the bar opens beyond the stop, the exit fills at the **open**
+        #   (pessimistic), never at the stop price.」
+        # 做空仓跳空**向上**穿过止损时, sl_p 是一个**物理上取不到**的价位(开盘就已越过)
+        # ⇒ 按 sl_p 成交会系统性把跳空损失截断在 sl_pct 内, 属乐观假设(逆 §0 Pessimistic
+        # Default)。三姊妹引擎(chase_up / uptrend_pullback / cycle_price_action)在此处
+        # 一律按开盘价成交, 只有本引擎相反 —— 族内不对称。已改为 open_p。
+        #
+        # 为什么此处此前**反过来写**并配了两条测试锁死: 见 test_short_reversal_no_lookahead.py
+        # 与 test_phase3_v3_bugfixes.py 的对应用例(docstring 已改写)。**这不是口径选择**:
+        # §4 是无条件 MUST, 且实际影响极大 —— 生产 preset 的 sl_pct 多为 0.0005(0.05%),
+        # 于是几乎每一笔 SL 都走"gap"分支并把损失钉在 0.05%, 与真实跳空无关。
+        #
+        # TP 侧维持 open_p: 回补是买入, 有利跳空下限价单本来就以更优价成交
+        # (与三姊妹引擎一致), 且 §4 的措辞只约束 "stop"。
         if self.p.intraday_tiebreak != "sl_first":
             raise ValueError(
                 f"short_reversal 必须 'sl_first', got {self.p.intraday_tiebreak}"
             )
         if open_p >= sl_p:
-            reason, price = "SL", sl_p
+            reason, price = "SL", open_p
         elif high >= sl_p:
             reason, price = "SL", sl_p
         elif open_p <= tp_p:
