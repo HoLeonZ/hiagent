@@ -303,8 +303,13 @@ def _run_ensemble(
     # _metrics_from_holder, 所以 ensemble 必须自己合成净值曲线 —— 否则三个候选
     # ensemble 全都没有 equity_curve (Task 8 的对比 + 日频 Sharpe 直接卡死)。
     # 合成口径与上面的 final_capital 完全一致 (Σ w_i · x_i)。
+    # 直接索引 r["equity_curve"], 与上面两行 r["trades"] 同一形式: 某腿没产出曲线
+    # 就是那条腿的路径坏了, 必须 KeyError 炸出来。用 .get(...) or [] 兜底的话, 该腿
+    # 会在每一天都退化成 row is None 分支的 INITIAL_CAPITAL —— 合成出一条**水平假
+    # 曲线**, 而 keys/首行 1M/对账全都依然"正常", 同时同一个 dict 的 final_capital
+    # 却是按真实腿算的。那是 fail-fast 的反面: 平坦的线正好掩盖了坏掉的路径。
     equity_curve = _weighted_equity_curve(
-        [r.get("equity_curve") or [] for r in sub_results], weights
+        [r["equity_curve"] for r in sub_results], weights
     )
 
     return {

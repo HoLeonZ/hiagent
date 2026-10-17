@@ -137,11 +137,18 @@ def test_short_reversal_main_exposes_equity_curve_writer(tmp_path: Path) -> None
     if "_write_equity_curve" in src:
         from short_reversal.main import _write_equity_curve
 
-        # Synthetic equity_curve list of dicts
+        # Synthetic equity_curve list of dicts. The row shape must match what
+        # the recorder actually emits: since Task 7 the recorder also carries
+        # the §2 three pools (free_cash / locked_margin / settling_funds), and
+        # `_write_equity_curve` direct-indexes them (no silent defaulting).
         equity_curve = [
             {"date": "2026-01-01", "cash": 1_000_000.0,
+             "free_cash": 1_000_000.0, "locked_margin": 0.0,
+             "settling_funds": 0.0,
              "holdings_value": 0.0, "equity": 1_000_000.0},
             {"date": "2026-01-02", "cash": 950_000.0,
+             "free_cash": 150_000.0, "locked_margin": 700_000.0,
+             "settling_funds": 100_000.0,
              "holdings_value": 50_000.0, "equity": 1_000_000.0},
         ]
         equity_path = tmp_path / "equity_curve.csv"

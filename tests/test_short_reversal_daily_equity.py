@@ -54,6 +54,10 @@ def test_equity_curve_first_row_is_initial_capital(metrics: dict):
 def test_equity_curve_has_the_keys_the_reporting_path_reads(metrics: dict):
     """The row schema is the EXISTING one from replay_strategy_v3.py:559-566 —
     do not change it here. `main.py` already reads `cash` and holdings_value`."""
+    # A loop over an empty collection asserts nothing. Another test in this file
+    # pins non-emptiness, but a test must not depend on its neighbour having run
+    # first — assert it here.
+    assert metrics["equity_curve"], "empty curve would make this test vacuous"
     for row in metrics["equity_curve"]:
         assert set(row) >= {"date", "cash", "holdings_value", "equity", "drawdown"}
         assert isinstance(row["date"], dt.date), (
@@ -77,6 +81,7 @@ def test_rows_carry_the_three_cash_pools(metrics: dict):
     to remove — with a different appearance. Assert the keys are produced, and
     that they reconcile with `cash`.
     """
+    assert metrics["equity_curve"], "empty curve would make this test vacuous"
     for row in metrics["equity_curve"]:
         assert {"free_cash", "locked_margin", "settling_funds"} <= set(row), (
             "the recorder must emit the three pools, or main.py's per-pool "
@@ -86,6 +91,25 @@ def test_rows_carry_the_three_cash_pools(metrics: dict):
             row["free_cash"] + row["locked_margin"] + row["settling_funds"],
             rel=1e-9, abs=1e-4,
         ), "the three pools must reconcile to total_cash (replay_strategy_v3.py:445)"
+
+    # PIN THE LIVENESS, not just the schema.
+    #
+    # The reconciliation above is TAUTOLOGICAL by construction: `cash` IS
+    # `total_cash`, a property defined as free + locked + settling, and the
+    # recorder writes the property and the three attributes from the same
+    # instant. So `cash == free + locked + settling` holds by arithmetic even if
+    # every pool value were wrongly zero. The assertion that can actually fail —
+    # and the one that distinguishes "a real split" from "agreeing zeros" — is
+    # that the pools MOVE.
+    assert any(row["locked_margin"] > 0 for row in metrics["equity_curve"]), (
+        "no row shows a non-zero locked_margin across a full backtest; either no "
+        "short was ever opened with margin, or the pool is being written as 0.0 "
+        "— the exact defect this test exists for"
+    )
+    assert any(row["settling_funds"] > 0 for row in metrics["equity_curve"]), (
+        "no row shows a non-zero settling_funds; a sell funds the pool every time, "
+        "so this should not be empty"
+    )
 
 
 def test_equity_curve_reaches_the_end_of_the_requested_window(metrics: dict):

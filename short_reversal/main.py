@@ -75,12 +75,14 @@ def _write_equity_curve(
     Accepts the `result_holder["equity_curve"]` list-of-dicts that
     Phase3V3Strategy populates per-bar.
 
-    §2 三池: cash_walk.csv 直接读记录器给出的池值 (free_cash / locked_margin /
-    settling_funds), 不再把 locked_margin / settling_funds 写死成 0.0。记录器
-    目前只落三池**合计** (`cash` = free + locked + settling), 池拆分留在策略内部
-    (三池现金账本见后续的 live/paper_account.py), 所以缺字段时退回单池口径:
-    free_cash = 合计 - 已给出的另两池, locked = settling = 0。这是缺省值, 不是
-    对真实池值的覆盖 —— 记录器一旦给出池值就按真实值写。
+    §2 三池: cash_walk.csv 逐池报告记录器给出的真实池值 (free_cash /
+    locked_margin / settling_funds)。两条回测路径 (单腿 + ensemble) 都产出这三个
+    键 —— 记录器在 replay_strategy_v3.py 的 next() 第 5 步写入 (`cash` 仍是合计
+    = free + locked + settling), `_weighted_equity_curve` 对 ensemble 逐腿加权合成。
+    所以这里直接索引、不做缺省: 少了键就是某条产出路径坏了, 必须炸出来, 而不是在本
+    函数里用 `合计 - 已给的另两池` 编一个 free_cash —— 那个表达式正是本任务要消灭的
+    静默兜底 (它让缺失的池字段看起来像真实的 0.0)。将来若 live/paper 路径产出不带池
+    的行, 要修的是那条路径, 不是这里。
     """
     equity_path.parent.mkdir(parents=True, exist_ok=True)
     cash_walk_path.parent.mkdir(parents=True, exist_ok=True)
@@ -105,14 +107,13 @@ def _write_equity_curve(
         w.writeheader()
         for row in rows:
             # §2: `cash` 是 free + locked + settling 的合计。
-            total_cash = float(row.get("cash", 0.0))
-            holdings_value = float(row.get("holdings_value", 0.0))
-            total_equity = float(row.get("equity", total_cash + holdings_value))
-            locked_margin = float(row.get("locked_margin", 0.0))
-            settling_funds = float(row.get("settling_funds", 0.0))
-            free_cash = float(
-                row.get("free_cash", total_cash - locked_margin - settling_funds)
-            )
+            total_cash = float(row["cash"])
+            holdings_value = float(row["holdings_value"])
+            total_equity = float(row["equity"])
+            # 直接索引 (不 .get): 见 docstring — 缺键必须炸, 不能在这里编一个拆分。
+            locked_margin = float(row["locked_margin"])
+            settling_funds = float(row["settling_funds"])
+            free_cash = float(row["free_cash"])
             w.writerow({
                 "date": row.get("date"),
                 "free_cash": free_cash,
