@@ -264,7 +264,10 @@ def run_backtest_v3(
         below_ratio_60=cfg.get("below_ratio_60", 0.6),
         close_ma60_buffer=cfg.get("close_ma60_buffer", 0.0),
         d_mode=cfg.get("d_mode", "strict"),
-        margin_rate=MARGIN_RATE,
+        # 2026-10-17: 此前**硬编码** MARGIN_RATE, preset 的 `margin_rate` 键
+        # 从未被读取 —— 属"声明了却无人读取"那一类。接通后可由 preset 覆盖;
+        # 出厂 preset 均未设该键 ⇒ 零漂移。
+        margin_rate=cfg.get("margin_rate", MARGIN_RATE),
         commission_rate=COMMISSION_RATE,
         stamp_duty_rate=STAMP_DUTY_RATE,
         initial_capital=INITIAL_CAPITAL,
