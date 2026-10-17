@@ -38,9 +38,13 @@ COMMISSION_RATE = 0.00025
 STAMP_DUTY_RATE = 0.0005
 MARGIN_RATE = 0.086
 DAYS_PER_YEAR = 365
-# CAGR 分母用的交易日口径。**必须与三个姊妹引擎一致** —— chase_up/backtest.py、
-# uptrend_pullback/backtest.py、cycle_price_action/allocator.py 全部是
-# `len(equity) / TRADING_DAYS`。
+# 交易日口径。基准是**实际评估期的权益行数** (与三个姊妹引擎一致), 但**常数未统一**:
+#   chase_up/backtest.py             TRADING_DAYS = 243
+#   uptrend_pullback/backtest.py     TRADING_DAYS = 243
+#   cycle_price_action/allocator.py  TRADING_DAYS_PER_YEAR = 252
+# 本引擎取 252 (通行惯例)。与 243 的差异约 3.7% 相对量, 只影响年化因子, 不改变排序
+# 方向。**登记为未统一项 (§5/§6), 不擅自改别人的常数** —— 统一它要动三个引擎的
+# 全部历史数字, 属结果变更。
 TRADING_DAYS_PER_YEAR = 252
 
 # Re-export for back-compat: tests/golden baselines reference this constant.
@@ -68,7 +72,8 @@ def _evaluated_days(
 
     §6/§0 (2026-10-17, 第 8 处): 本引擎此前用**请求窗** `(end - start).days / 365`
     当年数分母, 而 `chase_up` / `uptrend_pullback` / `cycle_price_action` 三个姊妹
-    引擎**全都**用**实际评估期的交易日数**。同一个仓库里同一个 `cagr` 字段被两种口径
+    引擎**全都**用**实际评估期的交易日数** (口径一致; 常数见 `TRADING_DAYS_PER_YEAR`
+    的注释 —— 那里存在 243/252 的未统一项)。同一个仓库里同一个 `cagr` 字段被两种口径
     定义, 本引擎是唯一的少数派 (族内不对称 —— 见 commit `0162de5` 的同类问题)。
 
     它不是纯口径偏好, 因为本引擎的实测期**可以显著偏离请求窗**。实测 (v58_mp_2,
@@ -106,6 +111,29 @@ def _years_between(start: str, end: str, n_days: int, source: str) -> float:
     if source == "none" or n_days <= 0:
         return max((pd.Timestamp(end) - pd.Timestamp(start)).days / DAYS_PER_YEAR, 1.0 / DAYS_PER_YEAR)
     return max(n_days / TRADING_DAYS_PER_YEAR, 1.0 / TRADING_DAYS_PER_YEAR)
+
+
+def _equity_sharpe(equity_curve: list[dict] | None) -> float | None:
+    """**姊妹引擎口径**的 Sharpe: 日权益收益的 mean/std × sqrt(年化常数)。
+
+    公式结构与 `chase_up/backtest.py`、`uptrend_pullback/backtest.py`、
+    `cycle_price_action/allocator.py` 相同 (日收益, ddof=1)。
+    **但年化常数不统一**: 那两个用 243, cycle 用 252, 本函数用 252。
+    差异 1.8% (sqrt(252/243)), 只影响标度不影响排序 —— 登记为未统一项,
+    见 `TRADING_DAYS_PER_YEAR` 上方的注释。
+    """
+    eq = [r.get("equity") for r in (equity_curve or [])]
+    eq = [float(v) for v in eq if v is not None]
+    if len(eq) < 3:
+        return None
+    arr = np.asarray(eq, dtype=float)
+    if np.any(arr[:-1] == 0):
+        return None
+    rets = np.diff(arr) / arr[:-1]
+    std = float(np.std(rets, ddof=1))
+    if std < 1e-12:
+        return None
+    return float(np.mean(rets) / std * math.sqrt(TRADING_DAYS_PER_YEAR))
 
 
 def _metrics_from_holder(holder: dict, start: str, end: str, cfg: dict) -> dict:
@@ -173,6 +201,18 @@ def _metrics_from_holder(holder: dict, start: str, end: str, cfg: dict) -> dict:
         "total_yield": float(total_yield),
         "cagr": float(cagr),
         "sharpe": float(sharpe),
+        # §5/§6 (2026-10-17, 第 9 处): 报告的 `sharpe` 是**逐笔口径**
+        # (mean/std of `net_return` × sqrt(min(n,250))), 而三个姊妹引擎是**日权益口径**
+        # (mean/std of 日收益 × sqrt(252))。**两者是不同的统计量, 不可跨族比较** ——
+        # 逐笔口径不含空仓日 (实测本样本 28.95% 的日子权益不变) 也不含持仓重叠。
+        #
+        # 本字段给出姊妹口径的值, 让不可比性无法再隐形。
+        # **不覆盖 `sharpe`**: 逐笔 Sharpe 是合法且已发布的统计量 (per-trade IR),
+        # 换掉它属**结果变更 / 口径选择** —— 按长期授权「登记, 不擅自改」。
+        # 实测 (v58_mp_2 / 2018-01-01..2020-12-31): 逐笔 −1.761 vs 日权益 −1.440,
+        # 差 0.32 (相对 22%)。注意方向**不系统**: 与本案前 8 处缺陷不同, 它不固定美化
+        # —— 空仓日占比越高, 日权益口径被稀释越多。它的问题不是偏差, 是**换了一把尺子**。
+        "sharpe_equity_basis": _equity_sharpe(holder.get("equity_curve")),
         "max_dd": min(1.0, max(0.0, float(holder["max_dd"]))),
         # §2/§3 Tick 51 (2026-10-17 修正): 逐 bar 权益序列必须带出来。
         # `Phase3V3Strategy` 一直在往 `result_holder["equity_curve"]` 里累积,
@@ -208,6 +248,11 @@ def _approx_sharpe(trades: list[dict]) -> float:
     由于本函数对成交做**无权平均**, 一笔 ¥300 的残仓与一笔 ¥100 万的仓位同等计入
     ⇒ 报告的 sharpe 被小残仓系统性抬高, 甚至**符号相反**
     (pure-1day/W2: 按 net **+1.19** vs 按 net_return **-0.39**)。
+
+    ⚠️ 另一个**未修**的问题 (§5/§6, 第 9 处): 本函数是**逐笔口径** Sharpe, 而三个姊妹
+    引擎是**日权益口径**。两者不可跨族比较。见 `_metrics_from_holder` 里
+    `"sharpe_equity_basis"` 的说明 —— 那里给出姊妹口径的值。本函数**未改**,
+    因为换口径属结果变更 (登记, 不擅自改)。
     """
     if not trades:
         return 0.0
@@ -310,6 +355,10 @@ def _run_ensemble(
         "cagr": float(cagr),
         "sharpe": float(sharpe),
         "max_dd": min(1.0, max(0.0, float(max_dd))),
+        # §5 (2026-10-17, 第 9 处): ensemble 汇总路径**不产出权益曲线** ⇒ 日权益口径
+        # 无法计算。显式给 None 而不是省略键 —— 省略会让调用方以为"没这个指标",
+        # 而真相是"这条路径量不出来"。同族的 `equity_curve` 也缺失, 是同一个原因。
+        "sharpe_equity_basis": None,
         "avg_pnl": avg_pnl,
         "avg_hold_days": avg_hold,
         "tp_count": tp_count,

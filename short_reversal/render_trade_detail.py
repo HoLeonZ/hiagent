@@ -757,7 +757,16 @@ def main():
         f'<tr><td>期末资金</td><td>¥{m["final_capital"]:,.2f}</td></tr>'
         f'<tr><td>总收益</td><td>{m["total_yield"] * 100:+.2f}%</td></tr>'
         f'<tr><td>CAGR</td><td>{m["cagr"] * 100:+.2f}%</td></tr>'
-        f'<tr><td>Sharpe</td><td>{m["sharpe"]:.2f}</td></tr>'
+        # §5/§6 (2026-10-17, 第 9 处): 报告的 Sharpe 是**逐笔口径**; 姊妹引擎是**日权益
+        # 口径**。两者是不同的统计量, 不可跨族比较 ⇒ 这里必须同时给出, 否则读者会拿
+        # 一个 per-trade IR 去和 uptrend/chase_up 的日 Sharpe 比高低。
+        f'<tr><td>Sharpe</td><td>{m["sharpe"]:.2f}'
+        + (
+            f'（日权益口径 {m["sharpe_equity_basis"]:.2f}）'
+            if m.get("sharpe_equity_basis") is not None
+            else '（日权益口径 <b>未记录</b>）'
+        )
+        + '</td></tr>'
         f'<tr><td>最大回撤</td><td>{m["max_dd"] * 100:.2f}%</td></tr>'
         f'<tr><td>TP/SL/time</td><td>{m["tp_count"]} / {m["sl_count"]} / {m["time_count"]}</td></tr>'
     )
