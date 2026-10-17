@@ -286,8 +286,23 @@ class Phase3V3Strategy(bt.Strategy):
         # per-data 指标字典（避免多 data 共享 indicator）
         self.indi: dict[str, dict] = {}
         # v57 J 条件状态: 最近一次 SL 出场的 exit_date, 用于冷却检查。
-        # 全局 (per-strategy, not per-symbol) — 因为 max_positions=1。
+        # 全局 (per-strategy, not per-symbol) — 该形状**只在 max_positions=1 时成立**:
+        # 单仓时"某只票止损出场"与"整个组合止损出场"是同一件事, 于是"拒绝所有入场"
+        # 才是自然语义。max_positions 可配之后 (v58/v69) 这个前提不再成立 ——
+        # N>1 时全局冷却会让**任意一只票的止损**冻住整个组合的入场, 那是没人设计过、
+        # 也没人会预期的行为。§0「Do not silently bypass」: 该组合显式拒绝, 不静默套用。
+        # 全局检查见 __init__ 末尾的 fail-fast。
         self._last_sl_date: "datetime.date | None" = None
+        # §0 Fail-Fast: J 条件的状态形状只在单仓下成立 (见上)。启用 J 且 N>1 时,
+        # 引擎会给出一个无设计、无预期的语义 ⇒ 显式拒绝, 而不是静默套用。
+        if self.p.sl_cooldown_days > 0 and self.p.max_positions > 1:
+            raise ValueError(
+                f"sl_cooldown_days={self.p.sl_cooldown_days} 与 "
+                f"max_positions={self.p.max_positions} 不兼容: 冷却期状态是"
+                f"全局单变量 (为 max_positions=1 设计), N>1 时任意一只票的止损会"
+                f"冻住整个组合的入场。要么设 sl_cooldown_days=0, 要么把冷却改成"
+                f"per-symbol 语义 (需先设计并声明)。"
+            )
         # 关键：只迭代 data feed，不迭代后续 __init__ 期间被加进来的 indicator
         # backtrader 的 Lines_LineSeries __slots__ 不允许任意属性注入
         for d in self.datas:

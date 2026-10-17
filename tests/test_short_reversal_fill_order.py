@@ -110,3 +110,26 @@ def test_vwap_conviction_falls_back_on_missing_volume() -> None:
     bad = _DataVwap("600001.SH", close=10.0, amount=0.0, volume=0.0)
     f = _FakeVwap([bad], "vwap")
     assert f.pending_entries["600001.SH"] == 0.0
+
+
+def test_cooldown_with_multi_position_is_rejected() -> None:
+    """§0: J 条件的状态形状只为 max_positions=1 设计; N>1 时必须显式拒绝。
+
+    全局单变量 _last_sl_date 在 N>1 下会让任意一只票的止损冻住整个组合的入场 ——
+    没人设计过、也没人会预期的语义。引擎应 fail-fast, 不静默套用。
+    """
+    import pytest as _pytest
+
+    src = (Path(__file__).parent.parent / "short_reversal" / "replay_strategy_v3.py").read_text(
+        encoding="utf-8"
+    )
+    assert "sl_cooldown_days > 0 and self.p.max_positions > 1" in src, (
+        "引擎必须在 sl_cooldown_days>0 且 max_positions>1 时 raise"
+    )
+    # 现有预设不得触发该守卫 (§0: 守卫不得把既有配置打死)
+    from short_reversal.presets import PRESETS
+
+    for name, p in PRESETS.items():
+        cd = p.get("sl_cooldown_days", 0)
+        n = p.get("max_positions", 1)
+        assert not (cd > 0 and n > 1), f"preset {name} 会触发 fail-fast 守卫"
