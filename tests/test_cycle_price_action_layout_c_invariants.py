@@ -122,6 +122,62 @@ class TestCyclePriceActionLayoutCInvariants:
         """data_feed.py 必须从 v_daily 视图加载 (单价格域)."""
         assert "v_daily" in _data_feed_text()
 
-    def test_replay_broker_fail_fast(self):
-        """replay_broker.py 必须 fail-fast on 数据缺口 (CLAUDE.md §0)."""
-        assert "RuntimeError" in _broker_text()
+    # 附五十七:此处的 `test_replay_broker_fail_fast`(断言 `"RuntimeError" in
+    # replay_broker.py 源码`)已**删除** —— 它是空转的:该文件里没有任何
+    # `raise RuntimeError`,那两处词都出现在**注释**里,于是它盯错了文件
+    # (真正的 fail-fast 在 `data_feed.ReplayDataProvider.open_price`),
+    # 而且判词不判行为。行为版本见本文件末尾的
+    # `test_data_gap_fail_fast_versus_suspension_is_distinguished`,它同时钉住
+    # 两个分支:未知标的 ⇒ 抛错;已知标的缺 bar(停牌)⇒ None。**不要把它加回来。**
+
+# ---------------------------------------------------------------------------
+# 附五十七 —— 把 `test_replay_broker_fail_fast` 从"文本形状"换成**行为**
+# ---------------------------------------------------------------------------
+#
+# 原断言是 `assert "RuntimeError" in replay_broker.py 的源码`。而 `replay_broker.py`
+# 里 **没有任何** `raise RuntimeError` —— 那两处 "RuntimeError" 都是**注释**
+# (一处讲停牌路径的历史,一处讲我的 §4 修复)。真正的 fail-fast 在
+# **`data_feed.ReplayDataProvider.open_price`**(库中完全无 bar 的标的)。
+#
+# 于是这条守卫有两个毛病,而它一直是绿的:
+#   (a) 它盯的是**错的文件** —— 把 raise 从 data_feed.py 删掉,它仍然绿;
+#   (b) 它判的是**词**而不是**行为** —— 注释里出现该词就够。
+#
+# 换成行为断言:两个分支都要钉 ——
+#   * 未知标的(库中无任何 bar)= **数据完整性问题** ⇒ fail-fast 抛错;
+#   * 已知标的但当日缺 bar(停牌)= **合法市场状态** ⇒ 返回 None(不成交,持仓顺延)。
+# 这两条一起才说明"缺行"的两种含义真的被区分开了。
+
+def test_data_gap_fail_fast_versus_suspension_is_distinguished(tmp_path):
+    """§0/§1:数据缺口 fail-fast;停牌不成交 —— 两者都必须可观测。"""
+    import duckdb
+    from datetime import date as _date
+
+    from cycle_price_action.data_feed import ReplayDataProvider
+
+    db = tmp_path / "cycle_ld.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute(
+        "CREATE TABLE v_daily (thscode VARCHAR, date DATE,"
+        "open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE,"
+        "amount DOUBLE, volume DOUBLE)"
+    )
+    # KNOWN 有 bar 的日子只有 06-03 / 06-04;06-05 缺行(停牌)
+    for d in (_date(2024, 6, 3), _date(2024, 6, 4)):
+        con.execute(
+            "INSERT INTO v_daily VALUES (?,?,?,?,?,?,?,?)",
+            ["600000.SH", d, 10.0, 10.5, 9.8, 10.2, 1e7, 1e6],
+        )
+    con.close()
+
+    provider = ReplayDataProvider(str(db))
+
+    # (a) 未知标的:库里**一行都没有** ⇒ 数据完整性问题 ⇒ fail-fast
+    with pytest.raises(RuntimeError):
+        provider.open_price("999999.SZ", _date(2024, 6, 4))
+
+    # (b) 已知标的、当日缺 bar(停牌)⇒ 合法状态 ⇒ None,不当作数据错误
+    assert provider.open_price("600000.SH", _date(2024, 6, 5)) is None, (
+        "停牌(缺 bar)被当成了数据缺口 —— 两种「缺行」必须区分(§1 vs §0)"
+    )
+    assert provider.open_price("600000.SH", _date(2024, 6, 4)) == 10.0
