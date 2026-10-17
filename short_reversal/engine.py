@@ -100,6 +100,15 @@ def _metrics_from_holder(holder: dict, start: str, end: str, cfg: dict) -> dict:
         "cagr": float(cagr),
         "sharpe": float(sharpe),
         "max_dd": min(1.0, max(0.0, float(holder["max_dd"]))),
+        # §2/§3 Tick 51 (2026-10-17 修正): 逐 bar 权益序列必须带出来。
+        # `Phase3V3Strategy` 一直在往 `result_holder["equity_curve"]` 里累积,
+        # 但本函数**从不把它拷进返回的 metrics** ⇒ `main.py` 的
+        # `if eq_rows := m.get("equity_curve")` 恒为假 ⇒ `equity_curve.csv` /
+        # `cash_walk.csv` **从未被写出**, 尽管注释写着 "Tick 51 GREEN"。
+        # (发现路径: 本轮想核对 max_dd 与权益曲线是否一致, 结果短侧根本没有这份产物,
+        #  我误读了同目录下 chase_up 留下的同名文件 —— 两个引擎写**同一套列名**,
+        #  光看文件名分不出是谁的。)
+        "equity_curve": holder.get("equity_curve", []),
         "avg_pnl": avg_pnl,
         "avg_hold_days": avg_hold,
         "tp_count": tp_count,
