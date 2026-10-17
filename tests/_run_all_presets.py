@@ -28,9 +28,22 @@ def main() -> None:
         raise SystemExit(f"DB not found at {db}")
 
     rows = []
+    failures: list[tuple[str, str]] = []
     for name in sorted(PRESETS.keys()):
-        print(f"=== {name} ===")
-        m = run_backtest_v3(name, START, END, db)
+        print(f"=== {name} ===", flush=True)
+        # §0 fail-fast presets (e.g. v61_k / v61_kf, whose Gate K mixes adj and
+        # raw price domains) now RAISE inside run_backtest_v3. One such preset
+        # must NOT abort the whole-library sweep and silently drop the remaining
+        # ~73 presets: skip it, report it loudly (count + name + reason), and
+        # continue. Do NOT swallow it silently — the failure list is printed and
+        # returned in the summary below.
+        try:
+            m = run_backtest_v3(name, START, END, db)
+        except Exception as exc:  # noqa: BLE001
+            msg = f"{type(exc).__name__}: {exc}"
+            failures.append((name, msg))
+            print(f"  SKIP {name}: {msg}", flush=True)
+            continue
         row = {
             "preset": name,
             "trades_count": m["trades_count"],
@@ -56,13 +69,24 @@ def main() -> None:
     out = Path("/tmp/all_presets_metrics.json")
     out.write_text(
         json.dumps(
-            {"start": START, "end": END, "rows": rows},
+            {
+                "start": START,
+                "end": END,
+                "rows": rows,
+                "failures": [{"preset": n, "reason": r} for n, r in failures],
+            },
             indent=2,
             ensure_ascii=False,
         ),
         encoding="utf-8",
     )
     print(f"\n>>> WROTE {out}")
+    if failures:
+        print(f"\n!!! {len(failures)} preset(s) SKIPPED (raised inside run_backtest_v3):")
+        for n, r in failures:
+            print(f"    {n}: {r}")
+    else:
+        print(f"  (all {len(rows)} presets ran)")
 
 
 if __name__ == "__main__":
