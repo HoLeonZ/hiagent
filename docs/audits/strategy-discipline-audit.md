@@ -3934,3 +3934,97 @@ short_reversal 的 feed **默认价线 = raw**、`adj_close` 线 = adj ⇒ 钉�
 
 接线本身是**结果敏感的重构**(各 loader 还带 warmup 缓冲、公司行为事件列、universe
 切片等各自的东西),故**登记待评估**,不在审计里顺手改。
+
+---
+
+## 附五十二 —— 跳空穿越止损按 `sl_p` 成交(原审计 **BLOCKER 族 6**):**成立**,已修 —— 100% 的 SL 被钉在 −0.05%
+
+### 1 · 缺陷(一个被"设计选择"名义冻结的乐观假设)
+
+`short_reversal/replay_strategy_v3.py::_check_exit`:
+
+```python
+if open_p >= sl_p:
+    reason, price = "SL", sl_p     # ← 做空:开盘已越过止损,却按止损价成交
+elif high >= sl_p:
+    reason, price = "SL", sl_p     # 盘内触价 → 按止损价成交(这条是对的)
+```
+
+做空的止损在上方(`sl_p = ep × (1 + sl_pct)`)。当**开盘价已越过**止损时,`sl_p` 是一个
+**当天物理上取不到**的价位;按它成交等于假设"跳空时还能拿回止损价"。§4 明文:
+
+> **Gap-Through-Stop:** If the bar opens beyond the stop, the exit fills at the **open**
+> (pessimistic), **never at the stop price**.
+
+`chase_up/portfolio.py:514`、`uptrend_pullback/portfolio.py:472`、`cycle_price_action/portfolio.py:493`
+三处的 `if open <= sl_p: fill = open` 全都合规 —— **只有本引擎相反**(族内不对称)。
+
+### 2 · 为什么它不是"口径选择":实测的钉死效应
+
+生产 preset 的 `sl_pct` 多为 **0.0005**(0.05%)。于是"开盘是否越过止损"几乎**恒真**,
+几乎每一笔 SL 都落进这条分支。在锁定窗口(2026-03-01..08-31)上:
+
+| | 修复前 | 修复后 |
+|---|---|---|
+| `v50_slope` SL 成交 `net` **恰好** = −0.0015 的笔数 | **16 / 16 = 100%** | 0 |
+| `v58_mp_2` 同上 | **34 / 34 = 100%** | 0 |
+| SL 单笔 `net` 均值 / 最差 | −0.0015 / −0.0015 | −0.024 / **−0.106** |
+| 同上(v58) | −0.0015 / −0.0015 | −0.030 / **−0.116** |
+
+`-0.0015` = `sl_pct`(0.0005)+ 往返成本。也就是说:**止损从来没有亏超过 0.05%**,与当天
+真实跳空 −1.4% … −11.6% 完全无关。这是一个"赢 8%、输 0.05%"的收益结构 ——
+也就是修复前 `sharpe` 4.09 / 5.66 的来源。
+
+### 3 · 结果变更(这次是**大**变更,登记在基线文件里)
+
+| | `v50_slope` | `v58_mp_2` |
+|---|---|---|
+| 成交笔数 | 28 → 30 | 58 → 58 |
+| final_capital | 2,398,274 → **1,403,968**(−41.5%) | 2,526,943 → **1,407,028**(−44.3%) |
+| sharpe | 4.09 → **1.12**(−72.6%) | 5.66 → **1.55**(−72.6%) |
+| win_rate | 42.9% → 33.3% | 41.4% → 37.9% |
+| 共有入场中 `exit_price` 改变 | 36.8%(7/19) | 39.6%(21/53) |
+| ……其中 `exit_reason` 仍是 SL 的占比 | **100%** | **100%** |
+
+方向与 §0 一致:只有**变悲观**。两条 golden 基线已按 §6 重算(生成脚本自带"连续重算两次
+哈希一致"的检查 ✓),并把**为何重算**写进基线文件自己的 `drift_log` —— 不只留在 PR 描述里,
+这样以后看到 pin 的人能立刻知道它不是第一次被 pin 的值。入场集合也有小幅变化(9→11 个只在
+一侧出现),来源是**提前释放的现金改变了后续候选**,属 §2 容量/现金耦合的连带效应,不是
+第二个缺陷。
+
+### 4 · 两条"反向守卫":本仓库此前把**错误方向**钉死了
+
+这是本条最该记下来的部分。缺陷之所以能存活,是因为有**两条测试断言了错误的行为**,
+且 docstring 把修复方向说反了:
+
+| 文件 | 原断言 | 原文措辞 |
+|---|---|---|
+| `tests/test_short_reversal_no_lookahead.py`(模块 docstring) | — | "SR-LA-06: SL gap-fill at sl_p … is **DESIGN CHOICE not a bug. Refutes the audit's recommendation** to flip to open_p" |
+| 同上 `::test_sl_gap_fill_uses_sl_p_loss_cap_semantics` | `exit_price == ep × 1.10` | "与另一条形成 **lock-in**:任何 flip 到 open_p 的提交都会同时打挂两个测试" |
+| `tests/test_phase3_v3_bugfixes.py::test_sl_exit_uses_sl_price_not_open_when_gap_up` | 同上 | "**Bug 修复前**:open_p 远高于 sl_p → 单笔 SL 损失被跳空放大数倍" |
+
+即:**审计的建议被一条测试"驳回"了**,而那条测试的判据是把乐观实现当成语义。两条一起
+lock-in,任何正确修复都会红灯 —— 与附四十七/四十八同属"守卫站在错误的一侧"。
+
+顺带一件小事:`no_lookahead` 那条用例的 docstring 引用「`presets.py` 注释:SL 跳空放大让
+单笔 SL 损失从 −0.05% 变 −10%」作为依据,而 **`grep 跳空 short_reversal/presets.py` = 0 命中**
+—— 依据本身已经不存在(又一次"守卫依赖已消失的产物")。
+
+**处置**:两条用例已按 §4 改写(更名为 `..._uses_open_p` / `..._uses_open_p_per_section_4`),
+并把新夹具的**跳空幅度压进 A 股 ±10% 之内**(+3.4%)—— 原夹具用 +12.6%,已越过涨停,
+于是场景里掺进了"封板→顺延"的额外机制,反而看不清 gap 分支本身。新用例各带一条
+**非空转前提**断言(`open > sl_p`),否则"通过"无法区分"实现正确"与"分支没走到"。
+
+### 5 · 双向验证
+
+把引擎那一行改回 `"SL", sl_p`:两条新用例**立刻变红**(`Obtained: 22.644`(= sl_p)
+vs `Expected: 23.0`(= open));恢复后 7 passed。基线石化:`v50_slope` 30 行 /
+`afd64bba…`,`v58_mp_2` 58 行 / `015787f0…`。
+
+### 6 · 顺带登记(未改)
+
+`core/dual_price.py::is_limit_down` 在 `prev_close is None` 时 **fail-open**(返回 False,
+即允许入场),docstring 写明是 "best-effort" 且与 `is_limit_up` 同语义。方向是**乐观**
+(§0 要求未知时取悲观),但**结构性不可达**:`prev_close` 只在 `len(d) <= 1`(该股在面板里的
+第一根 bar)时为 None,而入场受指标暖机门控,不可能落在第一根。故**登记不改** ——
+与附五十一 的"NaN 回退"同类(0 行可达),不为不可达路径加代码。
