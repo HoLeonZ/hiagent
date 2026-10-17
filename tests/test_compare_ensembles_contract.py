@@ -263,6 +263,74 @@ def test_record_cagr_and_max_dd_come_from_the_in_window_slice():
     assert math.isnan(rec["calmar"])  # max_dd == 0 -> Calmar undefined
 
 
+def test_record_daily_sharpe_comes_from_the_in_window_slice():
+    """COVERAGE REGRESSION GUARD — 578ae64.
+
+    That commit split the equity slice out of `daily_sharpe_from_equity` so ONE
+    slice feeds every §5 field, and made production compute the Sharpe inline
+    (`_build_record`: `annualized_sharpe(_returns_from_slice(sliced))`). The two
+    tests that pin window-slicing (`test_daily_sharpe_slices_to_the_requested_window`
+    and the NaN case in `test_sharpe_delegates_to_the_single_source`) assert
+    THROUGH `daily_sharpe_from_equity`, which the refactor left with no production
+    caller. So the property the 578ae64 horizon fix was ABOUT — the record reports
+    a Sharpe for the window it LABELS, not for the buffered span — stopped being
+    pinned by ANY test: substituting the buffered-span returns at the production
+    call site keeps all 12 tests green.
+
+    This test drives the PRODUCTION path (`_build_record`) and both (a) pins the
+    numeric in-window value and (b) couples it to the documented
+    `daily_sharpe_from_equity` interface, so production and that interface cannot
+    drift apart. The post-`end` tail is violent enough that leaking it moves
+    `daily_sharpe` by ~540 (547.43 -> 5.87) — the assertion below is a real
+    constraint, not a tautology (see the positive control at the end).
+    """
+    start, end = "2024-01-01", "2025-01-01"
+    rows: list[dict] = []
+    # in-window: mildly (but strictly) rising 1.0M -> 1.1M — a FINITE Sharpe, so
+    # this is not just re-testing the NaN -> None branch.
+    for i in range(0, 11):
+        rows.append({
+            "date": dt.date(2024, 1, 1) + dt.timedelta(days=33 * i),
+            "equity": 1_000_000.0 * (1.0 + 0.01 * i),
+        })
+    # post-`end`: violent swings — leaking these MUST move the Sharpe visibly.
+    rows.append({"date": dt.date(2025, 2, 1), "equity": 50_000_000.0})
+    rows.append({"date": dt.date(2025, 3, 1), "equity": 1_000_000.0})
+    rows.append({"date": dt.date(2025, 4, 1), "equity": 80_000_000.0})
+    rows.append({"date": dt.date(2025, 5, 1), "equity": 200_000.0})
+
+    rec = _build_record(
+        "v63_ensemble", {"equity_curve": rows},
+        start, end, bench_cagr=0.0, n_trials=119,
+    )
+    assert rec["daily_sharpe"] is not None
+
+    # (a) production equals the IN-WINDOW-only Sharpe, re-derived here WITHOUT the
+    # module's own slicing — an independent anchor for the numeric value.
+    in_window = [r for r in rows
+                 if dt.date(2024, 1, 1) <= r["date"] <= dt.date(2025, 1, 1)]
+    in_window_only = annualized_sharpe(
+        [b["equity"] / a["equity"] - 1.0
+         for a, b in zip(in_window, in_window[1:])]
+    )
+    assert rec["daily_sharpe"] == pytest.approx(in_window_only)
+
+    # (b) …and equals what the documented interface returns for the SAME rows, so
+    # `_build_record` and `daily_sharpe_from_equity` are coupled by an invariant.
+    assert rec["daily_sharpe"] == pytest.approx(
+        daily_sharpe_from_equity(rows, start, end)
+    )
+
+    # POSITIVE CONTROL: the fixture discriminates. The pre-578ae64 inline form —
+    # returns over the WHOLE buffered span — gives a wildly different answer, so
+    # the equalities above bite. Relaxing this fixture (a tame post-window tail)
+    # would make the regression slip through unnoticed.
+    buffered_span = annualized_sharpe(
+        [b["equity"] / a["equity"] - 1.0 for a, b in zip(rows, rows[1:])]
+    )
+    assert abs(rec["daily_sharpe"] - buffered_span) > 100.0
+
+
 # --- M5: the written artifact must be strictly valid JSON --------------------
 
 def test_write_json_emits_strictly_valid_json(tmp_path):
