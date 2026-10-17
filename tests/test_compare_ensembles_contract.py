@@ -14,6 +14,7 @@ import pytest
 from dna_stats.deflated import (
     annualized_sharpe,
     bonferroni_correct,
+    deflated_sharpe_ratio,
     sharpe_significance_pvalue,
 )
 from tools.live.compare_ensembles import (
@@ -222,6 +223,52 @@ def test_bonferroni_p_de_annualizes_the_sharpe_before_the_period_se():
     assert rec["bonferroni_p"] != 0.0
 
 
+def test_dsr_is_pinned_to_the_honest_n_trials():
+    """§5: `_build_record` must hand `deflated_sharpe_ratio` the HONEST n_trials
+    (119), not 1 — and `decide` (the script's entire deliverable) flips
+    reject→adopt on this number.
+
+    Nothing pinned the `dsr` `_build_record` actually PRODUCES: the schema test
+    calls `candidate_record(dsr=...)` with a hand-written value and this file's
+    other tests pin only `bonferroni_p` / the `n_trials` constant. So mutating
+    the call site to `deflated_sharpe_ratio(daily_sharpe, 1, ...)` — silently
+    dropping the selection-bias layer that 119 exists to encode — kept all
+    tests green. This mirrors the Bonferroni test's style.
+
+    The series is the same real, finite Sharpe the Bonferroni test uses; it is
+    chosen so the two n_trials DISAGREE observably (T=1600: DSR ≈ 0.79 at
+    n_trials=1 vs ≈ 0.038 at 119), making the equality a real constraint rather
+    than a tautology.
+    """
+    returns = [0.01 if i % 2 == 0 else -0.0096 for i in range(1600)]
+    rows = _equity_rows_from_returns(returns)
+    start, end = "2020-01-01", "2026-01-01"
+    n_trials = 119
+
+    rec = _build_record(
+        "v63_ensemble", {"equity_curve": rows}, start, end,
+        bench_cagr=0.0, n_trials=n_trials,
+    )
+
+    ann = annualized_sharpe(_windowed_returns(rows, start, end))
+    n = len(_windowed_returns(rows, start, end))
+    expected = float(
+        deflated_sharpe_ratio(ann, n_trials, n_returns=n)["deflated_sharpe"]
+    )
+    assert rec["dsr"] == pytest.approx(expected)
+
+    # POSITIVE CONTROL: the selection-bias layer MATTERS. At n_trials=1 the DSR is
+    # materially larger; if the call site dropped n_trials the equality above
+    # would still hold against the wrong reference — this rejects that.
+    underspecified = float(
+        deflated_sharpe_ratio(ann, 1, n_returns=n)["deflated_sharpe"]
+    )
+    assert not math.isclose(rec["dsr"], underspecified), (
+        "dsr is insensitive to n_trials — the call site dropped the "
+        "selection-bias layer that honest_n_trials()=119 encodes"
+    )
+
+
 # --- Finding 2: one horizon for every §5 field ------------------------------
 
 def test_record_cagr_and_max_dd_come_from_the_in_window_slice():
@@ -364,7 +411,8 @@ def test_write_json_emits_strictly_valid_json(tmp_path):
 
 def test_decide_adopts_when_a_decision_candidate_is_significant():
     """`decide` is the script's entire deliverable. `adopt` iff some DECISION
-    candidate reaches dsr >= 0.95 on the independent window."""
+    candidate reaches dsr >= 0.95 on the cross-window check (NOT an out-of-sample
+    holdout — see `reproduce_2016_2023`'s module docstring)."""
     from tools.live.reproduce_2016_2023 import decide
 
     payload = {"candidates": [
