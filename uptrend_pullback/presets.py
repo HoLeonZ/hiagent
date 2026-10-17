@@ -101,6 +101,11 @@ PRESETS: dict[str, dict] = {
         "sl_pct": 0.0293,
         "max_hold": 15,
         "max_positions": 1,
+        # §2 (audit 2026-10-17): 显式声明 —— 此前**未声明**而引擎用
+        # `p.get("nav_gate_ratio", 0.05)` 静默兜底,正是契约模块
+        # (`core/preset_contract.py`)明令禁止的"让缺口靠沉默存在"。
+        # 这里声明的就是**当时实际生效**的 0.05 ⇒ 零行为变化。
+        "nav_gate_ratio": 0.05,
         "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
@@ -144,6 +149,11 @@ PRESETS: dict[str, dict] = {
         "sl_pct": 0.021,
         "max_hold": 18,
         "max_positions": 1,
+        # §2 (audit 2026-10-17): 显式声明 —— 此前**未声明**而引擎用
+        # `p.get("nav_gate_ratio", 0.05)` 静默兜底,正是契约模块
+        # (`core/preset_contract.py`)明令禁止的"让缺口靠沉默存在"。
+        # 这里声明的就是**当时实际生效**的 0.05 ⇒ 零行为变化。
+        "nav_gate_ratio": 0.05,
         "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
@@ -201,6 +211,11 @@ PRESETS: dict[str, dict] = {
         "sl_pct": 0.021,
         "max_hold": 18,
         "max_positions": 1,
+        # §2 (audit 2026-10-17): 显式声明 —— 此前**未声明**而引擎用
+        # `p.get("nav_gate_ratio", 0.05)` 静默兜底,正是契约模块
+        # (`core/preset_contract.py`)明令禁止的"让缺口靠沉默存在"。
+        # 这里声明的就是**当时实际生效**的 0.05 ⇒ 零行为变化。
+        "nav_gate_ratio": 0.05,
         "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,     # §2

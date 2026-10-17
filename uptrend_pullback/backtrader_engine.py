@@ -37,6 +37,16 @@ from uptrend_pullback.presets import MAX_HOLD_LIMIT, get_preset
 from uptrend_pullback.replay_broker import AStockBroker
 from uptrend_pullback.replay_strategy import UpullbackTradeReplay
 
+# §2 单源 (audit 2026-10-17): 契约键一律经 core.preset_contract 解析(缺声明即
+# fail-fast),不再用 `p.get(key, <看起来合理的默认值>)`。
+from core.preset_contract import (
+    ALL_IN,
+    resolve_nav_gate_ratio,
+    resolve_position_fraction,
+    resolve_position_sizing,
+    resolve_volume_participation,
+)
+
 from core.dual_price import (  # §2 单源 (audit P2-11, 2026-10-15)
     resolve_atr_slip_scale,
     COMMISSION_RATE,
@@ -283,10 +293,12 @@ def run_backtrader_backtest(
         # (原本 position_sizing 默认 'equal', preset 的 'all_in' 从不被读)。
         # 显式传参 (非 None) 仍优先, 供测试覆盖用。
         position_sizing=(position_sizing if position_sizing is not None
-                         else p.get("position_sizing", "equal")),
+                         else resolve_position_sizing(
+                             p, p.get("_name", "uptrend_pullback"),
+                             allowed=frozenset({ALL_IN}))),
         kelly_fraction=(kelly_fraction if kelly_fraction is not None
                         else p.get("kelly_fraction")),
-        position_fraction=p.get("position_fraction", 1.0),
+        position_fraction=resolve_position_fraction(p, p.get("_name", "uptrend_pullback")),
         # Round 15 (2026-09-28, CLAUDE.md §0/§4): cost model plumbing
         # (commission/stamp/floor) + ATR-aware slippage from preset。
         # Defaults preserve pre-R15 behavior (legacy presets 无 key 时仍得
@@ -300,9 +312,11 @@ def run_backtrader_backtest(
         price_source_for_execution=p.get("price_source_for_execution", "adj_close"),
         # V8 (2026-09-22, CLAUDE.md §4): preset→strategy explicit plumbing。
         intraday_tiebreak=p.get("intraday_tiebreak", "sl_first"),
-        max_volume_participation=p.get("max_volume_participation", 0.10),
+        max_volume_participation=resolve_volume_participation(
+            p, p.get("_name", "uptrend_pullback")
+        ),
         # Round 14 (2026-09-28, CLAUDE.md §2): NAV-floor cash gate threshold from preset。
-        nav_gate_ratio=p.get("nav_gate_ratio", 0.05),
+        nav_gate_ratio=resolve_nav_gate_ratio(p, p.get("_name", "uptrend_pullback")),
     )
 
     if not verify or trades_p1.empty:

@@ -81,15 +81,31 @@ def resolve_position_sizing(
 
 
 def resolve_max_positions(
-    preset: Mapping[str, Any], preset_name: str, *, capacity: int,
+    preset: Mapping[str, Any], preset_name: str, *, capacity: int | None = None,
 ) -> int:
-    """§2 持仓上限声明。`capacity` 是引擎的**物理**上限(单仓引擎恒 1)。"""
+    """§2 持仓上限声明。
+
+    `capacity` = 该引擎的**物理**上限(单仓引擎恒 1);
+
+    **`capacity=None` = 该引擎没有物理上限**(支持任意 N,按 `free_cash / N` 分散,
+    容量闸门逐 bar 约束)—— 此时仍强制"**必须声明**",但不做上界检查。
+
+    2026-10-17:`capacity` 原为**必填**。但 chase_up / uptrend_pullback /
+    short_reversal 的引擎都支持任意 N(只有 cycle 的单仓是物理恒 1)⇒
+    给它们编一个"物理上限"是**假事实**,而"声明必须到达引擎"这一条(契约的本意)
+    仍然应当强制。故加 `None` 这一档,而不是让它们继续用 `p.get(key, 默认值)`
+    —— 那正是本模块 docstring 明令禁止的写法。
+    """
     raw = _declared(preset, "max_positions", preset_name)
     if isinstance(raw, bool) or not isinstance(raw, int):
         raise PresetDeclarationMissing(
             f"§2: preset {preset_name!r} 的 max_positions={raw!r} 不是整数"
         )
-    if not (1 <= raw <= capacity):
+    if raw < 1:
+        raise PresetDeclarationMissing(
+            f"§2: preset {preset_name!r} 声明 max_positions={raw} < 1"
+        )
+    if capacity is not None and raw > capacity:
         raise PresetDeclarationMissing(
             f"§2: preset {preset_name!r} 声明 max_positions={raw},"
             f"但该引擎的物理容量是 {capacity}。声明超出容量 = 静默忽略。"

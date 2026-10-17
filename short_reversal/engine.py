@@ -42,9 +42,11 @@ from core.preset_contract import (  # §0/§2/§3 (audit 2026-10-15)
     ALL_IN,
     EXECUTION_PRICE_SOURCE,
     resolve_execution_price_source,
+    resolve_max_positions,
     resolve_nav_gate_ratio,
     resolve_position_fraction,
     resolve_position_sizing,
+    resolve_volume_participation,
 )
 from core.trade_schema import annualized_years  # §2 年化单源 (audit 2026-10-15)
 
@@ -96,7 +98,10 @@ def strategy_kwargs(cfg: dict, name: str, *, holder: dict, start: str, end: str)
         max_hold=cfg["max_hold"],
         # v58 (2026-10-13): 多仓并行。max_positions > 1 时每笔 sizing 改为
         # free_cash / max_positions, 维持 all-in 总仓位。默认 1 保 v50 兼容。
-        max_positions=cfg.get("max_positions", 1),
+        # §2 (audit 2026-10-17): 声明必须到达引擎。本引擎**没有物理容量上限**
+        # (按 free_cash/N 分散、容量闸门逐 bar 约束),故 capacity=None ——
+        # 只强制"必须声明",不编一个假的上界。
+        max_positions=resolve_max_positions(cfg, name),
         # §2 (audit 2026-10-15): 经规范契约解析(缺声明/越界 fail-fast),不再
         # `cfg.get(..., 1.0)` —— 那样「没声明」与「声明为 1.0」不可区分。
         position_fraction=resolve_position_fraction(cfg, name),
@@ -133,7 +138,7 @@ def strategy_kwargs(cfg: dict, name: str, *, holder: dict, start: str, end: str)
         # V8 (2026-09-22, CLAUDE.md §4): max_volume_participation 与 intraday_tiebreak
         # 从 preset 显式 plumb 到 strategy (而非依赖模块常量/默认值)。
         # 当前 preset 默认 0.10 / 'sl_first', 完整覆盖 11/11 preset。
-        max_volume_participation=cfg.get("max_volume_participation", 0.10),
+        max_volume_participation=resolve_volume_participation(cfg, name),
         intraday_tiebreak=cfg.get("intraday_tiebreak", "sl_first"),
         # v50 (2026-10-12): F 条件 — MA20 下降趋势斜率过滤 (opt-in)。
         require_ma20_slope_neg=cfg.get("require_ma20_slope_neg", False),

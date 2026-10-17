@@ -21,6 +21,15 @@ from core.dual_price import (  # §2 单源 (audit P2-11, 2026-10-15)
     STAMP_DUTY_RATE,
 )
 from core.trade_schema import TRADING_DAYS_PER_YEAR  # §2 单源 (audit 2026-10-15)
+# §2 单源 (audit 2026-10-17): 契约键一律经 core.preset_contract 解析(缺声明即
+# fail-fast),不再用 `p.get(key, <看起来合理的默认值>)` —— 那正是 preset_contract
+# docstring 明令禁止的「让缺口靠沉默存在」。
+from core.preset_contract import (
+    ALL_IN,
+    resolve_nav_gate_ratio,
+    resolve_position_sizing,
+    resolve_volume_participation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -181,16 +190,20 @@ def run_backtest(
         initial_capital=initial_capital,
         atr_tp_mult=p.get("atr_tp_mult"),
         atr_sl_mult=p.get("atr_sl_mult"),
-        position_sizing=p.get("position_sizing", "equal"),
+        position_sizing=resolve_position_sizing(
+            p, p.get("_name", "chase_up"), allowed=frozenset({ALL_IN})
+        ),
         kelly_fraction=p.get("kelly_fraction"),
         # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System execution source。
         price_source_for_execution=p.get("price_source_for_execution", "adj_close"),
         # V8 (2026-09-22, CLAUDE.md §4): preset→strategy explicit plumbing。
         intraday_tiebreak=p.get("intraday_tiebreak", "sl_first"),
-        max_volume_participation=p.get("max_volume_participation", 0.10),
+        max_volume_participation=resolve_volume_participation(
+            p, p.get("_name", "chase_up")
+        ),
         # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate, 与 backtrader_engine.py:223 保持一致。
         # portfolio.py:175-189 文档化 Round 14 (2026-09-28) 引入,默认 0.05。
-        nav_gate_ratio=p.get("nav_gate_ratio", 0.05),
+        nav_gate_ratio=resolve_nav_gate_ratio(p, p.get("_name", "chase_up")),
         # R6 (2026-10-09, CLAUDE.md §0/§4): cost model plumbing, 与 backtrader_engine.py:212-216 保持一致。
         # Round 15 (2026-09-28) 在 portfolio.py:247-254 引入 ATR-aware slippage 与成本参数。
         # 当前 0/22 preset 声明这些 key, 函数默认 0.00025/0.0005/5.0/0.0/0.0 与 backtrader_engine.py p.get 默认完全一致 (R5 nav_gate_ratio 同模式)。

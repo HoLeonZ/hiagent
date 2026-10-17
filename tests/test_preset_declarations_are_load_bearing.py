@@ -16,9 +16,14 @@
 """
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 from core.preset_contract import PresetDeclarationMissing
 from cycle_price_action.portfolio import Portfolio
@@ -204,4 +209,81 @@ def test_chase_up_position_fraction_changes_fill_size(fraction, expected) -> Non
     assert int(trades.iloc[0]["size"]) == expected, (
         f"§2 VIOLATION: position_fraction={fraction} 未生效 —— "
         f"应成交 {expected} 股,实际 {int(trades.iloc[0]['size'])}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 附四十六:契约键**不得**用 `.get(key, 默认值)` 读 —— 那正是"让缺口靠沉默存在"
+# ---------------------------------------------------------------------------
+
+#: §2/§3/§4 的**契约键**:preset 必须声明,引擎必须 fail-fast 地读。
+#: `core/preset_contract.py` 的模块 docstring 明写「引擎不得再用
+#: `p.get(key, <看起来合理的默认值>)` —— 那正是让缺口靠沉默存在的写法」。
+_CONTRACT_KEYS = frozenset({
+    "max_positions", "position_fraction", "position_sizing",
+    "nav_gate_ratio", "max_volume_participation", "atr_slip_scale",
+})
+
+#: 生产入口(逐引擎):Phase-1 与 Phase-2 两条路径都要查 —— 审计发现过两条路径语义分歧。
+_ENGINE_ENTRY_FILES = (
+    "chase_up/backtest.py",
+    "chase_up/backtrader_engine.py",
+    "uptrend_pullback/backtest.py",
+    "uptrend_pullback/backtrader_engine.py",
+    "short_reversal/engine.py",
+    "cycle_price_action/backtest.py",
+)
+
+
+def silent_default_sites(source: str) -> list[tuple[int, str]]:
+    """返回 `key=<...>.get("key", 默认值)` 的 (行号, 键名) —— 即静默兜底点。
+
+    只认**关键字实参**形态(引擎给策略/组合传参的地方);`p["max_positions"]`
+    这种直接下标不算 —— 缺键会 KeyError,是**响亮的**,符合契约。
+    """
+    out: list[tuple[int, str]] = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        for kw in node.keywords:
+            if kw.arg not in _CONTRACT_KEYS:
+                continue
+            v = kw.value
+            is_get = (
+                isinstance(v, ast.Call)
+                and isinstance(v.func, ast.Attribute)
+                and v.func.attr == "get"
+            )
+            if is_get:
+                out.append((node.lineno, kw.arg))
+    return out
+
+
+def test_the_detector_actually_detects() -> None:
+    """守卫自身的守卫:植入一处静默兜底 ⇒ 必须被报出(否则本组断言恒绿无意义)。"""
+    planted = 'x = f(nav_gate_ratio=p.get("nav_gate_ratio", 0.05))\n'
+    assert silent_default_sites(planted) == [(1, "nav_gate_ratio")]
+    # 解析器形态(resolve_*)与直接下标都**不算**违规
+    ok = ('x = f(nav_gate_ratio=resolve_nav_gate_ratio(p, n))\n'
+          'y = g(max_positions=p["max_positions"])\n')
+    assert silent_default_sites(ok) == []
+
+
+@pytest.mark.parametrize("rel", _ENGINE_ENTRY_FILES)
+def test_no_engine_reads_a_contract_key_with_a_silent_default(rel: str) -> None:
+    """§2:契约键必须经 `resolve_*` 读(缺声明即 fail-fast),不得静默兜底。
+
+    实测过的形态:`uptrend_pullback` 的**三个 preset 从未声明 `nav_gate_ratio`**,
+    而引擎 `p.get("nav_gate_ratio", 0.05)` 静默兜底 ⇒ 它们一直跑在一个**没人声明过**
+    的 0.05 上(附四十六 已补声明并改为 resolve)。
+    """
+    path = REPO_ROOT / rel
+    if not path.exists():
+        pytest.skip(f"{rel} 不存在(引擎结构变了?)")
+    sites = silent_default_sites(path.read_text(encoding="utf-8"))
+    assert not sites, (
+        f"§2 VIOLATION: {rel} 用静默默认值读契约键:\n  "
+        + "\n  ".join(f"{ln}: {key}=….get(…)" for ln, key in sites)
+        + "\n缺声明时必须 fail-fast(core.preset_contract.resolve_*),"
+        "否则「没声明」与「声明为那个默认值」不可区分。"
     )
