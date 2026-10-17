@@ -843,10 +843,14 @@ class Phase3V3Strategy(bt.Strategy):
         # gap-aware：short 仓 TP/SL
         # CLAUDE.md P5 要求 SL-first (self.p.intraday_tiebreak='sl_first'):
         # 开盘同时穿越 TP/SL 时优先 SL（保 loss cap）。
-        # 此实现已对齐 P5；保留 v33 baseline parity 的"gap SL 用 sl_p, gap TP 用 open_p"
-        # 由 _run_single_stock_scenario 测试 (test_short_reversal_no_lookahead.py
-        # :131/:160) 锁定，不允许 flip 到 open_p（参 presets.py 注释 "SL gap 不放
-        # 大单笔损失" 的设计选择）。
+        # gap 填充口径 (2026-10-17 更正): 本引擎此前把跳空穿越止损填在 **sl_p**
+        # (即"无论跳空多远, 亏损都恰好在止损位"), 并称之为 design choice。那是
+        # **乐观方向**, 违反 CLAUDE.md §4「fills at the open (pessimistic), never at
+        # the stop price」。已改为 open_p。
+        # 族内复核 (2026-10-17): 另外三个引擎本来就是合规的 ——
+        #   chase_up/portfolio.py / uptrend_pullback/portfolio.py / cycle_price_action/portfolio.py
+        # 都写的是 `if o/up <= sl_p: SL @ open` (多头方向, 跳空低开填开盘价)。
+        # ⇒ **只有本引擎是反的**, 属族内不对称的另一例。
         if self.p.intraday_tiebreak != "sl_first":
             raise ValueError(
                 f"short_reversal 必须 'sl_first', got {self.p.intraday_tiebreak}"
