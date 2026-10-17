@@ -309,6 +309,13 @@ class Phase3V3Strategy(bt.Strategy):
         # v81.1 (审计修正): 默认值由 'raw' 改为 'adj' —— 审计指出"默认 raw 的
         #   开关 = 默认值仍是违规值" (§3 dual-price mandate)。'adj' 为强制合规值。
         signal_price_domain="adj",
+        # 诊断旁路 (§6): 非 None 时, _all_conditions 每评估一根 bar 就追加一条
+        # 记录。默认 None → 完全惰性。仅用于测试与线上信号作业读取引擎的判定,
+        # 不得用于改变任何行为。
+        signal_log=None,
+        # 写入条目的 preset 标签。run_backtest_v3 会把它自己收到的 preset 名
+        # 传进来, 因此 ensemble 逐腿调用时会自动落成腿名。
+        signal_log_tag="",
         result_holder=None,
     )
 
@@ -1010,7 +1017,18 @@ class Phase3V3Strategy(bt.Strategy):
             date=bt.num2date(d.datetime[0]).date(),
         )
         params = {k: getattr(self.p, k) for k in CONDITION_PARAM_KEYS}
-        return check_conditions(bar, ind, params, self._last_sl_date).passed
+        result = check_conditions(bar, ind, params, self._last_sl_date)
+        if self.p.signal_log is not None:
+            self.p.signal_log.append(
+                {
+                    "preset": self.p.signal_log_tag,
+                    "thscode": d._name,
+                    "date": bar.date,
+                    "passed": result.passed,
+                    "failed_at": result.failed_at,
+                }
+            )
+        return result.passed
 
     # ------------------------------------------------------------------ stop
 

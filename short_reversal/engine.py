@@ -121,6 +121,7 @@ def _run_ensemble(
     end: str,
     db_path: Path,
     min_bars: int,
+    signal_log: list | None = None,
 ) -> dict:
     """v63 ensemble: 跑 N 个子策略, 资金等分, 汇总 metrics。
 
@@ -145,7 +146,9 @@ def _run_ensemble(
         sub_cfg = dict(get_preset(name))
         sub_cfg["_name"] = name
         # 递归调用 run_backtest_v3 (会跳过 ensemble check, 走标准路径)
-        sub_results.append(run_backtest_v3(name, start, end, db_path, min_bars))
+        sub_results.append(
+            run_backtest_v3(name, start, end, db_path, min_bars, signal_log=signal_log)
+        )
 
     # 汇总 PnL: 等权 final_capital
     final_capital = sum(r["final_capital"] * w for r, w in zip(sub_results, weights))
@@ -205,6 +208,7 @@ def run_backtest_v3(
     end: str,
     db_path: Path,
     min_bars: int = 200,
+    signal_log: list | None = None,
 ) -> dict:
     """跑 v3 引擎返回 metrics dict。
 
@@ -214,6 +218,11 @@ def run_backtest_v3(
       db_path: DuckDB 文件路径
       min_bars: 每只票最少需要的 bar 数;2-month 滚动窗口期间 panel 跨春节可能
                 只有 ~197 trading days,这时可下调到 150,NaN gate 会兜底。
+      signal_log: 只读诊断旁路 (§6)。非 None 时, 策略每评估一根 bar 就向该
+                list 追加一条 {"preset", "thscode", "date", "passed",
+                "failed_at"} 记录; None (默认) 时完全惰性, 行为逐字节不变。
+                条目里的 preset 标签取自本函数的 preset 形参本身, 所以
+                ensemble 逐腿调用时会自动落成腿名。
     """
     cfg = dict(get_preset(preset))
     cfg["_name"] = preset
@@ -222,7 +231,7 @@ def run_backtest_v3(
     # OOS-validated (WFV mean +10.9%, holdout 2026-H2 +5.4%) over v50_slope.
     # 实现是 N 个独立 backtest 的 wrapper, 复用 v3 引擎, 行为等价。
     if "ensemble_substrategies" in cfg:
-        return _run_ensemble(cfg, start, end, db_path, min_bars)
+        return _run_ensemble(cfg, start, end, db_path, min_bars, signal_log=signal_log)
 
     universe = load_universe_asof(cfg["universe"], start, db_path)
     panel = _load_panel(db_path, start, end, universe)
@@ -313,6 +322,10 @@ def run_backtest_v3(
         entry_selection=cfg.get("entry_selection", "first"),
         # v81 (2026-10-14, §3): 信号价格域 ('raw' 默认兼容 / 'adj' §3 合规)。
         signal_price_domain=cfg.get("signal_price_domain", "adj"),
+        # 诊断旁路 (§6): 只读, None 时策略完全不触碰该属性。标签用 preset 形参
+        # 本身 —— ensemble 逐腿调用 run_backtest_v3(name, ...) 时自动落成腿名。
+        signal_log=signal_log,
+        signal_log_tag=preset,
         result_holder=holder,
     )
     cerebro.run()
