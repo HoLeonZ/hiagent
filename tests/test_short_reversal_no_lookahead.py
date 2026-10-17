@@ -8,11 +8,12 @@ Audit-driven invariants locked here:
     they exist by design (60-day post-buffer is in-flight close convention,
     not entry allowance). The presence of post-window exits is therefore NOT
     a violation. What IS a violation: any trade with entry_date < start.
-  - SR-LA-06: SL gap-fill at sl_p (loss-cap semantics) is DESIGN CHOICE not a bug.
+  - SR-LA-06 (2026-10-17 反转): SL gap-fill 必须用 open_p —— CLAUDE.md §4 明写
+    "never at the stop price"; 旧的 sl_p 填充是乐观方向的设计选择, 已被推翻。
     Refutes the audit's recommendation to flip to open_p; the existing
     test_phase3_v3_bugfixes.py::test_sl_exit_uses_sl_price_not_open_when_gap_up
     already locks the loss-cap behavior. This file re-asserts the symmetry:
-    TP gap → open_p (favorable to trader), SL gap → sl_p (loss cap, also favorable).
+    TP gap → open_p; SL gap → open_p (2026-10-17 修正: §4 要求悲观填充).
 
 Structural fragility (acknowledged but not blocking):
   - SR-LA-03 / SR-LA-04 / FINDING-001: panel has 180-day pre-buffer and 60-day
@@ -157,16 +158,23 @@ def test_tp_gap_fill_uses_open_p():
     )
 
 
-def test_sl_gap_fill_uses_sl_p_loss_cap_semantics():
-    """SR-LA-06: SL gap (short, open >= sl_p) → fill @ sl_p (loss cap)。
+def test_sl_gap_fill_uses_open_p_pessimistic():
+    """SR-LA-06 (**2026-10-17 反转**): SL gap (short, open >= sl_p) → fill @ open_p。
 
-    这不是 bug,而是 deliberate design choice:
-      - 紧止损 (sl_pct ≤ 0.5%) 时,gap 风险本身小,截断语义合理
-      - 宽止损 (如测试中 10%) 时,这是 v33 fix 的核心目标
-        (见 presets.py 注释 "SL 跳空放大让单笔 SL 损失从 -0.05% 变 -10%")
+    原先这条测试断言 fill @ sl_p, 理由是"SL 损失上限严格 = sl_pct, 不被跳空放大"。
+    但 CLAUDE.md §4 是项目规范原文, 它写的是相反的:
 
-    此测试与 test_phase3_v3_bugfixes.py::test_sl_exit_uses_sl_price_not_open_when_gap_up
-    形成 lock-in: 任何 flip 到 open_p 的提交都会同时打挂两个测试。
+        Gap-Through-Stop: If the bar opens beyond the stop, the exit fills at the
+        open (pessimistic), **never at the stop price**.
+
+    旧的 sl_p 填充是**乐观方向**的: 做空仓跳空高开时, 用 sl_p (更低) 回补 = 更差的
+    价格被抹掉。对 sl_pct=0.05% 的配置, 这意味着**几乎每一笔亏损单都被钉在 -0.05%**,
+    无论实际跳空多远 —— 这是系统性的乐观, 不是"损失上限"。
+
+    实测影响 (同一 preset、同一引擎, 只改这一处): short_reversal 全部 preset 的年化
+    收益从两位数正数变成零附近或负数, 例如 v50_slope 在 2024-10~2026-09 上
+    109% → 30%, v73 在独立期 2022-10~2024-09 上 +170% → -17%。
+    即这一处填充口径承载了此前测得的**几乎全部**优势。
     """
     df = _run_single_stock_scenario(
         ep_estimate=22.20, tp_pct=0.06, sl_pct=0.10, max_hold=20,
@@ -180,13 +188,12 @@ def test_sl_gap_fill_uses_sl_p_loss_cap_semantics():
     sl_trade = next((t for t in trades if t["exit_reason"] == "SL"), None)
     assert sl_trade is not None, f"未触发 SL 出场: {trades}"
     sl_p_expected = sl_trade["entry_price"] * 1.10
-    # SL gap → fill @ sl_p (loss cap, trader 不被跳空放大损失)
-    assert sl_trade["exit_price"] == pytest.approx(sl_p_expected, rel=1e-4), (
-        f"SL gap 应 fill @ sl_p={sl_p_expected:.4f},实际={sl_trade['exit_price']:.4f}"
+    # §4 gap-through-stop → fill @ open_p (悲观: 跳空的损失必须计入)
+    assert sl_trade["exit_price"] == pytest.approx(25.0, rel=1e-4), (
+        f"§4: SL gap 必须 fill @ open_p=25.0, 实际={sl_trade['exit_price']:.4f}"
     )
-    # SL 单笔损失严格 ≤ sl_pct (不被 open_p=25.0 放大到 -12.6%)
-    assert sl_trade["net"] > -0.10 - 0.001, (
-        f"SL gap 损失 {sl_trade['net']:.4f} 应 < -10% (loss cap)"
+    assert sl_trade["exit_price"] > sl_p_expected, (
+        "成交价应高于 sl_p —— 跳空损失不得被止损位抹掉"
     )
 
 
@@ -257,6 +264,9 @@ def _run_single_stock_scenario(
         margin_rate=0.086, commission_rate=0.0006, stamp_duty_rate=0.001,
         initial_capital=INITIAL_CAPITAL, lot_size=100,
         result_holder=holder,
+        # engine 要求显式传入 (默认 None 是 fail-fast 设计)。本 helper 原先漏传,
+        # 导致用它的一整组测试都在 TypeError 上早退 —— 从未真正跑到断言。
+        min_cash_ratio=0.05,
     )
     cerebro.run()
     return holder

@@ -852,7 +852,12 @@ class Phase3V3Strategy(bt.Strategy):
                 f"short_reversal 必须 'sl_first', got {self.p.intraday_tiebreak}"
             )
         if open_p >= sl_p:
-            reason, price = "SL", sl_p
+            # §4 Gap-Through-Stop: "If the bar opens beyond the stop, the exit fills
+            # at the open (pessimistic), never at the stop price."
+            # 做空方向: 跳空高开穿越止损时, 用 open_p (更高) 回补 = 更差的价格 = 悲观。
+            # 旧实现填 sl_p, 即假设"无论跳空多少, 亏损都恰好在止损位" —— 对 sl_pct=0.05%
+            # 的配置, 这几乎把每一笔亏损单的上限钉死, 是系统性的乐观。
+            reason, price = "SL", open_p
         elif high >= sl_p:
             reason, price = "SL", sl_p
         elif open_p <= tp_p:
