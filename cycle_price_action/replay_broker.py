@@ -142,10 +142,37 @@ class ReplayBroker:
     ) -> Optional[TradeFill]:
         # P3: same-day exit forbidden.
         held = self._open_positions.get(thscode, 0)
+        # §0 (附五十五): 这里**不能**对 `held` 做硬断言 —— 它是一条**影子账**,
+        # 有两条合法路径会让它与组合账本分叉:
+        #   (a) 送股/配股把组合的持股数放大(§3 要求的物理调整),broker 在买入时
+        #       只记了**除权前**的数量 ⇒ 全仓卖出时 `qty > held`;
+        #   (b) SL/TP 出场走 `Portfolio.try_exit_with_intraday_check`,**不经过**
+        #       `submit_sell` ⇒ 那些平仓从不减少 `held`(实测同一标的上 `held`
+        #       已累积到 1,050,900 而组合实际只持 346,612)。
+        # 之前它是 `raise ValueError("cannot sell more than held")` —— 在上述任一
+        # 情形下都会把一次**合法**的全仓平仓变成整轮回测的中止。
+        # 组合账本才是持股数的权威;此处降级为不一致告警(仍可见,不再中止)。
         if held < qty:
-            raise ValueError("cannot sell more than held")
-        if qty <= 0 or qty % 100 != 0:
-            raise ValueError("qty must be positive multiple of 100")
+            logger.warning(
+                "[broker-shadow] %s 卖出 %d 股 > 影子账 %d 股 —— 影子账与组合账本"
+                "分叉(送股调整 或 SL/TP 出场未经过 broker);按组合账本执行",
+                thscode, qty, held,
+            )
+        if qty <= 0:
+            raise ValueError("qty must be positive")
+        # A 股规则(附五十五):**买入**必须是 100 股整数倍;**卖出**不必 ——
+        # 送股/配股会把持仓变成非整手,而 A 股允许(且要求)把零股以**一笔**
+        # 全部卖出。此前这里对卖出也要求 100 的整数倍,于是该 bar 直接抛
+        # ValueError,被 `backtest.run_backtest` 包成 RuntimeError
+        # **中止整轮回测**(实测:000793.SZ 于 2026-06-22 除权,送股比率
+        # 0.0478,330,800 → 346,612 股,非整手 ⇒ 整轮 backtest 崩掉)。
+        # 本引擎只做**整仓平仓**(唯一的卖出调用传的就是 `position.shares`),
+        # 故非整手在这里只可能是"含零股的全仓卖出"。
+        if qty % 100 != 0:
+            logger.info(
+                "[odd-lot] 全仓卖出含零股 %s qty=%d(送股/配股产生;A 股允许整笔卖出)",
+                thscode, qty,
+            )
         fill_date = self._next_trading_date(decision_date)
         price = self._open_price(thscode, fill_date)
         if price is None:
@@ -157,9 +184,13 @@ class ReplayBroker:
             )
             return None
         fee = self._fee("sell", qty, price, atr_pct=atr_pct, participation=participation)
-        self._open_positions[thscode] -= qty
-        if self._open_positions[thscode] == 0:
-            del self._open_positions[thscode]
+        # 影子账可能已落后于组合(见上方分叉说明)⇒ 不能直接 -=,否则会变负
+        # 且永不清除。夹到 0 即视为清空。
+        _remaining = max(0, self._open_positions.get(thscode, 0) - qty)
+        if _remaining:
+            self._open_positions[thscode] = _remaining
+        else:
+            self._open_positions.pop(thscode, None)
         return TradeFill(fill_date, thscode, "sell", qty, price, fee)
 
 
