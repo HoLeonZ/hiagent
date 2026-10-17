@@ -1,14 +1,21 @@
 """backtrader 数据源。
 
-AShareData: 在 PandasData 基础上加 `amount`（成交额）line + V3a raw_* lines，
-            供 Am60 indicator 与 dual-price execution 用。
+AShareData: 在 PandasData 基础上加 `amount`（成交额）line、V3a `adj_*` 四条线,
+            以及公司行为事件列(div_per_share / bonus_ratio / rights_ratio)。
 
 build_per_stock_feeds: 把 DuckDB 拉出的 panel 切成 per-stock feeds 喂给 cerebro。
 
-V3a (2026-09-22, CLAUDE.md §3): 添加 raw_open/raw_high/raw_low/raw_close lines,
-strategy 在 price_source_for_execution="raw_close" 时切换 SL/TP/intraday
-trigger 价格到 raw_* lines。raw_* 缺失 (NaN, LEFT JOIN miss) → fallback 到
-adj open/high/low/close, baseline parity 保留。
+§3 双价域(2026-10-17 更正本 docstring):本 feed **不带 raw_* lines**,而且**不需要**:
+`v_daily` 本身就是**原始价**,所以 raw 域执行直接用默认的 `close` line;
+复权域另开 `adj_open/adj_high/adj_low/adj_close`(LEFT JOIN v_daily_hfq)。
+`price_source_for_execution="raw_close"` 的含义正是"用默认(原始)列",strategy 侧
+没有任何地方读 `d.raw_close`(实测全模块 grep 零命中)。
+
+更正它不只是为了准确 —— 原先这里写着「添加 raw_open/raw_high/raw_low/raw_close
+lines,strategy 在 price_source_for_execution="raw_close" 时切换 SL/TP 到 raw_*
+lines」,与 `lines` 元组的实际内容不符,会让人(或 agent)以为 `d.lines.raw_close`
+存在(进而写出 AttributeError),或据此对价格域下错结论 —— 而"短反转的 close 到底是
+raw 还是 adj"正是审计 §3 反复要钉住的前提。
 """
 from __future__ import annotations
 
