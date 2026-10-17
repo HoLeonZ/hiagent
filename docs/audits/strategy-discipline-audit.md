@@ -3710,3 +3710,50 @@ lines;raw_* 缺失 → fallback 到 adj …」。实测:
 `load_panel_for_signal` 还被 `lookahead_trade_trace.py` 使用 —— 它是**校验工具**,
 其面板现在也带上 `adj_*`,于是它构造的策略同样切到复权域(与引擎一致 ✓,这是修正而非回归),
 但它的输出口径变化**未逐条复核**(属"顺带受影响"的一类,登记待查)。
+
+---
+
+## 附四十八 —— 追加:契约锁**早就有**,只是只锁住了两处实现里的一处
+
+### 1 · 一个必须记下来的事实
+
+附四十七 修的那个缺陷(扫描器在原始价上算条件)之所以能长期保持绿色,
+原因不是我"没写守卫",而是:
+
+`tests/test_short_reversal_adj_close_indicator.py` **早就存在**,其 docstring 写着:
+
+> GAP CAPTURED (N5, 2026-09-28): strategy 声明 `price_source_for_signal="adj_close"`
+> 却静默忽略 …… **TDD: 本文件就是契约锁。RED → 切 adj_close → GREEN。**
+
+它确实把**策略构造**锁住了(并且已经 GREEN)。但信号扫描走的是**另一条路**
+(`scan_signals_fast._compute_indicators` 自己用 pandas 算指标),
+**那条路上的价格域从未被任何守卫覆盖** ⇒ "引擎已修、扫描未修"可以长期保持全绿。
+
+> **同一个契约、两处实现、只有一处有锁** —— 这与本次审计反复遇到的族内不对称
+> (附二十四/二十五/二十七)是同一种病的**测试侧**形态:
+> 修一处 ≠ 修一族,**锁一处 ≠ 锁一族**。
+> 判定"某契约是否被守住"时,问题不该是"有没有这条守卫",而是
+> **"这条契约的每一处实现,是否各自有守卫"**。
+
+### 2 · 新增的三条(同一个文件,同一份契约)
+
+| 用例 | 钉什么 |
+|---|---|
+| `test_scanner_follows_adj_close_when_the_two_domains_disagree` | 合成面板让 raw 与 adj 结论**相反**(raw 长期下行 ⇒ A 成立;adj 恒等于自身 MA60 ⇒ A 不成立)⇒ 扫描器**不得**产出信号 |
+| `test_the_same_panel_on_raw_would_produce_a_signal` | **双向对照**:丢掉 `adj_*`(= 修复前行为)⇒ **恰好命中 1 只**。没有这一半,"0 命中"分不清"跟随复权价"与"夹具压根不触发条件" |
+| `test_the_signal_loader_exposes_adjacent_adjusted_columns` | loader 必须暴露 `adj_*`;缺复权视图的库给 **NULL** 而非抛错 |
+
+三例都与真实库无关(一个纯合成面板 + 一个临时合成库),合计 **0.1 秒**。
+
+### 3 · 顺带修的脆性
+
+附四十七 的修法让 `load_panel_for_signal` **必须**能 JOIN `v_daily_hfq`,
+而合成夹具只建 `v_daily` ⇒ 立刻 `CatalogException`(实测打红了
+`test_fail_fast_cross_engine` 的异常传播用例)。
+现改为先查 `information_schema`:**视图不存在时给 NULL 的 adj_*** ——
+因为"没有复权数据"是一个**已声明**的回退状态(策略侧"adj_close 全 NaN ⇒ 回退
+`d.close`"、扫描器侧"逐行回退 `close`"两条规则都已定义),不该表现为崩溃。
+
+> 这条自己也说明一件事:**修好一个缺陷时引入的脆性,一样要被跑一遍**才看得见。
+> 我是靠"改动后立刻跑相关测试"发现的(而非靠推理)—— 这也是本会话里
+> "先 parse 再写盘、改完先跑局部"这套习惯第 N 次救场。
