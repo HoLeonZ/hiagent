@@ -36,10 +36,19 @@ from typing import Any, Mapping
 
 # Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical cost rates imported from
 # core/dual_price.py single-source-of-truth. (was 0.001 = 万10 pre-Aug2023).
+#
+# ⚠️ 2026-10-19 (§2 Canonical Cost Model 修复): 此前这三行 import **是装饰性的** ——
+# 下面 `class Portfolio` 里又把同名值**字面量重写了一遍**, 模块级名字实际从未被用;
+# `STAMP_DUTY_RATE` 还被改名成 `STAMP_TAX_SELL`。§2 明文:
+# "Commission / stamp-duty / min-fee constants are defined exactly once (in core/).
+#  Every engine MUST import them; redefining fee constants inside an engine or preset
+#  is a **fail-fast violation**."
+# ⇒ 现在改成**别名导入 + 类属性绑定到别名**, 让 import 真正承重。
+# 取值逐字节未变 (0.00025 / 5.0 / 0.0005) ⇒ **零结果漂移**。
 from core.dual_price import (
-    COMMISSION_RATE,
-    MIN_COMMISSION,
-    STAMP_DUTY_RATE,
+    COMMISSION_RATE as _CANON_COMMISSION_RATE,
+    MIN_COMMISSION as _CANON_MIN_COMMISSION,
+    STAMP_DUTY_RATE as _CANON_STAMP_DUTY_RATE,
 )
 
 
@@ -65,11 +74,15 @@ class Portfolio:
     / no leverage).
     """
 
-    COMMISSION_RATE = 0.00025
-    MIN_COMMISSION = 5.0
+    # 2026-10-19 (§2): **绑定到 core 的规范值**, 不再写字面量。
+    # 类属性必须保留 (tests/test_cycle_price_action_invested_entry_fee.py 钉住
+    # `Portfolio.COMMISSION_RATE` / `Portfolio.MIN_COMMISSION` 的存在), 但取值来自单一来源。
+    COMMISSION_RATE = _CANON_COMMISSION_RATE
+    MIN_COMMISSION = _CANON_MIN_COMMISSION
     # Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical 万5 post-Aug2023 rate
     # (was 0.001 = 万10 pre-Aug2023 historical). Sell-side only.
-    STAMP_TAX_SELL = 0.0005
+    # 名字保留 `STAMP_TAX_SELL` (调用方用它), 值来自规范常量。
+    STAMP_TAX_SELL = _CANON_STAMP_DUTY_RATE
     # Project policy: every entry is all-in (CLAUDE.md §2, revised 2026-09-21).
     # Held at 1.0 explicitly so the constant survives for callers/tests.
     MAX_POSITION_PCT = 1.0

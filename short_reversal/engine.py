@@ -34,8 +34,13 @@ INITIAL_CAPITAL = 1_000_000.0
 # Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical cost rates imported from
 # core.dual_price single-source. Previously COMM=0.0006 / STAMP=0.001 (2.4x
 # and 2x off canonical) — silently under-reported net PnL.
-COMMISSION_RATE = 0.00025
-STAMP_DUTY_RATE = 0.0005
+#
+# ⚠️ 2026-10-19 (§2 Canonical Cost Model 修复): 上面这句注释此前**与代码不符** ——
+# 底下两行是**字面量**, 并没有 import。§2 明文: "Commission / stamp-duty / min-fee
+# constants are defined exactly once (in core/). Every engine MUST import them;
+# redefining fee constants inside an engine or preset is a **fail-fast violation**."
+# ⇒ 改成真 import。取值逐字节未变 (0.00025 / 0.0005) ⇒ **零结果漂移**。
+from core.dual_price import COMMISSION_RATE, STAMP_DUTY_RATE  # noqa: E402
 MARGIN_RATE = 0.086
 DAYS_PER_YEAR = 365
 # 交易日口径。基准是**实际评估期的权益行数** (与三个姊妹引擎一致), 但**常数未统一**:

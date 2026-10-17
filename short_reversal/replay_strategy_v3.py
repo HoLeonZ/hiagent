@@ -55,9 +55,17 @@ MAX_VOL_PARTICIPATION = 0.10
 # (single-source-of-truth in core.dual_price.py). Declared at module level so
 # the AST detector in tests/test_cost_model_canonical_conformance_4engine.py
 # can verify canonical compliance. Used by Phase3V3Strategy.params below.
-COMMISSION_RATE: float = 0.00025
-STAMP_DUTY_RATE: float = 0.0005
-MIN_COMMISSION: float = 5.0
+# 2026-10-19 (§2 Canonical Cost Model 修复): 此前这三行是**字面量**, 而本文件
+# 顶部**已经** `from core.dual_price import ...` —— 只是没有把这些成本常量一并导入。
+# §2: "Commission / stamp-duty / min-fee constants are defined exactly once (in core/).
+# Every engine MUST import them; redefining fee constants inside an engine or preset
+# is a **fail-fast violation**."
+# ⇒ 改为真 import。取值逐字节未变 (0.00025 / 0.0005 / 5.0) ⇒ **零结果漂移**。
+from core.dual_price import (  # noqa: E402
+    COMMISSION_RATE,
+    MIN_COMMISSION,
+    STAMP_DUTY_RATE,
+)
 
 
 def _canonical_trade_record(
