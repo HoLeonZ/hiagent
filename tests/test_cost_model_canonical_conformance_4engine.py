@@ -115,6 +115,29 @@ def _scan_cost_constants(
     stamp_duty_value: float | None = None
     line_map: dict[str, int] = {}
 
+    # 2026-10-19 (§2 Canonical Cost Model 修复后新增):
+    # §2 明文要求引擎 **从 `core/` 导入**成本常量而非自己写死。按那条要求改过之后,
+    # 赋值右侧是 `ast.Name`(导入名)而不是数字 ⇒ 本扫描原来会报 "NOT FOUND"。
+    # 这里把 import 也认出来, 并把名字**解析回 core 里的规范值**。
+    # ⇒ "写死字面量"与"从单一来源导入"两种形态都被判为合规, 而**错值仍会被抓住**
+    #    (字面量分支未改)。
+    imported_from_core: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "core.dual_price":
+            for alias in node.names:
+                imported_from_core[alias.asname or alias.name] = alias.name
+
+    def _resolve_imported(node: ast.AST) -> float | None:
+        if not isinstance(node, ast.Name):
+            return None
+        canon = imported_from_core.get(node.id)
+        if canon is None:
+            return None
+        import core.dual_price as _cd
+
+        v = getattr(_cd, canon, None)
+        return float(v) if isinstance(v, (int, float)) else None
+
     # Patterns to match (lowercase for case-insensitive comparison)
     commission_names = {
         "commission_rate",
@@ -135,11 +158,15 @@ def _scan_cost_constants(
         attr_lower = attr_name.lower()
         if attr_lower in commission_names:
             val = _extract_numeric_value(value_node)
+            if val is None:
+                val = _resolve_imported(value_node)   # §2: 从 core 导入的形态
             if val is not None:
                 commission_value = val
                 line_map["commission"] = line
         elif attr_lower in stamp_duty_names:
             val = _extract_numeric_value(value_node)
+            if val is None:
+                val = _resolve_imported(value_node)
             if val is not None:
                 stamp_duty_value = val
                 line_map["stamp_duty"] = line
@@ -179,6 +206,22 @@ def _scan_cost_constants(
                 if kw_default is not None:
                     line = getattr(kw_default, "lineno", node.lineno)
                     _check_and_record(kw_arg.arg, kw_default, line)
+
+    # 2026-10-19 兜底 (§2): 有些引擎**只**写 `from core.dual_price import COMMISSION_RATE,
+    # STAMP_DUTY_RATE` 而**没有任何赋值** ⇒ 上面的赋值扫描会一个都找不到。
+    # 这里按 import 的名字补上。**作为兜底而非覆盖**: 若同一文件里还有显式字面量赋值,
+    # 上面的分支已经记录过了, 这里的 `is None` 判断保证不会把它盖掉 ⇒ **错值仍被抓住**。
+    for local, canon in imported_from_core.items():
+        v = _resolve_imported(ast.Name(id=local))
+        if v is None:
+            continue
+        name_l = (canon or local).lower()
+        if name_l in commission_names and commission_value is None:
+            commission_value = v
+            line_map.setdefault("commission", 0)
+        elif name_l in stamp_duty_names and stamp_duty_value is None:
+            stamp_duty_value = v
+            line_map.setdefault("stamp_duty", 0)
 
     return (commission_value, stamp_duty_value, line_map)
 
