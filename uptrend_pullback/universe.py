@@ -71,8 +71,20 @@ def _all_thscodes(db_path: Path, asof_date: str | None = None) -> list[str]:
 
 
 def _load_exclude(exclude_path: Path | None) -> set[str]:
-    if exclude_path is None or not Path(exclude_path).exists():
+    """读取黑名单。
+
+    exclude_path=None → 空集 (调用方没要求排除, 这是**明确**的语义)。
+    **显式传入路径却读不到 → fail-fast** (§0: 不得静默把"要排除"退化成"没排除")。
+    2026-10-17: 此前是 `exclude_path is None or not exists()` 一并返回空集, 于是
+    "路径写错"与"根本没要求排除"不可区分 —— 与 short_reversal 同型 (族内不对称)。
+    """
+    if exclude_path is None:
         return set()
+    if not Path(exclude_path).exists():
+        raise UptrendPullbackError(
+            f"黑名单文件不存在: {exclude_path} —— 要求排除却读不到, 拒绝静默退化为"
+            f"'排除 0 只' (§0 Fail-Fast)"
+        )
     return {
         line.strip()
         for line in Path(exclude_path).read_text(encoding="utf-8").splitlines()
