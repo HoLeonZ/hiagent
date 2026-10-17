@@ -288,3 +288,125 @@ class TestShortReversalLayoutBContract:
                 f"{preset_name} price_source_for_execution 必须 = raw_close "
                 f"(CLAUDE.md §3 铁律), 实际 {p['price_source_for_execution']}"
             )
+
+
+# ---------------------------------------------------------------------------
+# 附四十九(2026-10-17):在**真实数据**上验证第二 MUST("执行/SL/cash MTM MUST use
+# raw_close"),并要求样本**非空转**
+#
+# 本文件上半部分的断言都建在合成夹具上(8.0 vs 12.0 的 phantom)。而本会话刚吃过一次
+# 教训:扫描器的价格域错误**在与真值同口径的夹具上全绿**(附四十七)——
+# 夹具能证明"实现按某个口径**一致**",不能证明"这个口径就是**生产**口径"。
+# 故补两条真数据/真机器上的断言,各带"非空转"钳制:
+#   1. chase_up 的真实成交:`entry_price` 必须等于该日 **raw open**;
+#      并要求样本里**确实存在 raw != adj 的行**(否则这条什么都没验);
+#   2. short_reversal 的 feed:其默认价线必须来自 **raw**(v_daily),与 adj 线分离。
+# ---------------------------------------------------------------------------
+
+def _needs_db():
+    from hiagent_config import get_db_path
+
+    p = Path(get_db_path())
+    return p.exists() and p.stat().st_size > 0
+
+
+@pytest.mark.skipif(not _needs_db(), reason="本地 DuckDB 不可用 — §6 skip 而非 error")
+def test_real_chase_trades_enter_at_raw_open_not_adjusted() -> None:
+    """真实成交的入场价必须 = **raw open**(§3 第二 MUST),且样本非空转。"""
+    import duckdb
+
+    from hiagent_config import get_db_path
+
+    from core.trade_schema import annualized_years  # noqa: F401  (保持导入面一致)
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from chase_up.backtest import run_backtest
+
+    db = Path(get_db_path())
+    res = run_backtest(
+        "chase_v10_pos2_equal_atr_tp6_sl15_mh18_score16",
+        "2025-09-19", "2026-09-19", db,
+    )
+    trades = res["trades"]
+    assert len(trades) > 0, "夹具前提:该 preset 在此窗口应有成交"
+
+    con = duckdb.connect(str(db), read_only=True)
+    try:
+        con.execute("""
+            CREATE TEMP TABLE t AS
+            SELECT thscode, entry_date, entry_price FROM (VALUES %s)
+            AS v(thscode, entry_date, entry_price)
+        """ % ",".join(
+            "('%s', DATE '%s', %r)" % (r["thscode"], r["entry_date"], float(r["entry_price"]))
+            for _, r in trades.iterrows()
+        ))
+        rows = con.execute("""
+            SELECT t.thscode, t.entry_date, t.entry_price,
+                   v.open AS raw_open, h.open AS adj_open
+            FROM t
+            LEFT JOIN v_daily     v ON v.thscode = t.thscode AND v.date = t.entry_date
+            LEFT JOIN v_daily_hfq h ON h.thscode = t.thscode AND h.date = t.entry_date
+        """).fetchall()
+    finally:
+        con.close()
+
+    diverged = 0
+    bad: list[str] = []
+    for code, _d, ep, raw_open, adj_open in rows:
+        if raw_open is None:
+            continue
+        if adj_open is not None and abs(float(adj_open) - float(raw_open)) > 1e-9:
+            diverged += 1
+        if abs(float(ep) - float(raw_open)) > 1e-6:
+            bad.append(f"{code} {_d}: entry_price={ep} != raw_open={raw_open} (adj_open={adj_open})")
+
+    assert not bad, (
+        "§3 VIOLATION: 入场价不是 raw open —— 执行域被复权价污染:\n  " + "\n  ".join(bad[:5])
+    )
+    assert diverged > 0, (
+        "样本里**没有** raw != adj 的成交 ⇒ 这条断言是空转的(换个窗口/preset 让它有牙)"
+    )
+
+
+def test_short_reversal_feed_default_lines_are_raw_not_adjusted() -> None:
+    """§3:short_reversal 的 feed 默认价线必须来自 **raw**,adj 另设 —— 且两者确实可分离。
+
+    该引擎的 SL/TP/盯市读的就是默认线(`d.open/high/low/close`),所以"默认线=raw"
+    正是它满足第二 MUST 的方式;用一个 raw 与 adj 刻意不同的合成面板来钉。
+    """
+    import backtrader as bt
+    import numpy as np
+    import pandas as pd
+
+    from short_reversal.feed_bt import AShareData
+
+    n = 30
+    dates = pd.bdate_range("2025-01-01", periods=n)
+    panel = pd.DataFrame({
+        "thscode": "X.SH", "date": dates,
+        "open": np.full(n, 8.0), "high": np.full(n, 9.0),
+        "low": np.full(n, 7.5), "close": np.full(n, 8.5),
+        "amount": np.full(n, 5e7), "volume": np.full(n, 1e6),
+        "adj_open": np.full(n, 12.0), "adj_high": np.full(n, 13.0),
+        "adj_low": np.full(n, 11.5), "adj_close": np.full(n, 12.5),
+        "div_per_share": np.zeros(n), "bonus_ratio": np.zeros(n), "rights_ratio": np.zeros(n),
+    })
+
+    captured = {}
+
+    class S(bt.Strategy):
+        def next(self):
+            captured["close"] = float(self.data.close[0])
+            captured["adj_close"] = float(self.data.adj_close[0])
+
+    cerebro = bt.Cerebro(stdstats=False)
+    cerebro.adddata(AShareData(dataname=panel, datetime="date"), name="X.SH")
+    cerebro.addstrategy(S)
+    cerebro.run()
+
+    assert captured["close"] == pytest.approx(8.5), (
+        f"默认价线 = {captured['close']},应为 raw 8.5 —— 执行/盯市域被改了"
+    )
+    assert captured["adj_close"] == pytest.approx(12.5), (
+        f"adj 线 = {captured['adj_close']},应为 12.5 —— 两条线必须可分离"
+    )
