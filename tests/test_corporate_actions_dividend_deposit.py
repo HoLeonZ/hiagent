@@ -170,3 +170,91 @@ def test_raw_prev_close_loaded_into_entry_dict() -> None:
         assert "raw_prev_close" in Path(rel).read_text(encoding="utf-8"), (
             f"Regression: {rel} 不再加载 raw_prev_close"
         )
+
+
+# ---------------------------------------------------------------------------
+# 附五十(2026-10-17):在**真实数据**上把账本分红与"真发生过的除权事件"对账
+#
+# 既有覆盖是:语义(合成)✓、接线 ✓、schema ✓ —— 但**从没对账过**
+# 「账本里的 `cum_dividends` 是否等于该组合**持仓期内真发生的**除权事件之和」。
+# 而且守恒恒等式对它**不敏感**:若分红根本没入账,`cum_dividends` 与恒等式两边会
+# **同时为 0**,等式照样成立 —— 与附四十九 里"0 命中分不清跟随了复权价与夹具不触发"
+# 是同一类空洞。
+# ---------------------------------------------------------------------------
+
+_DIV_WINDOW = ("2025-09-19", "2026-09-19")
+
+
+def _expected_dividends(trades, db: Path) -> tuple[float, int]:
+    """独立复核:持仓期内(**非**入场当天)真发生的分红 × 当时持股数。"""
+    import duckdb
+
+    con = duckdb.connect(str(db), read_only=True)
+    try:
+        rows = con.execute(
+            "SELECT thscode, ex_date, dividend_per_share FROM raw_adjustment_events "
+            "WHERE dividend_per_share > 0 AND ex_date BETWEEN ? AND ?",
+            list(_DIV_WINDOW),
+        ).fetchall()
+    finally:
+        con.close()
+    by_code: dict[str, list[tuple[object, float]]] = {}
+    for code, ex_date, per_share in rows:
+        by_code.setdefault(code, []).append((ex_date, float(per_share)))
+
+    total, n = 0.0, 0
+    for _, t in trades.iterrows():
+        entry = t["entry_date"].date() if hasattr(t["entry_date"], "date") else t["entry_date"]
+        exit_ = t["exit_date"].date() if hasattr(t["exit_date"], "date") else t["exit_date"]
+        for ex_date, per_share in by_code.get(t["thscode"], []):
+            # 入场当天不享分红(当天已是除权日)—— 与引擎口径一致
+            if entry < ex_date <= exit_:
+                total += float(t["size"]) * per_share
+                n += 1
+    return total, n
+
+
+def _db_available() -> bool:
+    from hiagent_config import get_db_path
+
+    p = Path(get_db_path())
+    return p.exists() and p.stat().st_size > 0
+
+
+@pytest.mark.skipif(not _db_available(), reason="本地 DuckDB 不可用 — §6 skip 而非 error")
+@pytest.mark.parametrize(
+    "module_name,preset,expect_events",
+    [
+        ("chase_up.backtest", "chase_v1_atr_tp4_sl1", True),
+        ("uptrend_pullback.backtest", "v33_long_reverse_v19", False),
+    ],
+)
+def test_booked_dividends_match_real_held_through_events(
+    module_name: str, preset: str, expect_events: bool
+) -> None:
+    """账本 `cum_dividends` 必须等于独立复核的"持仓期内分红"之和。
+
+    `expect_events=True` 的那一条带**非空转钳制**:它的窗口里必须真的发生过
+    持仓期内的除权事件 —— 否则"对账相等"可能只是 0 == 0。
+    另一条(`uptrend_pullback` 该窗口实测 0 个事件)只作**一致性**检查,
+    其"分红确实入账"的能力由合成用例覆盖(`test_corporate_actions_events.py`)。
+    """
+    import importlib
+
+    from hiagent_config import get_db_path
+
+    run_backtest = importlib.import_module(module_name).run_backtest
+    res = run_backtest(preset, *_DIV_WINDOW, Path(get_db_path()))
+
+    booked = float(res["equity"]["cum_dividends"].iloc[-1])
+    expected, n_events = _expected_dividends(res["trades"], Path(get_db_path()))
+
+    assert booked == pytest.approx(expected, abs=0.01), (
+        f"{module_name}/{preset}: 账本分红 {booked:,.2f} != 独立复核 {expected:,.2f}"
+        f"(持仓期内除权事件 {n_events} 条)"
+    )
+    if expect_events:
+        assert n_events > 0, (
+            "该 preset/窗口原本有持仓期内除权事件,现在没有了 ⇒ 夹具/数据变了,"
+            "这条断言将退化为 0 == 0(空转)"
+        )
