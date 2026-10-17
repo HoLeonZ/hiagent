@@ -20,7 +20,7 @@ from hiagent_config import get_db_path  # noqa: E402
 
 # min_bars=150 (not the engine default 200): the panel spans start-180d..end+60d
 # and the F-01 guard in feed_bt.py now raises when EVERY stock is dropped.
-PRESETS = ["v50_slope", "v44_ratio02_buf07"]
+PRESETS = ["v50_slope", "v44_ratio02_buf07", "v81_adj"]
 START, END, MIN_BARS = "2025-09-12", "2026-09-12", 150
 OUT_DIR = Path(__file__).parent
 
