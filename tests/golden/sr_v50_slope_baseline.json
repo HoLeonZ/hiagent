@@ -1,0 +1,23 @@
+{
+  "preset": "v50_slope",
+  "start": "2025-09-12",
+  "end": "2026-09-12",
+  "min_bars": 150,
+  "metrics": {
+    "trades_count": 74,
+    "win_rate": 0.33783783783783783,
+    "final_capital": 3199700.2820858234,
+    "total_yield": 2.1997002820858236,
+    "cagr": 2.1997002820858236,
+    "sharpe": 5.617692320369431,
+    "max_dd": 0.11441358006584051,
+    "avg_pnl": 0.025718689872952994,
+    "avg_hold_days": 2.635135135135135,
+    "tp_count": 21,
+    "sl_count": 49,
+    "time_count": 4
+  },
+  "trades_sha256": "c695cb8da65a3063453ca6fa69aada277b377a1fffc52c096b720df6d3111453",
+  "trades_rows": 74,
+  "note": "§6 golden baseline for short_reversal. Any change to the trade list MUST regenerate this file and justify the drift in the PR."
+}
