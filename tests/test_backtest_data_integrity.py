@@ -1,7 +1,9 @@
 """5-layer backtest data integrity framework (2026-09-22, CLAUDE.md §3).
 
 5-layer regression suite for chase_up dual-price correctness:
-  Layer 1: panel raw_* coverage (raw_prev_close 0% NaN = 已知数据层 follow-up)
+  Layer 1: panel raw_* coverage (raw_prev_close 只在**每票首根 bar** 为 NaN ——
+           数据层已于 Round 23 2026-09-28 用内联 LAG 修复; 此前记为
+           "0% NaN = 已知数据层 follow-up" 的说法与恒真断言都是陈旧的, 见 Layer 1)
   Layer 2: entry_price ≈ raw_open (per-trade alignment, 含 slippage 容差)
   Layer 3: phantom TP 数 (count of TPs whose raw_high < TP threshold on fill bar)
   Layer 4: per-trade math 闭环 (gross/fees/net/return consistency)
@@ -50,13 +52,39 @@ def trades(panel_ind):
 
 
 def test_layer1_raw_prev_close_coverage(panel):
-    """Layer 1: 记录 panel 中 raw_prev_close 覆盖率. 当前 0% 是已知数据层问题
-    (DuckDB raw_kline_daily.prev_close NULL upstream), 由 data 层 fix 处理.
-    此测试固定记录现状, 数据层修复后覆盖率应提升到 100%."""
-    cov = panel["raw_prev_close"].notna().mean()
-    # 记录基线; 一旦数据层修复, 应改为 assert cov == 1.0
-    assert cov >= 0.0
-    print(f"\n[Layer 1] raw_prev_close coverage = {cov:.4%}")
+    """Layer 1: raw_prev_close 必须**只**在每只票的首根 bar 上为 NaN。
+
+    ⚠️ 本测试此前是**空转守卫** (审计 docs/audits/strategy-discipline-audit.md §(c)
+    点名的形态): 断言写作 `assert cov >= 0.0`, **恒真**; docstring 写着
+    "当前 0% 是已知数据层问题 ... 数据层修复后覆盖率应提升到 100%"。
+
+    但那句话**已经过期**: 数据层在 Round 23 (2026-09-28) 就修了 ——
+    `chase_up/data.py` 改用内联 `LAG(r.close) OVER (PARTITION BY thscode ORDER BY date)`
+    取代 0% populated 的 `raw_kline_daily.prev_close`。实测覆盖率 **99.80%**,
+    不是 0%。**恒真的断言正是没人发现 docstring 过期了的原因** —— 这正是"空转守卫"
+    腐蚀红/绿信号的机制: 文档在漂, 测试不会响。
+
+    现在钉两条**真**断言:
+      1. 覆盖率 ≥ 99% —— 实测 99.80% (方差来自每票首根 bar 无前行);
+      2. 每一个 NaN 都必须落在该票的**首根 bar** 上。若 NaN 出现在中间, 说明
+         LAG 的分区或排序坏了 —— 那会**静默改变 LIMIT_UP 守卫的输入**
+         (`extract_execution_bar` 会用 qfq 域的 `prev_close` 顶替, 见
+         `chase_up/portfolio.py` 的 "best-effort 回退" 注释)。
+    """
+    cov = float(panel["raw_prev_close"].notna().mean())
+    assert cov >= 0.99, (
+        f"raw_prev_close 覆盖率 {cov:.4%} < 99% —— 数据层的 LAG 回填退化了"
+    )
+
+    nulls = panel.loc[panel["raw_prev_close"].isna(), ["thscode", "date"]]
+    first = panel.groupby("thscode")["date"].min().rename("first_date")
+    merged = nulls.merge(first, left_on="thscode", right_index=True, how="left")
+    off_first = merged[merged["date"] != merged["first_date"]]
+    assert off_first.empty, (
+        f"{len(off_first)} 个 raw_prev_close NaN **不在首根 bar** 上 —— "
+        f"LAG 的 PARTITION BY / ORDER BY 可能坏了:\n{off_first.head(5)}"
+    )
+    print(f"\n[Layer 1] raw_prev_close coverage = {cov:.4%}, NaN={len(nulls)} (全部为首根 bar)")
 
 
 def test_layer2_entry_uses_raw_open(trades, panel):
