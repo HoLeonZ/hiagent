@@ -149,7 +149,63 @@ for label, ov in [("现配置", {}),
 ```
 **验证后再谈重生成** —— 且重生成属结果变更, 须在 PR 里逐条说明漂移。
 
-### 6.2 其余已登记项
+### 6.2 §4 ATR 滑点: **机制已接好, 但全部 81 个 preset 都把它关掉了**
+
+**§4 原文**: 「Execution slippage MUST be modeled dynamically as a function of the asset's
+current ATR (Average True Range) and the order's participation rate. **Do not use flat-rate
+slippage** (e.g. 1 tick).」
+
+**现状** (可直接复现, 见下): `chase_up` 22 / `uptrend_pullback` 4 / `short_reversal` 55
+个 preset **没有一个**声明 `atr_slip_scale` 或 `slippage`; 引擎调用点默认 `0.0`
+⇒ `core/dual_price.atr_slippage` 恒返回 0 ⇒ **实际是"零 flat rate"**,
+而 §4 明令禁止 flat rate。
+
+**注意这里两个"默认"是相反的**: `core/dual_price.atr_slippage(..., scale: float = 1.0)`
+的**函数默认是 1.0 (开)**; 而 `chase_up/backtrader_engine.py` / `uptrend_pullback/backtrader_engine.py`
+的调用点默认 `0.0` (关), 注释自陈理由是「Defaults preserve pre-R15 behavior ...
+**0.0 slippage**」。⇒ 关掉它是为了**向前兼容**, 不是因为它是对的。
+
+**为什么这条**没有**像 §4 跳空成交那样直接修** (那条 `57b751e` 直接修了):
+跳空成交那条 §4 给了**唯一的正确取值** (「fills at the open, never at the stop price」);
+这一条 §4 只规定了**形式** (ATR × participation), 没规定**系数**。而实测把系数从 0
+开到函数默认的 1.0, 效果**不单调**:
+
+| | W2 (报告窗) | IND (独立期) |
+|---|---|---|
+| CAGR 变化 | 变**差** | 变**好** |
+| 笔数变化 | **变多** | **变多** |
+
+⇒ 既不是"一致的收紧", 也不是"§0 悲观默认"(§0 要求假设最坏情形, 而这里有一个窗口变好)。
+所以**改它属结果变更/建模取值选择** ⇒ 按长期授权「登记, 不擅自改」。
+
+**要解开它需要的是"一个系数从哪来"的决策**, 不是代码改动。三条可选路径:
+(a) 由参与率与冲击成本的**外生标定**推出 (需要外部数据, 本库没有);
+(b) 取一个**预先声明**的保守常数, 并在 preset 里显式写出 (不再靠引擎默认);
+(c) 保持 0, 但在文档与报告里明确标注「本回测**不含**执行滑点, §4 未落实」。
+**在选定之前, 任何引用这几个引擎 CAGR 的结论都应附带 (c) 的标注。**
+
+**复现** (读 preset 的声明; 以及开/关对比):
+```python
+from chase_up.presets import get_preset, PRESETS
+from uptrend_pullback.presets import get_preset as ug, PRESETS as UP
+import short_reversal.presets as SR
+
+# (1) 现状: 81 个 preset 全都不声明 atr_slip_scale / slippage
+print({k: (get_preset(k).get("atr_slip_scale"), get_preset(k).get("slippage"))
+       for k in list(PRESETS)[:3]})
+
+# (2) 开/关对比 (任一引擎的任一提案; 这里以当前最优为例)
+from pathlib import Path
+from hiagent_config import DB_PATH
+from uptrend_pullback.backtrader_engine import run_backtrader_backtest
+for sc in (0.0, 1.0):
+    p = dict(ug("v33_long_reverse_v22")); p["atr_slip_scale"] = sc
+    m = run_backtrader_backtest(p, "2024-10-08", "2026-09-30", Path(DB_PATH),
+                                verify=False)["metrics"]
+    print(sc, m["trades"], m["cagr"])
+```
+
+### 6.3 其余已登记项
 
 | 项 | 说明 |
 |---|---|
@@ -157,6 +213,6 @@ for label, ov in [("现配置", {}),
 | `_approx_sharpe` 的**无权平均** | 一笔残仓与一笔满仓同等计入; 已披露加权版本, 未改 |
 | `TRADING_DAYS` **243 vs 252** | `chase_up`/`uptrend_pullback` 用 243, `cycle_price_action` 用 252 |
 | `sharpe` **口径不统一** | `short_reversal` 是逐笔口径, 其余三个是日权益口径; **不可跨族比较**。已披露 `sharpe_equity_basis` |
-| ATR 滑点值 | `§8#2`, 全部预设仍为 0 |
+| ATR 滑点值 | 见 **§6.2** (单独成节 —— 它是 §4 明令项, 且效果不单调) |
 | `presets.py` 内的历史 CAGR 注释 | 成片的 §7 违规 (代码注释里嵌历史指标) |
 | Layer 5 之外的 `test_backtest_data_integrity.py` | 见 6.1; 该文件的 Layer 1/Layer 5 已于 2026-10-17 修真 |
