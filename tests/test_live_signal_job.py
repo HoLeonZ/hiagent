@@ -1,7 +1,7 @@
 """Signal job: pure parts tested offline; DB parts skip when absent (§6)."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -206,19 +206,37 @@ def test_run_signal_job_uses_the_universe_as_of_the_signal_date(job_run):
 
 
 def test_run_signal_job_never_reads_a_row_after_the_as_of(job_run):
-    """End-to-end §1 check on the UNFILTERED log: the engine produced no row
-    dated after signal_date, so the signal set for that date cannot depend on
-    the future.
+    """§1: the engine's panel must not extend past the as-of, and the engine
+    must not have logged a row after it.
 
-    The old form asserted over `rec.candidates`, which `run_signal_job` has
-    already filtered to `date == as_of` — a tautology (`x <= x`), and vacuous
-    when there are no candidates. The raw log is the honest witness. This is what
-    catches the `panel_end_for_as_of` regression (returning signal_date
-    unchanged): run_backtest_v3 then loads 60 days of FUTURE bars, which changes
-    the log rows (different stocks clear min_bars) with `signals.jsonl` still
-    looking normal.
+    run_backtest_v3 loads [start-180d, end+60d], so passing end=signal_date would
+    load 60 days of FUTURE bars. The DISCRIMINATING check is on the `end` the job
+    actually hands the engine: it must be `signal_date - 60d`, so that
+    `end + PANEL_POST_BUFFER_DAYS <= as_of`.
+
+    Asserting only over the log is NOT sufficient today: `AS_OF` (2026-10-16)
+    equals the DB's `max(date)`, so a mutated `panel_end_for_as_of` (returning
+    signal_date unchanged) would extend the panel to 2026-12-15 — a window the DB
+    has no rows for — and the log would be byte-identical (the earlier
+    "+60d extension adds bars" premise does not hold here). The `end` assertion
+    below is what actually fires on that mutation; the log assertion is kept as
+    the end-to-end consequence check on the UNFILTERED engine log.
     """
+    from short_reversal._panel_loader import PANEL_POST_BUFFER_DAYS
+
     as_of = date.fromisoformat(AS_OF)
+
+    panel_end = date.fromisoformat(job_run["end"])
+    covered_through = panel_end + timedelta(days=PANEL_POST_BUFFER_DAYS)
+    assert covered_through <= as_of, (
+        f"the job handed the engine end={panel_end}; run_backtest_v3 loads "
+        f"[start-180d, end+{PANEL_POST_BUFFER_DAYS}d], so the panel extends to "
+        f"{covered_through} — past the as-of {as_of}. The job must pass "
+        f"end = signal_date - PANEL_POST_BUFFER_DAYS "
+        f"(= {panel_end_for_as_of(AS_OF)}), i.e. a panel_end_of_signal_date "
+        f"mutation."
+    )
+
     log = job_run["log"]
     assert log, "non-vacuity: the engine produced no log rows at all"
     latest = max(e["date"] for e in log)
