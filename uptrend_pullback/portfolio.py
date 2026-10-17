@@ -204,7 +204,22 @@ def _build_index(panel: pd.DataFrame) -> dict[str, dict]:
             entry["raw_high"] = sub["raw_high"].to_numpy(dtype=float) if "raw_high" in sub.columns else np.full(len(sub), np.nan)
             entry["raw_low"] = sub["raw_low"].to_numpy(dtype=float) if "raw_low" in sub.columns else np.full(len(sub), np.nan)
             entry["raw_close"] = sub["raw_close"].to_numpy(dtype=float) if "raw_close" in sub.columns else np.full(len(sub), np.nan)
-            entry["raw_prev_close"] = sub["raw_prev_close"].to_numpy(dtype=float) if "raw_prev_close" in sub.columns else np.full(len(sub), np.nan)
+            # §3/§4 (audit 2026-10-17): `raw_prev_close` **由 raw_close 序列自己算**。
+            # 面板里那一列在活库上是 **100% NULL**(实测 0 / 10,364,755 非空)⇒ 入场
+            # 涨停守卫取 `_pc` 时会回退到 **adj prev_close**,再拿它去比 **raw open**
+            # —— 跨域比较。两个域在这一库里**系统性不同**(后复权普遍低于原始价),
+            # 比值因此被调整因子放大,守卫**过度触发**。实测同一批候选 bar:
+            #     跨域判定「涨停开盘」102,641 次(6.409%)
+            #   vs 同域判定「涨停开盘」  8,200 次(0.512%)
+            # 多出来的 ~94,000 次是**被误拒的合法入场** —— §4 的涨停规则反而成了
+            # 少交易的来源。按 raw_close 的 shift 自己算之后,守卫=同域比较。
+            # (顺带:遇停牌缺口时 shift 给的是上一根**实际存在**的 bar 的收盘,
+            #  这正是涨跌停比较该用的"前收"。)
+            _rc = entry["raw_close"]
+            _raw_prev = np.empty_like(_rc)
+            _raw_prev[0] = np.nan
+            _raw_prev[1:] = _rc[:-1]
+            entry["raw_prev_close"] = _raw_prev
         idx[code] = entry
     return idx
 

@@ -1,8 +1,24 @@
 """Dual-Price System 共享逻辑 (CLAUDE.md §3, 2026-09-22).
 
-数据加载请走 ``dna_data.dual_price_loader.load_dual_price_panel()``
-(独立 I/O 模块,避免本文件引入 duckdb/pandas 依赖)。本模块是领域层,
-纯函数 + 零外部依赖。
+本模块是领域层:纯函数 + **零外部依赖**(故不引入 duckdb/pandas)。
+
+**勘误(2026-10-17)**:此处原写「数据加载请走
+``dna_data.dual_price_loader.load_dual_price_panel()``」—— 那是一条**没人遵守的规定**:
+生产代码里**没有任何引擎**走它(只有 tests 引用)。实际情况是:
+
+- 四个引擎各有自己的面板加载器(`chase_up/data.py`、`uptrend_pullback/data.py`、
+  `short_reversal/_panel_loader.py`、`cycle_price_action/data_feed.py`),
+  外加扫描器的 `load_panel_for_signal`;
+- `dna_data/` 那套 loader + resolver(`signal_close` / `execution_close` /
+  `execution_open`)是**迁移目标**,不是现状 —— 其 resolver 的 docstring 也如实写着
+  「legacy panel / 允许逐个策略增量迁移」。
+
+这个「共享层存在但无人接线」的状态**有代价**,今天刚吃过一次:附四十七 ——
+扫描器的加载器漏了 `adj_*`,`adj_close != close` 的行占 **94%**,而它本该是
+「只改一处」就能避免的事。**修一处 ≠ 修一族;一个共享层只有被接线才算数。**
+
+接线本身是结果敏感的重构(各引擎 loader 还带 warmup 缓冲、公司行为事件列、universe
+切片等各自的东西),故**登记待评估**,而不是在审计里顺手改。
 
 Background
 ==========
