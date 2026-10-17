@@ -20,6 +20,13 @@ BORROW_ASSUMPTION: dict = {
 }
 
 PRESETS: dict[str, dict] = {
+    # ⛔ 2026-10-18: **本族全部 preset 已判定不可用** (见 docs/strategy_mining_log.md
+    #    §4 与 §6.3)。下面注释里散布的**历史扫描数字** (CAGR / Sharpe / DD / win% 等)
+    #    是**修正前**的引擎跑出来的, 至少有两处系统性虚增已被推翻:
+    #      * §4 跳空穿越止损的成交价用了 sl_p —— 修正后一个变体由 +180% 掉到 -0.6%;
+    #      * CAGR 分母用了请求窗而非实测期。
+    #    ⇒ 这些数字**无法用当前代码复现** (CLAUDE.md §7: 不能复现的数字按陈旧处理),
+    #      **不要引用、不要据此选 preset**。保留它们只为留档"试过哪些变体"。
     # ⚠️ 2026-09-22 preset 库重组 ⚠️
     # 7 个破产/失败 preset 已删除 (v33×2 / v34 / v37 / v39_pctchg_04_09 / v41 / v47):
     #   - v33×2 + v47_d_strict: cash gate 触发时 NAV 透支 6-100 倍, paper-trading 幻影

@@ -49,6 +49,13 @@ import copy
 MAX_HOLD_LIMIT = 20
 
 PRESETS: dict[str, dict] = {
+    # ⛔ 2026-10-18: **本族全部 preset 已判定不可用** (见 docs/strategy_mining_log.md
+    #    §4 与 §6.3)。下面注释里散布的**历史扫描数字** (CAGR / Sharpe / DD / win% 等)
+    #    是**修正前**的引擎跑出来的, 至少有两处系统性虚增已被推翻:
+    #      * §4 跳空穿越止损的成交价用了 sl_p —— 修正后一个变体由 +180% 掉到 -0.6%;
+    #      * CAGR 分母用了请求窗而非实测期。
+    #    ⇒ 这些数字**无法用当前代码复现** (CLAUDE.md §7: 不能复现的数字按陈旧处理),
+    #      **不要引用、不要据此选 preset**。保留它们只为留档"试过哪些变体"。
     # v33_long_reverse_v19 — v18 + tp_pct 0.303→0.305 + min_mom120 0.16→0.18
     # (workflow v18-neighborhood 联合搜索发现)。
     # 关键参数变更:
