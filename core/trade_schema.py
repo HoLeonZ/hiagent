@@ -43,3 +43,34 @@ TRADE_COLS: tuple[str, ...] = (
     # 子信号类型 ("A"/"B"/"C" 拼接 — chase_up 专用, 其他 engine 留空)。
     "sub_signal_type",
 )
+
+# Canonical equity_curve.csv 的 5 列。
+#
+# ⚠️ 2026-10-19 之前, 这**同一个元组字面量被抄了三份**
+# (`cycle_price_action/main.py` / `uptrend_pullback/main.py` / `short_reversal/main.py`),
+# 三份**逐字节相同**, 但**没有单一来源**。实测确认相同后才上收 —— 所以本改动**零结果漂移**。
+#
+# 为什么必须上收 (而不是"能跑就别动"):
+# 本循环已证 `core/` **有** `trade_schema.py` 却**没有指标层** —— 而那正是四引擎
+# 六处定义分岔的成因 (见 docs/strategy_mining_log.md §13.12/§13.13)。
+# 同一个"同名 + 多份拷贝 + 无单一来源"的形状出现在 equity_curve 上,
+# **下一次分岔只差一次编辑**, 且没有任何东西会拦住它。
+# ⇒ 把**已经相同**的东西上收, 是**零成本的防分岔**;
+#   而把**已经不同**的东西上收 (如 `cagr`/`sharpe`) 属**结果变更**, 本循环明确不做。
+EQUITY_CURVE_COLS: tuple[str, ...] = (
+    "date",
+    "cash",
+    "position_value",
+    "total_equity",
+    "drawdown",
+)
+
+# Canonical cash_walk.csv 的 6 列 —— 与上面同一个理由, 同样是被抄了三份之后上收的。
+CASH_WALK_COLS: tuple[str, ...] = (
+    "date",
+    "free_cash",
+    "locked_margin",
+    "settling_funds",
+    "nav",
+    "total_equity",
+)

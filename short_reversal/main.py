@@ -24,10 +24,9 @@ logger = logging.getLogger(__name__)
 
 
 # §2/§3 Tick 51 GREEN: equity_curve.csv + cash_walk.csv canonical schemas.
-EQUITY_CURVE_COLS = ("date", "cash", "position_value",
-                     "total_equity", "drawdown")
-CASH_WALK_COLS = ("date", "free_cash", "locked_margin",
-                  "settling_funds", "nav", "total_equity")
+# 2026-10-19: 两个元组已上收至 core.trade_schema (单一来源) ——
+#   三份拷贝此前逐字节相同, 但没有任何东西拦住它们分岔。见 core/trade_schema.py 的说明。
+from core.trade_schema import CASH_WALK_COLS, EQUITY_CURVE_COLS
 
 
 def _strip_trades_for_json(metrics: dict) -> dict:
