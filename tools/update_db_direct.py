@@ -21,7 +21,7 @@ import argparse
 import os
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import duckdb
 import requests
@@ -34,9 +34,23 @@ def _require_env(name: str) -> str:
     return val
 
 
+# §0 (2026-10-17): 交易所时区锚点。A 股无夏令时, 恒为 UTC+8。
+# 缺陷: 此前 `to_ms` / `from_ms` 都用 **naive** datetime 的 `.timestamp()` /
+# `fromtimestamp()`, 两者都按**本机时区**解释 —— 同一组日期在 TZ=UTC 与
+# TZ=Asia/Shanghai 下产出相差 8 小时的毫秒值, **足以让同一份 API 负载落成不同的
+# bar 日期**。CLAUDE.md §0 明写 "normalize timestamps to a single exchange timezone"。
+EXCHANGE_TZ = timezone(timedelta(hours=8))
+
+
 def to_ms(date_str: str) -> int:
-    dt = datetime.strptime(date_str, "%Y-%m-%d")
+    """'YYYY-MM-DD' → 交易所时区当日 00:00 的 epoch 毫秒 (与时区无关)。"""
+    dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=EXCHANGE_TZ)
     return int(dt.timestamp() * 1000)
+
+
+def from_ms(ms: float) -> str:
+    """epoch 毫秒 → 交易所时区下的 'YYYY-MM-DD' (与时区无关)。"""
+    return datetime.fromtimestamp(ms / 1000, tz=EXCHANGE_TZ).strftime("%Y-%m-%d")
 
 
 def fetch_historical(
@@ -134,7 +148,7 @@ def main() -> int:
         to_insert = []
         for r in rows:
             try:
-                date_str = datetime.fromtimestamp(r["date_ms"] / 1000).strftime("%Y-%m-%d")
+                date_str = from_ms(r["date_ms"])
                 to_insert.append((
                     code, date_str,
                     float(r["open_price"]), float(r["high_price"]),
