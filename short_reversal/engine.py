@@ -250,6 +250,8 @@ def run_backtest_v3(
         fill_order=cfg.get("fill_order", "code"),
         require_close_below_vwap=cfg.get("require_close_below_vwap", False),
         signal_gap_max=cfg.get("signal_gap_max", None),
+        require_shortable_st_filter=cfg.get("require_shortable_st_filter", False),
+        st_lookback_bars=cfg.get("st_lookback_bars", 60),
         close_vwap_buffer=cfg.get("close_vwap_buffer", 0.0),
         position_fraction=cfg.get("position_fraction", 1.0),
         pct_chg_low=cfg.get("pct_chg_low", 0.02),

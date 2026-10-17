@@ -252,6 +252,13 @@ class Phase3V3Strategy(bt.Strategy):
         close_vwap_buffer=0.0,
         # M 条件 (2026-10-17): 信号日隔夜跳空上限 (None = 关闭)。
         signal_gap_max=None,
+        # §4 做空可行性 (2026-10-17): **逐 bar** 的不可融券检查 (opt-in)。
+        # ST / 风险警示股涨跌停 ±5% 且不在融资融券名单 ⇒ 不可做空。静态宇宙过滤
+        # 只剔掉约 2% 的成交 (该状态在窗口内随时间变化), 故必须逐 bar 判定。
+        # 判据: 信号日之前 `st_lookback_bars` 根 bar 内出现过"封死 ±5%"
+        # (|涨跌幅| ≈ 5% 且 high == low)。只用已发生的 bar ⇒ PIT 安全。
+        require_shortable_st_filter=False,
+        st_lookback_bars=60,
         # v58_mp (2026-10-16, CLAUDE.md §2): 满仓时的成交顺序。
         # 'code' (默认) = feed 顺序 = thscode 字典序 —— 历史行为, 与信号强度无关,
         #   属 §2「predefined tie-breaker」的弱读法。
@@ -578,6 +585,35 @@ class Phase3V3Strategy(bt.Strategy):
         return nav
 
     # ------------------------------------------------------------- entry/exit
+
+    def _suspected_st_now(self, d) -> bool:
+        """信号日之前 `st_lookback_bars` 根 bar 内该股是否呈 ±5% 涨跌停特征。
+
+        ST / 风险警示股停板幅度是 ±5% (主板 ±10%), 且不在融资融券名单 ⇒ 不可做空。
+        判据: 出现 |单日涨跌幅| ≈ 5% 且 `high == low` (全天一个价 = 封死停板)。
+        非风险警示的主板股几乎不可能出现 `high == low`, 故该判据信噪比很高。
+
+        PIT: 只回看**已发生**的 bar (偏移 -1 到 -lookback), 不使用当日及未来信息。
+        不可得 (bar 不足) 时返回 False —— 无证据不排除, 与"宁可少做"相比这里的
+        取舍是: 新上市票本来就会被其他条件挡住。
+        """
+        look = self.p.st_lookback_bars
+        if len(d) < 2:
+            return False
+        upper = min(look, len(d) - 1)
+        for i in range(1, upper + 1):
+            try:
+                hi = float(d.high[-i])
+                lo = float(d.low[-i])
+                cl = float(d.close[-i])
+                pc = float(d.close[-i - 1])
+            except (IndexError, TypeError, ValueError):
+                continue
+            if not (hi > 0 and lo > 0 and cl > 0 and pc > 0):
+                continue
+            if hi == lo and abs(abs(cl / pc - 1.0) - 0.05) < 0.0015:
+                return True
+        return False
 
     def _conviction(self, d) -> float:
         """§2 statistical conviction —— 满仓时的成交排序键。
@@ -1153,6 +1189,11 @@ class Phase3V3Strategy(bt.Strategy):
             vwap_v = amt_v / vol_v
             if close_v > vwap_v * (1.0 + self.p.close_vwap_buffer):
                 return False
+
+        # §4 做空可行性: 逐 bar 的不可融券 (ST/风险警示) 检查。最先做 —— 它最便宜,
+        # 且它拦的是"这笔单现实中下不出去", 优先于任何信号质量判断。
+        if self.p.require_shortable_st_filter and self._suspected_st_now(d):
+            return False
 
         # M 条件 (2026-10-17): 隔夜跳空幅度上限。
         # 设计动机: **全仓库没有用过"隔夜 / 日内"的收益分解** —— 而信号日的涨幅
