@@ -109,10 +109,22 @@ def _metrics_from_holder(holder: dict, start: str, end: str, cfg: dict) -> dict:
 
 
 def _approx_sharpe(trades: list[dict]) -> float:
-    """无日 PnL 序列 → 用每笔 net 估算 sharpe（粗略，仅供排序）。"""
+    """无日 PnL 序列 → 用每笔收益率估算 sharpe（粗略，仅供排序）。
+
+    §0/§4 (2026-10-17): 必须用**规范化字段 `net_return`**, 不能用旧兼容字段 `net`。
+    两者差别在**小额成交**上极大: `net` 是纯费率公式
+    `gross_pct - (佣金率 + 印花税率 + 佣金率×xp/ep)`, **不含 ¥5 最低佣金下限、也不含
+    融券费**。实测 pure-1day/W2: 名义额 ~¥100 万的成交两者几乎相等 (−0.671% vs
+    −0.670%), 而被**量能上限**裁到 100~200 股 (名义额 ¥300-800) 的残仓上, `net` 报
+    +1.957% 而 `net_return` 只有 +0.716% (¥10 费用占 ¥778 名义额的 1.3%)。
+
+    由于本函数对成交做**无权平均**, 一笔 ¥300 的残仓与一笔 ¥100 万的仓位同等计入
+    ⇒ 报告的 sharpe 被小残仓系统性抬高, 甚至**符号相反**
+    (pure-1day/W2: 按 net **+1.19** vs 按 net_return **-0.39**)。
+    """
     if not trades:
         return 0.0
-    arr = np.array([t["net"] for t in trades])
+    arr = np.array([t["net_return"] for t in trades])
     mean = float(arr.mean())
     std = float(arr.std(ddof=1)) if len(arr) > 1 else 0.0
     if std < 1e-9:
