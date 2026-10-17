@@ -69,9 +69,15 @@ def _metrics_from_holder(holder: dict, start: str, end: str, cfg: dict) -> dict:
     total_yield = final_capital / INITIAL_CAPITAL - 1
     cagr = (final_capital / INITIAL_CAPITAL) ** (1 / years) - 1 if final_capital > 0 else -1.0
 
-    wins = sum(1 for t in trades if t["net"] > 0)
+    # §4/§0 (2026-10-17): 胜数必须按**规范化字段** `net_pnl` 判, 不能用旧兼容字段 `net`。
+    # `net` 是**纯费率**公式 (`gross_pct - total_fee_ratio`), **不含 ¥5 最低佣金下限** ——
+    # 小额单 (notional < ¥20,000) 的下限约 ¥2.50-5.00/腿不进 `net`, 于是真亏的单
+    # 可能被记成胜。实测 (cap50/W2): 844 笔里有 3 笔两字段符号相反, 报告 win_rate
+    # 因此高 0.4pp。`net_pnl` / `net_return` 走的是含下限的 cash walk, 是权威口径。
+    wins = sum(1 for t in trades if t["net_pnl"] > 0)
     win_rate = wins / trades_count if trades_count > 0 else 0.0
-    avg_pnl = float(np.mean([t["net"] for t in trades])) if trades_count > 0 else 0.0
+    # 同上: 用含下限的 `net_return` (逐笔收益率), 而非 rate-only 的 `net`。
+    avg_pnl = float(np.mean([t["net_return"] for t in trades])) if trades_count > 0 else 0.0
     avg_hold = float(np.mean([t["hold_days"] for t in trades])) if trades_count > 0 else 0.0
 
     # 简单 Sharpe: 日 PnL 序列 → 年化
@@ -168,10 +174,10 @@ def _run_ensemble(
     )
     cagr = (final_capital / INITIAL_CAPITAL) ** (1 / years) - 1
 
-    wins = sum(1 for t in all_trades if t["net"] > 0)
+    wins = sum(1 for t in all_trades if t["net_pnl"] > 0)  # 见上: 须用含下限的 net_pnl
     trades_count = len(all_trades)
     win_rate = wins / trades_count if trades_count > 0 else 0.0
-    avg_pnl = float(np.mean([t["net"] for t in all_trades])) if trades_count > 0 else 0.0
+    avg_pnl = float(np.mean([t["net_return"] for t in all_trades])) if trades_count > 0 else 0.0
     avg_hold = float(np.mean([t["hold_days"] for t in all_trades])) if trades_count > 0 else 0.0
     sharpe = _approx_sharpe(all_trades)
     tp_count = sum(1 for t in all_trades if t["exit_reason"] == "TP")
