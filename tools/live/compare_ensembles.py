@@ -75,6 +75,13 @@ def honest_n_trials() -> int:
 
     The dominant layer is `len(PRESETS)` (the library was searched to produce
     the candidates), not each preset's self-reported `n_comparisons`.
+
+    `len(PRESETS)` deliberately INCLUDES `v61_k` / `v61_kf` even though they are
+    now unrunnable (Gate K raises under the 'adj' signal domain — see
+    `short_reversal/conditions.py`). They were part of the historical search
+    space that produced the candidates, so counting them is the CONSERVATIVE
+    direction for a multiple-comparisons correction: an n_trials that hides two
+    configurations actually examined would under-deflate the DSR. Keep them in.
     """
     return RESERVED + len(PRESETS) + WIDEST_DECLARED_SWEEP
 
@@ -284,9 +291,13 @@ def guard_universes(presets: list[str], asof: str, db_path: Path) -> None:
         if not universe:
             raise SystemExit(
                 f"F-01 guard: universe mode {mode!r} at as-of {asof} is EMPTY "
-                f"(db earliest date: {_db_min_date(db_path)}). An empty universe "
-                f"is a legal run_backtest_v3 input and yields 0 trades, so the "
-                f"run would be an invisible no-op."
+                f"(db earliest date: {_db_min_date(db_path)}). run_backtest_v3 "
+                f"now RAISES a named ValueError on an empty universe (§0 "
+                f"fail-fast), so an empty universe would abort the batch "
+                f"INSIDE the engine, hours in, after the earlier candidates "
+                f"have already run. This pre-flight guard exists to abort "
+                f"HERE, before any candidate runs. Fix the window/as-of data "
+                f"coverage and re-run."
             )
         print(f"universe[{mode}] @ {asof}: {len(universe)} codes", flush=True)
 

@@ -85,6 +85,51 @@ def test_n_trials_is_the_exact_documented_value():
     assert honest_n_trials() == 119
 
 
+def test_run_comparison_hands_build_record_the_honest_n_trials(monkeypatch, tmp_path):
+    """Blocker 4 — pin the n_trials ARGUMENT at the `run_comparison` CALL SITE.
+
+    `test_dsr_is_pinned_to_the_honest_n_trials` pins only `_build_record`'s BODY.
+    It leaves the call site free: editing
+    `_build_record(preset, result, start, end, bench, n_trials)` -> `... bench, 1)`
+    kept every test green while each candidate's `dsr`/`bonferroni_p` were deflated
+    at 1 (dropping the selection-bias layer 119 exists to encode) and
+    `payload["n_trials"]` still advertised 119. Nothing in the fast suite executed
+    `run_comparison` — the output-name test monkeypatches past it. So drive it
+    directly with the DB/backtest boundaries stubbed and capture the argument that
+    actually reaches `_build_record`.
+    """
+    import tools.live.compare_ensembles as ce
+
+    seen: list[int] = []
+    monkeypatch.setattr(ce, "guard_universes", lambda *a, **k: None)
+    monkeypatch.setattr(ce, "benchmark_cagr", lambda *a, **k: 0.0)
+    monkeypatch.setattr(ce, "guard_trades", lambda *a, **k: None)
+    monkeypatch.setattr(
+        ce, "run_backtest_v3",
+        lambda *a, **k: {"trades_count": 1, "equity_curve": []},
+    )
+
+    real_build = ce._build_record
+
+    def spy(preset, result, start, end, bench_cagr, n_trials):
+        seen.append(n_trials)
+        return real_build(preset, result, start, end, bench_cagr, n_trials)
+
+    monkeypatch.setattr(ce, "_build_record", spy)
+
+    payload = ce.run_comparison("2020-01-01", "2020-12-31", tmp_path / "db.duckdb", 150)
+
+    assert seen, "run_comparison never called _build_record"
+    assert set(seen) == {honest_n_trials()}, (
+        f"_build_record received n_trials={sorted(set(seen))} but "
+        f"honest_n_trials() is {honest_n_trials()} — the call-site argument is "
+        f"unpinned (mutating it to a constant keeps the body test green) while "
+        f"`payload['n_trials']` still advertises the honest bound"
+    )
+    # The advertisement and the deflation must be the SAME number.
+    assert payload["n_trials"] == honest_n_trials()
+
+
 def test_sharpe_delegates_to_the_single_source():
     """Do NOT define a second Sharpe.
 
