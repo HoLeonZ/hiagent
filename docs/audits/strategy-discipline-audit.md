@@ -3480,3 +3480,68 @@ refactor」—— **声明与实现相反**。`uptrend_pullback` 同形;`short_r
 | 日期映射 | 还原为"静默 verified" | **2 red**(`unverified` / `no_kline_match`),恢复后 5 全绿 |
 | 方向语义 | 合规样本 vs **植入幻影** | `[]` vs 报出 2 条(单元级,0.02 秒) |
 | cycle 基线 | 先以显式环境变量确认可通过(7m09s)再改为默认跑 | 通过,且默认收集数 +1 |
+
+---
+
+## 附四十五 —— 扫描"声明了但代码里没有的机制":命中 1 处(其余 23 处为合法),扫描器精度不足故不做守卫
+
+### 1 · 方法(承接附四十四 那个 `unverified` 缺陷的**形态**)
+
+附四十四 的真缺陷有一个共同外形:**docstring 里点名了一个机制/标签,而代码里没有它**。
+于是写扫描器把这种外形找出来:收集 docstring 里被引号或反引号点名的 token
+(`"unverified"` / `` `raw_close` `` 这类写法),再看它是否出现在**代码区**
+(即去掉 docstring 之后的源码)里。覆盖 107 个生产模块。
+
+### 2 · 结果:24 处命中,逐条看过后**只有 1 处是真缺陷**
+
+| 类别 | 例子 | 判定 |
+|---|---|---|
+| 跨模块引用 | `dna_data/dual_price_loader.py` 提到 `extract_execution_bar` / `is_limit_up` | 合法 |
+| 历史沿革说明 | `core/preset_contract.py` 提到改名前的 `min_cash_ratio` | 合法 |
+| 跨引擎一致性备注 | `short_reversal/engine.py` 提到 `profit_factor` 的 None 口径 | 合法 |
+| 通用词 | `cycle_price_action/presets.py` 的 `time` | 噪声 |
+| **真缺陷** | `short_reversal/feed_bt.py` 声称加了 `raw_*` lines | **见下** |
+
+### 3 · 那 1 处:`feed_bt` 的模块 docstring 描述了一个**不存在、也不需要**的机制
+
+模块 docstring 写着「V3a: 添加 raw_open/raw_high/raw_low/raw_close lines,strategy 在
+`price_source_for_execution="raw_close"` 时切换 SL/TP/intraday trigger 价格到 raw_*
+lines;raw_* 缺失 → fallback 到 adj …」。实测:
+
+- `lines` 元组里**没有任何 raw_***;
+- 全模块 grep `d.raw_close` / `d.lines.raw_*` **零命中**。
+
+而这个机制**本来就不需要**:`v_daily` 本身就是原始价 ⇒ raw 域执行直接用默认的
+`close` line;复权域另开 `adj_open/adj_high/adj_low/adj_close` 四条。
+`price_source_for_execution="raw_close"` 的含义正是"用默认(原始)列"。
+
+**为什么值得修**(而不只是"文字不准"):这段描述会让人或 agent 以为
+`d.lines.raw_close` 存在(→ 写出 AttributeError),或者据此对价格域下错结论 ——
+而"短反转的 `close` 到底是 raw 还是 adj"正是审计 §3 **反复要钉住的前提**
+(它决定了 A 条件、公司行为、D 条件那些结论是否成立)。
+
+**类** docstring(`AShareData`)本来就准确 —— 它明确写着「当前 strategy 仍读 raw
+(v_daily IS raw)」。故只更正模块级那一段,并使其与类级说法一致。纯文档改动。
+
+### 4 · 扫描器本身的评价:**精度不足,不做成守卫**
+
+24 处里 23 处合法 ⇒ 假阳性率约 96%。按本审计自己的判据(**假阳性比假阴性更毒** ——
+它会让真缺陷藏在噪声后、并最终导致守卫被关掉),这种精度的扫描器若固化成守卫,
+只会制造长期噪声。故它只当**一次性排查工具**用,结论记在这里,不入库。
+
+> 这也是本会话第 N 次遇到同一个元问题:**"扫描器"永远要先验证它自己**。
+> 今天早些时候,我自己的检测器分别把 84 个合规测试判成空转(附四十三)、
+> 把 `sl_pct=0.0005` 判成印花税重复(附四十三)、把 `pytest.skip()` 的检测写成零命中
+> (附四十四)。**先量自己的假阳性率,再决定它配不配当守卫。**
+
+### 5 · 本轮在"覆盖"这条线上的收获汇总(附四十三 → 附四十五)
+
+| 维度 | 手法 | 结果 |
+|---|---|---|
+| 空转守卫 | AST 扫 `assert True` / `if False` / 无理由 skip / 吞异常 | 粗模式**全清**;真缺陷在费率守卫(4 个用例 3 个从不失败) |
+| skip 当覆盖 | `-m "not slow" -rs` 列理由,逐条问"不 skip 的条件可能满足吗" | 3 处天花板守卫 + 1 条未实现的要求(附四十四) |
+| 声明 vs 代码 | docstring 点名的 token 是否出现在代码里 | 24 命中 / **1 真缺陷**(附四十五,本条) |
+
+合计把**4 条永远 skip 的守卫换成真覆盖**(cycle 基线 + 3 条 render_html),
+外加把 11 条依赖 gitignored csv 的不变量并入已有的重算测试 ——
+全套件因此 **skip 30 → 26、passed 1183 → 1190**,两个方向同时动,方向正确。
