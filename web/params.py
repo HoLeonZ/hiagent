@@ -110,7 +110,6 @@ PARAM_METADATA: dict[str, dict[str, dict[str, Any]]] = {
                    "help": "None 表示不做择时（嵌套 dict）"},
     },
     "cycle_price_action": {
-        "cash": {"label": "初始资金", "type": "float", "unit": "元"},
         "tp_pct": {"label": "止盈", "type": "float", "unit": "比例"},
         "sl_pct": {"label": "止损", "type": "float", "unit": "比例"},
         "max_hold": {"label": "最长持有", "type": "int", "unit": "交易日"},

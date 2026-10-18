@@ -3,7 +3,12 @@ from __future__ import annotations
 
 import pytest
 
-from web.params import OverrideError, split_params, validate_overrides
+from web.params import (
+    PARAM_METADATA,
+    OverrideError,
+    split_params,
+    validate_overrides,
+)
 
 
 def test_split_separates_tunable_from_declarations():
@@ -32,14 +37,26 @@ def test_metadata_covers_every_tunable_key():
 
 
 def test_metadata_has_no_ghost_keys():
-    """双向之二：元数据不得引用不存在的可调键。"""
-    from web.catalog import all_presets
+    """双向之二：元数据不得引用不存在的可调键。
 
-    for engine in ("short_reversal", "chase_up", "uptrend_pullback", "cycle_price_action"):
-        for preset in all_presets()[engine]:
-            out = split_params(engine, preset)
-            ghosts = set(out["metadata"]) - set(out["tunable"])
-            assert not ghosts, f"{engine}/{preset} 元数据有幽灵键: {sorted(ghosts)}"
+    必须比对**原始** `PARAM_METADATA`，而不是 `split_params` 的输出——后者的
+    `metadata` 是按 `tunable` 过滤出来的（`{k: meta[k] for k in tunable if k in meta}`），
+    于是 `set(out["metadata"]) - set(out["tunable"])` 恒为空集，这条测试会退化成永真。
+
+    真正的幽灵：登记在 `PARAM_METADATA[引擎]` 里、却不出现在该引擎**任何 preset**
+    的可调键并集中的键。`overrides` 永远暴露不到它、UI 也永远编辑不到它。
+    """
+    from web.catalog import DECLARATION_KEYS, all_presets
+
+    for engine, engine_presets in all_presets().items():
+        tunable_union = {
+            k
+            for params in engine_presets.values()
+            for k in params
+            if k not in DECLARATION_KEYS
+        }
+        ghosts = set(PARAM_METADATA.get(engine, {})) - tunable_union
+        assert not ghosts, f"{engine} 元数据有幽灵键: {sorted(ghosts)}"
 
 
 def test_declaration_values_are_present_in_declarations():
