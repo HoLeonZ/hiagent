@@ -60,6 +60,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -207,13 +208,21 @@ def test_assert_to_raise_ratio_is_healthy() -> None:
     raise_sites = _scan_raise_sites()
 
     # Healthy production code: ≥10 raises per 1 assert
-    if len(assert_sites) > 0:
-        ratio = len(raise_sites) / len(assert_sites)
-        assert ratio >= 10.0, (
-            f"§0 RAISE/ASSERT RATIO WARNING: {len(raise_sites)} raises "
-            f"vs {len(assert_sites)} asserts (ratio {ratio:.1f}:1, "
-            f"target ≥10:1). Production code should prefer `raise`."
+    # ⚠️ 2026-10-19 (§13.58): 此处原为 `if len(assert_sites) > 0: ...` —— 一个**静默通过**的
+    # 条件式: 当前生产代码里 assert 站点为 **0** ⇒ 比值没有分母 ⇒ 分支从不执行
+    # ⇒ 这条测试既不会响, 也不会在 `-rs` 里显示为 skip, 看上去与"跑过并通过"完全一样。
+    # 条件本身是**合法前置条件** (比值需要分母), 所以改成**显式 skip** —— 让它可见。
+    if not assert_sites:
+        pytest.skip(
+            "生产代码里当前 0 处 assert ⇒ 比值判据没有分母, 本判据**不适用** "
+            "(这不是通过; 见 §13.58 的说明)"
         )
+    ratio = len(raise_sites) / len(assert_sites)
+    assert ratio >= 10.0, (
+        f"§0 RAISE/ASSERT RATIO WARNING: {len(raise_sites)} raises "
+        f"vs {len(assert_sites)} asserts (ratio {ratio:.1f}:1, "
+        f"target ≥10:1). Production code should prefer `raise`."
+    )
 
 # ---------------------------------------------------------------------------
 # 反空转对照 (§13.46): 扫描必须是**发现式**的
