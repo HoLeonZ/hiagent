@@ -30,6 +30,25 @@ adjustment to Position_Quantity and Average_Cost."
   也未采用选项 B (当前无实测收益)。
 - 其余 3 个 engine 仍未收口, 继续 RED (超出本次改动范围)。
 
+2026-10-19 (§13.26) 补测 —— **"零暴露"是 preset/窗口特定的, 不推广**:
+  同一窗口 2024-10-08..2026-09-29、同一判定 (除权日在 (entry, exit] 内):
+
+  | 族 | 成交 | 穿越除权日 | 含送股 | 漏记分红现金 |
+  |---|---|---|---|---|
+  | `uptrend_pullback` (已收口, 用的是**另一个** preset/窗口) | 105 | **0** | 0 | 0 |
+  | `short_reversal` (v58_mp_2) | 642 | **3** | **1** | 4,475.90 |
+  | `chase_up` (chase_v5_pos2_...) | 75 | **1** | 0 | 2,070.00 |
+  | `cycle_price_action` (PRESET_V1) | 24,610 | **164** | **7** | 2,782,753 |
+
+  ⇒ 本测试的 3 条 RED **不是形式问题**: 有实测暴露, 而 cycle 的暴露量级不小。
+  ⇒ 其中**送股**才是最危险的一类 (现金分红只造成 ~1% 的缺口): 送股会让**不复权的
+     raw 价**出现机械缺口。已完整定案一笔 —— `short_reversal` / `002976.SZ`
+     2026-06-25 建 @33.65 → 06-26 平 @27.59, 记为 **TP +17.9% / +9,644.58 元**;
+     而 06-26 的复权价是 **上涨 0.7%** (43.92 → 44.24), raw 价却 −22.7%
+     (35.70 → 27.59, 正是 1/1.3 的除权比例)。**该空头在股票上涨的那天记了一笔
+     幻影止盈。**
+  ⇒ 复现: `python -c "..."` 见 docs/strategy_mining_log.md §13.26。
+
 修复方案:
 - 选 A: 在 CLAUDE.md §3 增加注释 "本项目以 adj_close 前复权为 canonical
   source, 视为隐式 event 注入, 无需独立 handler"
@@ -81,10 +100,16 @@ def test_engine_has_dividend_or_split_handler(module: str) -> None:
     if module == "uptrend_pullback.portfolio":
         pytest.skip(
             "uptrend_pullback: 2026-10-13 决策为『不实现显式 CA handler』—— 实测该"
-            "策略持仓期中位数仅 3 天, 窗口内无任何持仓穿过除权日 (漏记分红 = 0, "
-            "幻影止损 = 0), 故 event 记账当前无收益; 该零暴露前提已由 "
-            "tests/test_uptrend_pullback_corporate_actions_exposure.py 以可证伪的"
-            "行为守卫锁定, 本 source-text 探针对其不再适用。"
+            "策略 (v33_long_reverse_v19, 2024-09-01..2026-09-01, 105 笔) 持仓期中位数"
+            "仅 3 天, 窗口内无任何持仓穿过除权日, 故零暴露前提在那**一个 preset + 一个"
+            "窗口**上成立, 并已由 tests/test_uptrend_pullback_corporate_actions_exposure.py "
+            "以可证伪的行为守卫锁定。"
+            "⚠️ 2026-10-19 (§13.26): **这条零暴露**不能**推广到别的族** —— "
+            "实测同一窗口 (2024-10-08..2026-09-29) 三族的穿越笔数为 "
+            "short_reversal 3/642 (含送股 1)、chase_up 1/75、cycle_price_action **164/24610 "
+            "(含送股 7)**; 其中 short_reversal 一笔送股穿越产生 **+17.9% 的幻影止盈**"
+            "(002976.SZ 2026-06-26, 空头, 复权价当天实际上涨 0.7%)。"
+            "⇒ 本 skip 只对 uptrend_pullback 成立, 不得据此认为 §3 的 gap 是形式问题。"
         )
     if _engine_has_event_handler(module):
         pytest.skip(

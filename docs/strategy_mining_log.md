@@ -2889,3 +2889,96 @@ if self.p.max_positions > 1:
 本条不同: (i) 影响为零 (见 c); (ii) 要让静态守卫"能响", 必须把两族的
 broker 接口从绝对价改写成相对百分比 —— 那是**接口重构 + 结果变更**;
 (iii) 而这两族同样**已判不可用**。⇒ 按 §7 的精神, 只登记。
+
+### 13.26 ⛔ **"公司行动零暴露"是 preset/窗口特定的 —— 而另两族有幻影成交, 其中一笔已完全定案**
+
+#### (a) 本轮方法: 对已登记的 RED 项问一句"**它的收口理由现在还成立吗**"
+`tests/test_corporate_actions_gap.py` 是 §3 event-sourced 条款的**永久 RED 锁定**,
+按四族参数化。2026-10-13 给 `uptrend_pullback` 收了口: 实测该族持仓期中位数 3 天、
+**105 笔无一穿越除权日** ⇒ 零暴露 ⇒ 不实现 handler, 而把该前提做成
+`test_uptrend_pullback_corporate_actions_exposure.py` 里的**可证伪不变量**。
+**另外三族继续 RED, 注释写"仍未收口"。**
+
+本轮把**同一个判定**跑在另三族上 (窗口 2024-10-08..2026-09-29, 除权日落在 `(entry, exit]`):
+
+| 族 | 成交 | 穿越除权日 | 含送股 | 漏记分红现金 |
+|---|---|---|---|---|
+| `uptrend_pullback`(收口时用的是**另一个** preset/窗口) | 105 | **0** | 0 | 0 |
+| `short_reversal` (`v58_mp_2`) | 642 | **3** | **1** | 4,475.90 |
+| `chase_up` (`chase_v5_pos2_...`) | 75 | **1** | 0 | 2,070.00 |
+| `cycle_price_action` (`PRESET_V1`) | **24,610** | **164** | **7** | **2,782,753** |
+
+⇒ **零暴露只在 uptrend 的那一个 preset + 那一个窗口上成立, 不推广。**
+而这 3 条 RED 因此**不是形式问题** —— 有实测暴露, cycle 的量级还不小。
+
+#### (b) ⚠️ **送股**才是危险的那一类 —— 现金分红只是小缺口
+三类事件的机械缺口差着数量级:
+* **现金分红**: `605499.SH 2024-10-09` 分红 2.5 元/股 ⇒ raw −26.6%, 但那是**大额分红**;
+  多数是 ~1% 量级 (002976 的现金分红只有 0.253 元)。
+* **送股 (per_share_bonus)**: 机械缺口 = `bonus/(1+bonus)` ——
+  `002976.SZ` 送 0.3 ⇒ **−23.1%**, 与真实涨跌无关。
+
+#### (c) ✅ **一笔完整定案: 一个空头在股票上涨的那天记了一笔 +17.9% 的止盈**
+`short_reversal` / `v58_mp_2` / `002976.SZ`:
+
+| | |
+|---|---|
+| 建仓 | 2026-06-25 @ **33.65** (= 当日 raw_open) |
+| 平仓 | 2026-06-26 @ **27.59**, 原因 **TP** |
+| 记账 | `net_return` **+17.9%**, `net_pnl` **+9,644.58**, `hold_days` 1 |
+
+**价格真相 (v_daily_dual):**
+
+| 日期 | raw_close | adj_close |
+|---|---|---|
+| 2026-06-25 | 35.70 | 43.92 |
+| **2026-06-26** (除权, 送 0.3) | **27.66** (raw_open **27.59**) | **44.24** |
+
+* raw: 35.70 → 27.59 = **−22.7%** —— **恰是 1/1.3 的除权比例, 不是行情**;
+* adj: 43.92 → 44.24 = **+0.7%** —— **股票当天是涨的**。
+
+⇒ 引擎做**空头**, 于是在一只**上涨**的股票上记了一笔 **+17.9% 的"止盈"**。
+**这是纯粹虚构的盈利。** 而且它走的是"TP"这条**正常成交路径** —— 没有任何异常报错,
+它在成交表里与真实成交长得一模一样。
+
+> **与 §4 那次让 short_reversal 整族作废的形态是同一属**: 一个成交口径上的偏差,
+> 直接把一个虚构的盈利写成真实成交。**§6.1–§6.5 之后该族已作废, 所以这一处不改变
+> 任何活着的结论 —— 但它证明"零暴露"这条收口理由在别的族上是不成立的。**
+
+#### (d) 为什么**不**修, 也**不**加行为守卫
+1. **修 = 实现 §3 的 event-sourced handler** —— 那是**结果变更**, 而且仓库自己
+   早把它列为一个**设计二选一 (A: 全 adj 隐式 / B: raw + 显式 event)**, 需要一个决策,
+   不是零漂移修复。按既有授权: **登记, 不擅自改。**
+2. **不加行为守卫**: uptrend 那个收口守卫之所以便宜, 是因为它只跑一族一次回测。
+   四族版本里 `cycle_price_action` 一次回测就是 ~15 分钟(24,610 笔, 全主板),
+   加进套件会把运行时间推高一大截。**而这三族的 RED 测试本来就已经在守它们** ——
+   本轮要改的是那条 skip 的**措辞**(它会让读者以为问题已收口), 不是覆盖率。
+
+#### (e) 本轮实际做的两件事
+1. `tests/test_corporate_actions_gap.py` 的 **uptrend skip 理由**改正:
+   明写"零暴露只在**那一个 preset + 窗口**上成立", 并把上面三族的实测数字列进去
+   (附那笔幻影止盈的完整定案)。
+2. 该文件**模块 docstring** 的"2026-10-13 决策"段补上本轮补测表。
+
+#### (f) 复现
+```bash
+# 三族穿越除权日的笔数 (窗口 2024-10-08..2026-09-29)
+python - <<'PY'
+import duckdb, pandas as pd
+from pathlib import Path
+from hiagent_config import DB_PATH
+con = duckdb.connect(str(DB_PATH), read_only=True)
+ev = con.execute("SELECT thscode, ex_date, dividend_per_share, per_share_bonus "
+                 "FROM raw_adjustment_events WHERE ex_date BETWEEN ? AND ?",
+                 ["2024-10-08","2026-09-29"]).fetchdf(); con.close()
+ev["ex_date"]=pd.to_datetime(ev["ex_date"]); by={c:g for c,g in ev.groupby("thscode")}
+# …对每个引擎的 trades 判 (entry, exit] 内是否有 ex_date, 见 §13.26(a) 表
+PY
+
+# 定案那一笔
+python -c "
+from pathlib import Path; from hiagent_config import DB_PATH
+from short_reversal.engine import run_backtest_v3
+m=run_backtest_v3('v58_mp_2','2024-10-08','2026-09-29',Path(DB_PATH))
+print([t for t in m['trades'] if t['thscode']=='002976.SZ' and str(t['entry_date']).startswith('2026-06-2')])"
+```
