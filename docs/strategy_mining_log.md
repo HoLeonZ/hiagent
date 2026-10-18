@@ -2682,3 +2682,72 @@ assert default == COMMISSION_RATE
 `test_cost_constants_bound_to_core`), 覆盖面互相重叠。
 **本轮不合并** —— 合并测试是纯粹的整理, 不属于"修违反"; 登记在此, 且本节 (f) 已说明
 其中至少两条**确实是互补的 (不可去重)**。⇒ 若日后要收, 必须**逐对**证明冗余, 不能按名字合并。
+
+### 13.23 ⛔ **同一形态第二次出现 —— 而且这次长在我上一轮自己建的文件上**
+
+#### (a) 起因: 把 §13.22 那个形态**系统化**地找一遍
+判据: **"守卫自称的范围" vs "它实际枚举的东西"** 是否不一致。
+写了个 AST 扫描器, 找测试里所有"包含 ≥2 个路径/族名字符串"的元组/列表 —— **42 个**。
+逐个看下来, **绝大多数"只覆盖部分族"是有意的且写在文档里**, 例如
+`test_cost_cash_rejection_4engine.py` 第 50 行明写
+`cycle_price_action: uses cerebro (different pattern, skip)`。
+⇒ **§13.22 那个病并不普遍。** 这是一个**否定结果**, 和"找到了 23 处"一样有价值:
+**它把"是不是整个测试库都这样"变成了"就那两处"。**
+
+#### (b) 但扫出一个真命中 —— 在我上一轮建的守卫里
+`tests/test_equity_curve_schema_single_source.py` (Iteration 119, **我自己写的**):
+```python
+ENGINE_MAINS = ("short_reversal/main.py", "uptrend_pullback/main.py", "cycle_price_action/main.py")
+```
+它的 docstring 写的还是**事实**("此前**这三个** main.py 里各有一份拷贝")。
+但这正是 §13.22 那个失效形态的**弱版本**:
+> **枚举出来的覆盖面 = 作者当时看到的东西。第四个文件日后抄一份, 守卫看不见。**
+
+**实测**: `chase_up/main.py:28-31` **确实有这两个元组的本地拷贝**, 与规范值逐字节相同,
+而旧版守卫**从不检查它 —— 因为 `chase_up` 不在那三个名字里。**
+
+#### (c) 而且真相比"多一份拷贝"更重: **那两个拷贝是死的, 真正写盘的列名是内联字面量**
+`chase_up/main.py::_write_equity_curve` 里:
+```python
+eq_out.columns = ["date", "cash", "position_value", "total_equity", "drawdown"]   # 内联
+cw = pd.DataFrame({...})                                                          # 内联 6 列
+```
+⇒ **规范 schema 在这一个文件里出现了三遍**(两个死元组 + 两处内联), 而 CSV 的内容
+**只由内联那两处决定**。**这正是本守卫 docstring 自己说它要防的事 —— 而它没看这个文件。**
+
+#### (d) 修法 (仍按"已经相同 ⇒ 零漂移 ⇒ 直接做")
+1. `chase_up/main.py`: 删掉两个死元组, 改为
+   `from core.trade_schema import CASH_WALK_COLS, EQUITY_CURVE_COLS`,
+   并在写盘处**真的用它们构造列**:
+   `eq_out.columns = list(EQUITY_CURVE_COLS)` / `cw = cw[list(CASH_WALK_COLS)]`。
+2. 守卫改为**发现式**: `sorted(ROOT.glob("*/main.py"))`, 不再列文件名。
+   两条臂 (反面"不得本地定义" + 正面"必须导入") 都随之作用于**所有** main。
+
+**零漂移实测 (不是推理)**: 取 HEAD 版与本轮版的 `_write_equity_curve`,
+喂**同一条合成权益帧**, 比对写出的两个 CSV:
+```
+diff before/equity_curve.csv after/equity_curve.csv   → 逐字节相同
+diff before/cash_walk.csv   after/cash_walk.csv       → 逐字节相同
+```
+表头分别为 `date,cash,position_value,total_equity,drawdown` 与
+`date,free_cash,locked_margin,settling_funds,nav,total_equity` —— 与规范元组一致 ✅
+
+#### (e) §6 双向验证: **这一次不需要注入 —— 真实例自己就是证据**
+守卫改成发现式的**当刻**(尚未修 `chase_up/main.py`), 两条臂**同时变红**:
+```
+FAILED test_engine_main_does_not_redefine_the_canonical_tuples[chase_up/main.py]
+FAILED test_engine_main_imports_them_from_core[chase_up/main.py]
+```
+⇒ 旧守卫对该文件**从不运行**, 新守卫**一装上就抓到它**。
+**这是 §13.20/§13.22 那条线里第一次"新守卫在真实缺陷上自动变红"**, 不需要人工注入。
+
+#### (f) 登记 (不改)
+* `uptrend_pullback/main.py:31` 从 core **导入**了这两个元组, 但**正文从未引用**
+  (只有那一行 import) ⇒ 一个未使用的 import。属 lint 级, 不影响行为; 本轮不动。
+* `tests/test_equity_curve_csv.py:37-38` 另有一份**测试内的**拷贝。
+  测试自带期望值有它的道理 (不依赖被测代码), **不算引擎侧违反**; 记下以免下次误判。
+
+#### (g) §13.22 + §13.23 合起来的那句话
+> **两轮里, 同一个失效形态出现两次, 而第二次是在我"修完第一次"之后建的文件里。**
+> 两次的形状一模一样: **一个自称全库的判据, 实体是一张写死的短名单。**
+> **⇒ 修一处的正确方式不是把名单补长, 是让名单不再需要 —— 改成发现式。**

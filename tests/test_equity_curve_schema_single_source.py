@@ -27,11 +27,22 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).parent.parent
-ENGINE_MAINS = (
-    "short_reversal/main.py",
-    "uptrend_pullback/main.py",
-    "cycle_price_action/main.py",
-)
+
+
+def _engine_mains():
+    """**发现式**: 所有 `<族>/main.py` —— 不写死文件列表 (§13.22)。
+
+    ⚠️ 本测试**第一版**把 `ENGINE_MAINS` 写死成三个文件
+    (`short_reversal` / `uptrend_pullback` / `cycle_price_action`) ——
+    当时的描述是**事实的** ("此前只有这三处有拷贝")。
+    但那正是 §13.22 记录的那个失效形态的**弱版本**:
+    > **枚举出来的覆盖面 = 作者当时看到的东西; 第四个文件日后抄一份, 守卫看不见。**
+
+    2026-10-19 实测: **`chase_up/main.py:28-31` 确实有这两个元组的本地拷贝**
+    (与规范值逐字节相同), 而旧版守卫**从不检查它** —— 因为它不在那三个名字里。
+    ⇒ 改为 glob `*/main.py`。**"当时只有三个"不是安全性的来源,"任何人抄都不会漏检"才是。**
+    """
+    return sorted(ROOT.glob("*/main.py"))
 
 
 def test_canonical_schema_module_exports_both_tuples() -> None:
@@ -48,13 +59,15 @@ def test_canonical_schema_module_exports_both_tuples() -> None:
     )
 
 
-@pytest.mark.parametrize("rel", ENGINE_MAINS)
-def test_engine_main_does_not_redefine_the_canonical_tuples(rel: str) -> None:
+@pytest.mark.parametrize("path", _engine_mains(), ids=lambda p: str(p.relative_to(ROOT)))
+def test_engine_main_does_not_redefine_the_canonical_tuples(path: Path) -> None:
     """引擎 main 里**不得**再出现 `XXX_COLS = (...)` 式的本地定义。
 
     结构性断言 (不需要 DB): 一旦有人把某个元组**抄回来改一列**, 本测试立刻红。
+    覆盖面由 `_engine_mains()` **发现式**给出 ⇒ 新增一个族也不会漏。
     """
-    src = (ROOT / rel).read_text(encoding="utf-8")
+    rel = str(path.relative_to(ROOT))
+    src = path.read_text(encoding="utf-8")
     for name in ("EQUITY_CURVE_COLS", "CASH_WALK_COLS"):
         assert not re.search(rf"^\s*{name}\s*=\s*\(", src, re.M), (
             f"{rel} 里又出现了 `{name} = (...)` 的本地定义 —— "
@@ -64,10 +77,11 @@ def test_engine_main_does_not_redefine_the_canonical_tuples(rel: str) -> None:
         )
 
 
-@pytest.mark.parametrize("rel", ENGINE_MAINS)
-def test_engine_main_imports_them_from_core(rel: str) -> None:
+@pytest.mark.parametrize("path", _engine_mains(), ids=lambda p: str(p.relative_to(ROOT)))
+def test_engine_main_imports_them_from_core(path: Path) -> None:
     """正面的那一半: 必须**确实**从 `core.trade_schema` 导入 (不能只是删掉了)。"""
-    src = (ROOT / rel).read_text(encoding="utf-8")
+    rel = str(path.relative_to(ROOT))
+    src = path.read_text(encoding="utf-8")
     assert re.search(r"from core\.trade_schema import .*EQUITY_CURVE_COLS", src), (
         f"{rel} 没有从 core.trade_schema 导入 EQUITY_CURVE_COLS"
     )

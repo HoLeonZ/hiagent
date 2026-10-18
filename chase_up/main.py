@@ -16,19 +16,16 @@ import pandas as pd
 from chase_up.backtest import INITIAL_CAPITAL, run_backtest
 from chase_up.backtrader_engine import run_backtrader_backtest
 from core.trade_report import render_trade_report, report_filename
+# §2/§3 (2026-10-19, §13.22): equity_curve.csv / cash_walk.csv 的列**必须**取自
+# core.trade_schema —— 此前本文件把两个元组**本地抄了一份**(且它们从未被引用),
+# 而真正写盘的两处列名列的是**内联字面量** ⇒ 规范 schema 在本文件里出现了**三遍**。
+from core.trade_schema import CASH_WALK_COLS, EQUITY_CURVE_COLS
 from chase_up.data import load_panel
 from chase_up.presets import get_preset
 from chase_up.signals import compute_indicators
 from chase_up.universe import load_universe
 
 from hiagent_config import DB_PATH as DEFAULT_DB
-
-
-# §2/§3 Tick 51 GREEN: equity_curve.csv + cash_walk.csv canonical schemas.
-EQUITY_CURVE_COLS = ("date", "cash", "position_value",
-                     "total_equity", "drawdown")
-CASH_WALK_COLS = ("date", "free_cash", "locked_margin",
-                  "settling_funds", "nav", "total_equity")
 
 
 def _write_per_preset_metrics(
@@ -77,7 +74,8 @@ def _write_equity_curve(
         peak = eq["equity"].cummax()
         eq["drawdown"] = ((peak - eq["equity"]) / peak).fillna(0.0)
     eq_out = eq[["date", "cash", "position_value", "equity", "drawdown"]]
-    eq_out.columns = ["date", "cash", "position_value", "total_equity", "drawdown"]
+    # 列名取自单一来源 (core.trade_schema) —— 顺序与规范元组逐字节相同 ⇒ 输出未变。
+    eq_out.columns = list(EQUITY_CURVE_COLS)
     eq_out.to_csv(equity_path, index=False)
 
     cw = pd.DataFrame({
@@ -88,6 +86,8 @@ def _write_equity_curve(
         "nav": eq["cash"] + eq["position_value"],
         "total_equity": eq["equity"],
     })
+    # 显式按规范元组取列 ⇒ 以后 core 改列名时这里会跟着走, 不再靠"字典正好是这个顺序"。
+    cw = cw[list(CASH_WALK_COLS)]
     cw.to_csv(cash_walk_path, index=False)
 
 
