@@ -18,13 +18,14 @@
 
 **来源**: `/tmp/hiagent_mining/{cross_section2,cs_final,cs_holdout}.py`,逐字摘取。
 
-## 抢救时**只动了三处**, 都为了"可复现"这一个目标
+## 抢救后共动了**四处** (前三处为"可复现", 第四处为 §0 fail-fast)
 
 | # | 改动 | 为什么必须改 |
 |---|---|---|
 | 1 | `sys.path.insert(0, "/Users/holeon/code/hiagent")` → `str(Path(__file__).resolve().parents[2])` | 硬编码绝对路径在别的 clone 上直接跑不起来 |
 | 2 | 外层 `SELECT` 补 `ORDER BY date, thscode` | 行序未定 ⇒ 下游 `rank(method="first")` 的**并列打破随行序变** ⇒ 逐次运行的末位不同 |
 | 3 | `cross_section2.py` 的 `ntile(10) OVER (PARTITION BY date ORDER BY sig)` → `ORDER BY sig, thscode` | `ntile` 的并列打破**未定义** ⇒ 档位归属逐次变动 |
+| 4 | `cs_final.py` 的两处 `assert cash >= -1e-6` → `if cash < -1e-6: raise ValueError(...)` | §0 fail-fast: `assert` 会被 `python -O` **剥掉** ⇒ 容量模拟一旦透支, 旧写法会**静默**产出一个看起来像结果的数 (§13.46 已用注入实测: 旧版 `-O` 下 `exit=0` 并打印出「容量咬合」数字, 新版 `-O` 下 `exit=1` 抛错)。正常执行下**零漂移**(前后输出逐字节相同) |
 
 **改动 2/3 的依据是 CLAUDE.md §0 的 Reproducibility Mandate**:
 > Identical inputs MUST produce byte-identical outputs.

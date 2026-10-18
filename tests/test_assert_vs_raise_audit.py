@@ -64,35 +64,29 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-SCAN_DIRS = [
-    "chase_up",
-    "uptrend_pullback",
-    "short_reversal",
-    "cycle_price_action",
-    "core",
-    "dna_stats",
-]
-
+# ⚠️ 2026-10-19 (§13.46): 这里原先是一张手写的 `SCAN_DIRS`(6 个目录) + `if not exists: continue`
+# (§13.43 记过的静默跳过形态)。它与 §13.45 遇到的是同一个**结构性**问题:
+# **"目录列表 + rglob"够不到仓库根的散文件**。⇒ 改为遍历仓库, 只按目录排除。
 EXCLUDE_DIR_NAMES = {
+    "tests",
     "__pycache__",
     ".git",
+    ".claude",
     "node_modules",
     "results",
+    "worktrees",
 }
 
 
 def _iter_production_files() -> list[Path]:
+    """**发现式**: 遍历仓库里所有 `.py`, 只按目录排除 (§13.46)。"""
     files: list[Path] = []
-    for scan_dir in SCAN_DIRS:
-        base = REPO_ROOT / scan_dir
-        if not base.exists():
+    for path in sorted(REPO_ROOT.rglob("*.py")):
+        if any(part in EXCLUDE_DIR_NAMES for part in path.parts):
             continue
-        for path in base.rglob("*.py"):
-            if any(part in EXCLUDE_DIR_NAMES for part in path.parts):
-                continue
-            if path.name.startswith("test_"):
-                continue
-            files.append(path)
+        if path.name.startswith("test_"):
+            continue
+        files.append(path)
     return files
 
 
@@ -220,3 +214,25 @@ def test_assert_to_raise_ratio_is_healthy() -> None:
             f"vs {len(assert_sites)} asserts (ratio {ratio:.1f}:1, "
             f"target ≥10:1). Production code should prefer `raise`."
         )
+
+# ---------------------------------------------------------------------------
+# 反空转对照 (§13.46): 扫描必须是**发现式**的
+# ---------------------------------------------------------------------------
+
+
+def test_scan_is_discovery_based_and_reaches_root_files() -> None:
+    """扫描必须覆盖旧手写清单**之外**的位置 —— 否则"放宽覆盖面"是句空话。
+
+    ⚠️ 2026-10-19 (§13.46): 原用 `SCAN_DIRS`(6 个目录) + `rglob`。
+    "目录列表 + rglob" **结构上够不到仓库根的散文件** (见 §13.45);
+    实测改为遍历仓库后覆盖到 `tools/` / `dna_data/` / 两个根散文件。
+    """
+    rels = {f.relative_to(REPO_ROOT).as_posix() for f in _iter_production_files()}
+    old_scope = {"chase_up", "uptrend_pullback", "short_reversal",
+                 "cycle_price_action", "core", "dna_stats"}
+    assert {r for r in rels if r.split("/")[0] not in old_scope}, (
+        "扫描没有越出旧的那 6 个目录 ⇒ 覆盖面并未真的放宽"
+    )
+    assert {r for r in rels if "/" not in r}, (
+        "扫描够不到仓库根的散文件 ⇒ 目录列表 + rglob 的老问题还在"
+    )

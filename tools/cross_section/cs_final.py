@@ -71,10 +71,16 @@ def chain(sel, h, cap0, cap_on, sig_dates):
             nt = sh * p
             if spent + nt > cash: continue
             cash -= nt + max(nt*COMM, MINFEE); spent += nt + max(nt*COMM, MINFEE)
-            assert cash >= -1e-6
+            if cash < -1e-6:
+                raise ValueError(
+                    f"资不抵债: cash={cash!r} —— 容量模拟不得透支 (CLAUDE.md §2 资金物理)"
+                )
             pr = sh * r.fx
             cash += pr - max(pr*COMM, MINFEE) - pr*STAMP
-            assert cash >= -1e-6
+            if cash < -1e-6:
+                raise ValueError(
+                    f"资不抵债: cash={cash!r} —— 容量模拟不得透支 (CLAUDE.md §2 资金物理)"
+                )
     return cash
 
 con = duckdb.connect(str(DB_PATH), read_only=True)
