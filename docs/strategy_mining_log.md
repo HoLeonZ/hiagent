@@ -7318,6 +7318,12 @@ METRICS_BASIS = {"trading_days": …, "sharpe": "equity",
 ⇒ **跨族按 sharpe 排序时, 用 252 的两个族被系统性抬高 1.84%。**
 
 #### (c) ★ 而 HTML 报告里那句手写警告是**错的**
+
+> ⛔ **2026-10-19 (§13.91) 更正本节 (c)/(d) 的口径清单**: 本节把 `short_reversal` 的 `max_dd`
+> 写成「`max(sub_i.max_dd)` over all windows」—— **那是假的, 而且是我自己引入的**。
+> 实测主路径 (`_metrics_from_holder`) 的 `max_dd` **取自同一条 NAV 序列, 与 chase/uptrend 同口径**;
+> `max(sub_i)` 只是 **v63 ensemble 那一个函数**的汇总法。**我把一个函数的 docstring 当成了整族的做法。**
+> ⇒ 因此**不是「四种口径」, 而是两种** (NAV 盯市 ×3 + 已实现不盯市 ×1)。详见 §13.91。
 原文:
 > ⚠ short_reversal 因 CAGR 体量级差异(数千%), CAGR/Sharpe 榜会被其包揽; **`max_dd` 升序榜更有跨策略可比性**。
 
@@ -7360,4 +7366,68 @@ METRICS_BASIS = {"trading_days": …, "sharpe": "equity",
 | 相关测试 (`html_smoke` / `metrics_output_conformance` / `backtest_metrics_canonical_schema`) | `4 failed / 33 passed` → **逐条一致** (那 4 条是**既有红**: 产物缺失类) ✅ |
 
 #### (i) §5 记账
+审计节, `n_comparisons` 不变 (186)。
+
+### 13.91 ⛔ **我上一轮写进「口径自披露」的那个字符串是假的** —— 自纠, 并把表的「行与行不等重」说清
+
+#### (a) 错在哪
+§13.89 我往 `short_reversal` 的 `METRICS_BASIS` 写了:
+```python
+"max_dd": "worst_subwindow_max_dd",
+```
+**它是假的。** 依据是我在 `engine.py` 里读到的那一行:
+> `- max_dd = max(sub_i.max_dd) over all i  (worst-case DD, 保守口径)`
+
+—— 那是 **`_run_ensemble` 那一个函数**的 docstring。
+而**主路径** `_metrics_from_holder` 报的是 `holder["max_dd"]`, 它**取自同一条 NAV 序列**
+(该处注释自己写着「**本引擎自己的 `max_dd`** 也是从**同一条 NAV 序列**算的」)
+⇒ **与 chase/uptrend 完全同口径**。
+
+> **我把一个函数的 docstring 当成了整族的做法。**
+> 这是本册记过的第 **12** 次同类形态 —— **用「整体」断言「部分」** ——
+> 而这一次的产物很坏: **它落在了一个专门用来「说清口径」的字段里**。
+
+#### (b) 修正 (3 处, 零数字漂移)
+| 处 | 改成 |
+|---|---|
+| `short_reversal/engine.py` 的 `METRICS_BASIS["max_dd"]` | `"nav_mtm"` (+ 注明 ensemble 路径是例外) |
+| `tests/test_metrics_basis_table_is_pinned.py` 的 `PINNED_BASIS` | `"max_dd": "nav_mtm"` |
+| `tools/run_all_backtests_html.py` 报告里的同一句说明 | 同上, 并点明**仅 v63 ensemble 取子策略最大值** |
+
+#### (c) ★ 顺带把「表的行与行**不等重**」说清 (这才是本轮更有用的产出)
+§13.87 那张表把四件事并排列出, 但它们**不是同一量级的事实**:
+| 行 | 性质 | 依据 |
+|---|---|---|
+| **`trading_days` 243 vs 252** | **真实 + 已量化**: `√(252/243)=1.01835` ⇒ sharpe 差 **1.84%**, 且**方向确定** (用 252 的两族被抬高) | §13.90(b) |
+| `cagr_denominator` | 真实 (请求窗 vs 实测期) | §13.16 / `53d3ab5` |
+| **`win_rate_field` `net` vs `net_pnl`** | ⚠️ **只有命名不同, 语义相同** —— chase/uptrend 的变量**名叫 `net` 但是元金额** (`gross - total_fees`), 与 `net_pnl` **同物**; short_reversal 弃用的那个 `net` 是**费率式**, 是**另一个东西** | §13.89 的实现核对 |
+| **`max_dd`** | 真实但**只有两档**: NAV 盯市 ×3 + 已实现不盯市 ×1 (cycle 自陈「真实回撤不会比它小」) | 本节 (a) |
+
+⇒ **正确表述不是「四族四个量全部定义不同」(那太粗), 而是**:
+> **四个量里, 两个有**可量化的**口径差 (`trading_days` 1.84%; `cagr` 分母), 一个有**方向已知**的差
+> (`max_dd`: cycle 偏乐观), 一个**只是命名不同** (`win_rate_field`)。**
+
+这与 §13.13 的禁令**不冲突** —— 禁令仍然成立 (跨族引用前必须逐项确认口径);
+但它把禁令从「**一律不许**」变成「**知道差在哪、差多少**」, 后者可操作得多。
+
+#### (d) §6 双向验证 + 零漂移
+| 检查 | 结果 |
+|---|---|
+| 还原态 | **18 passed** |
+| **注入: 把 `max_dd` 口径改回那个错的字符串** | **红** ✅ |
+| 再还原 | 18 passed ✅ |
+| 相关测试 (`html_smoke` / `metrics_output_conformance` / `backtest_metrics_canonical_schema` / `preset_to_engine_api_conformance`) | `8 failed / 34 passed` → **逐条一致** ✅ |
+
+#### (e) 一个命题的**分析证明 + 实证** (顺手做掉, 不需要跑回测)
+我原本还想验「最坏段 DD ≤ 整条 DD」, 于是跑了 **2 万条随机游走 + 随机切段**: **反例 0 个**
+⇒ 该不等式在权益非负时成立。(构造例子上: 整条 8.33% vs 最坏段 3.51%。)
+⇒ **它本来是要支持一个错的结论的**; 结论错了, 但那条数学是对的, 留着备用。
+
+#### (f) ⚠️ **而本轮又一次「日志没落盘、提交却跑了」**
+写日志的那个 `python3 - <<PY` 因**引号嵌套**语法错而中止, 而同一个 `bash` 里的
+`git add -A && git commit` **照常执行** ⇒ 提交信息声称写了 §13.91, 而日志里 **0 处**。
+**与 §13.64 / round 164 完全同一形态 —— 这是第二次。**
+⇒ 纪律升级: **写完日志必须回读核验** (`grep -c "13\.91"`), 不信退出码、不信提交信息。
+
+#### (g) §5 记账
 审计节, `n_comparisons` 不变 (186)。
