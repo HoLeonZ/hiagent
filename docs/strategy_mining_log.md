@@ -6082,3 +6082,68 @@ monkeypatch `_all_conditions` 使其**只在第一次 `next()` 时为真** ⇒ *
 
 #### (g) §5 记账
 审计节, 不产生策略评估 ⇒ `n_comparisons` 不变 (186)。
+
+
+### 13.69 ✅ 把全部 **39 处"排除理由"** 逐条核了一遍: **38 处合法或自失效, 1 处不自失效 (已修)**
+
+#### (a) 为什么扫这个
+§13.68 发现**一句未被核实的注释**（"cycle 用 cerebro, skip"）让一整族失明。
+⇒ 那句注释属于一类更宽的东西: **测试里"我为什么不做 X"的理由**。这类句子
+**读起来像说明, 实际是开关** —— 它一旦错, 一整块检查就不再执行, 而**没人会去看它**。
+⇒ 把 `tests/` 里所有 `skip` / `xfail` / `skipif` 的**理由**抽出来 (AST, 39 处) 逐条核。
+
+#### (b) 分类结果
+| 类别 | 条数 | 说明 |
+|---|---|---|
+| **合法 skip — 环境 / 产物缺失** | **23** | 缺 DB / 缺 trades.csv / 缺 baseline / 结果目录已清空。§6 明文"缺产物时 skip 不 error" ⇒ 全部正确 |
+| **条件式跳过 — 数据前置不满足** | **5** | 见 (c) |
+| **已在册的登记债 / 自失效豁免** | **11** | 见 (d) |
+
+#### (c) 5 条条件式跳过 —— **逐条核实, 全部属实**
+| 理由 | 出处 | 核实 |
+|---|---|---|
+| "chase/uptrend 的 `load_universe` 已升级为 PIT" | `test_pit_universe_gap.py:112/125` | ✅ **属实**: 两族签名都是 `(mode, db_path, exclude_path=None, asof_date=None)`; PIT 过滤另有一条测试实际断言。⚠️ 但那两个 `except TypeError` 分支**不可达** (`asof_date` 有默认值) ⇒ **死分支** |
+| "uptrend 零暴露 (无持仓穿越除权日)" | `test_corporate_actions_gap.py:101` | ✅ **属实且已量化**: 该 skip 里已带 §13.26 的实测 (三族穿越笔数; short_reversal 一笔送股穿越产生 **+17.9% 幻影止盈**), 且 uptrend 的零暴露有**专属行为式守卫** |
+| "无引擎实现 CA handler" (该 skip 的分支) | `test_corporate_actions_gap.py:115` | ✅ **属实**: 四族 grep 皆无 `dividend_handler`/`split_handler` ⇒ 该分支为**死分支** |
+| "`_verify_trade_with_backtrader` not yet refactored" | `test_uptrend_pullback_v3a_runtime.py:308` | ✅ **该助手存在** (`uptrend_pullback/backtrader_engine.py:89`)、能 import、该文件 **8 passed / 0 skipped** ⇒ 分支**不可达**, **消息过期** |
+| "`exit_date < 2` 无法验证 step-change" / "mid 不在轴上" | `test_chase_up_no_lookahead.py:1005/1010` | ✅ 数据前置, 合法 |
+
+> **⇒ 一句错的前提都没有找到。** §13.68 那句是**孤例** —— 至少在这一批 39 条里。
+
+#### (d) ⚠️ 11 条豁免里, **只有 1 条不会自失效** —— 已修
+仓里共 **3 处 `@pytest.mark.xfail`**: 两处 `strict=True` (§13.27 / §13.31),
+**一处 `strict=False`** (`test_backtrader_engine_net_return_entry_commission.py:60`)。
+另有 6 处**命令式** `pytest.xfail`, **全部**由前面的显式 `assert` 兜底 (§13.24/§13.66/§13.67 的形状 ⇒ 自失效)。
+
+**为什么 `strict=False` 是个洞** —— 用**实测**说明, 不凭印象:
+```
+@pytest.mark.xfail(reason="…", strict=False)  def test_non_strict(): assert True
+@pytest.mark.xfail(reason="…", strict=True)   def test_strict():     assert True
+```
+| 装饰器 | 结果 |
+|---|---|
+| `strict=False` | **XPASS** —— **不是失败** |
+| `strict=True` | **FAILED** (`[XPASS(strict)]`) |
+
+⇒ **非 strict 的 XPASS 不会被要求清理** ⇒ 那份"STALE FIXTURE"的陈旧豁免可以**永远挂着**,
+而这条测试**永远不会告诉你它已经过期**。
+(§13.19 "豁免必须自失效" 在这条上**没有被执行** —— 不是因为有人违规, 是因为**默认值就是 `False`**。)
+
+#### (e) 改动 + §6 双向验证 (**用心造的 fixture 造的 XPASS**)
+把 `strict=False` 改成 `strict=True`。验证用一份**满足断言的合成 trades.csv**
+(放 `uptrend_pullback/results/`, 该目录 gitignored 且当时为空; 用完即删):
+
+| 检查 | 结果 |
+|---|---|
+| ① `strict=False` + 合成 fixture | **`2 passed, 2 xpassed`** —— **XPASS 不是失败** (洞的实证) |
+| ② 改成 `strict=True` + **同一** fixture | **`2 failed`** (`[XPASS(strict)]`) ⇒ **自失效成立** ✅ |
+| ③ 删掉合成 fixture | 回到 **`2 passed, 2 skipped`** (与原状一致) ✅ |
+
+#### (f) ★ 一个附带形态: **不可达的 skip 分支**
+5 条条件式跳过的里 **3 条的实际分支不可达** (§c 的三个 ⚠️)。它们**无害**, 但意味着
+**写在里面的理由永远不会被打印出来** ⇒ 过期了也没人知道。
+这与 §13.20 的"跑了却不可能失败的守卫"是**同族**, 只是在**分支**这一层:
+> **一个"不可能发生"的分支, 与一条"不可能失败"的断言, 都不提供信息。**
+
+#### (g) §5 记账
+审计节, 不产生策略评估 ⇒ `n_comparisons` 不变 (186)。

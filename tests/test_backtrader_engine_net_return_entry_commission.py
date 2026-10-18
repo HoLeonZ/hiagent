@@ -59,8 +59,10 @@ def test_uptrend_pullback_backtrader_engine_invested_formula_unit():
 ])
 @pytest.mark.xfail(
     reason="STALE FIXTURE: trades.csv 是 pre-Round 20 旧代码生成, "
-           "需重跑 uptrend_pullback backtest 重生成 trades.csv 才会 PASS。",
-    strict=False,
+           "需重跑 uptrend_pullback backtest 重生成 trades.csv 才会 PASS。"
+           "§13.69: strict=True —— 重生成后本测试**会** XPASS(strict) 变红, "
+           "提示删掉这份陈旧豁免 (§13.19: 豁免必须自失效)。",
+    strict=True,
 )
 def test_uptrend_pullback_stale_trades_csv_needs_regeneration(fixture_csv):
     """Forward-defense: stale trades.csv 数据是 pre-Round 20 旧代码生成。
