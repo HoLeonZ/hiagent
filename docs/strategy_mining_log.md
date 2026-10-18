@@ -3252,3 +3252,84 @@ AttributeError: module 'short_reversal.engine' has no attribute 'duckdb'
 > **真债 / 形式钉桩造成的假红 / 测试自己坏掉 / **以及"代码动了我忘了翻转 pin"**。**
 > 第四种的特别之处: **它使失败数在"代码变对"时上升。**
 > ⇒ **这个数字既不是债务量, 也不与正确性同向。引用它时必须带分类。**
+
+### 13.30 ⛔ **§0 的 golden baseline 契约被跳过约 3 周 —— 已按契约补上(重生成 + 归因)**
+
+#### (a) §0 原文与它要求的动作
+> Golden-baseline hashes lock trade-list behavior for every engine;
+> **any logic change that alters the trade list MUST regenerate the baseline and
+> justify the drift in the PR.**
+
+机制: 每族若干 preset, 各有 `tests/golden/<name>_baseline.json` 锁 `trades_csv_sha256`
+与行数; 测试跑同一个 preset/窗口, 比对哈希。
+
+#### (b) 现状: **8 条红, 且是"有意的改动没做记账"**
+`tests/test_chase_up_no_lookahead.py` 有 **8 条** golden 测试 (v5, v8–v14), **全部红**。
+实测漂移量级:
+
+| preset | 基线行数 | **实测行数** |
+|---|---|---|
+| v5 | 107 | **38** |
+| v8 | 82 | **27** |
+| v9 | 76 | **25** |
+| v10 | 71 | **15** |
+| v11 | 71 | **14** |
+| v12 | 75 | **13** |
+| v13 | 73 | **12** |
+| v14 | 73 | **12** |
+
+⇒ 成交数普遍降到 **1/5 – 1/3**。不是细微漂移。
+
+#### (c) 归因: 提交信息里**早就写着**漂移量
+基线最后一次提交 = **2026-09-28** (`fb54a97`)。此后的改动链中, 主导的一条是
+**`fdf9371` (2026-10-10) `feat(chase_up): switch 22/22 presets from OR to AND
+sub-signal mode`** —— 而**它自己的提交信息就量化了**:
+> "OR **73 trades** → AND **14 trades** (↓81%)"
+
+我们实测 v11 = **14 笔** ⇒ **逐位对上**。
+一同归因的还有: `0517388` (黑名单在三个引擎里是静默 no-op ⇒ 修死路径)、
+`0162de5` (非交易日 asof 静默产出空宇宙)、`5195402` (phase2 拒绝发布负权益曲线)、
+`c9cb1e5` (成本口径对齐)、§13.22 成本常量上收 (**零漂移**, 已验证)。
+
+> **⇒ 这不是"无法解释的漂移", 而是"一个被跳过的记账步骤"。**
+> 改动是**有意的、有文档的、被量化的** —— 唯独没做 §0 明文要求的那一步。
+
+#### (d) 动作: 按契约重生成 **+ 归因** (§0 的两半都做)
+1. 用仓库自带的 `tests/_regen_chase_baselines.py` 重生成 **13 份** chase 基线
+   (不只是那 8 条失败的 —— 见 (f), 另外 5 份**没有测试**);
+2. 给每份写入 `regen_2026_10_19_note`, 把 (c) 的归因链与量化结果写进去 ——
+   **"justify the drift" 这一半不能省**。
+验证: `tests/test_chase_up_no_lookahead.py` **33 passed**; 连带上
+`test_uptrend_pullback_sha256_baseline.py` (3 passed) 与 `test_reproducibility_audit.py`
+一起 **46 passed**。
+
+#### (e) ⚠️ 我一度得出一个**错误结论**, 核对后撤回了
+我注意到测试是这样写的:
+```python
+trades_csv = .../"chase_up"/"results"/"v5_trades.csv"
+if not trades_csv.exists():      # ← 只在文件不存在时才真跑引擎
+    ... run_backtest ... ; to_csv(...)
+df = pd.read_csv(trades_csv)     # ← 否则读磁盘上那份**缓存产物**比 hash
+```
+⇒ 我当时推断"**这 8 条测试根本没在测引擎, 只是在比一个缓存产物**", 并据此怀疑
+"v15–v19 之所以绿, 是因为缓存掩盖了漂移"。
+
+**核对后撤回**: (1) 我把 8 份缓存**移开重跑**, 得到的哈希与缓存**完全相同**
+⇒ **缓存这次是新的, 没有掩盖任何东西**; (2) `v15–v19` **根本没有测试**
+(全文只有 8 条 golden 测试) ⇒ 谈不上"被掩盖"。
+**⇒ 那个设计洞是真的 (它是潜在的), 但本次它没有发作 —— 不能拿它当解释。**
+
+#### (f) 顺带查出的两件事 (登记)
+1. **`tests/golden/` 里有 5 份基线 (v15–v19) 没有任何测试引用它们** ——
+   钉子挂着, 但没有守卫去打它。§13.19 那个形态的**第五种**: 不是"断言恒真",
+   也不是"守卫不跑", 而是**被钉住的数据无人校验**。
+2. **v13 / v14 / v15 / v16 / v17 重生成后哈希完全相同 (`580014…`)、行数都是 12**
+   ⇒ **这五个 preset 在该窗口上产出完全相同的成交列表** ——
+   区分它们的参数 (atr035 / mom10 / mom11 / ma60buf08 …) 在这段窗口上**没有效果**。
+   这与 §3.1"许多 preset 轴是刀刃/无差异"是同一族的现象, 登记备查。
+
+#### (g) 未做 (登记)
+`tests/test_cycle_price_action_sha256_baseline.py` 仍是红 —— 它是**前向防御**:
+cycle 是**全库唯一没有 pinned baseline 的引擎**。前提是"引擎开始产出 trades.csv 之后
+再钉"; 该前提是否已成立、以及该钉哪一份, 需要先定 cycle 的产物口径
+⇒ 属**选择**而非违约修复, 登记。
