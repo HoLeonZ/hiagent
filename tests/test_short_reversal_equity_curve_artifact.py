@@ -19,8 +19,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 ENGINE = (Path(__file__).parent.parent / "short_reversal" / "engine.py").read_text(
     encoding="utf-8"
 )
@@ -31,17 +29,19 @@ def test_metrics_carry_the_equity_curve() -> None:
     assert '"equity_curve": holder.get("equity_curve", [])' in ENGINE
 
 
-@pytest.mark.skipif(
-    not Path("/tmp/sr_iso3/equity_curve.csv").exists(), reason="需要本地回测产物"
-)
-def test_artifact_matches_reported_max_dd() -> None:
-    """报告的 max_dd 必须等于曲线上的最大回撤 (同一次运行内)。"""
-    import json
-
-    import pandas as pd
-
-    eq = pd.read_csv("/tmp/sr_iso3/equity_curve.csv")
-    te = pd.to_numeric(eq["total_equity"], errors="coerce")
-    dd = float((1 - te / te.cummax()).max())
-    m = json.loads(Path("/tmp/sr_iso3/m.json").read_text())
-    assert abs(dd - m["max_dd"]) < 1e-9, f"曲线回撤 {dd} vs 报告 {m['max_dd']}"
+# ⚠️ 2026-10-19 (§13.20): 这里原有第二条断言 `test_artifact_matches_reported_max_dd`,
+# 它读 `/tmp/sr_iso3/equity_curve.csv` + `m.json` 并核对 `max_dd` == 曲线最大回撤。
+# **已删除, 因为它被更新的守卫完全覆盖, 而它的 skip 条件让它在本机之外从不运行**:
+#
+#   * **覆盖它的守卫**: `tests/test_metrics_self_consistency_4engine.py` 里的 `_check_all`
+#     第 ② 条 —— 每次都**真跑一次回测**, 用**它自己那条 NAV 序列**复算 `max_dd` 并断言相等。
+#     同一性质, 但**不依赖 `/tmp`**, 因此在任何机器、任何时刻都真的会跑。
+#   * **原断言的问题**: `/tmp` 是**设计上易失**的 (§7 的产物本地化)。它在我这台机器上此刻
+#     存在, 于是会跑; 但**换一台机器、或清一次 `/tmp`, 它就静默跳过** ——
+#     而 `-rs` 里的样子与"合法的缺库 skip"完全一样。
+#     ⇒ 这正是 §13.19 那条的另一半: **不是"构造上永远跳过", 而是"在正常情形下永远跳过"**。
+#   * **保留它的成本**: 会让人以为这条性质"有两个守卫", 实际只有一个在跑 ——
+#     **覆盖面的假象比没有守卫更糟。**
+#
+# 本文件保留的 `test_metrics_carry_the_equity_curve` 是**结构臂**, 不依赖任何产物,
+# 且在整套件里真的会跑 —— 它才是本文件的承重部分。

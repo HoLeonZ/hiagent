@@ -18,8 +18,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).parent.parent
 SRC = (ROOT / "short_reversal" / "engine.py").read_text(encoding="utf-8")
 
@@ -34,21 +32,15 @@ def test_engine_does_not_average_legacy_net() -> None:
     assert 'np.mean([t["net_return"] for t in' in SRC
 
 
-@pytest.mark.skipif(
-    not Path("/tmp/hiagent_mining/sr_over_winfix_cap50_W2.json").exists(),
-    reason="需要本地回测产物",
-)
-def test_reported_win_rate_matches_the_canonical_field() -> None:
-    """报告的 win_rate 必须等于"按 net_pnl 判胜"的比例 (旧口径会差 0.6pp)。"""
-    import json
-
-    d = json.loads(
-        Path("/tmp/hiagent_mining/sr_over_winfix_cap50_W2.json").read_text()
-    )
-    ts = d["trades"]
-    by_pnl = sum(1 for t in ts if t["net_pnl"] > 0) / len(ts)
-    by_net = sum(1 for t in ts if t["net"] > 0) / len(ts)
-    assert abs(d["win_rate"] - by_pnl) < 1e-12, (
-        f"报告 {d['win_rate']} 与 net_pnl 口径 {by_pnl} 不符"
-    )
-    assert abs(by_pnl - by_net) > 1e-6, "本用例需要两个口径确实不同的样本"
+# ⚠️ 2026-10-19 (§13.20): 这里原有 `test_reported_win_rate_matches_the_canonical_field`
+# —— 读 `/tmp/hiagent_mining/sr_over_winfix_cap50_W2.json`, 断言 `win_rate` == (net_pnl>0) 占比。
+# **已删除**: 同一性质已由**每次都真跑一次回测**的守常驻覆盖 ——
+#   `tests/test_metrics_self_consistency_4engine.py::_check_all` 第 ③ 条,
+#   (该断言经 §6 双向验证: chase_up 注入 `win_rate × 0.5` ⇒ 红)。
+# 而本臂的 skip 条件是 **`/tmp` 产物存在** ⇒ 换台机器 / 清一次 `/tmp` 就**静默跳过**,
+# 在 `-rs` 里与"合法的缺库 skip"向量完全相同。**两个守卫看起来是两道, 实际只有一道在跑。**
+#
+# **但它有一样东西是第 ③ 条没有的, 记在这里而不是丢掉** (§13.20(b)):
+#   第 54 行那条 `abs(by_pnl - by_net) > 1e-6` —— **非退化前置条件**。
+#   第 ③ 条本身**没有**这个前提: 若某窗口上两个口径恰好一致, 它是**恒真**的。
+#   ⇒ 这是一个**已知的、被登记的空转口子**, 不在本文件里修 (修它需要选窗口 = 口径选择)。

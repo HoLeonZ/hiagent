@@ -24,8 +24,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).parent.parent
 SRC = (ROOT / "short_reversal" / "engine.py").read_text(encoding="utf-8")
 
@@ -35,28 +33,25 @@ def test_sharpe_uses_canonical_net_return() -> None:
     assert 'np.array([t["net_return"] for t in trades])' in SRC
 
 
-@pytest.mark.skipif(
-    not Path("/tmp/hiagent_mining/sr_over_shfix_pure1_W2.json").exists(),
-    reason="需要本地回测产物",
-)
-def test_reported_sharpe_matches_net_return_basis() -> None:
-    import json
-    import math
-
-    import numpy as np
-
-    d = json.loads(
-        Path("/tmp/hiagent_mining/sr_over_shfix_pure1_W2.json").read_text()
-    )
-    ts = d["trades"]
-
-    def ap(key: str) -> float:
-        a = np.array([t[key] for t in ts])
-        s = a.std(ddof=1)
-        return a.mean() / s * math.sqrt(min(len(a), 250)) if s > 1e-9 else 0.0
-
-    assert abs(d["sharpe"] - ap("net_return")) < 1e-6  # JSON 序列化有舍入
-    # 本样本两个口径必须**差异显著**, 否则这条断言退化成恒真。
-    # 实测: 按 net -0.897 vs 按 net_return -2.521 (差 1.62 点)。
-    # (注: 在更早的产物上两者曾符号相反 [net +1.19 / net_return -0.39];
-    #  该产物生成于 max_hold 与 §4 跳空修复之前, 成交集不同。)
+# ⚠️ 2026-10-19 (§13.20): 这里原有 `test_reported_sharpe_matches_net_return_basis`
+# —— 读 `/tmp/hiagent_mining/sr_over_shfix_pure1_W2.json`, 断言 `sharpe` 能用 `net_return` 口径复现。
+# **已删除**, 两个理由 (第二个才是决定性的):
+#
+#  ① **重复**: 同一性质已由**每次真跑回测**的守常驻覆盖 ——
+#     `tests/test_metrics_self_consistency_4engine.py::_check_all` **第 ④ 条**,
+#     且第 ④ 条**更强**: 它按**引擎自己声明的**基准复算并且直接断言,
+#     而本臂只按 `net_return` 硬编码。skip 条件是 `/tmp` 产物存在 ⇒ 换机器就静默跳过。
+#
+#  ② ⚠️ **它的注释承诺了一条它没有的断言** (这条值得单独记, 见 §13.20(c)):
+#     原第 59-63 行写着
+#         "# 本样本两个口径必须**差异显著**, 否则这条断言退化成恒真。
+#          # 实测: 按 net -0.897 vs 按 net_return -2.521 (差 1.62 点)。"
+#     —— 而**下面没有任何 `assert`**。注释在**描述**一条非退化前置条件,
+#     **代码里没有它**。⇒ 这条断言**本来就可能是恒真的**, 而注释让人以为不是。
+#
+#     **这正是 §13.19 查的那个形态的第三变体**:
+#       * §13.19: **条件恒真**的 skip ⇒ 永远不跑;
+#       * 作者三次注入 (§13.18(c)): **断言看着在、其实没被执行到**;
+#       * **本条**: **注释看着有断言, 代码里没有** —— 守卫的**说明书**与**实体**不一致。
+#     兄弟文件 `test_short_reversal_win_rate_basis.py` 里**同一个位置**是真的有
+#     `assert abs(by_pnl - by_net) > 1e-6` 的 ⇒ 两边不对称, 是抄写时掉的。
