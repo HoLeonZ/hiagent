@@ -93,7 +93,7 @@
 
 | 方向 | 证据 | 落点 | 现状 |
 |---|---|---|---|
-| 提高 `max_positions`(N=2 / N=4) | 三个独立窗口 + 9~12 个滚动窗口 | `v58_mp_2`/`v58_mp_4` | **不可操作** (族已作废) |
+| 提高 `max_positions`(N=2 / N=4) | 三个独立窗口 + 9~12 个滚动窗口 | `v58_mp_2`/`v58_mp_4` | **不可操作** (族已作废)。⚠️ **2026-10-19 (§13.24): 这一行测的不是它声称的东西** —— 该族**没有并发计数闸门**, `max_positions` 只被当作 sizing 除数、且是**逐笔对剩余现金**再除 ⇒ 实测 `v58_mp_2` 并发峰值 **15**(声明 2)。所谓"N 槽并行"从未实现 |
 | 把满仓成交顺序显式化 | 契约修复; 两种顺序实测互有胜负 | `fill_order` 参数 | **不可操作** (族已作废) |
 
 ### 3.2 已判定为**更差 / 不稳健**的改动
@@ -2842,3 +2842,50 @@ if self.p.max_positions > 1:
 两次注入后引擎 `git diff` 均为空。
 
 守卫当前状态: **5 passed, 1 xfailed** (xfail = 登记在案的债, 不计入失败数)。
+
+### 13.25 §4 "TP/SL 必须是相对百分比" —— **零守卫**;两族用的是被禁的绝对形式,但**实测影响为零**
+
+#### (a) 条款与检索结果
+§4 原文:
+> TP/SL and slippage must always be communicated from Strategy to Broker as
+> **relative percentages (e.g. `sl_pct = 0.05`)**, **NEVER as absolute point differences
+> derived from adjusted prices**, to guarantee reality mapping on raw execution prices.
+
+检索 `relative percentage` 在 `tests/` 的命中数 = **0** ⇒ **这条没有任何守卫。**
+
+#### (b) 四族实际用的是哪一种
+| 族 | broker 面拿到的是 | |
+|---|---|---|
+| `short_reversal` | **相对**:`tp_p = ep * (1 - self.p.tp_pct)` / `sl_p = ep * (1 + self.p.sl_pct)` | ✅ 条文的写法 |
+| `cycle_price_action` | 走 `allocator` / 自身 broker,未见绝对 tp/sl | ✅ |
+| `chase_up` | **绝对**:引擎算 `compute_trade_tp_sl(entry_price, ...)` → `tp_price`/`sl_price`,策略里 `tp_p = float(self.p.tp_price)` | ⚠️ 被禁的形式 |
+| `uptrend_pullback` | 同上 | ⚠️ 被禁的形式 |
+
+⇒ 又一处**族内不对称**,这次是"规定的写法用在两族、被禁的写法用在另两族"。
+
+#### (c) ⚠️ 但影响是 **0** —— 我查了, 并要把结论写死在这里
+绝对阈值本身不一定是错的; 条文真正禁止的是"**由复权价推出、却作用在原始成交价上**"。
+所以判据是: **阈值与喂给券商的价格是不是同一个域**。查下来是**同一个域, 且是构造上自洽的**:
+
+* Phase 1(`chase_up/portfolio.py`)在 `price_source_for_execution == "raw_close"` 时取
+  `raw_open` / `raw_prev_close`(508/513 行), 否则取复权列 ⇒ `entry_price` 的域**由该 flag 决定**;
+* Phase 2(`backtrader_engine.py`)用**同一个 flag** 构造 backtrader feed;
+* 而全部 **22 个 chase_up + 4 个 uptrend preset 都声明 `raw_close`**
+  ⇒ 阈值与成交价**都是原始的**, 两边同域。
+
+⇒ **今天没有任何可达到的失真。** 把它读成"一个有影响的缺陷"是**过度解读**。
+真正的性质是**结构性脆弱**: 条文存在的意义正是"让 broker 不必关心域" ——
+用相对百分比, 阈值可以作用在任何域上而不失真; 用绝对价, 就**必须**依赖
+"两边同源"这个论证一直成立。**这不是 bug, 是把一条已被契约消掉的前提又请了回来。**
+
+#### (d) 顺带登记: `compute_trade_tp_sl` 有 **2 份拷贝**
+`chase_up/backtrader_engine.py:31` 与 `uptrend_pullback/backtrader_engine.py:46`,
+而它自己的 docstring 还写着"与 `portfolio.py:simulate_portfolio` **完全一致**"
+⇒ 实际可能是 **4 份**。§2 的"exactly once"只约束成本常量, **不覆盖这个**;
+登记, 不动 (与 §13.22(i) 同一条: 合并要逐对证明冗余, 不按名字合并)。
+
+#### (e) 为什么**不加**守卫 (与 §13.24 的处理不同)
+§13.24 加守卫, 是因为那是一个**清晰的不变量**(并发数 ≤ max_positions)且**实测被违反**。
+本条不同: (i) 影响为零 (见 c); (ii) 要让静态守卫"能响", 必须把两族的
+broker 接口从绝对价改写成相对百分比 —— 那是**接口重构 + 结果变更**;
+(iii) 而这两族同样**已判不可用**。⇒ 按 §7 的精神, 只登记。
