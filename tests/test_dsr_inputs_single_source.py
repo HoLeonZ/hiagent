@@ -141,13 +141,13 @@ def test_n_returns_is_never_a_hardcoded_literal() -> None:
     """
     offenders: list[str] = []
     for path, call in _dsr_call_sites()[0]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for kw in call.keywords:
-            if kw.arg in {"n_returns", "trading_days_per_year"} and isinstance(
-                kw.value, ast.Constant
+            if kw.arg in {"n_returns", "trading_days_per_year"} and any(
+                isinstance(e, ast.Constant) for e in _expressions_feeding(call, tree)
             ):
                 offenders.append(
-                    f"{path.relative_to(REPO_ROOT)}:{call.lineno} "
-                    f"{kw.arg}={kw.value.value!r}"
+                    f"{path.relative_to(REPO_ROOT)}:{call.lineno} {kw.arg}=<字面量>"
                 )
     assert not offenders, (
         "§5 VIOLATION: DSR 的输入被写成字面量 —— 它必须来自本次运行:\n  "
@@ -169,6 +169,35 @@ def test_n_returns_is_never_a_hardcoded_literal() -> None:
 # 判据改成"**不得来自模块级常量**":`n_returns` 要么是字面量(现任守卫已拦),
 # 要么必须是函数内的**局部**名字(由本次运行算出);若它解析到一个**模块级**变量,
 # 那就还是常数,只是被起了个名字。
+
+
+def _expressions_feeding(call: ast.Call, tree: ast.Module) -> list[ast.AST]:
+    """找出**决定这次调用的 T 的表达式** —— 若有间接,追一层。
+
+    为什么需要:`uptrend_pullback/iter_reverse.py` 的真实形状是
+
+        n_returns = WINDOW_TRADING_DAYS_PER_MONTH * args.window_months   # ← 本地赋值
+        ...
+        n_returns=n_returns                                              # ← 调用点只传名字
+
+    只看调用点的三条规则**全都看不见它**(我第一版就是这样:复现那个形状后守卫依然全绿 ——
+    **两向验证当场证伪了我自己的判据**)。故此处做**一层数据流**:若调用点传的是裸名字,
+    就把该名字在**同一函数/模块**里的赋值表达式也纳入检查对象。
+    """
+    targets: list[ast.AST] = []
+    for kw in call.keywords:
+        if kw.arg not in {"n_returns", "trading_days_per_year"}:
+            continue
+        targets.append(kw.value)
+        if isinstance(kw.value, ast.Name):
+            name = kw.value.id
+            # 一层:同模块或同函数内的 `name = <expr>`
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Assign):
+                    for t in node.targets:
+                        if isinstance(t, ast.Name) and t.id == name:
+                            targets.append(node.value)
+    return targets
 
 
 def _module_level_names(tree: ast.Module) -> set[str]:
@@ -288,11 +317,14 @@ def test_n_returns_contains_no_baked_in_number() -> None:
 
     offenders: list[str] = []
     for path, call in _dsr_call_sites()[0]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for kw in call.keywords:
-            if kw.arg in {"n_returns", "trading_days_per_year"} and has_baked_number(kw.value):
+            if kw.arg in {"n_returns", "trading_days_per_year"} and any(
+                has_baked_number(e) for e in _expressions_feeding(call, tree)
+            ):
                 offenders.append(
                     f"{path.relative_to(REPO_ROOT)}:{call.lineno} {kw.arg}=<expr with 数字> "
-                    f"({ast.unparse(kw.value)[:60]})"
+                    f"({ast.unparse(kw.value)[:40]})"
                 )
     assert not offenders, (
         "§5 VIOLATION: DSR 的输入表达式里烤进了数字 —— 它必须由本次运行算出:\n  "
@@ -333,3 +365,103 @@ def test_the_baked_number_rule_actually_bites() -> None:
                     and s.value not in (0, 1)
                 ]
                 assert not bad, f"合法写法被误伤:{ast.unparse(k.value)}"
+
+
+# ---------------------------------------------------------------------------
+# 附六十六 —— 第四种形状:引用**模块级数字常量**
+# ---------------------------------------------------------------------------
+#
+# `uptrend_pullback/iter_reverse.py` 曾写:
+#
+#     WINDOW_TRADING_DAYS_PER_MONTH = 21
+#     n_returns = WINDOW_TRADING_DAYS_PER_MONTH * args.window_months
+#
+# 这个表达式里**一个数字字面量都没有**(两个操作数都是名字)⇒ 第三条规则看不见;
+# 名字也不是"那个常数自身被直接传进去"⇒ 第二条规则看不见。而它的理由更值得记:
+# 「取自**仓库既有口径**:walk-forward 家族用 6 个月 = 126 个交易日,即 126/6 = 21」——
+# 那个"既有口径"(126)本身就是附六十 修掉的那个猜。**用一个猜给另一个猜背书。**
+#
+# 判据:把表达式里出现的模块级名字**解析回它的值**;值是数字且不是 0/1 ⇒ 违规。
+# 这样"由本次运行算出的变量"(函数内赋值)不受影响,而"从别处的估计借来的数"会被拦。
+
+
+def _module_level_numbers(tree: ast.Module) -> dict[str, object]:
+    """模块级 `NAME = <数字字面量>` 映射(用于把名字解析回值)。"""
+    out: dict[str, object] = {}
+    for node in tree.body:
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, (int, float))
+            and not isinstance(node.value.value, bool)
+        ):
+            out[node.targets[0].id] = node.value.value
+    return out
+
+
+def test_n_returns_does_not_borrow_a_module_level_number() -> None:
+    """§5: T 不得引用模块级数字常量 —— 那还是"从别处借来的数"。"""
+    offenders: list[str] = []
+    for path, call in _dsr_call_sites()[0]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        consts = _module_level_numbers(tree)
+        for kw in call.keywords:
+            if kw.arg not in {"n_returns", "trading_days_per_year"}:
+                continue
+            for _e in _expressions_feeding(call, tree):
+              for sub in ast.walk(_e):
+                if not isinstance(sub, ast.Name):
+                    continue
+                val = consts.get(sub.id)
+                if isinstance(val, (int, float)) and not isinstance(val, bool) \
+                        and val not in (0, 1):
+                    offenders.append(
+                        f"{path.relative_to(REPO_ROOT)}:{call.lineno} "
+                        f"{kw.arg} 引用了模块级数字常量 {sub.id} = {val!r}"
+                    )
+    assert not offenders, (
+        "§5 VIOLATION: DSR 的输入引用了模块级数字常量 —— T 必须由本次运行算出:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def test_the_module_level_number_rule_actually_bites() -> None:
+    """元测试:复现 iter_reverse 那个形状 ⇒ 必被认出来;运行算出的变量 ⇒ 不误伤。"""
+    bad = ast.parse(
+        "WINDOW_TRADING_DAYS_PER_MONTH = 21\n"
+        "def f(args):\n"
+        "    return deflated_sharpe_ratio(observed_sharpe=1.0, n_trials=3,\n"
+        "                                 n_returns=WINDOW_TRADING_DAYS_PER_MONTH * args.m)\n"
+    )
+    consts = _module_level_numbers(bad)
+    call = next(n for n in ast.walk(bad) if isinstance(n, ast.Call))
+    kw = next(k for k in call.keywords if k.arg == "n_returns")
+    hits = [
+        s.id for s in ast.walk(kw.value)
+        if isinstance(s, ast.Name) and isinstance(consts.get(s.id), (int, float))
+    ]
+    assert hits == ["WINDOW_TRADING_DAYS_PER_MONTH"], f"元测试夹具失效:{hits}"
+
+    good = ast.parse(
+        "def f(df):\n"
+        "    _observed_t = int(df['n_daily_returns'].mean())\n"
+        "    return deflated_sharpe_ratio(observed_sharpe=1.0, n_trials=3,\n"
+        "                                 n_returns=_observed_t)\n"
+    )
+    gconsts = _module_level_numbers(good)
+    # 注意:必须挑 **deflated_sharpe_ratio** 那个 call —— `ast.walk` 的次序会把
+    # 夹具里先出现的 `int(df[...].mean())` 当作第一个 Call(我第一版就是这么写的,
+    # 于是元测试自己 StopIteration)。
+    gcall = next(
+        n for n in ast.walk(good)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+        and n.func.id == "deflated_sharpe_ratio"
+    )
+    gkw = next(k for k in gcall.keywords if k.arg == "n_returns")
+    ghits = [
+        s.id for s in ast.walk(gkw.value)
+        if isinstance(s, ast.Name) and isinstance(gconsts.get(s.id), (int, float))
+    ]
+    assert ghits == [], f"运行算出的变量被误伤:{ghits}"

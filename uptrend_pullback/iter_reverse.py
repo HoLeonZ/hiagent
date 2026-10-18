@@ -42,10 +42,16 @@ from hiagent_config import DB_PATH  # noqa: E402
 from uptrend_pullback.presets import MAX_HOLD_LIMIT, get_preset  # noqa: E402
 from uptrend_pullback.walkforward import monthly_windows, run_windows  # noqa: E402
 
-#: §5 (audit 2026-10-15): 单窗交易日数 ≈ 21/月 —— 取自**仓库既有口径**:
-#: walk-forward 家族用 6 个月 = 126 个交易日,即 126 / 6 = 21。此处沿用同一比例,
-#: 而不是另发明一个数。
-WINDOW_TRADING_DAYS_PER_MONTH = 21
+# §5 (附六十六): 这里原有 `WINDOW_TRADING_DAYS_PER_MONTH = 21`,把 T 估成
+# `21 × window_months`,理由写的是"取自仓库既有口径:walk-forward 家族用 6 个月 =
+# 126 个交易日,即 126/6 = 21"。
+#
+# 那个"既有口径"**本身就是一个猜**(见附六十:`126` 被当成"6 个月"写死,而窗口长度是
+# CLI 参数)—— 于是这里用**另一个猜**给这个猜背书。两个数都不是从运行里来的。
+# 实测偏差:A 股实际月均 ≈ 20.25 个交易日(243/12)⇒ T 约 **+4% 偏乐观**
+# (与附三十二 那次 252 vs 242 同量级、同方向)。
+#
+# 现直接取引擎发布的真实观察数 `n_daily_returns`(附六十六),不再估。
 
 logger = logging.getLogger(__name__)
 
@@ -281,7 +287,17 @@ def main() -> None:
 
         observed = float(rows[0]["sharpe_med"])
         n_trials = len(rows)
-        n_returns = WINDOW_TRADING_DAYS_PER_MONTH * args.window_months
+        # 附六十六:T 取自本次运行 —— 每个窗口的 `n_daily_returns`(引擎发布,
+        # 见 uptrend_pullback/backtest.py)取**均值**,即"一个窗口的观测数"。
+        # 不把各窗口相加:2 月窗 / 1 月步之间重叠,相加会把不独立的东西当独立。
+        _win = rows[0].get("windows") or []
+        _ts = [w["n_daily_returns"] for w in _win if w.get("n_daily_returns") is not None]
+        if not _ts:
+            raise ValueError(
+                "§5: 取不到窗口的真实观察数(daily_returns)—— 不许用"
+                "「每月天数 × 月数」的估计兜底,那正是本项要修的缺陷(附六十六)"
+            )
+        n_returns = int(round(sum(_ts) / len(_ts)))
         dsr = deflated_sharpe_ratio(
             observed_sharpe=observed, n_trials=n_trials, n_returns=n_returns,
         )
