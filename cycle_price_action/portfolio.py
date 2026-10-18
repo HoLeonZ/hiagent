@@ -49,6 +49,7 @@ from core.dual_price import (
     COMMISSION_RATE as _CANON_COMMISSION_RATE,
     MIN_COMMISSION as _CANON_MIN_COMMISSION,
     STAMP_DUTY_RATE as _CANON_STAMP_DUTY_RATE,
+    volume_cap_fill,
 )
 
 
@@ -267,8 +268,17 @@ class Portfolio:
         # 这是 CLAUDE.md §4 "Max_Fill_Qty = MIN(Order_Qty, Bar_Volume * 0.10)"
         # 防止小票大单砸穿市场、产生 slippage / market impact。
         if bar_volume is not None and not _is_nan(bar_volume) and bar_volume > 0:
-            max_fill = int(bar_volume * self.MAX_VOL_PARTICIPATION // 100) * 100
-            if max_fill > 0 and shares > max_fill:
+            # 2026-10-19 (§13.28): 改为走 `core.dual_price.volume_cap_fill` (**单一来源**)。
+            # 旧内联式 `int(bar_volume * pct // 100) * 100` 在 bar 量 < 1000 股时取整成
+            # **0**, 而下面那句当时写的是 `if max_fill > 0 and shares > max_fill:`
+            # ⇒ **上限被静默跳过、全量成交**。那正是 `volume_cap_fill` 里
+            # "round-to-0 silent bypass" 那条修正要防的东西 ——
+            # **另三族已改走规范函数, 只有本族漏掉** (族内不对称)。
+            # 逐值等价性: 两式在 `volume >= 1000` 时完全相同, 只在 `volume < 1000`
+            # 时不同; 而本库窗口 (2024-10-08..2026-09-29) 内 `volume < 1000` 的
+            # bar 为 **0 个** ⇒ **零结果漂移**。
+            max_fill = volume_cap_fill(bar_volume, self.MAX_VOL_PARTICIPATION, 100)
+            if shares > max_fill:
                 shares = max_fill
                 cost = self._buy_cost(price, shares)
                 if cost > self.free_cash + 1e-9 or shares < 100:
