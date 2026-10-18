@@ -237,8 +237,14 @@ def test_chase_up_cash_subtraction_is_guarded() -> None:
     results = _scan_cash_subtraction()
     chase = results["chase_up"]
 
-    if not chase:
-        return  # No cash subtraction found — clean
+    # ⚠️ §13.71: 原为 `if not chase: return  # No cash subtraction found — clean`
+    # —— 那让「**把扣减点删掉**」变成**通过**: 扫不到东西与被守卫了**不可区分**。
+    # 注入实证: 四族各把唯一一处 `self.free_cash -= actual_debit` 的变量改名 ⇒ **仍 4 passed**。
+    # ⇒ 改为**非空下限** (§13.48 的形状): 找不到扣减点本身就要报警。
+    assert chase, (
+        "§2: chase_up 里**找不到任何**现金扣减点 —— 该族的现金状态机可能已被删除或改名, "
+        "本测试会因此**空转通过**。请先确认扫描器仍认得它的形态。"
+    )
 
     # Check each violation for proximate guard
     unguarded: list[tuple[str, int, str]] = []
@@ -269,8 +275,14 @@ def test_uptrend_pullback_cash_subtraction_is_guarded() -> None:
     results = _scan_cash_subtraction()
     uptrend = results["uptrend_pullback"]
 
-    if not uptrend:
-        return
+    # ⚠️ §13.71: 原为 `if not uptrend: return` —— 那让「**把扣减点删掉**」变成**通过**:
+    # 扫不到东西与被守卫了**不可区分**。注入实证: 四族各把唯一一处
+    # `self.free_cash -= actual_debit` 的变量改名 ⇒ **仍 4 passed**。
+    # ⇒ 非空下限 (§13.48 的形状)。
+    assert uptrend, (
+        "§2: uptrend_pullback 里**找不到任何**现金扣减点 —— 现金状态机可能已被删除或改名, "
+        "本测试会因此**空转通过**。请先确认扫描器仍认得它的形态。"
+    )
 
     unguarded: list[tuple[str, int, str]] = []
     for rel_path, line, snippet in uptrend:
@@ -295,8 +307,14 @@ def test_short_reversal_cash_subtraction_is_guarded() -> None:
     results = _scan_cash_subtraction()
     short = results["short_reversal"]
 
-    if not short:
-        return
+    # ⚠️ §13.71: 原为 `if not short: return` —— 那让「**把扣减点删掉**」变成**通过**:
+    # 扫不到东西与被守卫了**不可区分**。注入实证: 四族各把唯一一处
+    # `self.free_cash -= actual_debit` 的变量改名 ⇒ **仍 4 passed**。
+    # ⇒ 非空下限 (§13.48 的形状)。
+    assert short, (
+        "§2: short_reversal 里**找不到任何**现金扣减点 —— 现金状态机可能已被删除或改名, "
+        "本测试会因此**空转通过**。请先确认扫描器仍认得它的形态。"
+    )
 
     unguarded: list[tuple[str, int, str]] = []
     for rel_path, line, snippet in short:
@@ -321,8 +339,14 @@ def test_cycle_price_action_cash_subtraction_is_guarded() -> None:
     results = _scan_cash_subtraction()
     cycle = results["cycle_price_action"]
 
-    if not cycle:
-        return
+    # ⚠️ §13.71: 原为 `if not cycle: return` —— 那让「**把扣减点删掉**」变成**通过**:
+    # 扫不到东西与被守卫了**不可区分**。注入实证: 四族各把唯一一处
+    # `self.free_cash -= actual_debit` 的变量改名 ⇒ **仍 4 passed**。
+    # ⇒ 非空下限 (§13.48 的形状)。
+    assert cycle, (
+        "§2: cycle_price_action 里**找不到任何**现金扣减点 —— 现金状态机可能已被删除或改名, "
+        "本测试会因此**空转通过**。请先确认扫描器仍认得它的形态。"
+    )
 
     unguarded: list[tuple[str, int, str]] = []
     for rel_path, line, snippet in cycle:

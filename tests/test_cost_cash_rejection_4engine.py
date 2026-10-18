@@ -313,8 +313,10 @@ def test_short_reversal_rejects_cost_greater_than_cash() -> None:
     results = _scan_cost_cash_rejection()
 
     # Look across all short_reversal entry points
+    # ⚠️ §13.71: 这里原还留着 `"short_reversal/portfolio.py"` —— **那个路径不存在**
+    # (短仓引擎是 replay_strategy_v3.py)。它在下方 `if k in results` 被过滤掉 ⇒ **惰性**,
+    # 但正是 §13.66/§13.68 那个形状的残留文本。已删。
     short_keys = [
-        "short_reversal/portfolio.py",
         "short_reversal/replay_strategy_v3.py",
         "short_reversal/engine.py",
     ]
