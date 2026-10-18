@@ -56,6 +56,39 @@ def _self_consistent(cagr: float, nav_series, init: float) -> tuple[bool, str]:
     return False, f"n_days={n} 终值={nav_series[-1]:,.2f}"
 
 
+def _check_all(eng: str, m: dict, nav, trades_net, *, tr_key: str) -> None:
+    """把 §13.16 的自洽性方法施于**其余指标** (§13.17)。
+
+    对每个指标只用**引擎自己的输出**复算 —— **不需要跨引擎对齐** ⇒ 不循环。
+    这四条一起在一处断言, 因为**跑一次回测就能全查** (零额外运行时成本)。
+    """
+    nav = [float(x) for x in nav]
+    assert nav and nav[-1] > 0, f"{eng}: 权益曲线为空/非正"
+
+    # ① total_return
+    tr = m.get(tr_key)
+    assert tr is not None and abs(tr - (nav[-1] / INITIAL - 1.0)) < 1e-9, (
+        f"{eng}: total_return 报 {tr} 与它自己权益曲线的 {nav[-1] / INITIAL - 1.0:.10f} 不符"
+    )
+
+    # ② max_dd —— 必须等于**它自己那条** NAV 序列的最大回撤
+    peak, dd = nav[0], 0.0
+    for v in nav:
+        peak = max(peak, v)
+        if peak > 0:
+            dd = max(dd, 1.0 - v / peak)
+    assert m.get("max_dd") is not None and abs(m["max_dd"] - dd) < 1e-9, (
+        f"{eng}: max_dd 报 {m.get('max_dd')} 与它自己权益曲线的 {dd:.10f} 不符"
+    )
+
+    # ③ win_rate —— 必须等于**它自己那些成交**里净利为正的比例
+    if trades_net is not None and len(trades_net) > 0:
+        wr = float(sum(1 for x in trades_net if x > 0) / len(trades_net))
+        assert m.get("win_rate") is not None and abs(m["win_rate"] - wr) < 1e-9, (
+            f"{eng}: win_rate 报 {m.get('win_rate')} 与它自己成交的 {wr:.10f} 不符"
+        )
+
+
 @pytest.mark.skipif(_db() is None, reason="需要本地 DB (§6: 缺产物时 skip, 不 error)")
 def test_short_reversal_cagr_is_self_consistent() -> None:
     from hiagent_config import DB_PATH
@@ -63,6 +96,12 @@ def test_short_reversal_cagr_is_self_consistent() -> None:
 
     m = run_backtest_v3("v58_mp_2", *WINDOW, Path(DB_PATH))
     nav = [r["equity"] for r in m["equity_curve"] if r.get("equity") is not None]
+    # ⚠️ 键名**不跨引擎统一** —— short_reversal 用的是 `total_yield`, 另三个才是 `total_return`。
+    # (本节初稿把 short_reversal 也写成 `total_return` ⇒ 读到 None ⇒ 断言红。
+    #  这正是 §13.13 那条"同名不是一致性的证据"的**反面**: 这里连名字都不相同,
+    #  而我**先入为主地假设了它们相同**。是"跑一遍"把它抓出来的。)
+    _check_all("short_reversal", m, nav, [t["net_pnl"] for t in m["trades"]],
+               tr_key="total_yield")
     ok, why = _self_consistent(m["cagr"], nav, INITIAL)
     assert ok, (
         f"short_reversal 的 cagr={m['cagr']:+.8f} **无法由它自己的权益曲线复现** ({why})。\n"
@@ -76,6 +115,9 @@ def test_chase_up_cagr_is_self_consistent() -> None:
     from chase_up.backtest import run_backtest
 
     r = run_backtest("chase_v5_pos2_equal_atr_tp6_sl15_mh10", *WINDOW, DB_PATH)
+    _check_all("chase_up", r["metrics"], r["equity"]["equity"].to_numpy(),
+               r["trades"]["net_pnl"].to_numpy() if len(r["trades"]) else None,
+               tr_key="total_return")
     ok, why = _self_consistent(
         r["metrics"]["cagr"], r["equity"]["equity"].to_numpy(), INITIAL
     )
@@ -88,6 +130,9 @@ def test_uptrend_pullback_cagr_is_self_consistent() -> None:
     from uptrend_pullback.backtest import run_backtest
 
     r = run_backtest("v33_long_reverse_v22", *WINDOW, DB_PATH)
+    _check_all("uptrend_pullback", r["metrics"], r["equity"]["equity"].to_numpy(),
+               r["trades"]["net_pnl"].to_numpy() if len(r["trades"]) else None,
+               tr_key="total_return")
     ok, why = _self_consistent(
         r["metrics"]["cagr"], r["equity"]["equity"].to_numpy(), INITIAL
     )
@@ -114,5 +159,6 @@ def test_cycle_price_action_cagr_is_self_consistent() -> None:
         final_equity=eq[-1],
     )
     m = portfolio_metrics(res)
+    _check_all("cycle_price_action", m, eq, None, tr_key="total_return")
     expect = (eq[-1] / INITIAL) ** (1.0 / (len(eq) / TRADING_DAYS_PER_YEAR)) - 1.0
     assert abs(m["cagr"] - expect) < 1e-12, "cycle 的 cagr 无法由它自己的权益曲线复现"
