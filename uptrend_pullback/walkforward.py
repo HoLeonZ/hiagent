@@ -36,6 +36,11 @@ RESULT_COLS = [
     "start", "end", "trades", "win_rate", "total_return",
     "sharpe", "max_dd", "avg_hold_days", "max_hold_days",
     "tp_count", "sl_count", "time_count", "signals",
+    # §5 (附六十四): 引擎**早已**为 DSR 发布观察数(`n_daily_returns`,
+    # 见 uptrend_pullback/backtest.py 的注释:那是"有多少个收益观测",用于标准误);
+    # 但 walk-forward 表一直没有带上它 ⇒ 下游只能**猜**(实测下游在猜
+    # `n_windows * 63`,而窗口是 2 个月)。带上它,下游就不必猜。
+    "n_daily_returns",
 ]
 
 
