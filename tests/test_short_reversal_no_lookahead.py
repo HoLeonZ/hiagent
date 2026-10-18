@@ -386,6 +386,10 @@ def test_volume_participation_cap_enforced_for_short_entry():
         a_condition="cascade_price",
         margin_rate=0.0, commission_rate=0.0, stamp_duty_rate=0.0,
         initial_capital=initial, lot_size=100,
+        # 2026-10-19 (§13.52): 补上 —— 本文件另两处构造都传了它, 只有这一处漏。
+        # 默认值是 None 是**刻意的 fail-fast 设计** (见 replay_strategy_v3.py:176-178:
+        # "忘传时报 TypeError 而非 silently 0.05") ⇒ 漏传就该报错, 不该靠默认值兜。
+        min_cash_ratio=0.05,
         result_holder=holder,
     )
     cerebro.run()

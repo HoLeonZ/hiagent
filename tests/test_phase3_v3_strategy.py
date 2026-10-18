@@ -49,6 +49,9 @@ def _run_strategy(
         margin_rate=0.086,
         commission_rate=0.0006,
         stamp_duty_rate=0.001,
+        # 2026-10-19 (§13.52): 补上 —— 默认 None 是**刻意的 fail-fast 设计**
+        # (见 replay_strategy_v3.py:176-178), 漏传就该报 TypeError, 不该靠默认值兜。
+        min_cash_ratio=0.05,
         initial_capital=initial_capital,
         lot_size=100,
         result_holder=holder,

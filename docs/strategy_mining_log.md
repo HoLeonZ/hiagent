@@ -4635,3 +4635,67 @@ ValueError: margin fee 234.87 > locked_margin 0.00 — reject (no leverage)
 §13.21 的**结论**(登记不修)不变, 但**理由要改**:
 > 那 3 个 ERROR 不是"一个参数默认值不可用", 而是
 > **"一个诊断工具从两个覆写处绕开了父类的状态机"** —— 补参数不会让它工作。
+
+### 13.52 ✅ **trace 工具改为"包装"** —— 3 个 ERROR 归零, 而 **3 条 §1 断言第一次真正跑起来**
+
+#### (a) 做了 §13.51 说该做的事
+`TraceStrategy` 的两个覆写从"**父类逻辑的分叉**"改为"**包装**":
+```python
+def _fill_pending_entries(self):
+    before = set(self._holds)
+    super()._fill_pending_entries()                 # ← 真正的工作 (含结算/保证金状态机)
+    for code in set(self._holds) - before:          # ← 只**观察**它的结果
+        p = self._holds[code]
+        self._entry_meta[code] = {...}
+
+def _close(self, d, price, reason):
+    n0 = len(self.trades)
+    super()._close(d, price, reason)
+    if len(self.trades) == n0: return               # 父类没产出记录 (被拒)
+    t = self.trades[-1]                             # ← 从 canonical 记录取字段
+    self.traces.append({... "net_per_share": t["net_return"], "notional_pnl": t["net_pnl"] ...})
+```
+**没有再复制一行引擎逻辑。**
+
+> ⚠️ **两个字段的口径随之改变, 这是有意的**: `net_per_share` 现在取 canonical 的
+> `net_return`、`notional_pnl` 取 `net_pnl` —— **因为修这条的全部意义就是让 trace 描述
+> "产出那些 metrics 的那个引擎"**, 而不是一个陈旧副本。
+
+#### (b) 结果: 3 个 ERROR 归零
+| 文件 | 改前 | 改后 |
+|---|---|---|
+| `test_short_reversal_no_lookahead.py` | 1 failed + **3 errors** | **7 passed** |
+| `test_phase3_v3_strategy.py` | 4 failed | **7 passed** |
+
+⇒ **最有价值的一句: 那 3 条 LAHEAD-001 断言(§1: 窗口前 / 窗口后**不得有成交**)
+从来没有真正跑过, 现在跑起来了 —— 而且通过。**
+
+#### (c) §13.21 那组的**共同根因**, 与正确的修法
+§13.21 登记的 8 条(3 ERROR + 5 TypeError)**根因只有一个**:
+**直接构造者漏传了 `min_cash_ratio`** —— 而那个 `None` 默认值是**作者刻意的 fail-fast 设计**。
+⇒ **修法在调用者, 不在那个默认值。** 本轮的 3 处修正:
+| 调用者 | 类型 |
+|---|---|
+| `short_reversal/lookahead_trade_trace.py` | **生产工具**(§13.51 已补, 但真正的问题是分叉) |
+| `tests/test_phase3_v3_strategy.py` | 测试 |
+| `tests/test_short_reversal_no_lookahead.py::test_volume_participation_cap_...` | 测试(**同文件另两处早就传了, 只有这一处漏**) |
+
+#### (d) ✅ **顺带查出一处族内不对称**: `chase_up` **静默忽略 `position_fraction`**
+`test_all_in_sizing_fraction_preservation.py` 是那条**不同**的红:
+> `§2 POSITION_FRACTION DROPPED: chase_up/portfolio.py Portfolio class DOES NOT reference position_fraction`
+
+**实测**:
+| 文件 | `position_fraction` 出现次数 |
+|---|---|
+| `uptrend_pullback/portfolio.py` | **4**(`slot_value *= position_fraction`) |
+| `chase_up/portfolio.py` | **0** |
+
+而 chase_up 的 sizing 有三条分支(`equal` / `all_in` / `kelly`), **三条都不乘它。**
+
+**暴露量为零 (今天)**: `chase_up` 的 **22/22** 个 preset 都声明 `position_fraction = 1.0`
+⇒ **没有任何预设受影响**。但它是个**潜在**缺陷: 将来声明 `0.5` 的 preset 会被**静默当成满仓**
+(风险 2 倍)—— 正是那条断言警告的情形。
+
+> **⇒ 形状值得单独记: §2 要求"每个 preset 必须显式声明这个键", 而 chase_up 声明了却不读它。**
+> "声明而不读" 与 §13.22 的 "同名不同义" / §13.24 的 "同名而语义不同" 是同一族的第三面。
+> **修法方向**(在 `all_in`/`equal` 分支里按 uptrend 的写法乘上它)属**结果变更** ⇒ 登记, 不擅改。
