@@ -271,6 +271,8 @@ def test_acknowledged_batch_patterns_have_noqa_comment() -> None:
     Pin these so future batch patterns follow same documentation
     discipline.
     """
+    # 注(附七十七): 本条断言的是**注释里**有 `# noqa: BLE001` —— 主题就是注释。
+    # `tests/_census_comment_guards.py` 会把它列为候选,那是**已知误报**(不是空转)。
     sweep_all_src = Path("chase_up/sweep_all.py").read_text(encoding="utf-8")
     wf_sweep_all_src = Path("chase_up/wf_sweep_all.py").read_text(
         encoding="utf-8"

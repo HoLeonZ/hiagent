@@ -152,6 +152,8 @@ def test_sources_call_hfq_backward_adjusted() -> None:
     (附七十六:此前 `sql/migrate_v_daily_dual.sql` 的注释把它叫 "forward-adjusted",
     而那处错标传播进了加载器 docstring 与 phantom 工具的 qfq 校准。)
     """
+    # 注(附七十七): 本条断言的是**docstring 措辞** —— 主题就是文档。
+    # `tests/_census_comment_guards.py` 会把它列为候选,那是**已知误报**(不是空转)。
     sql = SQL_PATH.read_text(encoding="utf-8")
     loader = LOADER_PATH.read_text(encoding="utf-8")
 
