@@ -2982,3 +2982,86 @@ from short_reversal.engine import run_backtest_v3
 m=run_backtest_v3('v58_mp_2','2024-10-08','2026-09-29',Path(DB_PATH))
 print([t for t in m['trades'] if t['thscode']=='002976.SZ' and str(t['entry_date']).startswith('2026-06-2')])"
 ```
+
+### 13.27 ⛔ **§1 lookahead: cycle 的股票池是用"窗口之后的数据"选出来的** (9.4% 的票)
+
+#### (a) 出发点: 前几轮找到的缺陷**全都只会让结果更差**
+把 §4 跳空成交口径、§13.26 幻影送股、缺失的 ATR 滑点排在一起看, 方向是一致的:
+**修正它们只会让每个族更差** ⇒ **不可能救活任何已关闭的族**。
+真正能救活的只会是**方向相反**的缺陷 —— **过度悲观**。于是本轮专门去找那一类。
+(顺手记一条元结论: **到目前为止找到的所有缺陷, 修正后都不会让任何族变得更好。**
+ 这是"四族关闭"这个判断的一条独立支撑 —— 它不是测量宽松的产物。)
+
+#### (b) 先查了一个"过度悲观"候选 —— 预热窗口截断, 结果是干净的
+It.87 曾在探针里抓到过: SQL 先按窗口过滤、**再**算滚动指标 ⇒ 静默丢掉窗口开头的
+有效信号 (483 天 vs 278 天)。查四个加载器:
+
+| 加载器 | 预热 |
+|---|---|
+| `chase_up/data.py` | ✅ `load_start = start − 400 天` |
+| `uptrend_pullback/data.py` | ✅ 同上 |
+| `short_reversal/_panel_loader.py` | ✅ `start − 180 天` |
+| **`cycle_price_action/data_feed.py`** | ⚠️ 主面板**无预热** (`BETWEEN start AND end`) |
+
+⇒ 三族干净。cycle 的主面板确实丢了窗口开头的 ~21 个交易日 (最大 `periods=21`),
+量级约 4% 的窗口, 不足以翻转任何判定 —— **但它引出了下面这个真问题**。
+
+#### (c) 真问题: 同一个文件里,**流动性过滤**走的是**全历史**
+`cycle_price_action/data_feed.py` 里紧挨着两段:
+```python
+# 主面板: 有日期边界
+"WHERE v.thscode IN (...) AND v.date BETWEEN '{start}' AND '{end}'"
+
+# 流动性过滤: **没有日期边界** (注释自己写着 "needs full history")
+"SELECT thscode, date, amount FROM v_daily WHERE thscode IN (...)"
+liquid = apply_liquidity_filter(liquidity_codes, min_avg_turnover=5e7, lookback=60)
+```
+而 `apply_liquidity_filter` (`universe.py:33`):
+```python
+avg_turn = df.groupby("thscode")["amount"].mean()      # 全段历史的**全局均值**
+```
+⇒ **整个回测窗口的股票池, 是用包含窗口之后在内的全部历史选出来的。**
+
+**两处与文档不符**:
+1. `tests/test_cycle_survivorship_bias.py` 的 docstring 把它描述成
+   "Liquidity filter (**60d rolling mean** of amount)" —— 实现既**不是 rolling**、
+   **也不是 60 天**, 是**全历史全局均值**;
+2. 模块自称 "**PIT-compliant** universe at `asof_date`" —— PIT 只覆盖了
+   "是否仍在市" 那一半 (`MAX(date) >= ref_end`), 流动性这一半**完全不是**。
+
+#### (d) 量化 (主板基础池 3,196 只; 窗口 2024-10-08..2026-09-29)
+| 口径 | 通过流动性筛 |
+|---|---|
+| **当前实现 (全历史均值)** | **2,990** |
+| §1 要求的 as-of `start` | 2,717 |
+| 窗口内 | 3,079 |
+
+⇒ **差异 281 只 (9.4%)**, 其中 **277 只**是"当前实现纳入、as-of 会排除"
+—— **这 277 只用窗口之后的数据换来了入选资格**。
+
+#### (e) 这与 §11 的存活偏差是**两回事**, 且**叠加**
+§11 记录的是"本库 0 只退市票"这一数据层问题。本条是**代码层**的:
+即便数据里真有退市票, 一个"liquid-early / illiquid-later"的票会被**整段排除**,
+包括它**早期本应合法可交易**的那一段。⇒ 两个偏差方向不同但都在**美化**股票池。
+
+#### (f) 新增守卫 (合成库, 毫秒级, 零真实 DB 依赖)
+`tests/test_cycle_universe_liquidity_pit.py`:
+* 三个票: 全程达标 (必须入选) / **asof 前不达标、之后才达标** (必须排除) /
+  全程不达标 (必须排除);
+* **两条正向对照**先跑 (证明机制不空转: 若哪天 universe 干脆返回空集, 它们先红);
+* 真判据那条今天 **xfail**, 且 **`strict=True`** —— 修好后会 **XPASS ⇒ 测试失败**,
+  逼着来的人删掉标记并登记结果漂移。
+
+**§6 双向验证 (两个方向都真跑了)**:
+| 检查 | 结果 |
+|---|---|
+| 断言是否**可满足** (不是恒假) | `600003.SH` as-of 均值 **7,529,412** (153 天, 低于 5e7 门槛) vs 全历史 **457,685,714** ⇒ 正确的 as-of 实现**会**排除它 ✅ |
+| strict 是否**真的自失效** | 强行让断言成立 ⇒ **XPASS(strict) ⇒ FAILED** ✅ |
+
+#### (g) 为什么不修
+按 §1 收口流动性查询 = 把 277 只票移出股票池 = **结果变更**, 而且
+"用 as-of 当日的**滚动 60 日**均值" 与 "用 as-of 之前**全部**历史的均值" 之间
+还有一个口径选择 (文档说的是 rolling 60d, 实现的是 all-history)。
+⇒ 按既有授权: **登记, 不擅自改。**
+**登记事项**: cycle 的股票池有 9.4% 是用未来数据选的; 且"60d rolling"这个描述
+从未被实现过。
