@@ -5031,3 +5031,77 @@ def test_the_dormant_module_is_not_wired_is_registered() -> None:
   (`core/benchmark.py`),而 `dna_stats.attribution.attribute()` 要的是**逐期收益序列、
   复利**口径。等指数数据到位,必须明确是**替换**还是**并存**,以及两者口径如何对账 ——
   **这是研究决策,登记在你这边**。
+
+---
+
+## 附六十三 —— `tools/` 五个工具里**四个**在"部分失败"时返回 0:结论只在 stdout,退出码恒 0
+
+沿着附六十一/六十二 的消费端继续走,顺手核了 `tools/` 的**退出语义**。结果是一族。
+
+### 1 · 实测(逐文件)
+
+| 工具 | 现状 |
+|---|---|
+| `update_db_direct.py` | **统计并打印 `errors`,然后 `return 0`** —— 而它写的是**共享行情库** |
+| `run_all_backtests_html.py` | **已经在数 `error_count`**,`return 0` |
+| `render_top5_presets_html.py` | 渲染 5 份报告,任一 `except Exception → print(ERROR) → return 0` |
+| `rerun_top_presets.py` | 两处 `except` 各自 `print(ERROR)` → `return 0` |
+| `compare_rolling_24m.py` | 只读汇总,无失败路径 —— 唯一"干净"的一个 |
+
+与附五十八 的 phantom 工具同族:**结论只在 stdout,退出码恒 0**。人会不看输出,
+机器不会 —— 而 pipeline 只读退出码。
+
+### 2 · 为什么这次比附五十八 严重
+
+`update_db_direct.py` 写的是 `raw_kline_daily`(共享行情库),而**所有回测都读它**。
+一次部分失败的更新以退出码 0 结束 ⇒ pipeline 当作成功继续 ⇒ 下一轮回测读到**半更新**
+的库 ⇒ **同一份代码在不同时间跑出不同结果**。这正是 §0 可复现性明写要防的事:
+
+> Reproducibility Mandate: Identical inputs MUST produce byte-identical outputs.
+> A backtest that cannot be reproduced is a bug, not a result.
+
+输入库被半更新,而"输入变了"这件事**没有任何信号**。
+
+`run_all_backtests_html.py` 那条尤其说明问题:它**已经在数 `error_count`** ——
+即"失败会被计数"这一层已经有了,缺的只是**把计数接到退出码上**。这类"数据已经在那儿,
+只是没人读"的缺陷,与本审计前面那些"守卫站在错误一侧"的形状不同,但同样静默。
+
+### 3 · 修法:一份**共享**的退出码判定
+
+新增 `core/cli_verdict.py::cli_verdict(failures, attempted, succeeded, what)`,
+四个工具共用(退出码映射是**纯函数**,便于单测、不碰网络/回测):
+
+| 情形 | 退出码 | 措辞 |
+|---|---|---|
+| 有失败 | **1** | `[PARTIAL] … 本次产出不完整…` |
+| 没有可处理的项目 | 0 | `[NO-OP] … 这不等于失败,也不等于成功。` |
+| 处理了 N 项但**无一产出结果** | 0 | `[NOTHING-DONE] … 也不等于成功(常见于窗口/目标日期选早了)` |
+| 否则 | 0 | `[OK] … N/M 项成功。` |
+
+**四档分开是刻意的**:附五十八 的教训是"空域被写成 `0.00%`,看起来像干净";
+那么这次连"**做了但没结果**"都不许与"成功"共用一句话 —— 于是 `NO-OP` 与
+`NOTHING-DONE` 各占一档。(`update_db_direct --target` 的默认值是一个写死的旧日期,
+选早了正好走 NOTHING-DONE。)
+
+> 顺带:`update_verdict()` 保留为 `update_db_direct` 的薄包装(委托给共享实现),
+> 免得两处各写一份映射 —— §6 的老要求。
+
+### 4 · 守卫(9 条,含一个家族 AST 检查)
+
+* 映射全覆盖(四条),其中 `test_no_op_is_zero_but_explicitly_not_success` 同时钉
+  `NO-OP` 与 `NOTHING-DONE` **两档**,并各自断言措辞里含"也不等于成功";
+* **家族 AST 检查**(参数化四个工具):入口函数必须**调用**共享判定,且函数体内
+  **不得再有写死的 `return 0`** —— 注释里写"我们返回了正确退出码"不算;
+* 共享实现唯一性(直接调用 `core.cli_verdict` 验映射)。
+
+**双向验证**:`git checkout -- tools/` 还原四个工具 ⇒ **8 条红**;
+恢复 ⇒ 20 passed(含 `test_render_top5_tool_consistency.py` 的 11 条)。
+
+### 5 · 没做
+
+* `tools/compare_rolling_24m.py` 未改(它没有失败路径)。
+* `update_db_direct.py` 的 `--target` 默认值仍是写死的 `2026-09-19` —— 属于"默认参数
+  该不该是今天"的口径决定;现在它至少会以 `NOTHING-DONE` **可见地**说明"什么都没做",
+  而不是静静返回 OK。**登记,不改。**
+* 没有给这些工具接 CI(它们要网络/长时间回测);本条的收益是**别人把它们接进 pipeline
+  时不会拿到一个永远绿的门**。
