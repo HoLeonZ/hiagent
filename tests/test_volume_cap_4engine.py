@@ -73,6 +73,44 @@ FILL_LOGIC_FILES = [
 ]
 
 
+
+def _volume_cap_is_applied(path: Path) -> tuple[bool, bool, str]:
+    """该文件是否 (①调用了量能上限 **且** ②其结果确实被用来缩减 size)。
+
+    ⚠️ §13.79: 原判据是 "文件里有一个 `min(...)`, 其参数提到含 'vol' 的名字"。
+    而 **真正的量能上限早就搬迁到共享助手 `volume_cap_fill(...)` 了**;
+    留在文件里的唯一 `min(vol_ref, ...)` 是
+        participation = min(1.0, size_pre_cap / bar_vol)     ← **滑点**的参与率, 不是上限。
+    注入实证: 把 `max_fill = volume_cap_fill(...)` 与随后的 `size = max_fill` 钳制
+    **整段删除** ⇒ 旧判据**仍然满足** ⇒ 本文件 **3 passed 不响**。
+    ⇒ 判据改为按**当前形态**判: 见下两条。
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (SyntaxError, OSError, UnicodeDecodeError):
+        return False, False, "parse error"
+
+    cap_names: set[str] = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Assign) and isinstance(n.value, ast.Call):
+            f = n.value.func
+            fname = (f.id if isinstance(f, ast.Name)
+                     else f.attr if isinstance(f, ast.Attribute) else "")
+            if "volume_cap" in fname:
+                for t in n.targets:
+                    if isinstance(t, ast.Name):
+                        cap_names.add(t.id)
+    if not cap_names:
+        return False, False, "no volume_cap_* call"
+
+    applied = False
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Compare):
+            names = {x.id for x in ast.walk(n) if isinstance(x, ast.Name)}
+            if names & cap_names and "size" in names:
+                applied = True
+    return True, applied, f"cap_vars={sorted(cap_names)}"
+
 def _find_fill_logic_uses() -> dict[str, list[dict[str, object]]]:
     """Scan fill logic files for volume cap patterns.
 
@@ -237,20 +275,19 @@ def test_chase_up_has_volume_cap_pattern() -> None:
     This PASS baseline only checks that MIN() wrapper exists somewhere.
     """
     findings = _find_fill_logic_uses()
-    chase_engine_sites = findings.get(
-        "chase_up/backtrader_engine.py", []
-    )
-    chase_portfolio_sites = findings.get(
-        "chase_up/portfolio.py", []
-    )
-    chase_up_sites = chase_engine_sites + chase_portfolio_sites
+    # ⚠️ §13.79: 旧判据 ("文件里有个提到 vol 的 `min(...)`") 会被**滑点**那行满足 ——
+    # `participation = min(1.0, size_pre_cap / bar_vol)` (第 ~557 行);
+    # 而真正的量能上限早已迁到**共享助手** `volume_cap_fill(...)`。
+    # 注入实证: 把 `max_fill = volume_cap_fill(...)` 与随后的 `size = max_fill` 钳制
+    # **整段删除** ⇒ 旧判据仍然满足 ⇒ 本文件 3 passed 不响。
+    # ⇒ 按**当前形态**判: 有 cap 调用 **且** 其结果确实用来缩减 size。
+    _srcs = [REPO_ROOT / "chase_up" / "backtrader_engine.py",
+             REPO_ROOT / "chase_up" / "portfolio.py"]
+    _caps = [_volume_cap_is_applied(x) for x in _srcs if x.exists()]
+    min_sites = [r for r in _caps if r[0]]
+    _applied = any(r[1] for r in _caps)
 
-    min_sites = [
-        s for s in chase_up_sites
-        if s["pattern"] == "MIN(vol_ref, ...)"
-    ]
-
-    assert min_sites, (
+    assert min_sites and _applied, (
         "§4 chase_up volume cap MISSING: no MIN(vol_ref, ...) pattern "
         "found in chase_up/{backtrader_engine,portfolio}.py. Per "
         "CLAUDE.md §4:\n"
@@ -266,20 +303,19 @@ def test_uptrend_pullback_has_volume_cap_pattern() -> None:
     backtrader_engine.py). Forward-defense guards both.
     """
     findings = _find_fill_logic_uses()
-    uptrend_engine_sites = findings.get(
-        "uptrend_pullback/backtrader_engine.py", []
-    )
-    uptrend_portfolio_sites = findings.get(
-        "uptrend_pullback/portfolio.py", []
-    )
-    uptrend_sites = uptrend_engine_sites + uptrend_portfolio_sites
+    # ⚠️ §13.79: 旧判据 ("文件里有个提到 vol 的 `min(...)`") 会被**滑点**那行满足 ——
+    # `participation = min(1.0, size_pre_cap / bar_vol)` (第 ~557 行);
+    # 而真正的量能上限早已迁到**共享助手** `volume_cap_fill(...)`。
+    # 注入实证: 把 `max_fill = volume_cap_fill(...)` 与随后的 `size = max_fill` 钳制
+    # **整段删除** ⇒ 旧判据仍然满足 ⇒ 本文件 3 passed 不响。
+    # ⇒ 按**当前形态**判: 有 cap 调用 **且** 其结果确实用来缩减 size。
+    _srcs = [REPO_ROOT / "uptrend_pullback" / "backtrader_engine.py",
+             REPO_ROOT / "uptrend_pullback" / "portfolio.py"]
+    _caps = [_volume_cap_is_applied(x) for x in _srcs if x.exists()]
+    min_sites = [r for r in _caps if r[0]]
+    _applied = any(r[1] for r in _caps)
 
-    min_sites = [
-        s for s in uptrend_sites
-        if s["pattern"] == "MIN(vol_ref, ...)"
-    ]
-
-    assert min_sites, (
+    assert min_sites and _applied, (
         "§4 uptrend_pullback volume cap MISSING: no MIN(vol_ref, ...) "
         "pattern found in uptrend_pullback/{backtrader_engine,portfolio}.py. "
         "Per CLAUDE.md §4: Max_Fill_Qty = MIN(Order_Qty, Bar_Volume * 0.10)"
