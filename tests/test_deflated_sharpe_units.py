@@ -132,3 +132,35 @@ def test_pvalue_actually_uses_the_annualization_parameter() -> None:
     )
     assert b > a, "年化常量没有参与换算(修前该参数被忽略)"
     assert abs(b - a) > 1e-6
+
+
+# ---------------------------------------------------------------------------
+# 附七十 —— `_norm_ppf` 的精度**声明**与实测不符;现在由守卫把声明钉住
+# ---------------------------------------------------------------------------
+#
+# 原 docstring 写 "Accurate to ~1e-9"。实测(与 stdlib `NormalDist().inv_cdf` 逐点比对):
+#   中心区 p∈(0,1) 最大误差 ≈ 2.9e-9;
+#   E[max] 会用到的远端(如 k=1e12 时 p = 1−1/(k·e))最大误差 ≈ 7.9e-9。
+# 即声明**小了一个量级**。影响可忽略(E[max] 上 8e-9 传到 DSR 也是 8e-9),但
+# "声明 ≠ 实测"正是本审计反复记录的那一类 —— 与其改口径,不如**把声明变成守卫**:
+# 谁把它换成更差的近似(三段有理式那种,误差 ~1e-3),这里就会红。
+
+
+def test_norm_ppf_accuracy_is_enforced() -> None:
+    """`_norm_ppf` 与 stdlib NormalDist.inv_cdf 的误差必须 < 1e-7。"""
+    from dna_stats.deflated import _norm_ppf
+
+    worst = max(abs(_norm_ppf(i / 1000) - _ND.inv_cdf(i / 1000)) for i in range(1, 1000))
+    assert worst < 1e-7, f"中心区误差 {worst:.2e} 超出守卫上限 1e-7"
+
+
+@pytest.mark.parametrize("k", [10, 1000, 10 ** 6, 10 ** 9, 10 ** 12])
+def test_norm_ppf_accuracy_in_the_far_tail_used_by_expected_max(k: int) -> None:
+    """E[max] 的取值点 `p = 1−1/(k·e)` 必须同样准(那里是近似最容易失真的地方)。"""
+    from dna_stats.deflated import _norm_ppf
+
+    for m in (1.0, math.e):
+        p = 1.0 - 1.0 / (k * m)
+        assert abs(_norm_ppf(p) - _ND.inv_cdf(p)) < 1e-6, (
+            f"k={k}, m={m}: 远端误差过大"
+        )

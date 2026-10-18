@@ -48,8 +48,17 @@ def _norm_cdf(x: float) -> float:
 
 
 def _norm_ppf(p: float) -> float:
-    """Standard normal inverse CDF (Beasley-Springer-Moro approximation).
-    Avoids scipy.stats dependency. Accurate to ~1e-9.
+    """Standard normal inverse CDF(Beasley-Springer-Moro 近似,避开 scipy 依赖)。
+
+    **实测精度(附七十)**:与 stdlib `statistics.NormalDist().inv_cdf` 逐点比对,
+    最大绝对误差 **≈ 7.9e-9**(出现在 E[max] 会用到的远端,如 k=1e12 时的
+    `p = 1−1/(k·e)`),`p∈(0,1)` 中心区 ≈ **2.9e-9**。
+
+    原 docstring 写"Accurate to ~1e-9" —— 比实测**小了一个量级**。改动只是为了**把声明
+    写成事实**(影响可忽略:E[max] 上 8e-9 的误差传到 DSR 也是 8e-9),但声明与实测
+    不一致本身就是本审计反复记录的那类问题;而且现在这个声明**由
+    `tests/test_deflated_sharpe_units.py::test_norm_ppf_accuracy_is_enforced` 守着** ——
+    谁把它换成更差的近似(例如三段有理式,误差 ~1e-3),守卫会红。
     """
     if not (0.0 < p < 1.0):
         raise ValueError(f"p must be in (0, 1), got {p}")
@@ -258,6 +267,17 @@ def bonferroni_correct(
     Returns:
         np.ndarray of corrected p-values, same shape as input.
     """
+    # §0 fail-fast(附七十): `n_comparisons` 是"这一族里测了多少个假设"。
+    # 0 或负数在语义上不存在,而它的后果**方向最坏**:
+    #   实测 n_comparisons=0  ⇒ 所有 p 变成 **0.0**(读作"极其显著");
+    #        n_comparisons=-1 ⇒ 所有 p 变成**负数**(任何 `p < 0.05` 都通过)。
+    # 即"用一个不可能的输入把多重比较校正整个取消掉"。与其静默给出这种结果,不如报错。
+    if int(n_comparisons) < 1:
+        raise ValueError(
+            f"n_comparisons must be >= 1(这一族里测了多少个假设), "
+            f"got {n_comparisons} —— 0/负数会把校正后的 p 变成 0 或负数,"
+            f"即'极其显著',等于取消掉校正。"
+        )
     arr = np.asarray(p_values, dtype=float)
     corrected = np.minimum(arr * n_comparisons, 1.0)
     return corrected

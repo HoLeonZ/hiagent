@@ -173,3 +173,18 @@ def test_raw_kurtosis_helper() -> None:
     assert raw_kurtosis_from_excess(0.0) == pytest.approx(3.0)
     assert raw_kurtosis_from_excess(2.0) == pytest.approx(5.0)
     assert raw_kurtosis_from_excess(-1.0) == pytest.approx(2.0)   # 薄尾
+
+
+def test_bonferroni_rejects_impossible_comparison_counts() -> None:
+    """§0:`n_comparisons < 1` ⇒ fail-fast(否则会把校正整个取消掉)。
+
+    实测(修前):`n_comparisons=0` ⇒ 所有 p 变成 **0.0**(读作"极其显著");
+    `n_comparisons=-1` ⇒ 所有 p 变成**负数**(任何 `p < 0.05` 都通过)。
+    即"用一个不可能的参数把多重比较校正取消掉",而输出看起来更"显著"。
+    """
+    for bad in (0, -1, -100):
+        with pytest.raises(ValueError, match="n_comparisons"):
+            bonferroni_correct([0.4], n_comparisons=bad)
+    # 反向:合法输入不受影响
+    assert bonferroni_correct([0.4], n_comparisons=1)[0] == pytest.approx(0.4)
+    assert bonferroni_correct([0.4], n_comparisons=10)[0] == pytest.approx(1.0)
