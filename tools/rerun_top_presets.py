@@ -233,7 +233,11 @@ def main() -> int:
 OLD_SNAPSHOT_TAG = "2026-10-08-snapshot"
 
 _TOP5_CAVEAT = (
-    "=== TOP 5 (Sharpe DESC, CAGR DESC, max_dd ASC) ===",
+    # 附七十三:这一行是**可机检的声称** —— 形如 `(列 方向, 列 方向, …)`,
+    # 由 `tests/test_report_self_consistency.py` 解析后与**实际顺序**比对。
+    # (改排序键而忘了改这行,正是"标题与表相反"那类缺陷;我刚在隔壁那张表修掉它,
+    #  转头自己又造了一遍 —— max_dd 是负数,DESC = 回撤更小者在前。)
+    "=== TOP 5 (Sharpe DESC, CAGR DESC, max_dd DESC) ===",
     "⚠ 跨引擎的 Sharpe **不是同一个量**(chase/uptrend: 日年化;short_reversal: 逐笔近似)"
     " ⇒ 按 Sharpe 跨策略排序只在同一引擎内可比(每行的量纲见方括号;"
     "同族的 tools/run_all_backtests_html.py 有同样的警示)。",
