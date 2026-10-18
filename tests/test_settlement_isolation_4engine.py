@@ -144,23 +144,28 @@ def _collect_self_attrs_in_init(
 
 def _audit_cash_state_machine(
     file_path: Path,
-) -> tuple[bool, list[str], list[str]]:
+) -> tuple[bool, list[str], list[str], list[str]]:
     """Audit Portfolio class for §2 Settlement Isolation compliance.
 
-    Returns (compliant, found_free_pool, found_locked_settling_pool).
+    Returns (compliant, free_pool, locked_pool, settling_pool).
+
+    ⚠️ §13.70: 原返回的是 (compliant, free, **locked-or-settling 合并**), 判据为
+    `free ≥1 且 (locked 或 settling) ≥1` —— **那分不出三池与两池**。实测: 把
+    `self.locked_margin` 从 `__init__` 里改名以模拟「丢了保证金池」, 本文件**仍然全绿**。
+    ⇒ 改为**三个池各自都要出现** (§2 点名 Free_Cash / Locked_Margin / Settling_Funds)。
     """
     if not file_path.exists():
-        return (False, [], ["file not found"])
+        return (False, [], [], ["file not found"])
 
     try:
         source = file_path.read_text(encoding="utf-8")
         tree = ast.parse(source)
     except (SyntaxError, OSError, UnicodeDecodeError):
-        return (False, [], ["parse error"])
+        return (False, [], [], ["parse error"])
 
     portfolio_class = _find_portfolio_class(tree)
     if portfolio_class is None:
-        return (False, [], ["no Portfolio class found"])
+        return (False, [], [], ["no Portfolio class found"])
 
     attrs = _collect_self_attrs_in_init(portfolio_class)
 
@@ -176,14 +181,18 @@ def _audit_cash_state_machine(
             or "unlocked" in a
         )
     )
-    locked_settling_pool = sorted(
+    locked_pool = sorted(
+        a
+        for a in CASH_SEPARATION_PATTERNS
+        if a in attrs_lower
+        and ("locked" in a or "committed" in a or "position_margin" in a)
+    )
+    settling_pool = sorted(
         a
         for a in CASH_SEPARATION_PATTERNS
         if a in attrs_lower
         and (
-            "locked" in a
-            or "committed" in a
-            or "settling" in a
+            "settling" in a
             or "settled" in a
             or "unsettled" in a
             or "in_transit" in a
@@ -191,24 +200,26 @@ def _audit_cash_state_machine(
         )
     )
 
-    # Compliant = has free pool AND (locked OR settling) pool distinct
-    has_separation = bool(free_pool) and bool(locked_settling_pool)
+    # §2 点名**三个**池 ⇒ 三个都要有。
+    # ⚠️ §13.70: 原判据 `free ≥1 且 (locked 或 settling) ≥1` 分不出三池与两池 (注入实证)。
+    compliant = bool(free_pool) and bool(locked_pool) and bool(settling_pool)
 
-    return (has_separation, free_pool, locked_settling_pool)
+    return (compliant, free_pool, locked_pool, settling_pool)
 
 
 def _engine_red_message(
     engine: str,
     free_pool: list[str],
-    locked_settling_pool: list[str],
+    locked_pool: list[str],
+    settling_pool: list[str],
 ) -> str:
     return (
-        f"§2 SETTLEMENT ISOLATION VIOLATION: {engine} Portfolio uses "
-        f"single cash pool (self.cash), no state machine.\n"
+        f"§2 SETTLEMENT ISOLATION VIOLATION: {engine} Portfolio 的三池状态机不完整.\n"
         f"Per CLAUDE.md §2: must differentiate Free_Cash, Locked_Margin, "
-        f"and Settling_Funds.\n"
-        f"Found free pool attrs: {free_pool}\n"
-        f"Found locked/settling attrs: {locked_settling_pool}\n"
+        f"and Settling_Funds —— **三个都要有** (§13.70)。\n"
+        f"Found Free_Cash attrs: {free_pool}\n"
+        f"Found Locked_Margin attrs: {locked_pool}\n"
+        f"Found Settling_Funds attrs: {settling_pool}\n"
         f"max_positions=1 currently masks this, but per §0 Pessimistic "
         f"Default + §2 Settlement Isolation, state machine must be "
         f"explicit.\n"
@@ -229,23 +240,23 @@ def test_chase_up_settlement_isolation() -> None:
     Settling_Funds. Per [[settlement-isolation-4-engine]] (2026-09-22):
     4 engines普适违规.
     """
-    compliant, free_pool, locked_settling_pool = _audit_cash_state_machine(
+    compliant, free_pool, locked_pool, settling_pool = _audit_cash_state_machine(
         PORTFOLIO_FILES["chase_up"]
     )
 
     if not compliant:
-        raise AssertionError(_engine_red_message("chase_up", free_pool, locked_settling_pool))
+        raise AssertionError(_engine_red_message("chase_up", free_pool, locked_pool, settling_pool))
 
 
 def test_uptrend_pullback_settlement_isolation() -> None:
     """§2 RED: uptrend_pullback Portfolio has only self.cash."""
-    compliant, free_pool, locked_settling_pool = _audit_cash_state_machine(
+    compliant, free_pool, locked_pool, settling_pool = _audit_cash_state_machine(
         PORTFOLIO_FILES["uptrend_pullback"]
     )
 
     if not compliant:
         raise AssertionError(
-            _engine_red_message("uptrend_pullback", free_pool, locked_settling_pool)
+            _engine_red_message("uptrend_pullback", free_pool, locked_pool, settling_pool)
         )
 
 
@@ -254,25 +265,25 @@ def test_short_reversal_settlement_isolation() -> None:
 
     Per line 241: explicit comment '仅 self.cash' confirms single-pool design.
     """
-    compliant, free_pool, locked_settling_pool = _audit_cash_state_machine(
+    compliant, free_pool, locked_pool, settling_pool = _audit_cash_state_machine(
         PORTFOLIO_FILES["short_reversal"]
     )
 
     if not compliant:
         raise AssertionError(
-            _engine_red_message("short_reversal", free_pool, locked_settling_pool)
+            _engine_red_message("short_reversal", free_pool, locked_pool, settling_pool)
         )
 
 
 def test_cycle_price_action_settlement_isolation() -> None:
     """§2 RED: cycle_price_action Portfolio has only self.cash."""
-    compliant, free_pool, locked_settling_pool = _audit_cash_state_machine(
+    compliant, free_pool, locked_pool, settling_pool = _audit_cash_state_machine(
         PORTFOLIO_FILES["cycle_price_action"]
     )
 
     if not compliant:
         raise AssertionError(
             _engine_red_message(
-                "cycle_price_action", free_pool, locked_settling_pool
+                "cycle_price_action", free_pool, locked_pool, settling_pool
             )
         )
