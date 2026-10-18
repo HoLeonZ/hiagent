@@ -6577,3 +6577,68 @@ monkeypatch `_all_conditions` 使其**只在第一次 `next()` 时为真** ⇒ *
 
 #### (h) §5 记账
 审计节, `n_comparisons` 不变 (186)。
+
+
+### 13.77 ⛔ **守卫的单位是「文件存在」而非「是一个 runner」** —— 清空 129 行后仍然绿 (第十处)
+
+#### (a) 形态
+```python
+    existing = [p for p in paths if p.exists()]
+    assert existing, "§5 WFV RUNNER MISSING: …"
+```
+判据的单位是 **`p.exists()`** —— 文件**存在**即算"有 WFV runner"。
+
+#### (b) 注入实证
+把整个 **129 行**的 `chase_up/walkforward.py` 清成 **一行注释**:
+```
+修前: 4 passed   ← 不响
+```
+
+#### (c) 它同时让一条"**声明自己是红的**"测试其实是绿的
+`cycle_price_action/walkforward.py` 是 **19 行的 re-export 存根**
+(`from core.walkforward import …` / `from dna_stats.deflated import …`, **顶层 def/class = 0 个**)
+⇒ 它也满足旧判据 ⇒ `test_cycle_price_action_has_no_wfv_runner_documented_gap` 走 `if existing:` 分支
+⇒ **绿**。而它的 docstring 写着:
+> *"NOTE: This test is **intentionally RED** to document the gap"* /
+> *"Forward-defense: if cycle adds optimization in the future, this test will GREEN once walkforward.py is added."*
+
+⇒ **注释描述的与代码做的是两件事**: 那条测试**从来没有红过**, 因为它判的是"文件在不在",
+而文件一直在。**登记的缺口没有被记住, 反而被"文件存在"抹平了。**
+
+#### (d) 修: 判据收紧为「文件存在 **且** 定义了至少一个顶层 callable」
+四族实测的天然分界:
+| 族 | 顶层 def/class | `walkforward.py` 行数 |
+|---|---|---|
+| `chase_up` | **3** (`run_windows` / `summarize` / `main`) | 129 |
+| `uptrend_pullback` | **3** | 147 |
+| `short_reversal` | **5** | 194 |
+| **`cycle_price_action`** | **0** (只有 import) | **19** |
+
+⇒ 三族是**真的 runner**, cycle 是**存根** —— 与 docstring 的说法一致。
+
+#### (e) §6 **三重**验证
+| 检查 | 结果 |
+|---|---|
+| **清空 `chase_up/walkforward.py` (129 → 1 行)** | **RED** ✅ (修前 4 passed) |
+| **给 cycle 的存根加一个 `def`** (假装补上了 runner) | 豁免**立刻失效变红**, 并提示"请把这条 xfail 删掉" ✅ |
+| 再还原 | **3 passed, 1 xfailed** ✅ |
+
+⇒ cycle 的登记改用**显式 `xfail`**(§13.24 形状): **登记在案**这件事从此由**测试状态**表达,
+而不是由一句"注意它是红的"的注释表达。
+
+#### (f) 这一类已**十现**; 本处是 §13.71 / §13.75 的直接同源
+三者都是 **"判据的单位比它声称的性质弱"**:
+* §13.71: 单位是"扫到了吗" ⇒ 扫不到就通过;
+* §13.75: 单位是 `ast.Dict` ⇒ 在该族**不存在**;
+* **§13.77: 单位是 `p.exists()`** ⇒ 空壳也算。
+⇒ 新增一格问法:
+| 问 | 例 |
+|---|---|
+| 改掉被检查的东西, 断言会怎样? | §13.66 / §13.67 / §13.70 |
+| 这条测试**断言了什么**? | §13.71 / §13.74 |
+| 它的**扫描单位**在这一族存在吗? | §13.75 |
+| 有没有**兜底**把「没看见」翻译成「合规」? | §13.76 |
+| **这个判据的「单位」是什么 —— 文件 / 字符串 / 一个真能跑的东西?** | **§13.77** |
+
+#### (g) §5 记账
+审计节, `n_comparisons` 不变 (186)。

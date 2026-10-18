@@ -56,7 +56,10 @@ G. **Test results (Tick 65 expected)**:
 """
 from __future__ import annotations
 
+import ast
 from pathlib import Path
+
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -85,6 +88,29 @@ WFV_PATHS = {
 # ---------------------------------------------------------------------------
 
 
+def _has_runner_def(path: Path) -> bool:
+    """该文件是否**定义**了至少一个顶层 callable —— 不只是"存在", 也不只是 re-export。
+
+    ⚠️ §13.77: 原判据是 `p.exists()`。**注入实证**: 把整个 129 行的
+    `chase_up/walkforward.py` 清成**一行注释** ⇒ 本文件仍然 **4 passed**。
+    ⇒ 它的单位是"**文件存在**", 不是"**是一个 runner**"。
+    而 `cycle_price_action/walkforward.py` 是 19 行的 **re-export 存根**
+    (顶层 def/class **0** 个) —— 它也满足旧判据, 于是那条标着
+    "intentionally RED to document the gap" 的测试**实际是绿的**。
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (SyntaxError, OSError, UnicodeDecodeError):
+        return False
+    return any(
+        isinstance(n, (ast.FunctionDef, ast.ClassDef, ast.AsyncFunctionDef))
+        for n in tree.body
+    )
+
+
+def _real_runners(paths: list[Path]) -> list[Path]:
+    return [p for p in paths if p.exists() and _has_runner_def(p)]
+
 def test_chase_up_has_walkforward_runner() -> None:
     """§5 PASS baseline: chase_up has walkforward.py.
 
@@ -92,10 +118,11 @@ def test_chase_up_has_walkforward_runner() -> None:
     TP/SL/MaxHold parameter grid → must have WFV runner.
     """
     paths = WFV_PATHS["chase_up"]
-    existing = [p for p in paths if p.exists()]
+    existing = _real_runners(paths)
 
     assert existing, (
-        "§5 WFV RUNNER MISSING: chase_up has no walkforward.py. "
+        "§5 WFV RUNNER MISSING: chase_up 没有任何**真正的** walkforward runner "
+        f"(文件不存在, 或存在但只 import 不定义 —— §13.77). "
         "Per CLAUDE.md §5: chase_up's TP/SL/MaxHold parameter grid "
         "requires Walk-Forward Validation to prevent p-hacking."
     )
@@ -104,10 +131,11 @@ def test_chase_up_has_walkforward_runner() -> None:
 def test_uptrend_pullback_has_walkforward_runner() -> None:
     """§5 PASS baseline: uptrend_pullback has walkforward.py."""
     paths = WFV_PATHS["uptrend_pullback"]
-    existing = [p for p in paths if p.exists()]
+    existing = _real_runners(paths)
 
     assert existing, (
-        "§5 WFV RUNNER MISSING: uptrend_pullback has no walkforward.py. "
+        "§5 WFV RUNNER MISSING: uptrend_pullback 没有任何**真正的** walkforward runner "
+        f"(文件不存在, 或存在但只 import 不定义 —— §13.77). "
         "Per CLAUDE.md §5: uptrend_pullback's TP/SL/MaxHold parameter "
         "grid requires WFV."
     )
@@ -121,11 +149,11 @@ def test_short_reversal_has_walkforward_runner() -> None:
     This test verifies file EXISTS (drift is a separate dimension).
     """
     paths = WFV_PATHS["short_reversal"]
-    existing = [p for p in paths if p.exists()]
+    existing = _real_runners(paths)
 
     assert existing, (
-        "§5 WFV RUNNER MISSING: short_reversal has no walkforward.py "
-        "or grid_runner.py. Per CLAUDE.md §5: short_reversal's "
+        "§5 WFV RUNNER MISSING: short_reversal 没有任何**真正的** walkforward/grid runner "
+        "(文件不存在, 或存在但只 import 不定义 —— §13.77). Per CLAUDE.md §5: short_reversal's "
         "parameter optimization requires WFV."
     )
 
@@ -149,17 +177,19 @@ def test_cycle_price_action_has_no_wfv_runner_documented_gap() -> None:
     catch any future regression that ADDS optimization without WFV.
     """
     paths = WFV_PATHS["cycle_price_action"]
-    existing = [p for p in paths if p.exists()]
+    existing = _real_runners(paths)
 
     if existing:
-        # If cycle DOES have WFV, that's good — but verify it follows
-        # the standard pattern
-        assert len(existing) >= 1, (
-            "§5 cycle_price_action WFV runner exists but is incomplete."
+        # ⚠️ §13.77: 债还清 ⇒ **立刻红**, 提示把下面的 xfail 删掉 (豁免不得继续挂着)
+        raise AssertionError(
+            f"cycle_price_action 现在**已经有真正的** WFV runner 了 ({existing}) —— "
+            f"请把这条 xfail 删掉, 改为与其它三族一致的正向断言, "
+            f"并在 docs/strategy_mining_log.md §13.77 记下结果。"
         )
     else:
-        # Documented gap — RED to enforce future work
-        raise AssertionError(
+        # Documented gap — 用**显式 xfail** 表达"登记在案", 而不是让它静默变绿
+        if True:  # noqa: SIM108
+            pytest.xfail(
             "§5 DOCUMENTED GAP: cycle_price_action has no "
             "walkforward.py or grid_runner.py.\n\n"
             "This is INTENTIONALLY RED to document the gap:\n"
