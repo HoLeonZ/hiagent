@@ -357,7 +357,7 @@ def _run_ensemble(
 
 
 def run_backtest_v3(
-    preset: str,
+    preset: str | dict,
     start: str,
     end: str,
     db_path: Path,
@@ -368,7 +368,8 @@ def run_backtest_v3(
     """跑 v3 引擎返回 metrics dict。
 
     参数:
-      preset: PRESETS 里的 preset name
+      preset: PRESETS 里的 preset name, 或一个完整的 preset dict (平台覆盖参数的
+                通路; 与 chase_up / uptrend_pullback / cycle_price_action 的约定一致)
       start / end: 回测区间 (YYYY-MM-DD)
       db_path: DuckDB 文件路径
       min_bars: 每只票最少需要的 bar 数;2-month 滚动窗口期间 panel 跨春节可能
@@ -387,8 +388,14 @@ def run_backtest_v3(
                 那是面板算术的副作用, 不是策略规则 —— 策略只用 min_bars
                 闸门判定暖机不足。
     """
-    cfg = dict(get_preset(preset))
-    cfg["_name"] = preset
+    # `str | dict` —— 与 chase_up / uptrend_pullback / cycle_price_action 的入口约定一致。
+    # 传 dict 是平台覆盖参数的**唯一**通路：按名字查全局 PRESETS 会让平台侧的改动被静默丢弃。
+    if isinstance(preset, str):
+        cfg = dict(get_preset(preset))
+        cfg["_name"] = preset
+    else:
+        cfg = dict(preset)
+        cfg.setdefault("_name", "<dict>")
 
     # v63 (2026-10-13): Ensemble 模式 — 跑 N 个子策略, 资金等分, 汇总 PnL。
     # OOS-validated (WFV mean +10.9%, holdout 2026-H2 +5.4%) over v50_slope.
