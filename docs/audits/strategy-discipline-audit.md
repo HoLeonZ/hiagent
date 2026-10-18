@@ -4962,3 +4962,72 @@ back-compat shim、且平行 workstream 修过几处"用了 `net`"。
 重述 `_compute_short_indicators`(逐 bar 指标序列)与 `_build_entry_reasons_*`(A/B/C 文案),
 消解它需要引擎暴露逐 bar 指标序列 —— 属重构。本条**只**处理了"日期/权益这两处会给出
 **错误数字**的重复",没去动"重复但结论一致"的那部分。
+
+---
+
+## 附六十二 —— §5 归因的三件套来自**同一个提交**,却互相矛盾:报告告诉读者"归因不可计算",而同一提交里风格篮子基准已经落地并接线
+
+继续沿**消费端/声明面**走。这一条与前面各条不同:它不是引擎算错,而是**仓库对自己的
+描述互相矛盾**,且其中一句随**每一份报告**走到读者眼前。
+
+### 1 · 三件套(同一个提交 `008ea11`,`2026-10-16`)
+
+| 文件 | 状态 | 它对用户的说法 |
+|---|---|---|
+| `dna_stats/attribution.py` | `attribute()`(含 beta、可注入基准序列):**已实现、已有测试**(`tests/test_attribution.py`),但**没有任何生产代码调用** | 诚实:自己写明"⚠️ 当前数据缺口(必须先解决才能用)" |
+| `core/benchmark.py` | 风格篮子基准(该窗口 PIT 宇宙等权买入持有)——**已接线**,由各引擎逐次发布 `benchmark_kind / benchmark_return / benchmark_members / excess_return` | **不实**:"本仓库此前**完全没有实现**这一条(只报裸收益)" |
+| `core/trade_report.py::UNATTRIBUTED_NOTICE` | 渲染进**每一份**报告 | **过期**:"本地行情库无指数序列,**归因暂不可计算**" |
+
+### 2 · 为什么"归因暂不可计算"是错的
+
+§5 逐字允许两支基准:
+
+> Headline returns MUST be reported alongside benchmark-relative excess return
+> (**index or style basket**).
+
+本机确实没有**指数**序列 —— 但**风格篮子**正是 §5 给的另一支,而且它已经落地并接线。
+那段话把**指数那一支**的缺口,说成了**整条 §5 要求**的缺口。后果是:任何打开 HTML 报告
+的人都会读到"归因不可计算",从而以为 §5 未被满足 —— 而实际上只是**换了一支基准**。
+`tests/test_attribution.py` 的模块 docstring 当时也写着同一句。
+
+**同一提交里**写下的三句话,彼此矛盾,而没有任何一条守卫会注意到 ——
+这属"文档声称的状态与代码不符"(与附四十六 的契约禁令、附五十一 的加载指引同族),
+只不过这次行走到了用户面前。
+
+### 3 · 修法(把三处都改成**当下的真实状态**,并互相交叉引用)
+
+| 位置 | 改动 |
+|---|---|
+| `core/benchmark.py` | 删掉"完全没有实现"这一不实说法,补上它与 `dna_stats/attribution.py` 的关系(哪一支接线、哪一支在等数据) |
+| `dna_stats/attribution.py` | 补"本模块当前**已实现但未接线**"一段:它要的是**指数**序列;已接线的是 `core/benchmark.py`;指针指向登记守卫 |
+| `core/trade_report.py::UNATTRIBUTED_NOTICE` | 保留 §5 要求的「**未归因**」标签(对该报告是准确的:报告本身只展示绝对收益),但把"归因暂不可计算"改成"**这不等于 §5 未满足** —— 风格篮子基准已随产物发布,见 metrics 的 `benchmark_*`;指数基准待数据补齐" |
+| `tests/test_attribution.py` 模块 docstring | 同样更正(它复述了那句话) |
+
+> 保留「未归因」标签这一点是**先跑测试才定的**:我先写掉了那个词,
+> `test_report_labels_returns_as_unattributed` 立刻报红 —— 而它守的正是 §5 要求的
+> **显式标注**(不能让读者自己去怀疑)。正确的做法是**标签与更正并存**:标签描述
+> 这份报告,更正描述整个机制。
+
+### 4 · 守卫:把"未接线"这个**现状**登记下来
+
+```python
+def test_the_dormant_module_is_not_wired_is_registered() -> None:
+    """`dna_stats/attribution.py` 已实现、已被测试覆盖,**却没有任何生产代码调用** ——
+       它在等指数序列。一旦有人接上,本用例变红,提示同步更新说明与分工。"""
+```
+
+判据是 **AST 扫生产代码的导入**(排除 `tests/` 与 `dna_stats/` 自身),
+且**无法解析的文件会被报出来而不是跳过**(附六十 的教训:静默跳过 = 静默失去覆盖)。
+双向验证:临时给 `core/trade_report.py` 加一行 `from dna_stats.attribution import attribute`
+⇒ 该用例**变红**;撤销 ⇒ 10 passed / 1 skipped。
+
+**不删那个模块**:它是指数基准的现成实现,数据到位后正是要接的那一段。
+
+### 5 · 登记(未做)
+
+* **没有把真实超额收益接进 HTML 报告**。那需要把 metrics 一路 plumb 到渲染层;
+  目前报告里的那段文字改为**告诉读者去哪里看**(metrics 的 `benchmark_*`)。属改进项,登记。
+* **两支归因的合并口径未定**:风格篮子取的是各标的窗口收益的**算术等权平均**
+  (`core/benchmark.py`),而 `dna_stats.attribution.attribute()` 要的是**逐期收益序列、
+  复利**口径。等指数数据到位,必须明确是**替换**还是**并存**,以及两者口径如何对账 ——
+  **这是研究决策,登记在你这边**。
