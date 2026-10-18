@@ -77,7 +77,11 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
-        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni" —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
+        # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
         # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
         # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
@@ -143,7 +147,11 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
-        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni" —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
+        # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
         # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
         # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
@@ -204,7 +212,11 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
-        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni" —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
+        # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
         # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
         # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
@@ -269,7 +281,11 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
-        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni" —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
+        # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
         # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
         # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
@@ -337,7 +353,11 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
-        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni" —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
+        # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
         # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
         # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
@@ -377,7 +397,11 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
-        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni" —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
+        # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
         # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
         # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
@@ -441,7 +465,11 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
-        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni" —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
+        # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
         # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
         # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
@@ -501,7 +529,11 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
-        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni" —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
+        # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
         # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
         # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
@@ -549,7 +581,11 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
-        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni" —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
+        # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
         # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
         # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
@@ -610,7 +646,11 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
-        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni" —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
+        # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
         # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
         # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
@@ -1259,7 +1299,11 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
-        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni" —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
+        # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
         # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
         # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;

@@ -6940,3 +6940,61 @@ assert has_dsr_call, "…图 GAP CAPTURED … never calls deflated_sharpe_ratio"
 
 #### (h) §5 记账
 审计节, `n_comparisons` 不变 (186)。
+
+
+### 13.83 ⛔ **一句 §5 合规声明写了 23 次, 而对写它的三个族全为假** (第十四处)
+
+#### (a) 声明原文
+```python
+        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
+        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+```
+
+#### (b) "声明"与"实现"的分布 —— **两个不相交的集合**
+| 族 | 写了这句声明 | **实际调用** `format_walkforward_stats` |
+|---|---|---|
+| `chase_up` | **11 次** | **0 处** |
+| `short_reversal` | **11 次** | **0 处** |
+| `cycle_price_action` | **1 次** | **0 处** |
+| `uptrend_pullback` | **0 次** | **1 处** (`wfv_eval.py:122`) |
+
+⇒ **写了 23 次, 对写它的三个族全部为假**; 而唯一**真的会调用它**的那一族**偏偏没写**。
+⇒ **声明与实现分属两个不相交的子集。**
+
+#### (c) 而唯一的那个实现恰恰是**对的**
+`uptrend_pullback/wfv_eval.py` 的 `--n-trials` 是 **`required=True`**, 且它的文档逐字写着
+*"n_trials 必须由调用方显式传入, 且等于**到此为止累计试过的配置数**(含手动迭代)"* ——
+⇒ **它正是 §13.82 里唯一按 §5 本意接对的那个调用点。**
+**而它没有那句声明。** 三个有声明的地方, 反而一处都没接。
+
+> **⇒ 这不是"文档落后于代码", 而是"文档与代码各自挂在不同的族上"。**
+> 读 `chase_up/presets.py` 的人会以为该族走 `format_walkforward_stats`;
+> 读 `wfv_eval.py` 的人会以为只有该族做 DSR。**两边都只看到一半, 且都看错了另一半。**
+
+#### (d) 三族**真正的** §5 惩罚在哪 (不是没有, 是没走那句声明说的那条路)
+`chase_up/sweep*.py` / `short_reversal/grid_runner.py` + `wf_*_focused.py` /
+`cycle_price_action/main.py` + `sweep_thresholds.py` —— 都在自己脚本里直接调 `deflated_sharpe_ratio`。
+⇒ 惩罚**存在**, 只是**不经过 `walkforward` 的输出版**。
+
+#### (e) 修 (**注释级 ⇒ 零漂移**)
+23 处全部改成真实陈述: 本族不走 `format_walkforward_stats`; 本族真正的 §5 惩罚在 **sweep 脚本**里;
+下面那个 `n_comparisons` 是 **fallback 默认值、不参与任何 DSR/Bonferroni 计算** (§13.82)。
+
+#### (f) §6 验证
+| 检查 | 结果 |
+|---|---|
+| 旧句**整行**残留 (三族 × 三种形态各查一次) | **全部 0** ✅ |
+| **前后对照** (`git stash`) | **5 failed / 10 passed → 5 failed / 10 passed, 红名单逐条一致** ✅ |
+| 四族 preset 仍可导入、条数不变 | 22 / 55 / 4 / 21 ✅ |
+
+#### (g) ⚠️ 而我这次**自己也误报了一次** (与 §13.81 同源)
+第一次核验用 `grep -c "自动套 DSR"` —— 而**我的新注释为了存档引用了旧句** ⇒ 报"残留 11 / 1"。
+**编辑是对的; 错的是我的检查。**
+> **☆ 这一轮内第二次: 检查写错比编辑写错更容易发生。** (§13.81 是按变量名 `size` 找而漏了 `shares`;
+> 本节是按子串找而没料到自己会引用它。)
+
+#### (h) 这一类已**十四现**; 本处的形态比"提到≠做到"更具体
+> **"提到"与"做到"不仅不等价, 而且在这一处它们连人都不是同一批。**
+
+#### (i) §5 记账
+审计节, `n_comparisons` 不变 (186)。

@@ -47,8 +47,10 @@ PRESET_V1 = dict(
     price_source_for_execution="raw_close",
     # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor 声明。
     # cycle 单一 preset, 无 sweep; n_comparisons=1 (DSR→PSR)。
-    # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
-    # 自动套 DSR + Bonferroni 校正。
+    # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats。
+    # ⚠️ §13.83: 此处原写 "walkforward 输出走 … 自动套 DSR + Bonferroni 校正" —— **那是假的**:
+    # 全仓**只有** uptrend_pullback/wfv_eval.py 调用它, 本族 walkforward.py **0 处引用**。
+    # 本族真正的 §5 惩罚在 sweep_thresholds.py / main.py 的 deflated_sharpe_ratio 调用里。
     n_comparisons=1,
     # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
     # Engine `portfolio.py:65` hardcodes MAX_POSITION_PCT=1.0; 显式声明如下。

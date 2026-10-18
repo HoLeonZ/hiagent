@@ -49,8 +49,14 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
         # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
-        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
-        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        # §5 惩罚指标: 本族**不走** format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report.
+        # format_walkforward_stats / 自动套 DSR + Bonferroni 校正" —— **那一句是假的**:
+        # 全仓**只有** uptrend_pullback/wfv_eval.py 调用它 (其 --n-trials 是 required,
+        # 且文档明说它必须等于"到此为止累计试过的配置数")。本族的 walkforward.py
+        # **0 处引用**。本族真正的 §5 惩罚指标在 **sweep 脚本**里 (deflated_sharpe_ratio)。
+        # 下面这个 n_comparisons 只是 fallback 默认值, **不参与任何 DSR/Bonferroni 计算**
+        # (见 §13.82: 它是只写字段)。
         "n_comparisons": 10,
         "tp_pct": 0.30,         # fallback
         "sl_pct": 0.05,         # fallback
@@ -106,8 +112,14 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
         # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
-        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
-        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        # §5 惩罚指标: 本族**不走** format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report.
+        # format_walkforward_stats / 自动套 DSR + Bonferroni 校正" —— **那一句是假的**:
+        # 全仓**只有** uptrend_pullback/wfv_eval.py 调用它 (其 --n-trials 是 required,
+        # 且文档明说它必须等于"到此为止累计试过的配置数")。本族的 walkforward.py
+        # **0 处引用**。本族真正的 §5 惩罚指标在 **sweep 脚本**里 (deflated_sharpe_ratio)。
+        # 下面这个 n_comparisons 只是 fallback 默认值, **不参与任何 DSR/Bonferroni 计算**
+        # (见 §13.82: 它是只写字段)。
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
@@ -150,8 +162,14 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
         # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
-        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
-        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        # §5 惩罚指标: 本族**不走** format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report.
+        # format_walkforward_stats / 自动套 DSR + Bonferroni 校正" —— **那一句是假的**:
+        # 全仓**只有** uptrend_pullback/wfv_eval.py 调用它 (其 --n-trials 是 required,
+        # 且文档明说它必须等于"到此为止累计试过的配置数")。本族的 walkforward.py
+        # **0 处引用**。本族真正的 §5 惩罚指标在 **sweep 脚本**里 (deflated_sharpe_ratio)。
+        # 下面这个 n_comparisons 只是 fallback 默认值, **不参与任何 DSR/Bonferroni 计算**
+        # (见 §13.82: 它是只写字段)。
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.08,
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
@@ -194,8 +212,14 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
         # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
-        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
-        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        # §5 惩罚指标: 本族**不走** format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report.
+        # format_walkforward_stats / 自动套 DSR + Bonferroni 校正" —— **那一句是假的**:
+        # 全仓**只有** uptrend_pullback/wfv_eval.py 调用它 (其 --n-trials 是 required,
+        # 且文档明说它必须等于"到此为止累计试过的配置数")。本族的 walkforward.py
+        # **0 处引用**。本族真正的 §5 惩罚指标在 **sweep 脚本**里 (deflated_sharpe_ratio)。
+        # 下面这个 n_comparisons 只是 fallback 默认值, **不参与任何 DSR/Bonferroni 计算**
+        # (见 §13.82: 它是只写字段)。
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
@@ -242,8 +266,14 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
         # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
-        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
-        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        # §5 惩罚指标: 本族**不走** format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report.
+        # format_walkforward_stats / 自动套 DSR + Bonferroni 校正" —— **那一句是假的**:
+        # 全仓**只有** uptrend_pullback/wfv_eval.py 调用它 (其 --n-trials 是 required,
+        # 且文档明说它必须等于"到此为止累计试过的配置数")。本族的 walkforward.py
+        # **0 处引用**。本族真正的 §5 惩罚指标在 **sweep 脚本**里 (deflated_sharpe_ratio)。
+        # 下面这个 n_comparisons 只是 fallback 默认值, **不参与任何 DSR/Bonferroni 计算**
+        # (见 §13.82: 它是只写字段)。
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
@@ -286,8 +316,14 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
         # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
-        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
-        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        # §5 惩罚指标: 本族**不走** format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report.
+        # format_walkforward_stats / 自动套 DSR + Bonferroni 校正" —— **那一句是假的**:
+        # 全仓**只有** uptrend_pullback/wfv_eval.py 调用它 (其 --n-trials 是 required,
+        # 且文档明说它必须等于"到此为止累计试过的配置数")。本族的 walkforward.py
+        # **0 处引用**。本族真正的 §5 惩罚指标在 **sweep 脚本**里 (deflated_sharpe_ratio)。
+        # 下面这个 n_comparisons 只是 fallback 默认值, **不参与任何 DSR/Bonferroni 计算**
+        # (见 §13.82: 它是只写字段)。
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
@@ -338,8 +374,14 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
         # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
-        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
-        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        # §5 惩罚指标: 本族**不走** format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report.
+        # format_walkforward_stats / 自动套 DSR + Bonferroni 校正" —— **那一句是假的**:
+        # 全仓**只有** uptrend_pullback/wfv_eval.py 调用它 (其 --n-trials 是 required,
+        # 且文档明说它必须等于"到此为止累计试过的配置数")。本族的 walkforward.py
+        # **0 处引用**。本族真正的 §5 惩罚指标在 **sweep 脚本**里 (deflated_sharpe_ratio)。
+        # 下面这个 n_comparisons 只是 fallback 默认值, **不参与任何 DSR/Bonferroni 计算**
+        # (见 §13.82: 它是只写字段)。
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 10, "max_positions": 1, "position_sizing": "all_in",
@@ -386,8 +428,14 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
         # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
-        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
-        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        # §5 惩罚指标: 本族**不走** format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report.
+        # format_walkforward_stats / 自动套 DSR + Bonferroni 校正" —— **那一句是假的**:
+        # 全仓**只有** uptrend_pullback/wfv_eval.py 调用它 (其 --n-trials 是 required,
+        # 且文档明说它必须等于"到此为止累计试过的配置数")。本族的 walkforward.py
+        # **0 处引用**。本族真正的 §5 惩罚指标在 **sweep 脚本**里 (deflated_sharpe_ratio)。
+        # 下面这个 n_comparisons 只是 fallback 默认值, **不参与任何 DSR/Bonferroni 计算**
+        # (见 §13.82: 它是只写字段)。
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
@@ -430,8 +478,14 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
         # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
-        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
-        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        # §5 惩罚指标: 本族**不走** format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report.
+        # format_walkforward_stats / 自动套 DSR + Bonferroni 校正" —— **那一句是假的**:
+        # 全仓**只有** uptrend_pullback/wfv_eval.py 调用它 (其 --n-trials 是 required,
+        # 且文档明说它必须等于"到此为止累计试过的配置数")。本族的 walkforward.py
+        # **0 处引用**。本族真正的 §5 惩罚指标在 **sweep 脚本**里 (deflated_sharpe_ratio)。
+        # 下面这个 n_comparisons 只是 fallback 默认值, **不参与任何 DSR/Bonferroni 计算**
+        # (见 §13.82: 它是只写字段)。
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 15, "max_positions": 1, "position_sizing": "all_in",
@@ -478,8 +532,14 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
         # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
-        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
-        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        # §5 惩罚指标: 本族**不走** format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report.
+        # format_walkforward_stats / 自动套 DSR + Bonferroni 校正" —— **那一句是假的**:
+        # 全仓**只有** uptrend_pullback/wfv_eval.py 调用它 (其 --n-trials 是 required,
+        # 且文档明说它必须等于"到此为止累计试过的配置数")。本族的 walkforward.py
+        # **0 处引用**。本族真正的 §5 惩罚指标在 **sweep 脚本**里 (deflated_sharpe_ratio)。
+        # 下面这个 n_comparisons 只是 fallback 默认值, **不参与任何 DSR/Bonferroni 计算**
+        # (见 §13.82: 它是只写字段)。
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 10, "max_positions": 1, "position_sizing": "all_in",
@@ -537,8 +597,14 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # chase_up 22 preset 自身是 v1→v19 顺序 sweep (每一版扩展 v 前一版邻域),
         # 总比较数 ≈ 当前版本号 × 邻域大小 ≈ n_comparisons。
-        # walkforward 输出走 dna_stats.walkforward_report.format_walkforward_stats
-        # 自动套 DSR + Bonferroni 校正, 此处声明给 fallback 默认值。
+        # §5 惩罚指标: 本族**不走** format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report.
+        # format_walkforward_stats / 自动套 DSR + Bonferroni 校正" —— **那一句是假的**:
+        # 全仓**只有** uptrend_pullback/wfv_eval.py 调用它 (其 --n-trials 是 required,
+        # 且文档明说它必须等于"到此为止累计试过的配置数")。本族的 walkforward.py
+        # **0 处引用**。本族真正的 §5 惩罚指标在 **sweep 脚本**里 (deflated_sharpe_ratio)。
+        # 下面这个 n_comparisons 只是 fallback 默认值, **不参与任何 DSR/Bonferroni 计算**
+        # (见 §13.82: 它是只写字段)。
         "n_comparisons": 10,
         "tp_pct": 0.30, "sl_pct": 0.05,
         "max_hold": 18, "max_positions": 1, "position_sizing": "all_in",
