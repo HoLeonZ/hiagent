@@ -105,3 +105,93 @@ def test_the_243_vs_252_gap_is_the_documented_1_8_percent() -> None:
     assert abs(ratio - 1.01835) < 1e-4, f"√(252/243) = {ratio} —— 与注释自陈的 1.8% 不符"
     # 且它**确实**是四族之间唯一被量到的标度差 (不是排序差)
     assert max(PINNED_TRADING_DAYS.values()) / min(PINNED_TRADING_DAYS.values()) == 252 / 243
+
+
+# ---------------------------------------------------------------------------
+# §13.89: 口径**自披露** —— 让表"从产出可读", 而不是只由本文件写死
+# ---------------------------------------------------------------------------
+
+_BASIS_MODULE = {
+    "chase_up": "chase_up.backtest",
+    "uptrend_pullback": "uptrend_pullback.backtest",
+    "short_reversal": "short_reversal.engine",
+    "cycle_price_action": "cycle_price_action.allocator",
+}
+
+# 各族的**自披露**应当与上表一致 —— 这是"表"与"引擎"之间的唯一接缝。
+PINNED_BASIS = {
+    "chase_up": {"trading_days": 243, "sharpe": "equity",
+                 "cagr_denominator": "evaluated_days", "win_rate_field": "net"},
+    "uptrend_pullback": {"trading_days": 243, "sharpe": "equity",
+                         "cagr_denominator": "evaluated_days", "win_rate_field": "net"},
+    "short_reversal": {"trading_days": 252, "sharpe": "equity",
+                       "cagr_denominator": "evaluated_days", "win_rate_field": "net_pnl"},
+    "cycle_price_action": {"trading_days": 252, "sharpe": "equity",
+                           "cagr_denominator": "evaluated_days", "win_rate_field": "pnl"},
+}
+
+
+def _disclosed_basis(fam: str) -> dict:
+    """从引擎**自己声明的单一来源**取值 —— 不读源码文本、不重写一遍。"""
+    mod = importlib.import_module(_BASIS_MODULE[fam])
+    return dict(mod.METRICS_BASIS)
+
+
+@pytest.mark.parametrize("fam", sorted(PINNED_BASIS))
+def test_disclosed_basis_matches_the_pinned_table(fam: str) -> None:
+    """§13.89: 引擎**报出的**口径必须与 §13.13 的对照表一致。
+
+    这条把那张表从"我读完源码写下的字符串"变成**与引擎的单一声明对齐的实测**。
+    """
+    got = _disclosed_basis(fam)
+    assert got == PINNED_BASIS[fam], (
+        f"§13.89: {fam} 的 `METRICS_BASIS` 与对照表不符。\n"
+        f"  表: {PINNED_BASIS[fam]}\n  引擎: {got}\n"
+        f"⇒ 若这是有意的口径变更, 请同步更新 docs/strategy_mining_log.md §13.13 的对照表"
+        f"与本文件的 `PINNED_BASIS`; 若是无意的, 那它就是一次**静默的口径漂移**。"
+    )
+
+
+def test_disclosure_is_a_single_source_not_a_copy() -> None:
+    """§13.89: 披露必须**只有一份** —— metrics 里报出的那个必须是同一个对象的内容。
+
+    做法: 拿 cycle 的纯函数真跑一次, 比对它报出的 `metrics_basis` 与模块常量。
+    (另三族要从 `backtest`/`engine` 跑出 metrics, 代价高; 它们的两处 dict 都写成
+     `dict(METRICS_BASIS)`, 由 `test_every_family_discloses_single_source_in_source` 覆盖。)
+    """
+    import cycle_price_action.allocator as ca
+
+    eq = [1_000_000.0 * (1 + 0.001 * i) for i in range(50)]
+    res = ca.AllocationResult(
+        trading_days=list(range(50)), equity=eq, taken=[], n_signals=0,
+        n_rejected_capacity=0, exposure=0.0, initial_capital=1_000_000.0, final_equity=eq[-1],
+    )
+    m = ca.portfolio_metrics(res)
+    assert "metrics_basis" in m, "§13.89: cycle 的 portfolio_metrics 不再报 metrics_basis"
+    assert m["metrics_basis"] == dict(ca.METRICS_BASIS), (
+        "§13.89: cycle 报出的 metrics_basis 与模块常量不一致 ⇒ 披露被复制成了第二份"
+    )
+
+
+@pytest.mark.parametrize("fam", sorted(_BASIS_MODULE))
+def test_every_family_discloses_single_source_in_source(fam: str) -> None:
+    """§13.89: 每个族的 metrics dict 里必须是 `dict(METRICS_BASIS)` —— 不得内联再写一遍。
+
+    (AST 判定: 找 `metrics_basis` 这个键在 dict 字面量里的值节点是否为 `dict(METRICS_BASIS)`。)
+    """
+    import ast
+    from pathlib import Path as _P
+
+    src_path = _P(_BASIS_MODULE[fam].replace(".", "/") + ".py")
+    tree = ast.parse(src_path.read_text(encoding="utf-8"))
+    found = 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            for k, v in zip(node.keys, node.values):
+                if isinstance(k, ast.Constant) and k.value == "metrics_basis":
+                    found += 1
+                    assert isinstance(v, ast.Call) and ast.unparse(v) == "dict(METRICS_BASIS)", (
+                        f"§13.89: {fam} 的 metrics dict 里 `metrics_basis` 不是 "
+                        f"`dict(METRICS_BASIS)` 而是 `{ast.unparse(v)}` ⇒ 又是「同名两份」。"
+                    )
+    assert found >= 1, f"§13.89: {fam} 的 metrics dict 里**找不到** metrics_basis 键"

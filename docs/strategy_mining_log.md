@@ -7244,3 +7244,62 @@ A 股最小报价单位 = **¥0.01**:
 
 #### (g) §5 记账
 审计节, `n_comparisons` 不变 (186)。
+
+
+### 13.89 ✅ **口径自披露**: 从"只有 1/4 族报"到"四族同名同形", 并让 §13.87 的表与**引擎的单一声明**对齐
+
+#### (a) 起点: 披露只覆盖 **1/4 族**
+实测: 全仓**唯一**的口径披露字段是 `short_reversal` 的 `sharpe_equity_basis`
+(而且只有它自己的 `render_trade_detail.py` 消费)。**另三族一个口径字段都没有。**
+⇒ §13.13 那条禁令("不得跨族引用这四个量, 除非先对齐定义")要能落地, **第一步是各族能说出自己的定义**;
+而当时那件事只写在**注释**里, 且**三个族连注释都不全**。
+
+#### (b) 改动: 四族各加一个 **`METRICS_BASIS` 模块级常量** (单一来源) + metrics 里报 `dict(METRICS_BASIS)`
+```python
+METRICS_BASIS = {"trading_days": …, "sharpe": "equity",
+                 "cagr_denominator": "evaluated_days", "win_rate_field": …}
+```
+| 族 | `trading_days` | `win_rate_field` |
+|---|---|---|
+| `chase_up` / `uptrend_pullback` | **243** | `net` |
+| `short_reversal` | **252** | `net_pnl` |
+| `cycle_price_action` | **252** | `pnl` |
+
+**这是加字段, 不动任何数** ⇒ 属"零漂移 ⇒ 应当做" (§13.19(e) 的判据)。
+
+#### (c) 门禁扩了 **9 条**断言
+1. **披露 == §13.87 的表** (4 条) —— 把那张表从"我读完源码写下的字符串"变成**与引擎的单一声明对齐的实测**;
+2. **披露是单源、不是第二份** (1 条) —— 真跑 cycle 的纯函数, 比对它报出的 `metrics_basis`;
+3. **源码里必须是 `dict(METRICS_BASIS)` 而非内联** (AST 判定, 4 条)。
+
+#### (d) §6 双向验证 (每次都清 `__pycache__`, §13.88 的纪律)
+| 检查 | 结果 |
+|---|---|
+| 还原态 | **15 passed** |
+| 注入: 改 `chase_up` 的 `win_rate_field` | **红** ✅ |
+| 注入: cycle 把 `metrics_basis` 内联再写一遍 | **单源断言红** ✅ |
+| 再还原 | 15 passed ✅ |
+
+#### (e) **零漂移对照**
+范围: `test_metrics*` / `test_backtest*` / `test_cash_walk*` / `test_equity_curve*` / `test_per_trade*` /
+`test_trades_csv*` / `test_output_schema*` / `test_preset*` / `test_*4engine*` / `test_dual_price*` (约 224 个):
+```
+改动前  16 failed, 205 passed, 4 skipped, 3 xfailed
+改动后  16 failed, 214 passed, 4 skipped, 3 xfailed      ← 红名单逐条一致; passed +9 = 新增的 9 条断言
+```
+
+#### (f) ⚠️ **而我在做这件事时, 同一个 bug 连犯了两次**
+第一次把 `METRICS_BASIS` 插到了赋值**之前** ⇒ `NameError`。原因:
+`str.replace(sub, new, 1)` / `s.index(sub)` 命中的是**注释里的一处子串** ——
+`short_reversal/engine.py:49` 的 `#   cycle_price_action/allocator.py  TRADING_DAYS_PER_YEAR = 252`
+**包含** `TRADING_DAYS_PER_YEAR = 252`。
+⇒ **第一次改错; 第一次"修复"我又用了同样的子串定位 ⇒ 又错。** 第三次改用**按行**定位才对。
+> **同一族(子串 vs 行)在同一个修复里连中两次。**
+> 这与本循环反复记的那条同源: **判据/工具的"单位"选错了** —— 而这次单位是"子串"而不是"行"。
+
+#### (g) 这一族 (「检查/编辑工具本身出错」) 今天已 **7 次**
+§13.81 同名 · §13.83 引用旧句 · §13.84 zsh 词分割 · §13.86 集合去重 · §13.88 缓存命中 ·
+**本节 子串命中注释 (×2)**。**每一次的改动/意图都是对的, 错的全在"我怎么定位、怎么核"。**
+
+#### (h) §5 记账
+审计节, `n_comparisons` 不变 (186)。

@@ -26,6 +26,15 @@ logger = logging.getLogger(__name__)
 INITIAL_CAPITAL = 1_000_000.0
 TRADING_DAYS = 243
 
+# §13.89: 口径**自披露**的单一来源 —— 与 metrics 里报出的 `metrics_basis` 同源,
+# 也与 §13.13 的对照表同源 (§13.87 钉住的那张表)。
+METRICS_BASIS = {
+    "trading_days": TRADING_DAYS,
+    "sharpe": "equity",
+    "cagr_denominator": "evaluated_days",
+    "win_rate_field": "net",
+}
+
 
 def compute_metrics(
     trades_df: pd.DataFrame,
@@ -46,6 +55,7 @@ def compute_metrics(
             "avg_hold_days": 0.0, "max_hold_days": 0, "overrun_count": 0,
             "tp_count": 0, "sl_count": 0, "time_count": 0, "eod_count": 0,
             "avg_net_return": 0.0, "profit_factor": 0.0, "exposure": 0.0,
+            "metrics_basis": dict(METRICS_BASIS),
         }
 
     eq = equity_df["equity"].to_numpy(dtype=float)
@@ -87,6 +97,9 @@ def compute_metrics(
 
     return {
         "trades": int(len(trades_df)),
+        # §13.89: 口径自披露 —— 让"各族同名指标定义不同"这件事**从产出里可读**,
+        # 而不是只写在注释里 (全仓此前只有 short_reversal 报 `sharpe_equity_basis`)。
+        "metrics_basis": dict(METRICS_BASIS),
         "win_rate": float((net > 0).mean()),
         "final_equity": final_equity,
         "total_return": total_return,

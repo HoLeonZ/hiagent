@@ -40,6 +40,14 @@ from cycle_price_action.metrics import TradeRecord
 
 TRADING_DAYS_PER_YEAR = 252
 
+# §13.89: 口径**自披露**的单一来源 (与 metrics 里报出的 `metrics_basis` 同源)。
+METRICS_BASIS = {
+    "trading_days": TRADING_DAYS_PER_YEAR,
+    "sharpe": "equity",
+    "cagr_denominator": "evaluated_days",
+    "win_rate_field": "pnl",
+}
+
 
 @dataclass(frozen=True)
 class AllocationResult:
@@ -179,4 +187,6 @@ def portfolio_metrics(res: AllocationResult) -> dict:
             if res.taken
             else 0.0
         ),
+        # §13.89: 口径自披露 —— 此前本族**一个口径字段都没有**。
+        "metrics_basis": dict(METRICS_BASIS),
     }

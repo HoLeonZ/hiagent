@@ -47,10 +47,19 @@ DAYS_PER_YEAR = 365
 #   chase_up/backtest.py             TRADING_DAYS = 243
 #   uptrend_pullback/backtest.py     TRADING_DAYS = 243
 #   cycle_price_action/allocator.py  TRADING_DAYS_PER_YEAR = 252
+
 # 本引擎取 252 (通行惯例)。与 243 的差异约 3.7% 相对量, 只影响年化因子, 不改变排序
 # 方向。**登记为未统一项 (§5/§6), 不擅自改别人的常数** —— 统一它要动三个引擎的
 # 全部历史数字, 属结果变更。
 TRADING_DAYS_PER_YEAR = 252
+
+# §13.89: 口径**自披露**的单一来源 (与 metrics 里报出的 `metrics_basis` 同源)。
+METRICS_BASIS = {
+    "trading_days": TRADING_DAYS_PER_YEAR,
+    "sharpe": "equity",
+    "cagr_denominator": "evaluated_days",
+    "win_rate_field": "net_pnl",
+}
 
 # Re-export for back-compat: tests/golden baselines reference this constant.
 PANEL_FORWARD_BUFFER_DAYS = PANEL_FORWARD_BUFFER_DAYS
@@ -237,6 +246,8 @@ def _metrics_from_holder(holder: dict, start: str, end: str, cfg: dict) -> dict:
         # 差 0.32 (相对 22%)。注意方向**不系统**: 与本案前 8 处缺陷不同, 它不固定美化
         # —— 空仓日占比越高, 日权益口径被稀释越多。它的问题不是偏差, 是**换了一把尺子**。
         "sharpe_equity_basis": _equity_sharpe(holder.get("equity_curve")),
+        # §13.89: 与三个姊妹族**同名同形**的口径自披露 (本族此前只有 sharpe 那一个字段)。
+        "metrics_basis": dict(METRICS_BASIS),
         "max_dd": min(1.0, max(0.0, float(holder["max_dd"]))),
         # §2/§3 Tick 51 (2026-10-17 修正): 逐 bar 权益序列必须带出来。
         # `Phase3V3Strategy` 一直在往 `result_holder["equity_curve"]` 里累积,
