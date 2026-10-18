@@ -80,18 +80,40 @@ def distinct_manual_configs(engine: str, preset: str) -> int:
 
     §5 管的是"试过多少**配置**"，不是"点了多少次运行"：
       - **不带覆盖**的运行 = 复现一个已声明的 preset，**不计**（那不是一次迭代）；
-      - 同一组覆盖跑两次 = 同一个配置，**只计一次**；
+      - 同一组覆盖 + **同一个窗口** 跑两次 = 同一个配置，**只计一次**；
       - 覆盖内容不同 = 不同配置，各计一次。
 
     用运行次数当试验数会让账本虚高：在 UI 里反复点同一个"运行"不会让你多试一个配置，
     却会把 n_trials 抬上去，从而**虚增** DSR/Bonferroni 的惩罚——与 §5 的意图相反。
     §5 明令防的是**低报**；虚报同样使判据失真，故一并堵掉。
+
+    ⚠️ **去重键必须包含评估窗口（`start` / `end` / `mode`），不能只看 `param_diff`。**
+
+    CLAUDE.md §5 有一句是明写的：*"Every iteration — including changes to the
+    evaluation window itself — increments `n_trials`."* **换窗口本身就是一次迭代。**
+
+    只看 `param_diff` 会**低报**（§5 最防的那个方向）：同一组覆盖扫 20 个窗口
+    去找最好看的那个，账本会显示"1 次试验"。实跑复现（2026-10-19）：
+    三个不同窗口 + 同一组覆盖 → 旧实现返回 **1**，§5 要求 **3**。
+    那正是本节要堵的"不提记账的调参后门"。
+
+    `mode` 同理：preview 与 full 是同覆盖、**不同窗口**（preview 把窗口缩到最近 P 天），
+    设计文档 §7.2 明写 preview 也计入。
     """
     seen = set()
     for r in _read_all():
         if r["engine"] != engine or r["preset"] != preset:
             continue
         diff = r.get("param_diff") or {}
-        if diff:
-            seen.add(json.dumps(diff, sort_keys=True, ensure_ascii=False, default=str))
+        if not diff:
+            continue                      # 原件复现不是一次迭代
+        seen.add(json.dumps(
+            {
+                "diff": diff,
+                "start": r.get("start"),
+                "end": r.get("end"),
+                "mode": r.get("mode"),
+            },
+            sort_keys=True, ensure_ascii=False, default=str,
+        ))
     return len(seen)

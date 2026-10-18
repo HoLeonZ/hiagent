@@ -30,9 +30,15 @@ def test_append_returns_a_monotonic_trial_number(home):
 
 
 def test_preview_runs_are_also_recorded(home):
-    """§5 管的是“试过多少配置”，与用什么窗口无关。
+    """preview 也要落账本（设计文档 §7.2）。
 
-    漏记 preview 等于开了一个不提记账的调参后门。
+    漏记 preview 等于开了一个不提记账的调参后门——而 preview 正是调参循环里
+    用得最多的模式，所以这个后门最容易被踩。
+
+    ⚠️ 但**不要**把这理解成"窗口与 §5 无关"。原 docstring 曾这么写，是错的：
+    §5 原文有一句 *"including changes to the evaluation window itself"*，
+    换窗口**本身**就是一次迭代。两者是两件事：本条说的是"preview 要落账本"，
+    窗口计入去重键由 `test_a_different_evaluation_window_is_a_new_trial` 守。
     """
     append_trial(run_id="r1", engine="short_reversal", preset="v50_slope",
                  param_diff={"tp_pct": 0.09}, start="2025-01-01", end="2025-03-01",
@@ -74,6 +80,54 @@ def test_different_overrides_count_separately(home):
     append_trial(run_id="r2", engine="short_reversal", preset="v50_slope",
                  param_diff={"tp_pct": 0.10}, start="2024-01-01", end="2025-01-01", mode="full")
     assert distinct_manual_configs("short_reversal", "v50_slope") == 2
+
+
+def test_a_different_evaluation_window_is_a_new_trial(home):
+    """**换窗口本身就是一次迭代。**（§5 明写，此处是它的守门测试）
+
+    CLAUDE.md §5 原文：*"Every iteration — including changes to the evaluation
+    window itself — increments `n_trials`."*
+
+    去重键若只看 `param_diff`，同一组覆盖扫 20 个窗口去找最好看的那个，
+    账本会显示"1 次试验"——**那正是 §5 最防的低报方向**，等于开了一个不提记账的调参后门。
+
+    实跑复现（2026-10-19，修复前）：三个不同窗口 + 同一组覆盖 → 返回 **1**，§5 要求 **3**。
+
+    判别力：把去重键里的 `start`/`end` 去掉，这条立刻变红。
+    """
+    for rid, s, e in (("r1", "2024-01-01", "2025-01-01"),
+                      ("r2", "2023-01-01", "2024-01-01"),
+                      ("r3", "2022-01-01", "2023-01-01")):
+        append_trial(run_id=rid, engine="short_reversal", preset="v50_slope",
+                     param_diff={"tp_pct": 0.09}, start=s, end=e, mode="full")
+    assert distinct_manual_configs("short_reversal", "v50_slope") == 3, \
+        "同一组覆盖换了三个窗口 = 三次迭代（§5：窗口变更也算迭代）"
+
+
+def test_preview_and_full_are_separate_trials_for_the_same_overrides(home):
+    """`mode` 也进去重键：preview 与 full 是同覆盖、**不同窗口**（preview 缩窗）。
+
+    设计文档 §7.2 明写 preview 也计入账本；既然计入，它就必须是一次**独立的**迭代，
+    而不是被 full 那次合并掉。
+    """
+    append_trial(run_id="r1", engine="short_reversal", preset="v50_slope",
+                 param_diff={"tp_pct": 0.09}, start="2024-01-01", end="2025-01-01", mode="full")
+    append_trial(run_id="r2", engine="short_reversal", preset="v50_slope",
+                 param_diff={"tp_pct": 0.09}, start="2024-01-01", end="2025-01-01", mode="preview")
+    assert distinct_manual_configs("short_reversal", "v50_slope") == 2
+
+
+def test_the_exact_same_run_twice_still_counts_once(home):
+    """反向守门：**同覆盖 + 同窗口 + 同 mode** 才是"同一个配置"，必须仍然去重。
+
+    没有这条，上面两条可以靠"干脆不去重"变绿——那样 n_trials 会虚高，
+    虚增 DSR/Bonferroni 惩罚，同样使判据失真。
+    """
+    for rid in ("r1", "r2"):
+        append_trial(run_id=rid, engine="short_reversal", preset="v50_slope",
+                     param_diff={"tp_pct": 0.09}, start="2024-01-01", end="2025-01-01",
+                     mode="full")
+    assert distinct_manual_configs("short_reversal", "v50_slope") == 1
 
 
 def test_count_is_per_engine_and_preset(home):
