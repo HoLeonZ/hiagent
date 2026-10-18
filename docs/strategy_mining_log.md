@@ -3521,3 +3521,78 @@ def load_universe_data(db_path, start, end, *, asof_date: date | None = None):
 > **真债 / 形式钉桩造成的假红 / 断言恒真 / 测试自己坏掉 / 代码动了我忘了翻转 pin /
 > 已修但基线未重生成 / 默认值陷阱(生产无 bug)。**
 > **⇒ 引用这个数字时必须带分类; 只说"49 条红"等于什么也没说。**
+
+### 13.34 ✅ **等价类是 chase_up 特有** (一个**保护结论**的否定结果) + 类别 7 分类 + 一处 §3 语义冲突
+
+#### (a) `uptrend_pullback` 的 4 个 preset **互不相同** —— 反对该族的"四重证据"没有被削弱
+对上轮 §13.31 的同一判据, 在**同一个窗口** (`2024-09-01..2026-09-01`, 三份基线窗口一致):
+
+```
+uptrend_pullback: 4 个 preset -> 4 个互不相同的成交列表
+  v19 (n=105)  v20 (n=127)  v21 (n=57)  v22 (n=89)
+```
+
+⇒ **§13.31 那个"22 个候选只有 17 个不同"是 `chase_up` 特有的, 不是普遍现象。**
+**这是一个反向的结果, 但它的价值是正面的: 它排除了"uptrend 的四重证据其实只有两三重"
+这个可能性。** (§4/§6.3.2–§6.3.5 的判定不受影响。)
+
+#### (b) 类别 7 的分类 (§13.33(d) 说要从这里开始, 这里做完)
+逐条取失败原因, **10 条里 8 条是真债**:
+
+| 测试 | 原因 | 判定 |
+|---|---|---|
+| `test_chase_up_phase2_sl_first` | "Phase 2 picked **TP** when `o == sl_p == tp_p`" (§4 Pessimistic Default 要求 SL) | **真债** |
+| `test_chase_up_phase2_limit_up_skip` | "Phase 2 did not set `self.skipped` on limit-up open" | **真债** |
+| `test_cycle_buy_execution_bar` | "entry branch must call `extract_execution_bar`" (§3 域声明) | **真债** |
+| `test_phase3_v3_bugfixes::test_hold_days_is_bar_span_not_bar_count_minus_one` | "`hold_days` 应=4 实际=3" (off-by-one) | **真债** |
+| `test_dual_price::test_extract_partial_nan_close_raises` | **DID NOT RAISE** (§0 fail-fast) | **真债**(见 c) |
+| `test_dual_price::test_extract_falls_back_to_adj_when_raw_missing` | `7.8 != 0.0` (§3 执行域) | **真债**(见 c) |
+| `test_immutable_state_4engine` | "short_reversal 有 1 处 `self.<attr>.<mutable>()`" | **真债** |
+| `test_claudemd_full_audit::test_short_reversal_full_audit` | "CLAUDE.md gaps found" | **真债**(聚合审计) |
+| `test_fail_fast_deep_scan_section2::test_silent_except_sites_beyond_tick44` | "17 silent except sites" —— 首例是 `chase_up/sweep_all.py:82`(扫描脚本, **本就该 warn+continue**) | ⚠️ **过宽** |
+| `test_fail_fast_deep_scan_section2::test_tick44_known_sites_are_in_silent_list` | "Scanner regression: 新扫描器**漏检**了 Tick 44 已知的站点" | **真债**(是守卫的守卫坏了) |
+
+> **⇒ 清掉"形式钉桩造成的假红"之后(§13.28–§13.32), 剩下的是**压倒性地真实**。**
+> 本轮在这一组里**没有再找到假红**。这是一个**终止性**的结论:
+> **"假红"这一类是有界的, 而且已经清完了。**
+
+#### (c) ⚠️ 一处**§3 语义冲突** —— 两条红测试说的是同一件事, 而 Round 30 的改动正好相反
+`core/dual_price.py::extract_execution_bar` 现在是:
+```python
+c = _chain_get(row, "raw_close", "adj_close", "close")   # raw 缺失/NaN ⇒ 回退 adj
+```
+i.e. **raw_close 不可用时, 拿 adj_close 当执行价**。而 §3 原文:
+> ALWAYS use **Raw Prices** (`raw_close`) for evaluating limit order triggers, stop-losses,
+> and portfolio physical cash mark-to-market.
+
+**两条红测试都反对这个回退**(措辞不同, 指向同一件事):
+* `test_extract_partial_nan_close_raises` —— 部分 NaN 必须 **raise**, "不能静默 phantom";
+* `test_extract_falls_back_to_adj_when_raw_missing` —— 期望 `bar.open == 0.0`, 注释明写
+  *"这里期望 raw 优先, NaN 时**仍取 raw(即 0.0)**, 这是 §3 严格语义。真实 phantom 防护由
+  entry override guard 在上层处理, **本函数保持纯净**"*。
+
+而 `_chain_get` 是 **Round 30 (2026-09-28) 有意引入的**(其 docstring 自陈是"NaN-aware
+fallback chain"修正)。⇒ **一次有意的改动与两条早于它的测试互相矛盾**, 而矛盾已经挂在那里。
+
+**危险是真实的、且有过前科**: `chase_up/presets.py` 的 `v3a_change_note` 写着
+*"V3a entry **静默回退到 adj_open**, exit 用 raw_\*, **混用触发 phantom TP/SL**"* ——
+**同一个机制, 同一个函数族。**
+
+**但为什么本轮不修 (三点)**:
+1. **真实数据里永不触发**: `v_daily_dual` **10,364,755 行**中
+   `raw_close`/`raw_open` 为 NULL/NaN 的 **各 0 行**(只有 `raw_prev_close` 有 5,565 个 NULL,
+   而两条测试针对的都是 `close`) ⇒ **修与不修, 结果一模一样**;
+2. **"应该改成哪种"是设计选择**: (i) 一律 raise / (ii) 纯净透传(全 NaN 时返回 0.0) /
+   (iii) 保持回退 —— 而 (ii) 会**故意返回一个 0.0 的幻影执行价**, 那正是 Round 30 想消除的东西。
+   两条测试各自暗示的语义并不完全一致;
+3. 按既有授权: **口径选择 ⇒ 登记, 不擅自改**。
+
+**登记事项**: 执行域的回退链与 §3 的双价契约冲突; 两条红测试锁定的是契约一侧;
+真实数据暴露为 0, 所以**不影响任何已有结论**, 但任何**未来**引入 partial-NaN 的数据源
+都会直接踩上去。
+
+#### (d) 收口: 这条线 (§13.28 → §13.34) 的共同结论
+> **项目里"红灯"的七种成分已经全部点名(§13.33(e)), 而"假红"这一类经两轮搜索已经清空。**
+> 剩下的失败**是真的**; 它们的价值不在"数了多少", 而在**逐条读出来的那几件事**:
+> 执行域的回退、Phase 2 的 SL/涨停判定缺失、`hold_days` 的 off-by-one、
+> 以及"守卫的守卫坏了"。
