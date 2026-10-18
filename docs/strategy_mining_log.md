@@ -3596,3 +3596,72 @@ fallback chain"修正)。⇒ **一次有意的改动与两条早于它的测试�
 > 剩下的失败**是真的**; 它们的价值不在"数了多少", 而在**逐条读出来的那几件事**:
 > 执行域的回退、Phase 2 的 SL/涨停判定缺失、`hold_days` 的 off-by-one、
 > 以及"守卫的守卫坏了"。
+
+### 13.35 ⚠️ **一个我拒绝"修"的红灯**: `hold_days` 的口径之争 —— 测试的期望很可能才是错的那个
+
+#### (a) 冲突的两方
+`tests/test_phase3_v3_bugfixes.py::test_hold_days_is_bar_span_not_bar_count_minus_one` 断言
+`short_reversal` 的一笔 time-exit 的 `hold_days == 4`(entry bar 200, `max_hold=3`),实测 **3**。
+
+* **测试方** docstring:
+  > Bug 修复前: `hold_days = len(self) - 1 - entry_bar` = bar_count − 1 (off-by-1)
+  > Bug 修复后: `hold_days = len(self) - entry_bar` = **bar_span**
+* **代码方** (`short_reversal/replay_strategy_v3.py:866-874` 的注释) 说的是**相反的**:
+  > `entry_bar` 存的是**计数**(成交时 `entry_bar = len(self)`),不是索引。
+  > 旧实现写成 `len(self) - 1 - entry_bar`,把计数当索引用 ⇒ `held` 在成交…(那一处是**真**的 off-by-1, 已修)
+  > 同文件 `hold_days = len(self) - pos["entry_bar"]` 用的是**计数**口径
+  且 `held = len(self) - pos["entry_bar"]`(876)与 `hold_days`(1020)**是同一个表达式**,
+  前者驱动 time exit (`elif held >= self.p.max_hold`),后者只被报告。
+
+#### (b) ⚠️ 为什么我判定**不能照测试改** —— 算术上就说不通
+测试的期望值来自这个算式:
+> `hold_days 应 = exit bar - entry bar = 200 + 3 + 1 - 200 = 4`(即它认为 **exit bar = 204**)
+
+但按 `elif held >= max_hold`,time exit 发生在 `held` 首次达到 3 的那根 bar ⇒ `len(self) = entry_bar + 3`
+⇒ **exit bar = 203,不是 204**。测试的算术假设了引擎**晚一根 bar** 才出场。
+
+**而"哪种口径对"是有独立答案的**: T+1 策略里 entry 在 200、exit 在 201 ⇒ `held = 1`,
+即**"持有 1 夜"** —— 对 A 股这是自然的读法;跨度读法会报 **2**(把 entry 那根也算进去)。
+⇒ **计数口径是对的;测试的"跨度"期望才是可疑的那个。**
+
+**若照测试改 `hold_days = held + 1`**: 每笔的 `hold_days`(以及 `avg_hold_days` / `max_hold_days`)
+统一 +1, 而"持有 1 夜"会被报成 2 —— **用一次口径变差去换一条测试变绿, 这正是我一直拒斥的
+"迎合测试"**。⇒ **登记, 不改。**
+
+#### (c) 但这条测试本身暴露了两件**新的、可复用的**事
+1. **它此前从未跑到过断言**。测试体内自己的注释写着:
+   > *"engine 要求显式传入 (默认 None 是 fail-fast 设计); 本测试原先漏传, 导致它在 **TypeError
+   > 上早退** —— 即它**从未真正跑到过断言**。"*
+   ⇒ 一个"红着的测试"可能**红在与它要测的东西无关的原因**上(这里是 §13.21 的
+   `min_cash_ratio=None`)。**这给失败分类又加了一种成分, 而且是第五种"看着在测、其实没测到":
+   它确实执行了, 但在到达断言前就抛了。**
+   与 §13.19(条件恒真的 skip)、§13.18(c)(注入没到路径上)同族, 但形态不同:
+   **它不是"不跑", 是"跑到一半就死了"**。
+2. **四族的 `hold_days` 至少有三套定义**:
+   | 位置 | 口径 |
+   |---|---|
+   | `chase_up/backtrader_engine.py:298` / `uptrend_pullback/backtrader_engine.py:381` | `max(int((exit_date - entry_date).days), 1)` —— **日历天数** |
+   | `uptrend_pullback/portfolio.py:353` | `pos["bars"]` —— 一个计数器 |
+   | `short_reversal/replay_strategy_v3.py:1020` | `len(self) - entry_bar` —— **bar 计数** |
+   | `short_reversal/render_trade_detail.py:108` | `exit_bar - entry_bar - 1` —— **再减 1** |
+   ⇒ 跨引擎那部分 §13.13 已登记("同名不同义"); **新的是**: `short_reversal` **引擎**与
+   它**自己的渲染器**用的也不是同一个式子 ⇒ 同一个族内的不对称。
+
+#### (d) 结论
+> **"能不能让它变绿" 与 "应不应该让它变绿" 是两件事。**
+> 本轮这条是**唯一一条我判定"测试侧才是错的那一方"**的 —— 而判定依据不是偏好, 是
+> **T+1 隔夜持有下两种口径各自报出的数合不合理**。
+
+#### (e) 证明(不靠推理,靠测试自己报出的数)
+`held`(876 行)与 `hold_days`(1020 行)**是同一个表达式**:
+```python
+held      = len(self) - pos["entry_bar"]          # 876, next() 内, 驱动 time exit
+...
+hold_days = len(self) - pos["entry_bar"]          # 1020, _close() 内, 只被报告
+```
+而 `_close(d, ...)` 是在**决策的同一根 bar** 上调用的(948 行紧接判定)⇒ 两处的 `len(self)` 相同
+⇒ **在出场那一根 bar 上, `hold_days` 恒等于触发出场的那个 `held`**。
+
+⇒ 测试观测到 `hold_days = 3`, 而它用的是 `max_hold = 3` ⇒ **exit 恰恰发生在 `held` 首次等于 3 的那根 bar**
+⇒ 测试期望的 4 **只能**来自 `hold_days = held + 1`。
+**它的算术("exit bar = 204")与它自己观测到的 3 直接矛盾** —— 这条判定不依赖我的偏好。
