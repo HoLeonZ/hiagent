@@ -16,7 +16,8 @@
   · `n_trials`  = **实际评分的配置数**(§5 Iterative-Tuning Accounting 要累计试验数,
                   不是窗口数;用 `len(rows)` 而非 `--iter`,失败的迭代并未被评分);
   · 并显式声明 **selection in-sample** —— DSR 量化的是"从 k 个里挑最好"的虚高,
-    **不能替代**样本外验证(要下结论须另跑 `wfv_eval.py` 的 train/test)。
+    **不能替代**样本外验证(要下结论须另跑 `wfv_eval.py`,换一段区间并声明
+    `--window-role holdout` —— 本仓库没有代码强制的 train/test 划分)。
 
 注:审计原文说它"在同一窗口选优并直接报告" —— 逐行核对后**不准确**:它用的是
 `monthly_windows` 的 22 个滚动窗口。但"选优与报告用同一批窗口"这一实质问题成立。

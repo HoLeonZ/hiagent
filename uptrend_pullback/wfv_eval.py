@@ -1,4 +1,12 @@
-"""§5 合规的 preset 评估器 — WFV + DSR。
+"""preset 评估器:滚动窗口 + DSR(§5 的**迭代期**工具)。
+
+> ⚠️ 2026-10-18 更正(附七十四):此前首行写的是「**§5 合规**的 preset 评估器 —
+> **WFV** + DSR」。而本工具的窗口来自 `monthly_windows`(滚动、**无 train/test 划分**;
+> 默认 2 月窗 / 1 月步 ⇒ 相邻窗重叠 50%),严格说它是**样本内**评估。
+> §5 要求的 WFV 是「with strict **out-of-sample** testing windows」—— 那需要**划分**,
+> 本工具没有;它有的是"操作者自己换 `--start-month/--end-month`"的人工约定。
+> 因此现在:**`--window-role` 是必需参数**(iteration / holdout)并写进产物,
+> 好让搜索日志能分清哪一行是结论期的;而"要不要把划分做进代码"是待你定的**口径**问题。
 
 把「某个 candidate 到底比现有 preset 好不好」变成一条可复现命令:
 
@@ -85,19 +93,38 @@ def _summarize(df) -> dict:
     }
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
+    """命令行解析器(**抽出来是为了可测** —— 尤其"哪些参数是必需的"这件事,
+    必须能被守卫行为性地验证,而不是靠人读代码)。
+
+    附七十四:`--n-trials`(§5 迭代计数)与 `--window-role`(§5 样本外声明)都是
+    **必需**参数 —— §5 的这两半都落在"调用方必须显式声明"上。
+    """
     ap = argparse.ArgumentParser()
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--preset", help="PRESETS 里的 preset 名")
     src.add_argument("--base", help="作为起点的 preset 名 (配合 --overrides)")
     ap.add_argument("--overrides", default="{}", help="JSON: 点路径 -> 值")
     ap.add_argument("--label", default="", help="写入 JSON 的标签")
+    # §5 (附七十四): 本工具**无法**自行验证 OOS —— 它能做的是**要求操作者声明**
+    # 这段区间扮演什么角色,并把它写进产物。与 `--n-trials` 同法(那个也是必需的):
+    # §5 的"迭代计数"与"样本外"两半,都落在"调用方必须显式声明"上。
+    # 理由:仅靠注释里的约定("迭代期用 train 段,结论用 holdout 段"),
+    # **搜索日志里分不出哪一行是 holdout** —— 而 §5 要的正是"结论必须来自 OOS"。
+    ap.add_argument(
+        "--window-role", required=True, choices=("iteration", "holdout"),
+        help="这段区间扮演什么角色:iteration(迭代期,可以反复看)或 holdout(结论期)",
+    )
     ap.add_argument("--n-trials", type=int, required=True,
                     help="§5 累计试过的配置数 (含本次); DSR 的选择偏差折算用")
     ap.add_argument("--start-month", default=DEFAULT_START_MONTH)
     ap.add_argument("--end-month", default=DEFAULT_END_MONTH)
     ap.add_argument("--engine", default="simulate", choices=("simulate", "backtrader"))
-    args = ap.parse_args()
+    return ap
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = build_parser().parse_args(argv)
 
     logging.basicConfig(level=logging.WARNING, format="%(message)s")
 
@@ -118,7 +145,21 @@ def main() -> None:
     stats = _summarize(df)
 
     print(f"[{args.label or base_name}] {args.start_month}..{args.end_month} "
-          f"({len(windows)} windows, engine={args.engine})")
+          f"({len(windows)} windows, engine={args.engine}) "
+          f"role={args.window_role}")
+    # §5 (附七十四): 说清**这次评估是什么**。本工具的窗口来自 `monthly_windows`
+    # (滚动、无 train/test 划分;默认 2 月窗 / 1 月步 ⇒ 相邻窗重叠 50%),故严格说
+    # 它是**样本内**评估 —— 适合"迭代期",**不能**直接当作结论。
+    # 此前文档把它称作 "§5 合规的 preset 评估器 — WFV + DSR",而 OOS 只靠注释里的
+    # 人工约定("迭代期用 train 段; 结论用 holdout 段")⇒ 产物里**没有**任何标记能把
+    # 两者分开。现在:角色是**必需参数**并写进产物。
+    _role_note = (
+        "迭代期评估(可反复看)" if args.window_role == "iteration"
+        else "结论期评估(应只跑一次;此后再改 candidate 则本行不再有效)"
+    )
+    print(f"  ⚠ 窗口为滚动**无划分**(默认 2 月窗 / 1 月步 ⇒ 重叠 50%)⇒ 本次是"
+          f"**样本内**评估:{_role_note}。§5 的 OOS 要求靠**操作者声明角色**+"
+          f"角色随产物落盘来守,不靠注释里的约定。")
     print(format_walkforward_stats(df, n_comparisons=args.n_trials))
     print(df.to_string(index=False))
 
@@ -130,6 +171,8 @@ def main() -> None:
         "end_month": args.end_month,
         "engine": args.engine,
         "n_trials": args.n_trials,
+        # §5 (附七十四): 角色随产物落盘 —— 搜索日志里从此能分出哪一行是 holdout。
+        "window_role": args.window_role,
         "stats": stats,
         # 关键参数快照, 便于事后复现 candidate
         "params": {k: cfg[k] for k in

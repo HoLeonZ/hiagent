@@ -298,7 +298,10 @@ def main() -> None:
     #
     # ⚠️ 仍须说清楚:TOP-K 是在**同一批窗口**上选出来的(selection in-sample)。
     # DSR 量化的正是"从 k 个配置里挑最好"带来的虚高,但**它不能代替样本外验证**。
-    # 要把某个 config 当作结论,必须另外跑 OOS —— 见 `wfv_eval.py` 的 train/test 划分。
+    # 要把某个 config 当作结论,必须另外跑 OOS —— **本仓库目前没有"代码强制的划分"**:
+    # `wfv_eval.py` 的窗口来自 monthly_windows(滚动、无 train/test),它的 OOS 靠
+    # 操作者自己换 --start-month/--end-month 并声明 --window-role holdout(附七十四
+    # 更正:此前这里写的是"见 wfv_eval.py 的 train/test 划分" —— **那个东西不存在**)。
     try:
         from dna_stats.deflated import bonferroni_correct, deflated_sharpe_ratio
 
@@ -329,7 +332,9 @@ def main() -> None:
         print(
             f"  ⚠️ in-sample selection:TOP-K 是在上面这 {len(windows)} 个窗口上选出的。\n"
             f"     DSR 只量化「从 {n_trials} 个配置里挑最好」的虚高,**不等于**样本外验证 ——\n"
-            f"     要把某个 config 当结论,请走 uptrend_pullback/wfv_eval.py 的 train/test 划分。"
+            f"     要把某个 config 当结论,请另跑 uptrend_pullback/wfv_eval.py,"
+            f"换一段 --start-month/--end-month 并声明 --window-role holdout"
+            f"(本仓库没有代码强制的 train/test 划分)。"
         )
     except ImportError as exc:  # pragma: no cover - 仅在缺 dna_stats 时
         print(f"\n[!] §5 惩罚指标不可用({exc})—— 结果**不得**作为结论引用")
