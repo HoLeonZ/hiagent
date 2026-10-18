@@ -21,5 +21,6 @@
 | `yield_placebo.py` | §10.9: **安慰剂 T±5** —— 是日期效应还是季节/风格效应 |
 | `overlay_window.py` | §10.9: overlay 值对**回避窗口**的敏感度 (不选最优窗口) |
 | `generic_reversal.py` | §10.10: **通用反转对照** —— T=0 那一跌是除权日特有, 还是"涨过就回吐" |
+| `executability.py` | §10.11: overlay **可执行性** (封板/停牌) 与**容量** (§4 参与上限) |
 
 `python3 tools/exdate/<脚本>.py` —— 全部只读 DB, 无副作用, 无随机性。
