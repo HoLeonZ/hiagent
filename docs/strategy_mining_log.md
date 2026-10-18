@@ -6272,3 +6272,66 @@ monkeypatch `_all_conditions` 使其**只在第一次 `next()` 时为真** ⇒ *
 
 #### (g) §5 记账
 审计节, `n_comparisons` 不变 (186)。
+
+
+### 13.72 ⛔ **判据绑在"字面拼法"上**: §0 可复现性守卫对 `import numpy` 完全失明 (同类第五处)
+
+#### (a) 靶子选择
+§13.66→§13.71 的判据已收敛成一问 (**"改掉被检查的东西, 断言会怎样?"**), 但只被**逐个撞见**。
+本轮开始**系统地**问。先挑两个契约最重的未验文件: §0 的 **不可变状态** 与 **可复现性**。
+
+#### (b) `test_immutable_state_4engine.py` —— **守卫有效** (排除结论)
+注入一条**正好是它要找的形态** (`self.positions.clear()`, 且运行时无害) 到 chase_up:
+⇒ **`test_chase_up_no_self_state_mutation` 立刻红** ✅。**该守卫是活的。**
+⚠️ 该文件另有**一条既有红**: `test_short_reversal_no_self_state_mutation` (属既有债清单)。
+
+#### (c) `test_random_seed_pinning_4engine.py` —— **对非别名拼法完全失明**
+探测器的判据写死在字面上: `if receiver.value.id == "np"` / `== "random"`。
+⇒ **"所有随机调用都被 seed" 这个性质, 被查成了"拼成 `np.random.X` 的调用被 seed"。**
+
+**注入实证 (三格)** —— ⚠️ 第一格我**做错过一次**, 记下来:
+| 注入 | 修前 | 修后 |
+|---|---|---|
+| `np.random.choice(1)` (与文件里 `import numpy as np` 一致) | **FAILED** ✅ | FAILED ✅ |
+| `import numpy` + `numpy.random.choice(1)` | **4 passed** ❌ | **FAILED** ✅ |
+| `import numpy as N` + `N.random.choice(1)` | (未试) | **FAILED** ✅ |
+> **我自己第一次注入用的是 `_npm` 别名** ⇒ 不在它认的范围内 ⇒ 得到 "4 passed"。
+> **那时我差点把它记成发现。** 停下去读探测器才发现**是我的注入不在被测形态里**。
+> ⇒ **注入必须落在被测判据认得的形态上, 否则"不响"说明的是注入, 不是守卫。**
+> (与 §13.18 那次"注入看起来像验证, 但没注入到被断言的那条路径"是同一个错。)
+
+#### (d) 修法: **按该文件的导入解析别名**, 而不是放宽成"任何 `.random`
+新增 `_collect_random_aliases(tree)`: 扫 `import numpy` / `import numpy as X` /
+`import numpy.random as X` / `from numpy import random` / `import random as X` / `from random import X`,
+得到 **(绑定 numpy 的名字集, 绑定 numpy.random 或 random 的名字集)**。
+`_is_random_leaf` 与 `_is_seed_call` 改为吃这两个集合 ⇒ **三种拼法全部覆盖**。
+**seed 那一侧同样要改** —— 拼法变了本来会被误判成"没 seed"(假红)。
+
+#### (e) §6 双向验证
+| 检查 | 结果 |
+|---|---|
+| 还原态 | 4 passed |
+| 注入 ① `np.random.X` | **FAILED** ✅ |
+| 注入 ② `import numpy` + `numpy.random.X` | **FAILED** ✅ (修前 4 passed) |
+| 注入 ③ `import numpy as N` + `N.random.X` | **FAILED** ✅ |
+| 再还原 | 4 passed ✅ |
+
+#### (f) 顺带记录一处**潜在假阳**: `RANDOM_FUNCTIONS` 里有单字母 `"f"`
+它本意是 F 分布 (`np.random.f`), 但与别名感知合看, 任何 `<别名>.f()` 都会被当成随机调用。
+**本仓目前不触发** (该名单只对 numpy/random 的别名生效), 但这是一条**宽于直觉**的名字。
+※ 只登记, 不改 (改它属于**改变判据的宽窄**, 而当前没有实测到的误报)。
+
+#### (g) 这一类已五现, 而**形态仍未穷尽**
+| 处 | 被查成 |
+|---|---|
+| §13.66 | "文件里出现过吗" |
+| §13.67 | "引擎收得到吗" |
+| §13.70 | "三个池里有一个就算" |
+| §13.71 | "扫得到就算, 扫不到就通过" |
+| **§13.72** | **"拼成 `np.random.X` 的算"** |
+
+⇒ **判据那一问仍然有效且仍是唯一手段**; 但本轮新增一条**给验证者自己**的纪律:
+> **注入必须落在被测判据认得的形态上。** 否则"不响"测的是注入, 不是守卫。
+
+#### (h) §5 记账
+审计节, `n_comparisons` 不变 (186)。
