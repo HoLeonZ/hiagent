@@ -6045,3 +6045,84 @@ Sharpe,`deflated_sharpe_ratio` 的 `n_returns` 取"一个窗口的观测数"(附
 —— 它会改变**每一次 sweep 的窗口集合** ⇒ 全量结果变更,且会让既往的跨窗统计不可比。
 方向上看,"不重不漏"更符合"N 个窗 = N 份证据"的读法;但那是**测试设计**的选择,
 不擅自改。现在的处置:**把事实算出来、说出来、钉住**,并把选择权留给你。
+
+---
+
+## 附七十六 —— 共享层 `v_daily_dual` 被**错标**为"前复权"(实测:它是**后复权**);顺带钉住一处接线兼容性
+
+这一轮换到**还没逐行读过**的 `dna_data/`(已登记为"未接线的迁移目标")。查它的**语义与在跑的引擎是否一致** —— 因为将来接线时,不一致会静默改变每一个结果。
+
+### 1 · 缺陷:**一处错标,传播到了三个地方**
+
+`sql/migrate_v_daily_dual.sql` 的注释原文:
+
+```sql
+-- Create v_daily_dual view joining forward-adjusted (v_daily_hfq) with
+-- raw (raw_kline_daily) prices ...
+```
+
+**`hfq` 是后复权(backward-adjusted),`qfq` 才是前复权。** 实测(活库,全表):
+
+| 比较 | 一致率 |
+|---|---|
+| `v_daily_dual.adj_close` vs `v_daily_hfq.close` | **10,364,755 / 10,364,755 = 100.00%** |
+| `v_daily_dual.adj_close` vs `v_daily_qfq.close` | 524,069 / 10,364,755 = **5.06%** |
+| `v_daily_dual.raw_close` vs `v_daily.close` | **100.00%** |
+
+这处错标**已经传播出去**:`dna_data/dual_price_loader.py` 的 docstring 同样写着
+"forward-adjusted";而 `tools/*/audit_phantom.py` 用 **qfq** 校准它的 phantom 判据
+(附五十八 §4 登记过那一处的后果,当时只记了"工具用 qfq、引擎用 hfq",没找到**错标**这个根)。
+
+### 2 · 为什么修的是**文档**而不是数据
+
+选后复权是对的:**前复权的历史价位会随之后每一次分红而改变** —— 同一份代码 + 同一份库,
+在不同日期跑会得到不同的历史价格,直接违反 §0 的可复现性。所以数据没问题,**词错了**。
+
+### 3 · 需要你知道的一处**契约**措辞
+
+`CLAUDE.md` §3 逐字:
+
+> ALWAYS use **Forward-Adjusted** Prices (`adj_close`) for mathematical indicators …
+
+而**四个引擎 + 这个视图实际一律用后复权**(实测如上)。即"契约原文的措辞"与"全仓库的实现"
+不一致 —— 我**没有**改契约文件(那是你的标准文本,不该我单方面动),但在加载器 docstring 里
+把这一点写明了:**方向不是本仓库的口径,"用复权价算指标、用原始价执行"才是**。
+要不要把 §3 的措辞改成"adjusted(本仓库用后复权)"由你定。
+
+### 4 · 顺带钉住一处**接线兼容性**(把一个推断变成事实)
+
+附五十一 发现引擎面板里的 `raw_prev_close` 列 **100% NULL**,于是在 `_build_index` 里
+**手算**了 `shift(raw_close)`。而 `v_daily_dual` 的这一列是**满的**。实测:
+
+| 检查 | 结果 |
+|---|---|
+| `raw_prev_close` == `lag(raw_close)`(从 **`v_daily`** —— 引擎真正读的那张表 —— 算) | **100%**,0 行例外 |
+| NULL 形态与 `lag` 是否一致 | **完全一致**;5,565 个 NULL 恰好是各票首根 bar |
+
+即:**接线 `dna_data.dual_price_loader` 不会改变附五十一 的守卫行为**。
+这把那条"结果敏感的重构"的一项风险从**推断**变成了**被钉住的事实** —— 正是 §5/§6 里那类
+重构最需要的东西。
+
+### 5 · 守卫(5 条,含两条真数据比对)
+
+| 用例 | 钉住 |
+|---|---|
+| `test_dual_view_adj_is_backward_adjusted_not_forward` | `adj_close` == hfq(**>99.99%**)且 **不是** qfq(**<10%**)—— 两边都卡,既是"别切到 qfq",也是"别按 forward 字面去改" |
+| `test_dual_view_raw_is_the_execution_domain` | `raw_close` == `v_daily.close` 100% |
+| `test_dual_view_raw_prev_close_is_lag_of_raw_close` | == `lag(raw_close)`,且 NULL 只在首根 bar |
+| `test_dual_view_prev_close_matches_the_engines_hand_rolled_shift` | **从 `v_daily` 算**左侧,与视图列逐行同值(= §4 的绿灯) |
+| `test_sources_call_hfq_backward_adjusted` | 描述行必须说 hfq 是后复权、且不得称它前复权 |
+
+### 6 · 自查:这一条里**两处检查都是假的**,都是靠双向验证才发现的(本轮第 6、7 次)
+
+**(a) "错标不许回来"那条守卫是空转的。** 我第一版写 `assert "backward-adjusted" in sql` ——
+而文件里**我自己写的更正说明**就含这个词 ⇒ 把描述行改回 `forward-adjusted` 之后,守卫
+**仍然绿**(实测)。现已改成**逐行**判据(只检查"描述视图组成的那一行"/"列清单那一行")。
+
+**(b) "接线兼容性"那条第一版是同义反复。** 它的左右两边都从 `v_daily_dual` 算 ——
+即使视图换了一套行集合也测不出来。现改为**左侧从 `v_daily` 算**(引擎真正读的表),
+这才是"两套口径是否同值"的真比对。
+
+> 累计:本轮"验证/实现方法本身太弱"已有 **7 次**。它们的共同点仍然一句话:
+> **用一个比自己以为的更弱的检查,却把它当成了结论。**
+> 而这一条里两次都**只有靠双向验证才发现** —— 这恰好说明那一步不是仪式。
