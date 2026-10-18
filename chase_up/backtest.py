@@ -12,6 +12,8 @@ from chase_up.data import load_panel
 from chase_up.portfolio import simulate_portfolio
 from chase_up.presets import MAX_HOLD_LIMIT, get_preset
 from chase_up.signals import compute_indicators, select_entries
+# §2 Canonical Cost Model: 成本常量只在 core/ 定义一次, 引擎必须**导入**而非重写。
+from core.dual_price import COMMISSION_RATE, MIN_COMMISSION, STAMP_DUTY_RATE
 from chase_up.universe import load_universe
 
 logger = logging.getLogger(__name__)
@@ -139,9 +141,13 @@ def run_backtest(
         # Round 15 (2026-09-28) 在 portfolio.py:247-254 引入 ATR-aware slippage 与成本参数。
         # 当前 0/22 preset 声明这些 key, 函数默认 0.00025/0.0005/5.0/0.0/0.0 与 backtrader_engine.py p.get 默认完全一致 (R5 nav_gate_ratio 同模式)。
         # 显式 plumb 防止未来 preset override 时两引擎 drift。
-        commission_rate=p.get("commission_rate", 0.00025),
-        stamp_duty_rate=p.get("stamp_duty_rate", 0.0005),
-        min_commission=p.get("min_commission", 5.0),
+        # 2026-10-19 (§2): 以下三个默认值**原先写死为字面量** ⇒ 违反
+        # "constants are defined exactly once (in core/) … redefining fee constants
+        # inside an engine is a fail-fast violation"。取值与规范值逐字节相同,
+        # 改为绑定 ⇒ **零结果漂移**; 而以后 core 改值时这里会跟着走, 不再静默分叉。
+        commission_rate=p.get("commission_rate", COMMISSION_RATE),
+        stamp_duty_rate=p.get("stamp_duty_rate", STAMP_DUTY_RATE),
+        min_commission=p.get("min_commission", MIN_COMMISSION),
         slippage=p.get("slippage", 0.0),
         atr_slip_scale=p.get("atr_slip_scale", 0.0),
     )

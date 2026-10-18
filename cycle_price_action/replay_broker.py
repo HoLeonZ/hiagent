@@ -18,6 +18,8 @@ from datetime import date
 from typing import Optional
 
 from core.dual_price import (
+    COMMISSION_RATE,  # §2: canonical 万2.5
+    MIN_COMMISSION,  # §2: canonical ¥5 floor
     STAMP_DUTY_RATE,  # Round 9 (2026-09-28): canonical 万5 sell-only stamp duty
 )
 
@@ -80,7 +82,10 @@ class ReplayBroker:
         static_slip: float = 0.0,
     ) -> float:
         notional = qty * price
-        commission = max(5.0, notional * 0.00025)
+        # 2026-10-19 (§2): 原先这里写死 `max(5.0, notional * 0.00025)` —— 而**同一个
+        # 函数的下一行**已经正确地用了 `STAMP_DUTY_RATE`。**一个函数内部的不对称**:
+        # 三个成本常量里两个是字面量, 一个是绑定。改为绑定 ⇒ 取值逐字节未变。
+        commission = max(MIN_COMMISSION, notional * COMMISSION_RATE)
         # Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical STAMP_DUTY_RATE (万5
         # post-Aug2023); was 0.001 = 万10 pre-Aug2023 historical.
         tax = notional * STAMP_DUTY_RATE if side == "sell" else 0.0

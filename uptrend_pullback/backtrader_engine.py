@@ -32,6 +32,8 @@ import numpy as np
 import pandas as pd
 
 from core.equity_invariants import assert_equity_curve_is_physical
+# §2 Canonical Cost Model: 只在 core/ 定义一次, 引擎必须**导入**而非重写。
+from core.dual_price import COMMISSION_RATE, MIN_COMMISSION, STAMP_DUTY_RATE
 from uptrend_pullback.backtest import INITIAL_CAPITAL, compute_metrics
 from uptrend_pullback.portfolio import TRADE_COLS, simulate_portfolio
 from uptrend_pullback.presets import MAX_HOLD_LIMIT, get_preset
@@ -285,9 +287,10 @@ def run_backtrader_backtest(
         # (commission/stamp/floor) + ATR-aware slippage from preset。
         # Defaults preserve pre-R15 behavior (legacy presets 无 key 时仍得
         # canonical 0.00025+0.0005+5.0 与 0.0 slippage)。
-        commission_rate=p.get("commission_rate", 0.00025),
-        stamp_duty_rate=p.get("stamp_duty_rate", 0.0005),
-        min_commission=p.get("min_commission", 5.0),
+        # 2026-10-19 (§2): 三个默认值原先写死为字面量 ⇒ fail-fast violation; 改为绑定。
+        commission_rate=p.get("commission_rate", COMMISSION_RATE),
+        stamp_duty_rate=p.get("stamp_duty_rate", STAMP_DUTY_RATE),
+        min_commission=p.get("min_commission", MIN_COMMISSION),
         slippage=p.get("slippage", 0.0),
         atr_slip_scale=p.get("atr_slip_scale", 0.0),
         # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System execution source。
@@ -364,8 +367,8 @@ def run_backtrader_backtest(
         # buy_commission = max(notional × commission_rate, min_commission)
         notional_in = entry_price * size
         buy_commission = max(
-            notional_in * p.get("commission_rate", 0.00025),
-            p.get("min_commission", 5.0),
+            notional_in * p.get("commission_rate", COMMISSION_RATE),
+            p.get("min_commission", MIN_COMMISSION),
         )
         invested = notional_in + buy_commission
         net_return = net_pnl_bt / invested if invested > 0 else 0.0

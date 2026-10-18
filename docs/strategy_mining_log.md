@@ -2562,3 +2562,123 @@ E   TypeError: unsupported operand type(s) for *: 'float' and 'NoneType'
   另有一个 `python3 -u -m pytest -q -p no:randomly` (PPID=1, 11:17 起, 99% CPU)
   与本套件争抢单核。**该进程不是本轮启动的**, 也不确定是否为用户自己的运行
   (本机 5 个登录会话), 故**未终止**, 只记录。⇒ 上表时长不代表干净环境下的时长。
+
+### 13.22 ⛔ **§2 Canonical Cost Model 的真规模**: 23 处违反, 其中 18 处在**我从未查过的两族**
+
+#### (a) 起因: 第 120 轮我只修了 3 个文件
+第 120 轮把成本常量上收进 `core.dual_price`, 修了 `short_reversal/engine.py`、
+`short_reversal/replay_strategy_v3.py`、`cycle_price_action/portfolio.py` —— 并写了守卫。
+本轮把同一判据对**四族全量**跑一遍, 结果:
+
+| 族 | 站点 | 我此前知道吗 |
+|---|---|---|
+| `short_reversal` | `replay_strategy_v3.py` **参数默认值** 3 处 | ⚠️ **不知道** (第 120 轮只上收了模块级常量) |
+| `cycle_price_action` | `replay_broker.py::_fee` 裸字面量 2 处 | ⚠️ **不知道** |
+| `chase_up` | `backtest.py` / `backtrader_engine.py`(×2) / `portfolio.py` 共 9 处 | ⛔ **完全不知道** |
+| `uptrend_pullback` | `backtest.py` / `backtrader_engine.py`(×2) / `portfolio.py` 共 9 处 | ⛔ **完全不知道** |
+
+**合计 23 处。** 全部与规范值**逐字节相同** ⇒ 修复零漂移 (见 (e))。
+
+#### (b) ⚠️ 本节真正的发现: **守卫的覆盖面 = 作者已经修过的东西**
+第 120 轮的守卫长这样:
+```python
+BINDINGS      = (("short_reversal/engine.py", ...), ("short_reversal/replay_strategy_v3.py", ...),
+                 ("cycle_price_action/portfolio.py", ...))
+LITERAL_GUARD = (("short_reversal/engine.py", "COMMISSION_RATE", "0.00025"), ...)
+```
+**文件列表是写死的** —— `chase_up/**` 与 `uptrend_pullback/**` 不在里面, 于是守卫
+**结构上不可能看见**那 18 处。
+
+> **它读起来是一条"全库契约"断言, 实际只是"我已修过的三个文件的回归钉桩"。**
+> **⇒ 换个族再犯同样的错, 这条守卫会一直是绿的。**
+
+而且还有**第二个洞**: 正则是 `^\s*{NAME}\s*=\s*{值}` —— 只认 **`UPPER = 字面量`**。
+现存 23 处**全部**是小写 kwarg / dataclass 默认值 / `p.get(..., 默认)` / 裸表达式
+⇒ **旧守卫对它们一处都认不出 (0/23)。**
+
+> **这与本轮之前那条线是同一个病, 但这次长在守卫自己身上:**
+> **§13.13 是"同名不同义"; 本条是"这条断言的名字叫'四族契约', 而它的实体是一个三元素列表"。**
+
+#### (c) 三处具体形态, 各自值得记
+1. **`cycle_price_action/replay_broker.py::_fee` —— 函数内部的对称性缺失**:
+   ```python
+   commission = max(5.0, notional * 0.00025)          # 两个字面量
+   tax = notional * STAMP_DUTY_RATE if side == "sell" # 同一函数下一行却已正确绑定
+   ```
+2. **`short_reversal/replay_strategy_v3.py` —— 注释与代码相反 (第二次)**:
+   第 162 行注释写 "COMMISSION_RATE / STAMP_DUTY_RATE **imported from** core.dual_price
+   single-source", 而下面三行**是字面量**。第 120 轮在 `engine.py` 抓到过**一模一样**的形态
+   ⇒ **同一页纸上的两个地方, 修了一个漏了另一个。**
+3. **`chase_up` / `uptrend_pullback`** —— 注释甚至写明"默认 0.00025/0.0005/5.0 与
+   backtrader_engine.py p.get 默认完全一致", 即**作者知道自己在两处各写一遍**,
+   把"一致"当成安全性来源。**§2 要的不是"两处一致", 是"只有一处"。**
+
+#### (d) 顺带: `cycle_price_action` **没有具名 preset**
+`PRESET_V1` 是一个**扁平的 21 键 dict** (单个参数集), 而另外三族是具名 preset 字典
+(55 / 22 / 4 个)。⇒ "cycle 的 preset 断言"与另三族**结构不同**, 记下以免日后再困惑。
+
+#### (e) 修法与**零漂移的实测证明**
+改了 8 个文件。零漂移**不是推理, 是实测**:
+用同一窗口 (`2025-07-01..2025-09-30`) 在**修复前**与**修复后**各跑一次三族,
+比对 `cagr/sharpe/max_dd/total_return(或 total_yield)/win_rate`:
+
+```
+$ diff /tmp/dt_prefix.json /tmp/dt_final.json
+✅ 仍逐字节相同
+```
+(注: 对照是**真跑两次**, 不是"值相同所以应该一样"。)
+
+#### (f) 守卫重写为**发现式** (§6 双向验证)
+新守卫不再列文件名, 而是**遍历四个族目录下的全部 `.py`**, 两条反面断言:
+* **Rule A 名字锚定**: 任何成本名被绑成**任何数值字面量** ⇒ 违规。
+  判据刻意是"**有没有写成数字**"而不是"等不等于规范值" —— 后者会漏掉**漂移成别的数**
+  (如 `= 0.0003`)。
+* **Rule B 裸字面量**: `* 0.00025` / `* 0.0005` / `max(5.0,` 三种精确形态。
+  **不做泛化数值扫描**: `0.0005` 在 `short_reversal` 里几乎全是 **`sl_pct`**
+  (止损百分比, **巧合同值**) —— 泛扫会大量误报。
+
+**验证 1 (对旧代码跑新守卫)**: `git stash` 掉修复后新守卫 **4 failed**,
+逐条列出 **21 处名字锚定 + 2 处裸字面量 = 23**, 与 (a) 表完全对上;
+而**旧守卫对同一棵树是 0 命中**。
+
+**验证 2 (注入)**: 把 `chase_up/portfolio.py` 的默认值注入成 `0.0003`
+⇒ Rule A **红**, 且另有一条**值比对**守卫同时红。
+
+⇒ 由此确认两条守卫**互补而非重复**:
+| 守卫 | 抓什么 | 注入 `0.0003` 时 |
+|---|---|---|
+| 本文件 Rule A (发现式绑定) | 成本名被写成**数字** | ✅ 红 |
+| `test_cost_model_single_source_enforcement.py` (值比对) | 生效值**偏离规范值** | ✅ 红 |
+两条都不是另一条的弱化版 —— 记下, 免得日后当成冗余删掉一条。
+
+#### (g) ⚠️ 我的修复**当场打红了一条既有守卫** —— 而且它的写法正是本循环一直在批的那种
+`test_cost_model_single_source_enforcement.py::test_chase_up_uptrend_have_correct_commission_rate_values`:
+```python
+if "commission_rate: float = 0.00025" not in source:   # ← 查的是**文本**
+```
+我把字面量换成绑定名之后它立刻红, **而值一个字节都没变**。
+⇒ 与 §13.13 同一条: **它钉的是"这行字长什么样", 不是"生效费率是多少"。**
+
+**修法**: 改为读**函数签名里解析后的默认值**, 直接与 `core.dual_price.COMMISSION_RATE` 比:
+```python
+default = inspect.signature(simulate_portfolio).parameters["commission_rate"].default
+assert default == COMMISSION_RATE
+```
+**无论写成字面量还是绑定, 都得到正确判定; 只有真的改了值才会红。**
+**双向验证**: 注入 `0.0003` ⇒ 红且**按值报出**
+(`生效默认 commission_rate=0.0003 != canonical 0.00025`); 恢复后绿。
+
+#### (h) 干净的否定结果: §2 的 **preset 声明**契约四族全满足
+§2 另有一条: "Every preset MUST **explicitly declare** `max_positions` and
+`position_fraction`"。全量查过:
+`short_reversal` 55 个 / `chase_up` 22 个 / `uptrend_pullback` 4 个 /
+`cycle_price_action` 的单参数集 —— **全部显式声明了两个键, 无一遗漏。** ✅
+
+#### (i) 一个登记性观察 (不动)
+`tests/` 下与成本相关的文件有 **8 个** (`test_cost_literals_are_canonical` /
+`test_cost_model_canonical` / `test_cost_model_conformance` /
+`test_cost_model_single_source_enforcement` / `test_cost_constants_single_source_4engine` /
+`test_cost_cash_rejection_4engine` / `test_cost_model_canonical_conformance_4engine` /
+`test_cost_constants_bound_to_core`), 覆盖面互相重叠。
+**本轮不合并** —— 合并测试是纯粹的整理, 不属于"修违反"; 登记在此, 且本节 (f) 已说明
+其中至少两条**确实是互补的 (不可去重)**。⇒ 若日后要收, 必须**逐对**证明冗余, 不能按名字合并。

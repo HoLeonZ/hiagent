@@ -159,9 +159,11 @@ class Phase3V3Strategy(bt.Strategy):
         margin_rate=0.086,
         # Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical rates (was 0.0006+0.001
         # = 2.4x and 2x off canonical). Canonical values match engine.py
-        # COMMISSION_RATE / STAMP_DUTY_RATE imported from core.dual_price single-source.
-        commission_rate=0.00025,
-        stamp_duty_rate=0.0005,
+        # 2026-10-19 (§2): 这里**原先仍是字面量** 0.00025/0.0005/5.0, 而上面那段注释
+        # 已经宣称 "imported from core.dual_price single-source" —— **注释与代码相反**
+        # (第 120 轮只把模块级常量上收了, 参数层这一处漏掉)。
+        commission_rate=COMMISSION_RATE,
+        stamp_duty_rate=STAMP_DUTY_RATE,
         # Round 29a (2026-09-28, CLAUDE.md §0/§3): MIN_COMMISSION ¥5 floor
         # wired into strategy params so _fill_pending_entries / _close can
         # apply `max(min_commission, notional × commission_rate)`. chase_up +
@@ -169,7 +171,7 @@ class Phase3V3Strategy(bt.Strategy):
         # _buy_cost / _sell_proceeds helpers; short_reversal was the only
         # engine with the constant declared but never enforced (undercharges
         # small-notional trades by ¥2.50-5.00).
-        min_commission=5.0,
+        min_commission=MIN_COMMISSION,
         initial_capital=1_000_000.0,
         lot_size=100,
         # Round 14 (2026-09-28, CLAUDE.md §2): 默认 None, engine 必须显式从 preset

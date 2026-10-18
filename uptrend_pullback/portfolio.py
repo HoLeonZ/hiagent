@@ -23,8 +23,11 @@ import numpy as np
 import pandas as pd
 
 from core.dual_price import (
+    COMMISSION_RATE,  # §2: canonical 万2.5
     LAYOUT_CHASE_UPTREND,
+    MIN_COMMISSION,  # §2: canonical ¥5 floor
     PRICE_SOURCE_RAW,
+    STAMP_DUTY_RATE,  # §2: canonical 万5
     extract_execution_bar,
     is_limit_up,
     validate_price_source,
@@ -213,9 +216,10 @@ def simulate_portfolio(
     start_date: str,
     end_date: str,
     initial_capital: float = 1_000_000.0,
-    commission_rate: float = 0.00025,
-    stamp_duty_rate: float = 0.0005,
-    min_commission: float = 5.0,
+    # 2026-10-19 (§2): 默认值原先写死为字面量 ⇒ fail-fast violation; 改为绑定。
+    commission_rate: float = COMMISSION_RATE,
+    stamp_duty_rate: float = STAMP_DUTY_RATE,
+    min_commission: float = MIN_COMMISSION,
     slippage: float = 0.0,
     # R5 (2026-09-21): ATR-aware slippage (CLAUDE.md §4)。
     # 若 atr_slip_scale > 0, slippage 改为 signal-day atr_pct × participation × scale。
