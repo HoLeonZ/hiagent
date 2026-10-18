@@ -6642,3 +6642,59 @@ monkeypatch `_all_conditions` 使其**只在第一次 `next()` 时为真** ⇒ *
 
 #### (g) §5 记账
 审计节, `n_comparisons` 不变 (186)。
+
+
+### 13.78 ⛔ **判据的单位是「函数体文本里的子串」—— 而注释算数** (第十一处)
+
+#### (a) 形态
+```python
+    m = re.search(r"def _all_thscodes\(.*?\):.*?(?=\ndef |\Z)", src, re.DOTALL)
+    fn_body = m.group(0)
+    has_select = "SELECT DISTINCT thscode" in fn_body
+    has_where_date = "WHERE date <=" in fn_body or "WHERE date <" in fn_body
+```
+判据的单位是 **`re.search` 抓到的函数体文本** —— **注释与可执行代码在它眼里没有区别**。
+
+#### (b) 注入实证
+把**真正的 PIT 查询**换成**无过滤的旧查询**, 只在函数里留一条**注释**:
+```python
+            # INJECT: 真正的 PIT 过滤已被移除; 下面这句注释是留给字符串匹配的
+            # 原文曾是 "WHERE date <= (SELECT MAX(date) ...)" —— 现在只存在于本注释里
+            rows = con.execute("SELECT DISTINCT thscode FROM v_daily ORDER BY thscode").fetchall()
+```
+落地核对 (**用判据本身**): `has_select = True`, `has_where_date = True`
+⇒ 本文件 **`7 passed`**。
+> **⇒ "移除 PIT 过滤"这件事对这条守卫完全不可见。** 它检查的是"这段文字在不在",
+> 而**注释里的文字也算**。
+
+#### (c) 修: 改用 AST 取该函数内的**可执行字符串字面量**
+注释天然不是 `ast.Constant` ⇒ "写在注释里"不再能冒充"写在 SQL 里"。
+
+#### (d) §6 双向验证
+| 检查 | 结果 |
+|---|---|
+| 还原态 | 7 passed |
+| **同一注入**(真过滤拿掉, 字面量只留在注释里) | AST 侧 `has_where_date=False` ⇒ **RED** ✅ (修前 7 passed) |
+| 再还原 | 7 passed ✅ |
+| 附带: `re.` 是否变成孤儿导入 | 文件里仍有 4 处 `re.` 使用 ⇒ 未孤儿化 ✅ |
+
+#### (e) ⚠️ **已知的粗度: 登记, 未修**
+`has_select` 可能来自 `asof_date is None` 那条**旧分支**(它的 SQL 里就有 `SELECT DISTINCT thscode`),
+而 `has_where_date` 来自 PIT 分支 ⇒ **两个子串来自不同分支也能同时成立**。
+⇒ 要做成"**逐分支**"(PIT 分支自己必须有过滤)需按 `if/else` 切子树。
+**这属这条守卫的下一层强度, 不是当前缺口** ⇒ 记在测试的 docstring 里, 未做。
+
+#### (f) 这一类已**十一现**; 本处的单位比前几处更弱
+| 处 | 单位 |
+|---|---|
+| §13.71 | "扫到了吗" |
+| §13.75 | `ast.Dict`(在该族不存在) |
+| §13.77 | `p.exists()`(空壳也算) |
+| **§13.78** | **"文本子串在不在"**(**注释也算**) |
+
+⇒ **单位一层比一层弱**: 文件 → 存在即可 → **文本 → 注释与代码同权**。
+判据那一问因此可以说得更简:
+> **"这个判据能区分「代码里有」与「文本里有」吗?"**
+
+#### (g) §5 记账
+审计节, `n_comparisons` 不变 (186)。
