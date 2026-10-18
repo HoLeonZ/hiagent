@@ -5,9 +5,17 @@ excess return (index or style basket). Pure style-beta replication MUST NOT be
 presented as alpha."
 
 本文件锁定归因机制本身(复利区间收益、超额、beta、以及"无法计算时不伪造")。
-**注意:机制正确 ≠ §5 已满足** —— 本地行情库没有任何指数序列,故归因当前无法真正
-计算;该数据缺口由 `test_benchmark_data_gap_is_registered` 显式登记,避免它再次
-退化为"没人提起所以不存在"。
+
+**2026-10-18 更正(附六十二)**:原文写「本地行情库没有任何指数序列,故**归因当前无法
+真正计算**」—— 这句把**指数那一支**的缺口说成了**整条 §5 要求**的缺口。§5 允许
+「index **or style basket**」,而**风格篮子**那一支已经落地并接线:
+`core/benchmark.py`(该窗口 PIT 宇宙等权买入持有)+ 各引擎逐次发布
+`benchmark_kind / benchmark_return / excess_return`。**指数**那一支确实仍缺数据,
+登记在 `test_benchmark_data_gap_is_registered`。
+
+本文件测的 `dna_stats/attribution.py` 则是**已实现、已有测试、但没有任何生产代码调用**
+的那一支(它在等指数序列)。该"未接线"现状由本文件末尾的
+`test_the_dormant_module_is_not_wired_is_registered` 登记。
 """
 from __future__ import annotations
 
@@ -162,4 +170,56 @@ def test_benchmark_data_gap_is_registered() -> None:
     # 若将来引入了指数,本测试自然转为检查基准可用
     assert any("index" in str(t) for t in types), (
         f"asset_type 出现了非个股类别但不像指数:{types} —— 请更新本登记"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 附六十二 —— 登记:"已实现、已测、但无生产调用"的那一支
+# ---------------------------------------------------------------------------
+
+
+def _production_importers_of_attribution() -> list[str]:
+    """扫**生产代码**(排除 tests/ 与 dna_stats/ 自身)里对 `dna_stats.attribution`
+    的导入。无法解析的文件**报出来**而不是跳过(附六十 的教训:静默跳过 = 静默失去覆盖)。
+    """
+    import ast
+
+    out: list[str] = []
+    for path in sorted(REPO_ROOT.rglob("*.py")):
+        rel = path.relative_to(REPO_ROOT)
+        if rel.parts[0] in {"tests", "dna_stats"} or "__pycache__" in rel.parts:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError) as e:
+            out.append(f"{rel}: UNPARSEABLE {type(e).__name__}")
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "dna_stats.attribution":
+                out.append(f"{rel}:{node.lineno} from dna_stats.attribution import …")
+            if isinstance(node, ast.Import):
+                for a in node.names:
+                    if a.name == "dna_stats.attribution":
+                        out.append(f"{rel}:{node.lineno} import dna_stats.attribution")
+    return out
+
+
+def test_the_dormant_module_is_not_wired_is_registered() -> None:
+    """**登记**:`dna_stats/attribution.py` 已实现、已被本文件覆盖,**却没有任何生产
+    代码调用它** —— 它在等**指数序列**(`hithink-finance index history`,本机没有)。
+
+    已接线的那一支是 `core/benchmark.py`(风格篮子),由各引擎逐次发布
+    `benchmark_kind / benchmark_return / excess_return`。
+
+    这条守卫钉住"现状 = 已登记的休眠":一旦有人把本模块接进引擎/工具,它**变红**,
+    提示同步更新 `dna_stats/attribution.py` 的说明与本登记(以及检查它与
+    `core/benchmark.py` 的关系:两支的基准口径不同,是一支还是两支并存需要明确)。
+
+    不删这个模块:它是**指数基准**的现成实现,指数数据到位后正是要接的那一段。
+    """
+    importers = _production_importers_of_attribution()
+    assert not importers, (
+        "§5: `dna_stats/attribution.py` 已被生产代码接线 —— 请更新它的模块说明、"
+        "本登记,并明确它与 core/benchmark.py 的分工(两支基准口径不同):\n  "
+        + "\n  ".join(importers)
     )

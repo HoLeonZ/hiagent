@@ -7,7 +7,15 @@ CLAUDE.md §5 原文:
     replication (e.g. size/momentum factor exposure) MUST NOT be presented
     as alpha.
 
-本仓库此前**完全没有实现**这一条(只报裸收益),故本节是"补空缺",不是"修缺陷"。
+本节是"补空缺":本仓库此前只报裸收益。
+
+**与 `dna_stats/attribution.py` 的关系(2026-10-18 更正,附六十二)**:那份模块
+(`attribute()`,含 beta、可注入基准序列)是同一批工作里的**另一支**,已经实现、已有测试
+(`tests/test_attribution.py`),但**没有任何生产代码调用它** —— 它在等**指数序列**
+(`hithink-finance index history`),而那台数据本机没有。
+本模块负责的是**已接线**的那一支:风格篮子基准 + 引擎逐次发布。
+两支合起来才是 §5 的完整形态;此前本文件写的是"本仓库完全没有实现这一条",
+那句话**在同一提交里就已经不成立**(附六十二 更正)。
 
 ## 基准的选择(已声明,可替换)
 

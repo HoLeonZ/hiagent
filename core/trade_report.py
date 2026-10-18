@@ -112,14 +112,20 @@ def _chart_payload(
 #:    return (index or style basket). Pure style-beta replication MUST NOT be
 #:    presented as alpha."
 #:
-#: 本地行情库**没有任何指数序列**(`dim_symbol.asset_type` 全为 a-share),
-#: 故归因当前不可计算。§5 要求在这种状态下把结论**显式标注为「未归因」**,
-#: 而不是把裸绝对收益当作 alpha 呈现。报告渲染器是唯一的规范展示点,所以标注
-#: 只需一处 —— 而且它随**每一份报告**一起走,不是只躺在某个测试的 skip 文本里。
+#: 本地行情库**没有任何指数序列**(`dim_symbol.asset_type` 全为 a-share)——
+#: 但**这不等于"归因不可计算"**(2026-10-18 更正,附六十二):§5 允许
+#: 「index **or style basket**」,而**风格篮子**这一支已经落地并在每次回测里发布 ——
+#: `core/benchmark.py` 的「该窗口 PIT 宇宙等权买入持有」,产物带
+#: `benchmark_kind / benchmark_return / benchmark_members / excess_return`。
+#: 此前这段文字写的是"归因暂不可计算",它把**指数那一支**的缺口说成了**整条 §5 要求**
+#: 的缺口 —— 读报告的人因此会以为 §5 没被满足,而实际上只是**换了一支基准**。
+#: §5 真正禁止的是"把裸绝对收益当 alpha 呈现",这一点仍然必须显式标注。
 UNATTRIBUTED_NOTICE = (
-    "未归因(CLAUDE.md §5): 上方为绝对收益,不含基准相对超额 —— "
-    "本地行情库无指数序列,归因暂不可计算。"
-    "补齐方式与机制见 dna_stats/attribution.py。"
+    "未归因(CLAUDE.md §5):本报告展示的是绝对收益,不含**指数**基准相对超额 —— "
+    "本地行情库无指数序列。**但这不等于 §5 未满足**:风格篮子基准"
+    "(该窗口 PIT 宇宙等权买入持有)已随回测产物发布 —— 见该次运行的 metrics 里的 "
+    "benchmark_kind / benchmark_return / excess_return;指数基准的补齐机制见 "
+    "core/benchmark.py 与 dna_stats/attribution.py。"
 )
 
 

@@ -25,6 +25,13 @@ alpha;把止损/择时带来的 beta 暴露当作 alpha 汇报,是审计在 §5 
   写入行情库**的动作,应由数据管道拥有者执行。
 
   在基准到位之前,任何只报绝对收益的结论都应显式标注为"未归因"。
+
+**本模块当前是"已实现但未接线"**(2026-10-18,附六十二):`attribute()` 有完整测试
+(`tests/test_attribution.py`)但**没有任何生产代码导入它** —— 它要的是**指数**收益序列。
+**已接线**的那一支是 `core/benchmark.py`(风格篮子 = 该窗口 PIT 宇宙等权买入持有),
+由各引擎随每次回测发布 `benchmark_kind / benchmark_return / excess_return`。
+`tests/test_attribution.py::test_the_dormant_module_is_not_wired_is_registered`
+把"未接线"这个现状**登记**下来:一旦有人接上,那条守卫会变红,提示同步更新本段说明。
 """
 from __future__ import annotations
 
