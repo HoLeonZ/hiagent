@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 
 from web.params import (
+    IGNORED_KEYS,
     PARAM_METADATA,
     OverrideError,
     split_params,
@@ -13,7 +14,7 @@ from web.params import (
 
 def test_split_separates_tunable_from_declarations():
     out = split_params("short_reversal", "v50_slope")
-    assert set(out) == {"tunable", "declarations", "metadata"}
+    assert set(out) == {"tunable", "declarations", "ignored", "metadata"}
     # 声明字段必须落在 declarations 里，且不得出现在 tunable
     assert "n_comparisons" in out["declarations"]
     assert "price_source_for_signal" in out["declarations"]
@@ -26,7 +27,12 @@ def test_tunable_contains_real_strategy_parameters():
 
 
 def test_metadata_covers_every_tunable_key():
-    """双向之一：可调键必须有元数据，否则 UI 会静默漏掉一个参数。"""
+    """双向之一：可调键必须有元数据，否则 UI 会静默漏掉一个参数。
+
+    忽略键（引擎不消费、覆盖无效）**不属于** `tunable`，故此处**不**要求它们有元数据。
+    但它们与 `tunable` / `declarations` 必须是互斥划分——这里一并钉住
+    `ignored ∩ tunable == ∅`（否则忽略键会既"可调"又"被忽略"，语义自相矛盾）。
+    """
     for engine in ("short_reversal", "chase_up", "uptrend_pullback", "cycle_price_action"):
         from web.catalog import all_presets
 
@@ -34,6 +40,14 @@ def test_metadata_covers_every_tunable_key():
             out = split_params(engine, preset)
             missing = set(out["tunable"]) - set(out["metadata"])
             assert not missing, f"{engine}/{preset} 缺少元数据: {sorted(missing)}"
+            assert not (set(out["ignored"]) & set(out["tunable"])), (
+                f"{engine}/{preset} 的 ignored 与 tunable 重叠: "
+                f"{sorted(set(out['ignored']) & set(out['tunable']))}"
+            )
+            assert not (set(out["ignored"]) & set(out["declarations"])), (
+                f"{engine}/{preset} 的 ignored 与 declarations 重叠: "
+                f"{sorted(set(out['ignored']) & set(out['declarations']))}"
+            )
 
 
 def test_metadata_has_no_ghost_keys():
@@ -45,17 +59,19 @@ def test_metadata_has_no_ghost_keys():
 
     真正的幽灵：登记在 `PARAM_METADATA[引擎]` 里、却不出现在该引擎**任何 preset**
     的可调键并集中的键。`overrides` 永远暴露不到它、UI 也永远编辑不到它。
+
+    **忽略键也算"真实键"**，必须被本检查覆盖：它们仍出现在 preset 里（只是引擎不消费），
+    故 `PARAM_METADATA` 里为它们留的条目不是幽灵。合法键域 = `tunable ∪ ignored`
+    （二者恰好是该引擎 preset 里全部非声明键）。
     """
-    from web.catalog import DECLARATION_KEYS, all_presets
+    from web.catalog import all_presets
 
     for engine, engine_presets in all_presets().items():
-        tunable_union = {
-            k
-            for params in engine_presets.values()
-            for k in params
-            if k not in DECLARATION_KEYS
-        }
-        ghosts = set(PARAM_METADATA.get(engine, {})) - tunable_union
+        referenced: set[str] = set()
+        for preset in engine_presets:
+            out = split_params(engine, preset)
+            referenced |= set(out["tunable"]) | set(out["ignored"])
+        ghosts = set(PARAM_METADATA.get(engine, {})) - referenced
         assert not ghosts, f"{engine} 元数据有幽灵键: {sorted(ghosts)}"
 
 
@@ -102,14 +118,21 @@ def test_overrides_accepts_a_real_bool():
 
 
 def test_overrides_rejects_a_string_for_a_list_param():
-    """Important 1: list 参数（periods / ensemble_substrategies）此前任意值放行。"""
+    """Important 1: list 参数（ensemble_substrategies）此前任意值放行。
+
+    注：cycle 的 `periods` 也曾在旧版被用作 list 参数样例，但它现已是**引擎忽略键**
+    （见 test_overrides_rejects_an_engine_ignored_key），故换成 short_reversal 的
+    真正可调 list 参数 `ensemble_substrategies`。
+    """
     with pytest.raises(OverrideError, match="type"):
-        validate_overrides("cycle_price_action", "PRESET_V1", {"periods": "abc"})
+        validate_overrides("short_reversal", "v63_ensemble", {"ensemble_substrategies": "abc"})
 
 
 def test_overrides_accepts_a_list_for_a_list_param():
-    got = validate_overrides("cycle_price_action", "PRESET_V1", {"periods": [3, 5, 8]})
-    assert got == {"periods": [3, 5, 8]}
+    got = validate_overrides(
+        "short_reversal", "v63_ensemble", {"ensemble_substrategies": ["v50_slope", "v44_ratio02_buf07"]}
+    )
+    assert got == {"ensemble_substrategies": ["v50_slope", "v44_ratio02_buf07"]}
 
 
 def test_overrides_rejects_a_string_for_a_dict_param():
@@ -191,11 +214,14 @@ def test_overrides_accepts_every_declared_choice():
 
 
 def test_split_params_periods_is_not_the_engine_global():
-    """Important 4 要求的 `is not` 实测：cycle 的 periods（tuple）不再同引用。"""
+    """Important 4 要求的 `is not` 实测：cycle 的 periods（tuple）不再同引用。
+
+    `periods` 是引擎忽略键，现归 `ignored`（而非 `tunable`），但深拷贝保证不变。
+    """
     import cycle_price_action.presets as cp
 
     out = split_params("cycle_price_action", "PRESET_V1")
-    assert out["tunable"]["periods"] is not cp.PRESET_V1["periods"]
+    assert out["ignored"]["periods"] is not cp.PRESET_V1["periods"]
 
 
 def test_every_preset_accepts_its_own_values():
@@ -204,18 +230,88 @@ def test_every_preset_accepts_its_own_values():
     不变量：校验器不得拒掉引擎自己的取值。
     缺这条时，cycle 的 tuple `periods` 被拒而 29 条测试全绿——用户在 UI 里
     不动参数直接提交会拿到 400，而参数是对的。
+
+    排除 `declarations`（只读契约字段）与 `ignored`（引擎忽略键，覆盖**本应**被拒）
+    ——这两类都不是"可调取值"。
     """
     from web.catalog import DECLARATION_KEYS, all_presets
 
     bad = []
     for engine, presets in all_presets().items():
+        ignored = IGNORED_KEYS.get(engine, frozenset())
         for name, params in presets.items():
-            tunable = {k: v for k, v in params.items() if k not in DECLARATION_KEYS}
+            tunable = {
+                k: v for k, v in params.items()
+                if k not in DECLARATION_KEYS and k not in ignored
+            }
             try:
                 validate_overrides(engine, name, tunable)
             except Exception as exc:
                 bad.append(f"{engine}/{name}: {type(exc).__name__}: {exc}")
     assert not bad, "校验器拒掉了 preset 自己的取值:\n  " + "\n  ".join(bad)
+
+
+# --- 引擎忽略键（焦点 3）：存在于 preset 但引擎不消费，覆盖必须 fail-fast ---
+
+
+def test_cycle_engine_declares_its_lazy_keys_as_ignored():
+    """cycle 的 4 个惰性键必须被登记为 ignored，且声明字段优先。
+
+    回归守卫：若 `IGNORED_KEYS` 被整体删掉，这 4 个键会重新落回 `tunable`，
+    用户又能"填了没用"——本测试即变红。
+    """
+    out = split_params("cycle_price_action", "PRESET_V1")
+    lazy = {"weight_kline", "weight_cycle", "weight_calendar", "periods"}
+    assert lazy <= set(out["ignored"]), (
+        f"cycle 惰性键未全部登记为 ignored: {sorted(lazy - set(out['ignored']))}"
+    )
+    # 声明优先：max_volume_participation 同时是 DECLARATION_KEYS，落在 declarations，
+    # 不得因出现在 IGNORED_KEYS 里就挪进 ignored 或 tunable。
+    assert "max_volume_participation" in out["declarations"]
+    assert "max_volume_participation" not in out["ignored"]
+    assert "max_volume_participation" not in out["tunable"]
+
+
+def test_overrides_rejects_an_engine_ignored_key():
+    """覆盖引擎忽略键必须 fail-fast（不再静默丢弃，§本任务焦点 3）。"""
+    for key in ("weight_kline", "weight_cycle", "weight_calendar", "periods"):
+        with pytest.raises(OverrideError, match="ignored"):
+            validate_overrides("cycle_price_action", "PRESET_V1", {key: 1.0})
+
+
+def test_declaration_wins_over_ignored_on_the_overlap():
+    """重叠加键（max_volume_participation）必须以 declaration 名义被拒，而非 ignored。"""
+    with pytest.raises(OverrideError, match="declaration"):
+        validate_overrides("cycle_price_action", "PRESET_V1", {"max_volume_participation": 0.2})
+
+
+def test_ignored_keys_point_at_real_preset_keys_and_respect_declaration_priority():
+    """IGNORED_KEYS 不得有幽灵/错别字：每个键必须是该引擎某个 preset 的真实键。
+
+    与 `DECLARATION_KEYS` 的**重叠是允许且有意的**（cycle 的
+    `max_volume_participation` 既被引擎过滤、又是 §4 契约字段），故此处**不**要求
+    二者互斥，而是钉住"重叠时声明优先"的落地：这类键必须出现在 `split_params` 的
+    `declarations` 里、不出现在 `ignored` / `tunable` 里。
+    """
+    from web.catalog import DECLARATION_KEYS, all_presets
+
+    presets = all_presets()
+    for engine, ignored in IGNORED_KEYS.items():
+        engine_keys = {k for params in presets.get(engine, {}).values() for k in params}
+        assert ignored <= engine_keys, (
+            f"{engine} 的 IGNORED_KEYS 含幽灵键: {sorted(ignored - engine_keys)}"
+        )
+        # 声明优先落地：与 DECLARATION_KEYS 重叠的键归 declarations，不进 ignored/tunable。
+        overlap = set(ignored) & set(DECLARATION_KEYS)
+        for name in presets.get(engine, {}):
+            out = split_params(engine, name)
+            assert overlap <= set(out["declarations"]), (
+                f"{engine}/{name} 声明/忽略重叠键未落入 declarations: "
+                f"{sorted(overlap - set(out['declarations']))}"
+            )
+            assert not (overlap & (set(out["ignored"]) | set(out["tunable"]))), (
+                f"{engine}/{name} 声明/忽略重叠键出现了二义归属"
+            )
 
 
 def test_catalog_output_is_detached_from_engine_globals():

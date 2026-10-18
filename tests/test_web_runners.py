@@ -4,9 +4,18 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
-from web.runners import PREVIEW_DAYS, RunResult, WindowTooShortError, effective_window, run
+from web.runners import (
+    EngineInputError,
+    PREVIEW_DAYS,
+    RunResult,
+    WindowTooShortError,
+    _as_trades,
+    effective_window,
+    run,
+)
 
 from hiagent_config import get_db_path
 
@@ -36,6 +45,86 @@ def test_full_window_is_returned_unchanged():
     assert effective_window("full", "2020-01-01", "2026-06-30") == ("2020-01-01", "2026-06-30")
 
 
+# --- _as_trades 的三条归一分支（不依赖 DB；brief 原稿恰有两处写错） ---
+
+
+def test_as_trades_normalizes_a_dataframe():
+    """chase_up / uptrend_pullback：`res["trades"]` 是 pandas DataFrame。"""
+    df = pd.DataFrame([
+        {"thscode": "000001.SZ", "pnl": 1.5},
+        {"thscode": "600000.SH", "pnl": -0.5},
+    ])
+    got = _as_trades(df)
+    assert got == [
+        {"thscode": "000001.SZ", "pnl": 1.5},
+        {"thscode": "600000.SH", "pnl": -0.5},
+    ]
+
+
+def test_as_trades_normalizes_a_frozen_dataclass_list():
+    """cycle：TradeRecord 是 **frozen dataclass**，不可迭代 —— `dict(t)` 会抛
+    `TypeError: 'TradeRecord' object is not iterable`（brief 原稿写错的地方）。
+    必须走 `dataclasses.asdict`。"""
+    import datetime as _dt
+
+    from cycle_price_action.metrics import TradeRecord
+
+    rec = TradeRecord(
+        thscode="002189.SZ",
+        entry_date=_dt.date(2025, 10, 8),
+        exit_date=_dt.date(2025, 10, 15),
+        entry_price=10.0,
+        exit_price=11.0,
+        shares=100,
+        pnl=100.0,
+        hold_days=5,
+        k_line_score=2.0,
+        phase_score=1.0,
+        calendar_score=0.0,
+    )
+    got = _as_trades([rec])
+    assert isinstance(got, list) and len(got) == 1
+    assert isinstance(got[0], dict)
+    assert got[0]["thscode"] == "002189.SZ" and got[0]["pnl"] == 100.0
+
+
+def test_as_trades_normalizes_a_list_of_dicts():
+    """short_reversal：`t2 = dict(t)` 逐笔重建出的 list[dict]。"""
+    assert _as_trades([{"thscode": "000001.SZ"}]) == [{"thscode": "000001.SZ"}]
+
+
+def test_as_trades_treats_none_and_empty_as_no_trades():
+    assert _as_trades(None) == []
+    assert _as_trades([]) == []
+
+
+def test_run_injects_the_real_preset_name_into_params(monkeypatch):
+    """评审焦点 2：平台走 **dict** 通路，`run()` 必须在调引擎前把真名注入 `params["_name"]`。
+
+    否则 short_reversal 引擎把 metrics["preset"] 落成 `"<dict>"`（实测），
+    与 `RunResult.preset` 口径不一致、并在报错消息里串入整个 dict。
+    用替身 runner 捕获 params：不跑引擎、不碰 DB。
+    """
+    import web.runners as runners_mod
+
+    captured: dict = {}
+
+    def fake(preset, start, end, db, params):
+        captured["params"] = dict(params)
+        return RunResult("short_reversal", preset, start, end, {}, [])
+
+    monkeypatch.setitem(runners_mod._RUNNERS, "short_reversal", fake)
+    got = run(
+        "short_reversal", "v50_slope", "2025-01-01", "2025-06-30",
+        overrides={"tp_pct": 0.30},
+    )
+
+    assert captured["params"]["_name"] == "v50_slope"
+    # 覆盖值仍照常并入 params（注入不吞掉 clean）
+    assert captured["params"]["tp_pct"] == 0.30
+    assert got.preset == "v50_slope"
+
+
 @pytest.mark.skipif(_db() is None, reason=SKIP_REASON)
 def test_run_returns_the_uniform_shape_for_short_reversal():
     """full 模式用引擎默认 min_bars；窗口足够宽，不应触发 F-01。"""
@@ -56,6 +145,20 @@ def test_window_too_short_raises_a_named_error_not_a_bare_valueerror():
     """
     with pytest.raises(WindowTooShortError, match="min_bars"):
         run("short_reversal", "v50_slope", "2026-01-05", "2026-01-20")
+
+
+@pytest.mark.skipif(_db() is None, reason=SKIP_REASON)
+def test_empty_universe_raises_a_named_engine_input_error_not_a_bare_valueerror():
+    """评审焦点 1：空 universe 守卫抛的 ValueError 消息里**不含** `min_bars`。
+
+    只靠 `"min_bars" in str(exc)` 判据会把它漏成裸 `ValueError` → HTTP 层 500，
+    而它和"窗口太短"同类（数据覆盖问题），该是 400。修后统一具名化为 EngineInputError。
+
+    实测触发窗口：as-of（2016-01-05）早于数据地板 → `load_universe_asof` 返回 []。
+    """
+    assert not issubclass(EngineInputError, WindowTooShortError)
+    with pytest.raises(EngineInputError):
+        run("short_reversal", "v50_slope", "2016-01-05", "2016-02-05")
 
 
 @pytest.mark.skipif(_db() is None, reason=SKIP_REASON)
@@ -100,3 +203,45 @@ def test_passing_a_name_still_behaves_identically():
     db = _db()
     m = run_backtest_v3("v50_slope", "2025-09-12", "2026-09-12", db)
     assert m["trades_count"] == 74, "v50_slope 在 golden 窗口上仍是 74 笔"
+
+
+# --- 其余三个引擎的统一形状（评审焦点 3：适配器只测了 1/4 个引擎）---
+#
+# 用 preview（chase_up / uptrend 的 preview ≈ 5 秒）或 cycle 的**无缺口**极小窗口。
+# cycle 在含停牌缺口的窗口上会崩（引擎自身缺陷，已登记，非本适配器问题），
+# 故 2025-10-08..2025-10-20 是实测无缺口、可稳定出笔的窗口。
+
+
+def _assert_uniform_shape(got: RunResult, *, engine: str, preset: str) -> None:
+    assert isinstance(got, RunResult)
+    assert got.engine == engine and got.preset == preset
+    assert isinstance(got.trades, list)
+    assert all(isinstance(t, dict) for t in got.trades), "trades 必须归一为 list[dict]"
+    assert isinstance(got.metrics, dict)
+    assert "trades_count" in got.metrics, "适配器必须保证统一键 trades_count 存在"
+    assert got.metrics["trades_count"] == len(got.trades)
+
+
+@pytest.mark.skipif(_db() is None, reason=SKIP_REASON)
+def test_run_returns_the_uniform_shape_for_chase_up():
+    """chase_up：包装 dict + DataFrame trades → 统一 RunResult（此前零覆盖）。"""
+    got = run("chase_up", "chase_v1_atr_tp4_sl1", "2025-09-12", "2026-03-12", mode="preview")
+    _assert_uniform_shape(got, engine="chase_up", preset="chase_v1_atr_tp4_sl1")
+
+
+@pytest.mark.skipif(_db() is None, reason=SKIP_REASON)
+def test_run_returns_the_uniform_shape_for_uptrend_pullback():
+    """uptrend_pullback：同 chase_up（包装 dict + DataFrame）→ 统一 RunResult（此前零覆盖）。"""
+    got = run("uptrend_pullback", "v33_long_reverse_v21", "2025-09-12", "2026-03-12",
+              mode="preview")
+    _assert_uniform_shape(got, engine="uptrend_pullback", preset="v33_long_reverse_v21")
+
+
+@pytest.mark.skipif(_db() is None, reason=SKIP_REASON)
+def test_run_returns_the_uniform_shape_for_cycle_price_action():
+    """cycle_price_action：date 入参 + frozen-dataclass 出参 → 统一 RunResult。
+
+    窗口必须无停牌缺口（含缺口时引擎自身抛 RuntimeError，非本适配器问题）。
+    """
+    got = run("cycle_price_action", "PRESET_V1", "2025-10-08", "2025-10-20")
+    _assert_uniform_shape(got, engine="cycle_price_action", preset="PRESET_V1")

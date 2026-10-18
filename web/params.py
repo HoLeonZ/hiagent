@@ -135,11 +135,42 @@ PARAM_METADATA: dict[str, dict[str, dict[str, Any]]] = {
 }
 
 
+#: 存在于 preset 里、但**引擎不消费**的键。改它们没有任何效果。
+#: 依据：各引擎源码里的过滤白名单（cycle_price_action/backtest.py:69-76）。
+#:
+#: cycle_price_action 的 `run_backtest` 用 `_accepted` 白名单过滤 preset
+#: （backtest.py:75-76），下面这些键**不在**白名单里，会被静默丢弃
+#: （`periods` 走模块级 `DEFAULT_PERIODS`）。引擎源码注释（:69-71）自述
+#: 它们 "live in PRESET_V1 but are not in the strategy params tuple; passing them
+#: would TypeError"，即引擎是**故意**过滤。
+#:
+#: 平台若不拦：用户改了 → 过 `validate_overrides` → 到引擎被静默丢弃——正是本项目
+#: 最忌的一类（"用户以为改了但没改"）。故在此声明为忽略键，由 `validate_overrides`
+#: fail-fast。**这 4 个惰性键（weight_* / periods）才是 ignored；`max_volume_participation`
+#: 虽也列在此处，但它同时是 §4 契约字段 → 见下。**
+#:
+#: 重叠处理（声明优先）：`max_volume_participation` 同时是 `DECLARATION_KEYS` 的一员。
+#: 它是 §2/§4 契约声明字段，**声明优先于忽略**——它留在 `declarations`，
+#: 覆盖它会报 "declaration"（declaration 判定在 ignored 判定之前），不会落到
+#: ignored 分支。故 IGNORED_KEYS 里列出它只是"如实登记引擎会过滤它"，
+#: 不改变它在 `split_params` 的归属（仍在 `declarations`）。
+IGNORED_KEYS: dict[str, frozenset[str]] = {
+    "cycle_price_action": frozenset({
+        "weight_kline", "weight_cycle", "weight_calendar", "periods",
+        "max_volume_participation",
+    }),
+}
+
+
 def split_params(engine: str, preset: str) -> dict[str, Any]:
-    """把一个预设拆成 `{tunable, declarations, metadata}`。
+    """把一个预设拆成 `{tunable, declarations, ignored, metadata}`。
+
+    四者是**互斥划分**：`declarations`（声明字段）> `ignored`（引擎不消费的键）>
+    `tunable`（其余可调键）。声明优先：同时落入 `DECLARATION_KEYS` 与 `IGNORED_KEYS`
+    的键（cycle 的 `max_volume_participation`）归 `declarations`，不进 `ignored`。
 
     **返回值是调用方私有**：底层来自 `all_presets()` 的深拷贝，`tunable` /
-    `declarations` 里的嵌套 dict/list/tuple 与引擎模块的全局 `PRESETS`
+    `declarations` / `ignored` 里的嵌套 dict/list/tuple 与引擎模块的全局 `PRESETS`
     不共享引用，可安全原地修改。
     """
     presets = all_presets()
@@ -149,13 +180,24 @@ def split_params(engine: str, preset: str) -> dict[str, Any]:
         raise KeyError(f"unknown preset: {preset}")
 
     params = presets[engine][preset]
+    ignored_set = IGNORED_KEYS.get(engine, frozenset())
     declarations = {k: v for k, v in params.items() if k in DECLARATION_KEYS}
-    tunable = {k: v for k, v in params.items() if k not in DECLARATION_KEYS}
+    # 声明优先：与 DECLARATION_KEYS 重叠的键不进 ignored（否则 max_volume_participation
+    # 会被同时登记，覆盖它时的报错理由就不确定）。
+    ignored = {
+        k: v for k, v in params.items()
+        if k in ignored_set and k not in DECLARATION_KEYS
+    }
+    tunable = {
+        k: v for k, v in params.items()
+        if k not in DECLARATION_KEYS and k not in ignored_set
+    }
     meta = PARAM_METADATA.get(engine, {})
     # 只为**实际存在**的可调键提供元数据；元数据里的幽灵键由测试抓
     return {
         "tunable": tunable,
         "declarations": declarations,
+        "ignored": ignored,
         "metadata": {k: meta[k] for k in tunable if k in meta},
     }
 
@@ -163,12 +205,19 @@ def split_params(engine: str, preset: str) -> dict[str, Any]:
 def validate_overrides(engine: str, preset: str, overrides: dict[str, Any]) -> dict[str, Any]:
     """校验并清洗 overrides。
 
-    四类拒绝：
+    五类拒绝：
       - declaration：声明字段受 §2/§3/§4/§5 约束，不可在 UI 修改
+      - ignored：键存在于 preset 里、但**引擎不消费**（如 cycle 的 weight_* / periods），
+        覆盖它没有效果——静默放行会让用户以为改了但没改
       - unknown：未知键（静默忽略会让用户以为改了但没改）
       - type：类型/取值范围/枚举与元数据不符（含 bool 冒充数值、可调键缺元数据），
         以及 `overrides` 整体不是 mapping（客户端传错容器类型）
       - KeyError：引擎/预设不存在
+
+    判定次序固定为 declaration → ignored → unknown（**声明优先**）：一个键可能
+    同时是契约声明字段与引擎忽略键（cycle 的 `max_volume_participation`），
+    此时以 declaration 报错。ignored 判定必须在 unknown **之前**——忽略键不在
+    `tunable` 里，否则会被 unknown 抢先以错误理由拒掉。
 
     先调 `split_params` 校验引擎与预设合法性，**再**处理空 overrides 的短路——
     否则 `validate_overrides('bogus', 'bogus', {})` 会对一个不存在的引擎静默成功。
@@ -201,6 +250,18 @@ def validate_overrides(engine: str, preset: str, overrides: dict[str, Any]) -> d
             f"declaration field(s) are read-only: {bad_decl} — "
             "these are CLAUDE.md §2/§3/§4/§5 contract declarations and editing them "
             "produces a preset that fails the compliance audit"
+        )
+
+    # 引擎忽略键：存在于 preset、但引擎的过滤白名单不消费它（改它没有任何效果）。
+    # 必须在 unknown **之前**判——忽略键不在 tunable 里，否则会被 unknown 抢先拒掉，
+    # 用户看到"未知参数"而真实原因是"这个键引擎根本不读"。
+    bad_ignored = sorted(set(overrides) & set(out["ignored"]))
+    if bad_ignored:
+        raise OverrideError(
+            f"ignored parameter(s): {bad_ignored} — these keys exist in the preset but "
+            "the engine does not consume them (filtered by its accepted-keys whitelist, "
+            "e.g. cycle_price_action/backtest.py:69-76). Overriding them has no effect, "
+            "so the override is refused instead of silently dropped"
         )
 
     unknown = sorted(set(overrides) - set(tunable))
