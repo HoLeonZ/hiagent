@@ -198,6 +198,26 @@ def test_split_params_periods_is_not_the_engine_global():
     assert out["tunable"]["periods"] is not cp.PRESET_V1["periods"]
 
 
+def test_every_preset_accepts_its_own_values():
+    """每个 preset 的真实可调取值都必须能通过 validate_overrides。
+
+    不变量：校验器不得拒掉引擎自己的取值。
+    缺这条时，cycle 的 tuple `periods` 被拒而 29 条测试全绿——用户在 UI 里
+    不动参数直接提交会拿到 400，而参数是对的。
+    """
+    from web.catalog import DECLARATION_KEYS, all_presets
+
+    bad = []
+    for engine, presets in all_presets().items():
+        for name, params in presets.items():
+            tunable = {k: v for k, v in params.items() if k not in DECLARATION_KEYS}
+            try:
+                validate_overrides(engine, name, tunable)
+            except Exception as exc:
+                bad.append(f"{engine}/{name}: {type(exc).__name__}: {exc}")
+    assert not bad, "校验器拒掉了 preset 自己的取值:\n  " + "\n  ".join(bad)
+
+
 def test_catalog_output_is_detached_from_engine_globals():
     """Important 4: 任何嵌套容器都不得与引擎模块的全局 PRESETS 同引用。
 

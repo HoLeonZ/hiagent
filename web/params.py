@@ -218,8 +218,14 @@ def validate_overrides(engine: str, preset: str, overrides: dict[str, Any]) -> d
             raise OverrideError(f"type error: {key} expects int, got {type(value).__name__}")
         elif want == "str" and not isinstance(value, str):
             raise OverrideError(f"type error: {key} expects str, got {type(value).__name__}")
-        elif want == "list" and not isinstance(value, list):
-            raise OverrideError(f"type error: {key} expects list, got {type(value).__name__}")
+        elif want == "list" and not isinstance(value, (list, tuple)):
+            # 引擎里 periods 存的是 tuple（cycle PRESET_V1），而 JSON 只能表示
+            # list —— 值从前端回来必然是 list。两者都是这个参数域的合法形态：
+            # 只接 list 会拒掉引擎自己的 tuple（校验器拒真值），只接 tuple 又
+            # 会拒掉前端回声。两边都接。
+            raise OverrideError(
+                f"type error: {key} expects list, got {type(value).__name__}"
+            )
         elif want == "dict" and not isinstance(value, dict):
             raise OverrideError(f"type error: {key} expects dict, got {type(value).__name__}")
 
