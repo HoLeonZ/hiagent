@@ -258,14 +258,17 @@ def test_chase_up_no_hardcoded_cost_literals() -> None:
     results = _scan_hardcoded_costs()
     chase = results["chase_up"]
 
-    # chase_up may have historical hardcodes (DUPLICATED per Tick 53)
-    # but NEW hardcodes introduced after single-source refactor are RED
-    # For Tick 67: forward-defense only — don't RED on existing duplication
-    # Just log if found (not assert)
-    if chase:
-        # Informational — chase_up has known duplicated cost constants
-        # per Tick 53. This is documented, not a regression.
-        pass
+    # ⚠️ §13.74: 这里原为 `if chase: pass` —— **整个测试体没有任何断言**,
+    # 注释自己写着 "Just log if found (not assert)", 而它连 log 都没有。
+    # **注入实证**: 往 chase_up/portfolio.py 植入 `_INJ = 0.00025`, 扫描器**当场报出**
+    # (chase_up/portfolio.py:640) —— 而本测试**仍然 5 passed**。
+    # 且原注释 "has known duplicated cost constants per Tick 53" **已过期**:
+    # 实测基线 chase_up/uptrend 各 **0 处** (§13.20/§13.22 已把成本常量上收 core)。
+    # ⇒ 改成**真断言** (基线为 0 ⇒ 零漂移)。
+    assert not chase, (
+        f"§2 Canonical Cost Model: chase_up 的生产文件里出现硬编码成本字面量 {len(chase)} 处 —— "
+        f"成本常量必须**只在 core/ 定义一次**并由各引擎 import。命中: {chase[:5]}"
+    )
 
 
 def test_uptrend_pullback_no_hardcoded_cost_literals() -> None:
@@ -273,10 +276,17 @@ def test_uptrend_pullback_no_hardcoded_cost_literals() -> None:
     results = _scan_hardcoded_costs()
     uptrend = results["uptrend_pullback"]
 
-    if uptrend:
-        # Informational — uptrend_pullback has known duplicated cost
-        # constants per Tick 53.
-        pass
+    # ⚠️ §13.74: 这里原为 `if uptrend: pass` —— **整个测试体没有任何断言**,
+    # 注释自己写着 "Just log if found (not assert)", 而它连 log 都没有。
+    # **注入实证**: 往 chase_up/portfolio.py 植入 `_INJ = 0.00025`, 扫描器**当场报出**
+    # (chase_up/portfolio.py:640) —— 而本测试**仍然 5 passed**。
+    # 且原注释 "has known duplicated cost constants per Tick 53" **已过期**:
+    # 实测基线 chase_up/uptrend 各 **0 处** (§13.20/§13.22 已把成本常量上收 core)。
+    # ⇒ 改成**真断言** (基线为 0 ⇒ 零漂移)。
+    assert not uptrend, (
+        f"§2 Canonical Cost Model: uptrend_pullback 的生产文件里出现硬编码成本字面量 {len(uptrend)} 处 —— "
+        f"成本常量必须**只在 core/ 定义一次**并由各引擎 import。命中: {uptrend[:5]}"
+    )
 
 
 def test_short_reversal_no_wrong_cost_literals() -> None:
