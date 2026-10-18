@@ -110,6 +110,20 @@ def annualized_sharpe(
     return mean / std * math.sqrt(trading_days_per_year)
 
 
+#: 原始峰度与超额峰度的换算偏移 —— 只在这里定义一次,免得调用方各写一个 "+3"。
+_EXCESS_TO_RAW_KURTOSIS_OFFSET = 3.0
+
+
+def raw_kurtosis_from_excess(excess_kurtosis: float) -> float:
+    """超额峰度(Fisher,正态 = 0)→ 原始峰度(正态 = 3)。
+
+    存在的理由:这两种口径在 Python 生态里都常见(scipy.stats 默认 Fisher),而
+    `deflated_sharpe_ratio` 的 `kurtosis` 参数要的是**原始**值。少写一个 +3 就会静默
+    算错 DSR —— 给个有名字的换算,比在 docstring 里写一句"记得加 3"可靠。
+    """
+    return float(excess_kurtosis) + _EXCESS_TO_RAW_KURTOSIS_OFFSET
+
+
 def deflated_sharpe_ratio(
     observed_sharpe: float,
     n_trials: int,
@@ -130,9 +144,12 @@ def deflated_sharpe_ratio(
                           edge by E[max(Z_1, ..., Z_k)] ≈ (1 - γ)Φ⁻¹(1-1/k) +
                           γΦ⁻¹(1-1/(ke)) where γ ≈ 0.5772 (Euler-Mascheroni).
         skewness:         Return distribution skewness (default 0 = normal).
-        kurtosis:         Return distribution excess kurtosis (default 3 = normal).
-                          Note: scipy uses Fisher (excess); Bailey uses raw kurtosis
-                          which equals excess + 3. We accept excess here.
+        kurtosis:         Return distribution **raw (非超额) kurtosis** —— 正态分布取 3.0
+                          (即默认值)。Bailey & López de Prado 的 eq.(5) 用的是**原始峰度**:
+                          `((γ4 − 1)/4)·SR²`,γ4=3 时给 0.5 ✓。
+                          若手上是**超额峰度**(scipy / pandas 的 Fisher 口径,正态 = 0),
+                          先过 `raw_kurtosis_from_excess()` 换成原始值,别直接传进来。
+                          `kurtosis < 1` 在数学上不可能是原始峰度 ⇒ fail-fast(见下)。
         autocorr_lag1:    Lag-1 autocorrelation of returns (default 0).
                           Positive autocorrelation inflates Sharpe; correction
                           deflates it.
@@ -150,6 +167,19 @@ def deflated_sharpe_ratio(
     """
     if n_trials < 1:
         raise ValueError(f"n_trials must be >= 1, got {n_trials}")
+
+    # §0 fail-fast(附六十九): `kurtosis` 要的是**原始**峰度。原始峰度按定义恒 ≥ 1
+    # (E[X⁴] ≥ E[X²]²,Cauchy–Schwarz),故 < 1 的值**不可能是**原始峰度 ——
+    # 最常见的误用正是把**超额峰度**(正态 = 0)直接传进来。
+    # 与其静默算出一个错的 DSR(docstring 此前恰恰写着"We accept excess here",
+    # 与实现相反),不如在这里拦下并指出该怎么办。
+    if kurtosis < 1.0:
+        raise ValueError(
+            f"kurtosis={kurtosis} 不可能是**原始**峰度(原始峰度恒 ≥ 1,正态为 3)—— "
+            f"看起来是把**超额峰度**传进来了(正态 = 0)。"
+            f"请用 raw_kurtosis_from_excess({kurtosis}) = "
+            f"{raw_kurtosis_from_excess(kurtosis)}。"
+        )
 
     # 1) Expected maximum Sharpe under H0 (all true Sharpe = 0) for k trials.
     #    E[max(Z_1..Z_k)] ≈ (1 - γ) Φ⁻¹(1 - 1/k) + γ Φ⁻¹(1 - 1/(ke))

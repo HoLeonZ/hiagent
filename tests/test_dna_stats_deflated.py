@@ -7,6 +7,7 @@ import pytest
 from dna_stats.deflated import (
     annualized_sharpe,
     bonferroni_correct,
+    raw_kurtosis_from_excess,
     deflated_sharpe_ratio,
     sharpe_significance_pvalue,
 )
@@ -69,9 +70,12 @@ def test_deflated_sharpe_skewness_kurtosis_input():
     """V7: 接受 skewness/kurtosis/autocorr_lag1 参数, 不报错。
     这覆盖了 non-normality correction 路径。
     """
+    # 附六十九: `kurtosis` 要的是**原始**峰度(正态 = 3)。下面这个 5.0 即"超额 2"
+    # 的厚尾分布 —— 写成 `raw_kurtosis_from_excess(2.0)` 是为了让口径**在调用点可见**,
+    # 而不是靠读者记得"这里要不要 +3"。
     res = deflated_sharpe_ratio(
         observed_sharpe=1.5, n_trials=50,
-        skewness=-0.5, kurtosis=5.0,
+        skewness=-0.5, kurtosis=raw_kurtosis_from_excess(2.0),
         autocorr_lag1=0.1, n_returns=252,
     )
     assert "deflated_sharpe" in res
@@ -125,3 +129,47 @@ def test_sharpe_significance_zero():
     """V7: Sharpe=0 → p ≈ 0.5 (无显著差异)。"""
     p = sharpe_significance_pvalue(observed_sharpe=0.0, n_returns=100)
     assert p == pytest.approx(0.5, abs=0.01)
+
+
+# ---------------------------------------------------------------------------
+# 附六十九 —— `kurtosis` 的**口径合同**:docstring 曾写"We accept excess",
+#              而实现按**原始**峰度用(default 3.0、公式 (γ4−1)/4)
+# ---------------------------------------------------------------------------
+#
+# 当前**行为是对的**(与论文 eq.(5) 一致:γ4=3 时给 0.5),错的是合同:
+# 参数默认 3.0 是原始峰度,而 docstring 说"接受超额"。谁按 docstring 传"超额峰度"
+# (正态 = 0)就会静默算出一个错的 DSR。故:
+#   1) docstring 改成明确说**原始**,并给出换算入口;
+#   2) 对数学上不可能是原始峰度的值(< 1)**fail-fast**,并指出多半是传了超额;
+#   3) 提供有名字的换算 `raw_kurtosis_from_excess`,免得调用方各写一个 "+3"。
+
+
+def test_default_kurtosis_is_raw_normal_not_excess() -> None:
+    """默认值 3.0 必须被当作**原始**峰度使用(等价于"超额 0")。"""
+    a = deflated_sharpe_ratio(observed_sharpe=1.0, n_trials=10, n_returns=250)
+    b = deflated_sharpe_ratio(
+        observed_sharpe=1.0, n_trials=10, n_returns=250,
+        kurtosis=raw_kurtosis_from_excess(0.0),      # 显式:超额 0 ⇒ 原始 3
+    )
+    assert a["deflated_sharpe"] == pytest.approx(b["deflated_sharpe"], abs=1e-12), (
+        "默认口径与'超额 0 ⇒ 原始 3'不一致 —— docstring 与实现又分家了"
+    )
+
+
+def test_excess_kurtosis_is_rejected_loudly() -> None:
+    """传超额峰度(正态 = 0)⇒ fail-fast,并指出该怎么办。
+
+    原始峰度恒 ≥ 1(`E[X⁴] ≥ E[X²]²`),故 < 1 不可能是原始值。静默算错的代价是
+    一个看起来正常的 DSR —— 宁可报错。
+    """
+    with pytest.raises(ValueError, match="raw_kurtosis_from_excess"):
+        deflated_sharpe_ratio(
+            observed_sharpe=1.0, n_trials=10, n_returns=250, kurtosis=0.0,
+        )
+
+
+def test_raw_kurtosis_helper() -> None:
+    """换算纯函数:正态(超额 0)→ 3;厚尾(超额 2)→ 5。"""
+    assert raw_kurtosis_from_excess(0.0) == pytest.approx(3.0)
+    assert raw_kurtosis_from_excess(2.0) == pytest.approx(5.0)
+    assert raw_kurtosis_from_excess(-1.0) == pytest.approx(2.0)   # 薄尾
