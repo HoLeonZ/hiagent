@@ -5677,3 +5677,74 @@ corrected = np.minimum(np.asarray(p_values) * n_comparisons, 1.0)
 调用点全都传 `len(...) ≥ 1`(实测核对过),`_norm_ppf` 的误差本来就在 1e-8 量级。
 它们属于**"把不可能输入与不实声明收口"**——按 §0 的 fail-fast 与显式原则。
 写清楚这一点,是为了不让"修了两处"听起来比实际更重要。
+
+---
+
+## 附七十一 —— 报告说「每行的 `sharpe_kind` 已随数据发布」,而 HTML 里**从不显示它**
+
+继续消费端。`tools/run_all_backtests_html.py` 是那份"全 preset 一览表"的产出者,
+跨 4 个引擎。
+
+### 1 · 缺陷:警示**指向一个读者在页面上看不见的东西**
+
+那张表的跨策略排名段落早就写着(R527/2026-10-15):
+
+> ⚠ 跨策略可比性:… ② **Sharpe 在三个引擎里不是同一个量** —— chase_up / uptrend_pullback 是
+> `daily_returns_annualized`(日收益年化),short_reversal 是 `per_trade_ratio_approx`
+> (逐笔比率);故「按 Sharpe 排序」**跨策略没有意义**,只在同一策略内可比
+> **(每行的 `sharpe_kind` 已随数据发布)**;
+
+这段警示本身**写得很好**。但实测:
+
+* `sharpe_kind` 确实写进了行数据(4 处 `row["sharpe_kind"] = …`)✓;
+* 它也进了 JSON 产物 ✓ ——所以"已随数据发布"**字面为真**;
+* 而**渲染层从来没有引用过它**:全文件 `grep sharpe_kind` 只有那 4 处赋值 + 警示里的一次提及。
+
+于是那句"每行的 `sharpe_kind` 已随数据发布"让读者**去页面上找每行的 kind**,而页面上没有 ——
+要真的核到,得离开 HTML 去翻同目录的 JSON。**缺的不是数据,是渲染这一步**(附三十七 同款:
+"writer 早就有,缺的是接线")。
+
+### 2 · 修法:把量纲**渲染**出来
+
+Sharpe 格改成「数字 + 量纲小标签」,全名放 `title` 悬停可见:
+
+```html
+<td class='num good'>1.50<span class='kind' title='sharpe_kind = per_trade_ratio_approx'>逐笔近似</span></td>
+<td class='num good'>2.00<span class='kind' title='sharpe_kind = daily_returns_annualized'>日年化</span></td>
+```
+
+两张表都改了(逐策略表 + 跨策略排名表),并加了一小段 `.kind` 的 CSS。
+**未知 kind 原样显示**而不是留空 —— 留空会让"没有量纲信息"与"量纲恰好为空"分不开
+(本仓库反复吃过"静默的零"的亏)。同时把警示里那句改成指向**页面上可见的**标注。
+
+### 3 · 我在这一处踩了自己的坑(记下来,并把它变成守卫)
+
+第一版我把 `<td>` 一起包进了 `_sharpe_cell` 的返回值,于是它从 `<td>` 变成了 `<span>` ——
+**CSS 里的 `td.num` / `td.good` / `td.bad` 全部失效**(选择器对的是 `td`)。
+
+这不只是"样式没了":这个文件自己有一段注释(`bar_pct` 绕过 `_fmt_pct` 的 NaN 保护)
+说明过这类"渲染层静默失效"的代价。故新增一条**回归守卫**
+`test_sharpe_cell_keeps_the_td_for_css`:断言 `_sharpe_cell` 只返回 `<td>` 的**内容**,
+且渲染结果里 `td class='num …'` 仍然存在。**把我自己的错变成一个不会再犯的判据。**
+
+### 4 · 守卫(6 条,双向验证)
+
+| 用例 | 钉住 |
+|---|---|
+| `test_kind_is_rendered_in_the_per_strategy_table` | 两种 kind 的短标签 + `title` 全名都在 |
+| `test_kind_is_rendered_in_the_cross_strategy_rank` | **那句警示说的正是这张表** ⇒ 量纲必须在这张表上可见 |
+| `test_unknown_kind_is_shown_not_blanked` | 未知 kind 原样显示 |
+| `test_missing_kind_renders_plain_number_without_a_tag` | 无 kind ⇒ 只剩数字,不出现空标签 |
+| `test_sharpe_cell_keeps_the_td_for_css` | **回归守卫**:`<td>`/class 结构不许被挤掉 |
+| `test_full_page_render_carries_kind_and_css` | **整页渲染**:标签、`title`、`CSS` 三者齐备 |
+
+**双向验证**:把两处渲染改回 `_fmt_num(...)` ⇒ **3 条红**;恢复 ⇒ 6 passed。
+另:整页渲染那条是我**先手写夹具踩了 `KeyError: 'engine'`** 之后补的 —— 手写夹具漏键这件事,
+恰好说明"整页渲染"这一层值得单独守(它会把 schema 缺键当场暴露)。夹具现已按**生产端真正的
+schema**(`run_all_backtests_html.py` 的返回处)构造。
+
+### 5 · 这一条的影响边界
+
+* **不影响任何数字**:排名逻辑、过滤(`cycle` 的 None 不参与排名)、排序键都没动;
+* 影响的是**读者能不能看懂那张表** —— 而这正是该文件自己在警示里想解决的问题:
+  它写对了警示,却没让警示的前提可见。
