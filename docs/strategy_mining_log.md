@@ -4699,3 +4699,68 @@ def _close(self, d, price, reason):
 > **⇒ 形状值得单独记: §2 要求"每个 preset 必须显式声明这个键", 而 chase_up 声明了却不读它。**
 > "声明而不读" 与 §13.22 的 "同名不同义" / §13.24 的 "同名而语义不同" 是同一族的第三面。
 > **修法方向**(在 `all_in`/`equal` 分支里按 uptrend 的写法乘上它)属**结果变更** ⇒ 登记, 不擅改。
+
+### 13.53 ⛔ **把 3 条断言救活之后, 立刻发现其中一条从来没断言过任何东西**
+
+#### (a) 触发: §13.52 之后的"它还咬吗"检查
+上轮刚把那 3 条 LAHEAD-001 断言从"永远 ERROR"救成"通过"。
+按 §6 的规矩, **通过了不等于有效** ⇒ 逐条注入它的目标违规, 看它会不会红:
+
+| 断言 | 原始 | 注入后 |
+|---|---|---|
+| `test_pre_window_entry_count_is_zero` | pass | **红** ✅ |
+| `test_pre_window_pnl_contribution_is_zero` | pass | **红** ✅ |
+| **`test_no_post_window_entries`** | pass | **pass** ❌ **不咬** |
+
+#### (b) 它为什么不咬: **断言的是两件与名字无关的事**
+```python
+    post_window_entries = [ ... ]      # ← 算出了正确的列表
+    post_exits = trace_report["post_window_exit_trades_count"]
+    assert trace_report["pre_window_entry_trades_count"] == 0, (...)   # ① 与上一条测试**重复**
+    assert post_exits >= 0  # 仅记录;post-exit 是 in-flight close 约定   # ② **恒真**
+```
+* **①** 断言的是**另一条测试的同一个字段**;
+* **②** `post_exits >= 0` —— 计数不可能为负 ⇒ **恒真**, 注释自己都写着"**仅记录**";
+* 而它**已经算出了 `post_window_entries`** 这个列表, **却从头到尾没有用它**。
+
+> **⇒ 这是"空转守卫"最好认的一个形态: 作者把正确的东西算出来了, 却断言了别的。**
+> (与 §13.19"条件恒真的 skip"、§13.20"阈值来自已作废的代码状态"同族。)
+
+#### (c) 而且它的 docstring 说的不变量**已经被设计放弃了**
+docstring:
+> "post-window EXIT 是允许的, 但 **post-window ENTRY 是真正的 look-ahead**。
+>  代码当前通过 **indicator NaN gate 隐式拒绝**; 此测试固化这一不变量。"
+
+**实测 (本窗)**: 报告里**确实有 2 笔 post-window entry** ——
+| entry_date | exit_date | 距请求 end (2026-09-12) |
+|---|---|---|
+| **2026-09-24** | 2026-09-28 | **+12 天** |
+| **2026-09-21** | 2026-09-22 | **+9 天** |
+
+而这不是未察觉的越界 —— **引擎的实测期本来就可以显著偏离请求窗**:
+`engine.py::_evaluated_days` 的 docstring 自己举了例
+(请求 `2018-01-01..2020-12-31` ⇒ 实测 `2019-02-18..2021-03-01`), 并说明这是 §13.16
+引入 `evaluated_start/end` **披露**时已知的事; 而 `_panel_loader.py:80` 写着
+`PANEL_POST_BUFFER_DAYS=60` 是 **"in-flight close buffer"**。
+
+⇒ **那句 "代码隐式拒绝" 是陈旧的**, 而这条测试"通过"多年, 只是因为**它什么都没断言**。
+
+#### (d) 修法: **不是**"断言为零"(那会与设计冲突), 而是钉住**当前**契约
+```python
+buffer_end = end_dt + pd.Timedelta(days=PANEL_POST_BUFFER_DAYS)
+beyond = [t for t in post_window_entries if pd.Timestamp(t["entry_date"]).date() > buffer_end]
+assert not beyond, (...)
+```
+⇒ **post-window entry 允许存在, 但必须落在声明的后置缓冲之内。**
+
+#### (e) §6 双向验证
+| 检查 | 结果 |
+|---|---|
+| 真实报告 | **pass** ✅(2 笔在 end+9 / end+12, 缓冲内) |
+| 注入一笔 **end+12 天**(缓冲内) | **pass** ✅(正确地容忍) |
+| 注入一笔 **end+90 天**(缓冲外) | **红** ✅ |
+
+#### (f) 本节最该记住的一句
+> **"把守卫救活" 与 "让守卫起作用" 是两件事。**
+> 这 3 条此前一直 ERROR ⇒ 没人看得见它们的内容; 而其中**一条即使不 ERROR 也什么都没断言**。
+> **是"救活 + 逐个注入"这个组合才把它暴露出来的 —— 只做前者, 它会以"通过"的姿态继续空转。**

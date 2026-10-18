@@ -98,23 +98,36 @@ def test_no_post_window_entries(trace_report):
     ENTRY 是真正的 look-ahead。代码当前通过 indicator NaN gate 隐式拒绝;
     此测试固化这一不变量。
     """
-    # 计算 entry_date > end 的 trades
+    # ================= 2026-10-19 (§13.53) 重写 =================
+    # 本测试此前**什么都没断言**: 它 (i) 重复了上一条测试的
+    # `pre_window_entry_trades_count == 0`, 并 (ii) 断言 `post_exits >= 0` —— **恒真**,
+    # 注释自己都写着"仅记录"。而它**已经算出了** `post_window_entries` 这个列表**却从未用它**。
+    #
+    # ⚠️ 更关键的是: 它的 docstring 说 "post-window ENTRY 是真正的 look-ahead, 代码当前通过
+    # indicator NaN gate **隐式拒绝**" —— **那句话已经过时**。
+    # 引擎的实测期**本来就可以显著偏离请求窗**(见 `engine.py::_evaluated_days` 的 docstring:
+    # 请求 `2018-01-01..2020-12-31` 实测成 `2019-02-18..2021-03-01`), 而面板的
+    # `PANEL_POST_BUFFER_DAYS=60` 正是为在途平仓而设的 (见 `_panel_loader.py:80`)。
+    # ⇒ **实测确认存在 post-window entry** (本窗 2 笔: end+9 天与 end+12 天) —— 那是**已披露的
+    # 设计后果**, 不是未察觉的越界。
+    #
+    # ⇒ 改为钉住**当前**契约: post-window entry **必须落在声明的后置缓冲之内**。
+    from short_reversal._panel_loader import PANEL_POST_BUFFER_DAYS
+
     end_dt = pd.Timestamp(END).date()
+    buffer_end = end_dt + pd.Timedelta(days=PANEL_POST_BUFFER_DAYS)
     post_window_entries = [
         t for t in trace_report.get("post_window_exit_trades_samples", [])
         if t.get("entry_date") and pd.Timestamp(t["entry_date"]).date() > end_dt
     ]
-    # 完整 traces 在 summary 里被截断,所以检查 raw count 与 post-exit 数量
-    # post-window exits 是允许的,但应该全部来自 in-window entry
-    post_exits = trace_report["post_window_exit_trades_count"]
-    # 如果结构上 post-window entries 出现,pre_window_entry_trades_count 会 > 0
-    # (因为 entry_date > end 仍晚于 in-window entry 检查)
-    assert trace_report["pre_window_entry_trades_count"] == 0, (
-        "若 pre_window_entry > 0,说明有 entry 落在 [end+1, panel_end],"
-        "即 post-window entry 污染"
+    beyond = [
+        t for t in post_window_entries
+        if pd.Timestamp(t["entry_date"]).date() > buffer_end
+    ]
+    assert not beyond, (
+        f"{len(beyond)} 笔 entry 落在**后置缓冲之外** (> end + {PANEL_POST_BUFFER_DAYS} 天) —— "
+        f"这超出了「仅为在途平仓而设」的面板范围。样本: {beyond[:3]}"
     )
-    # 这个数字可能 > 0 (允许),但应该全部来自 in-window entry
-    assert post_exits >= 0  # 仅记录;post-exit 是 in-flight close 约定
 
 
 # ---------- LAHEAD-002 quantitative proof: DELETED ---------------------------
