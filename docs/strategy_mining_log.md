@@ -1308,6 +1308,60 @@ DB 覆盖 `2016-09-02 .. 2026-09-30` ⇒ **此后在本库内, 新候选很难�
 #### (h) §5 记账
 新增 **1** 组预登记评估 (单组参数, 无扫描) ⇒ `n_comparisons` 186 → **187**。
 
+### 9.4 ✅ **§9 的「数据受阻」五条逐表复核 —— 全部确认**, 而复查方式是**枚举**不是印象
+
+#### (a) 为什么必须复核
+§9 那份表**恰恰是被证明最容易写错的一类句子**: 它两次出错都在"数据受阻"这一格 ——
+* §9.2: 配对原写"**结构性受阻**" ⇒ 实际本仓库**有**做空机制 (**写过头**);
+* §10.1: 事件驱动原写"数据受阻" ⇒ 实际 `raw_adjustment_events` **一直在** (**写过头**)。
+⇒ 所以这一格不能靠"我记得查过", 只能**逐表枚举列名**。
+
+#### (b) 14 张表的**全部列** (本节实测, 可直接引用)
+| 表 | 列 |
+|---|---|
+| `_import_batches` | batch_id, source, started_at, completed_at, status, row_count, content_hash, error_code |
+| `_meta` | key, value |
+| `calc_adjust_factor_daily` | thscode, date, forward_factor, backward_factor |
+| `dim_symbol` / `stg_symbol` / `v_symbol` | thscode, ticker, name, exchange, **asset_type**, updated_at |
+| `raw_kline_daily` / `stg_kline_daily` | thscode, date, open, high, low, close, prev_close, volume, amount, batch_id |
+| `raw_adjustment_events` / `stg_adjustment_events` | thscode, ex_date, dividend_per_share, per_share_bonus, rights_ratio, rights_price, batch_id |
+| `v_daily` | thscode, date, open, high, low, close, prev_close, volume, amount |
+| `v_daily_qfq` / `v_daily_hfq` | thscode, date, open, high, low, close, volume, amount |
+| `v_daily_dual` | thscode, date, adj_*, raw_* (o/h/l/c + raw_prev_close), volume, amount |
+
+#### (c) 逐条回答
+| §9 的行 | 判定 | 依据 |
+|---|---|---|
+| ① **基本面 / 质量 / 估值** | ✅ **确认无** | 全库**没有任何** pe / pb / roe / eps / 市值 / 净资产 列 |
+| ② **行业 / 风格轮动** | ✅ **确认无** | 无 industry / sector / 申万 / 板块 / concept 列 |
+| ③ **指数调仓 / 纳入剔除** | ✅ **确认无** | 无 index / constituent / hs300 / csi 列或表 |
+| ④ **做市 / 微观结构 (订单流)** | ✅ **确认无** | 无 bid / ask / tick / order / level1 / level2 列; **只有日线** |
+| ⑤ **期权 / 可转债 / 期货** | ✅ **确认无** | 无 option / future / bond / 转债 列或表; 且 **`asset_type` 全库只有一个取值** |
+
+**★ 第 ⑤ 条最硬的一条证据**: `dim_symbol.asset_type` 的**全部取值**是
+`{'a-share': 5565}` (`stg_symbol` 5561) ⇒ **本库的证券域只有 A 股**, 连一只可转债/ETF 都没有。
+
+#### (d) ⚠️ 而我这次的正则又**假报了两次** (逐条看命中串才发现)
+| 我查的正则 | 假命中 | 真结论 |
+|---|---|---|
+| `pe` (基本面) | **`o`+`pe`+`n`**、`per_share_bonus`、`asset_type` | **无基本面列** |
+| `tick` (订单流) | **`ticker`** | **无 tick 数据** |
+⇒ **在列名上做子串匹配, 命中必须逐条看** —— 否则会得出"有基本面数据"这种反向结论。
+(当日"我的检查错"第 **11** 次; 这次**没有写进任何结论**, 因为看命中了。)
+
+#### (e) 因此得到一条**可引用的边界陈述**
+> **本库 = A 股 · 日线 · 价量 + 复权因子 + 公司行动事件。就这些。**
+
+于是 §9 那张表 + §8.3 的禁令一起把"还能做什么"关死:
+* **数据受阻的六条** → 修不了 (要么换供应商, 要么换数据产品);
+* **剩余可从现有列派生的信号** (如隔夜/日内收益分解、收盘位置 CLV、均价/收盘比…)
+  → **全部落在 §8.3 的禁令内** ("不要再做: 在本库上再加一个价格/量能派生的横截面信号然后报其样本内 t")。
+
+⇒ **这不是"没找到更好的", 而是"现有输入下, 可做的事已经被穷尽 AND 被禁令覆盖"。**
+
+#### (f) §5 记账
+审计节, `n_comparisons` 不变 (187)。
+
 ## 10. **公司行动事件维度** (第一次实测): 除权日有真实的负超额, 但**在衰减**
 
 ### 10.1 起因: 又是在"边界声明"里发现自己写错了
