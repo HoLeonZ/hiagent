@@ -22,5 +22,6 @@
 | `overlay_window.py` | §10.9: overlay 值对**回避窗口**的敏感度 (不选最优窗口) |
 | `generic_reversal.py` | §10.10: **通用反转对照** —— T=0 那一跌是除权日特有, 还是"涨过就回吐" |
 | `executability.py` | §10.11: overlay **可执行性** (封板/停牌) 与**容量** (§4 参与上限) |
+| `host_portfolio.py` | §10.12: **宿主问题** —— 持有高股息票整年的超额, 与组合级除权日拖累 (三口径) |
 
 `python3 tools/exdate/<脚本>.py` —— 全部只读 DB, 无副作用, 无随机性。
