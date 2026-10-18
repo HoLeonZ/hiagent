@@ -5848,3 +5848,50 @@ raise AssertionError("GAP CAPTURED: ...")
 改动后: 5 failed, 8 passed     ← 逐条一致
 ```
 那 5 条是在册既有债 (4 条 preset 可达性 + cycle 缺基线)。
+
+### 13.65 ⛔ **登记** (§13.63 那道口子的**第二个实例**): §2 点名的两个资金参数, 在**第四个族里结构上不存在**
+
+#### (a) §2 明文 (逐字)
+> "Every preset MUST explicitly declare `max_positions` and `position_fraction`
+> — a preset that leaves them implicit is a **contract violation**."
+
+#### (b) 逐族数出来
+| 族 | preset | 声明 `max_positions` | 声明 `position_fraction` | 引擎能否接受 |
+|---|---|---|---|---|
+| `chase_up` | 22 | **22** | **22** | ✅ `simulate_portfolio(max_positions: int, …)` + `raise if <= 0` |
+| `uptrend_pullback` | 4 | **4** | **4** | ✅ 同形 + `position_fraction: float = 1.0` |
+| `short_reversal` | 55 | **55** | **55** | ✅ `params` 里两者都有 |
+| **`cycle_price_action`** | **21** | **0** | **0** | ❌ **`Portfolio` 没有这两个参数** |
+
+⇒ 三族 **81/81 合规**; `cycle` **0/21**。
+**而它不是"忘了写"** —— `cycle_price_action/portfolio.py` 的 `Portfolio` 参数表里**根本没有**
+`max_positions` / `position_fraction`, 只有一个类常量 `MAX_POSITION_PCT = 1.0`。
+⇒ **§2 的那条要求在这一族里结构上不可实现**: 容量由**引擎之外**的 `cycle_price_action/allocator.py`
+承担, 不在 `preset ↔ engine` 的接口上。
+
+#### (c) 第二个同形: `max_positions <= 0` 的**显式** fail-fast
+| 族 | 守卫 |
+|---|---|
+| `chase_up` | `raise ValueError(f"max_positions must be > 0, got …")` ✅ |
+| `uptrend_pullback` | 同形 ✅ |
+| `short_reversal` | **无** (它只有 `sl_cooldown_days` × `max_positions` 的**兼容性**守卫) |
+| `cycle_price_action` | **无参数可守** |
+⇒ **与 §13.63 完全同形**: 同一意图 (把非法资金参数挡在门外), 只有**部分族**把它写成显式守卫;
+另两族靠"这个参数不存在"或"没人传非法的"来保证 —— 那不是守卫。
+
+#### (d) 登记, **不修** (属结果变更)
+给 `cycle` 补这两个参数 = **改它的资金控制架构**, 且会让它的 capacity 语义从 allocator 挪进引擎
+⇒ 会动它的全部历史数字。**§6 已有相关登记** (`cycle` 的 `run_backtest` 曾给**每只票各自**
+1,000,000 账户, 后由 allocator 重放并施加容量) ⇒ **本节的新增部分**是
+(b) 的精确计数与 (c) 的守卫不对称, **不是**那条已知的容量问题。
+
+#### (e) 一个**零漂移**的候选动作 (未做)
+`tests/test_preset_to_engine_api_conformance.py::test_cycle_price_action_presets_all_reach_engine`
+**本来就是红的** (属 §13.61 对账里的既有债)。它红得对, 但它红的是"**键没送达**",
+不是"**§2 要求这些键存在**" —— 两件事。
+把 §2 这条要求写成一条**显式断言** (三族各断言覆盖 = 100%; 第四族用 `xfail(strict)` 把架构差异**具名**),
+比再写一条"登记未做"有用: 它会让"下次有人加 preset 时忘了声明"**立刻变红**。
+**未做**, 因为要先决定 xfail 的措辞 (写"cycle 架构不同"还是"§2 要求未满足") —— 那是个口径决定。
+
+#### (f) §5 记账
+本节是审计, 不产生策略评估 ⇒ `n_comparisons` 不变 (186)。
