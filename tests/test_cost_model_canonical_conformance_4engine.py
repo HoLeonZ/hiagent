@@ -207,6 +207,22 @@ def _scan_cost_constants(
                     line = getattr(kw_default, "lineno", node.lineno)
                     _check_and_record(kw_arg.arg, kw_default, line)
 
+    # Pattern 4 (§13.76) —— **kwargs**: `params = dict(commission_rate=...)` 形态。
+    # ⚠️ 这正是 short_reversal / cycle 的**真实配置面** (`self.p.commission_rate` 就读这里)。
+    # 原扫描只认 ①类体 AnnAssign ②类体 Assign ③__init__ 默认参数 ⇒ 对 kwargs **完全失明**;
+    # 而下面的"兜底"会把 import 里的规范值填进去 ⇒ **违规被兜底掩盖**。
+    # 注入实证: 把 short_reversal 的 `commission_rate=COMMISSION_RATE` **替换**成 `0.0006`
+    # (落地已核, 原行已不存在) ⇒ 扫描器仍报 0.00025, 本测试仍 4 passed。
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            for kw in node.keywords:
+                if kw.arg:
+                    _check_and_record(
+                        kw.arg,
+                        kw.value,
+                        getattr(kw.value, "lineno", getattr(node, "lineno", 0)),
+                    )
+
     # 2026-10-19 兜底 (§2): 有些引擎**只**写 `from core.dual_price import COMMISSION_RATE,
     # STAMP_DUTY_RATE` 而**没有任何赋值** ⇒ 上面的赋值扫描会一个都找不到。
     # 这里按 import 的名字补上。**作为兜底而非覆盖**: 若同一文件里还有显式字面量赋值,
@@ -336,6 +352,22 @@ def test_short_reversal_cost_model_canonical() -> None:
                 f"commission 0.0006 has no historical basis (line "
                 f"{lines.get('commission', '?')}); canonical is "
                 f"{CANONICAL_COMMISSION}",
+            )
+        )
+
+    # ⚠️ §13.76: 这一条此前**只断言 commission, 从不看 stamp_duty** ——
+    # 而它把 stamp_duty 收进来、还传给了错误信息, 制造了"已经检查过"的印象。
+    # **注入实证**: 把 `stamp_duty_rate` 换成 **0.002** (不在 VALID_STAMP_DUTY 里)
+    # ⇒ 扫描器正确报出 0.002, 而本测试**仍然 4 passed**。
+    # (chase_up / uptrend / cycle 三条都有这一句; 只有本族漏了。)
+    if stamp_duty not in VALID_STAMP_DUTY:
+        raise AssertionError(
+            _engine_red_message(
+                "short_reversal",
+                commission,
+                stamp_duty,
+                f"stamp_duty must be one of {sorted(VALID_STAMP_DUTY)} "
+                f"(line {lines.get('stamp_duty', '?')})",
             )
         )
 
