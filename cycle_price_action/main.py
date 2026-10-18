@@ -197,19 +197,18 @@ def _run_backtest(args) -> int:
     print(f"wrote {out_dir}: n_trades={m['n_trades']}, "
           f"pnl={m['total_pnl']:.2f}, win_rate={m['win_rate']:.2%}")
 
-    # CLAUDE.md §5 Penalty Metrics: 单 preset 单 trial 也报告 DSR
-    # (cycle 无 sweep, n_trials=1 → DSR=PSR)。此处直接输出以满足 §5。
-    sharpe = m.get("sharpe")
-    if sharpe is not None and m.get("n_trades", 0) > 0:
-        dsr = deflated_sharpe_ratio(
-            observed_sharpe=float(sharpe), n_trials=1, n_returns=int(m["n_trades"]),
-        )
-        print(
-            f"\n§5 DSR for {preset} | observed_sharpe={float(sharpe):.3f} | "
-            f"n_trials=1 | "
-            f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
-            f"p_value={dsr['dsr_p_value']:.4f}"
-        )
+    # CLAUDE.md §5 Penalty Metrics。
+    #
+    # 附六十五:这里此前是一个**永远不会执行**的分支 —— 原注释写"此处直接输出以满足 §5",
+    # 而条件 `sharpe is not None` 在 cycle 上**恒为假**:`cycle_price_action/metrics.py`
+    # 按设计(`cagr` / `sharpe` / `max_dd` 无定义 ⇒ 一律 `None`)从不发布 sharpe
+    # (实测:一次真实运行 sharpe=None, n_trades=495)。于是 §5 那一段**静默地什么都没做**,
+    # 而注释宣称它满足了 §5 —— 又一个"注释声称已做、实现没有"。
+    #
+    # 处置:不伪造一个组合级 Sharpe(本引擎是**每股独立账户**,组合 Sharpe 本就没有定义),
+    # 而是把"不报"这件事**显式说出来**。§5 要的是"不得把裸收益当 alpha",说清楚比沉默好。
+    print(dsr_notice(sharpe=m.get("sharpe"), n_trades=int(m.get("n_trades", 0)),
+                     preset=preset))
     return 0
 
 
@@ -227,6 +226,29 @@ def _run_walkforward(args) -> int:
               f" test={w.test_start}..{w.test_end}")
     print(f"total windows: {len(windows)}")
     return 0
+
+
+def dsr_notice(*, sharpe, n_trades: int, preset: str) -> str:
+    """§5 结论行 —— **纯函数**,便于单测。
+
+    - 有组合级 Sharpe ⇒ 报 DSR(单 preset 单 trial ⇒ n_trials=1,DSR 退化为 PSR);
+    - **没有** ⇒ 明确说明为什么不报(cycle 的 per-stock 独立账户设计使组合级 Sharpe
+      无定义),而不是静默跳过 —— 静默跳过正是本仓库反复吃亏的形态。
+    """
+    if sharpe is None:
+        return (
+            f"§5 (附六十五): 本引擎为**每股独立账户**,组合级 Sharpe 无定义 ⇒ "
+            f"不报 DSR(不伪造一个不存在的量)。{preset} 的 n_trades={n_trades};"
+            f"§5 的「不得把裸收益当 alpha」由每份报告顶部的基准说明承担。"
+        )
+    dsr = deflated_sharpe_ratio(
+        observed_sharpe=float(sharpe), n_trials=1, n_returns=max(n_trades, 1),
+    )
+    return (
+        f"\n§5 DSR for {preset} | observed_sharpe={float(sharpe):.3f} | "
+        f"n_trials=1 | deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
+        f"p_value={dsr['dsr_p_value']:.4f}"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

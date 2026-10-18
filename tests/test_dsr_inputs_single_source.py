@@ -243,3 +243,93 @@ def test_the_module_level_constant_rule_actually_bites() -> None:
     assert name in module_names and name not in assigned_in_funcs, (
         "元测试夹具失效:构造出的调用点没有命中判据"
     )
+
+
+# ---------------------------------------------------------------------------
+# 附六十五 —— 第三种形状:**内联表达式**里的常数
+# ---------------------------------------------------------------------------
+#
+# 前面两条守卫覆盖了 `n_returns=252`(字面量)与 `n_returns=WINDOW_TRADING_DAYS`
+# (模块级常量)。而实测**已接线**的 `dna_stats/walkforward_report.py` 是第三种:
+#
+#     n_returns=max(n_windows * 63, 100)      # 注释自认 "rough estimate"
+#
+# 它既不是字面量也不是模块级名字 ⇒ **两条规则都看不见它**。而后果最重:
+# 在 23 个 2 个月窗口的调用点上给它 1,449(真实 ~42)⇒ DSR 从 **0.072** 变成
+# **0.995** —— §5 的选中偏差惩罚被整条抹平(附六十四)。
+#
+# 这三种形状的共同点是**把某个数烤进了 T**。而"由本次运行算出来"的那些写法
+# 都不需要烤任何数:
+#
+#     n_returns=_observed_t                       ✓ 变量
+#     n_returns=n_obs                             ✓ 变量
+#     n_returns=int(panel["date"].nunique())      ✓ 由面板算
+#     n_returns=int(m["n_trades"])                ✓ 由产物算
+#     n_returns=max(n_windows * 63, 100)          ✗ 烤了 63 与 100
+#
+# 故判据:**`n_returns` 的表达式里不得出现 0/1 以外的数字字面量**。
+# (允许 0/1 是因为 `len(x) - 1` 这类"观测数 = 长度减一"的常规写法需要它们。)
+
+
+def test_n_returns_contains_no_baked_in_number() -> None:
+    """§5: T 的表达式里不得有 0/1 以外的数字字面量 —— 有,就是把假设烤进了 T。
+
+    这条补的是另两条守卫的空隙:字面量(第一条)与模块级常量(第二条)之外的
+    **内联表达式**(附六十四 实测的形状)。
+    """
+    numeric = (ast.Constant,)
+
+    def has_baked_number(node: ast.AST) -> bool:
+        for sub in ast.walk(node):
+            if isinstance(sub, numeric) and isinstance(sub.value, (int, float)) \
+                    and not isinstance(sub.value, bool) and sub.value not in (0, 1):
+                return True
+        return False
+
+    offenders: list[str] = []
+    for path, call in _dsr_call_sites()[0]:
+        for kw in call.keywords:
+            if kw.arg in {"n_returns", "trading_days_per_year"} and has_baked_number(kw.value):
+                offenders.append(
+                    f"{path.relative_to(REPO_ROOT)}:{call.lineno} {kw.arg}=<expr with 数字> "
+                    f"({ast.unparse(kw.value)[:60]})"
+                )
+    assert not offenders, (
+        "§5 VIOLATION: DSR 的输入表达式里烤进了数字 —— 它必须由本次运行算出:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def test_the_baked_number_rule_actually_bites() -> None:
+    """元测试:构造附六十四 那个真实形状 ⇒ 判据必须认出来(否则等于没写)。"""
+    tree = ast.parse(
+        "def f(n_windows):\n"
+        "    return deflated_sharpe_ratio(observed_sharpe=1.0, n_trials=3,\n"
+        "                                 n_returns=max(n_windows * 63, 100))\n"
+    )
+    call = next(n for n in ast.walk(tree) if isinstance(n, ast.Call))
+    kw = next(k for k in call.keywords if k.arg == "n_returns")
+    found = [
+        s for s in ast.walk(kw.value)
+        if isinstance(s, ast.Constant) and isinstance(s.value, (int, float))
+        and s.value not in (0, 1)
+    ]
+    assert {s.value for s in found} == {63, 100}, "元测试夹具失效"
+
+    # 反向:合法写法不得被误伤
+    ok = ast.parse(
+        "def f(panel, m):\n"
+        "    a = deflated_sharpe_ratio(observed_sharpe=1.0, n_trials=3,\n"
+        "                              n_returns=int(panel['date'].nunique()))\n"
+        "    b = deflated_sharpe_ratio(observed_sharpe=1.0, n_trials=3,\n"
+        "                              n_returns=len(panel) - 1)\n"
+    )
+    for c in [n for n in ast.walk(ok) if isinstance(n, ast.Call)]:
+        for k in c.keywords:
+            if k.arg == "n_returns":
+                bad = [
+                    s for s in ast.walk(k.value)
+                    if isinstance(s, ast.Constant) and isinstance(s.value, (int, float))
+                    and s.value not in (0, 1)
+                ]
+                assert not bad, f"合法写法被误伤:{ast.unparse(k.value)}"
