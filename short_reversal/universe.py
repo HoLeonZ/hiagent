@@ -105,6 +105,9 @@ def _suspected_five_pct_limit_codes(db_path: Path, asof_date: str) -> set[str]:
             WHERE ret IS NOT NULL
               AND abs(abs(ret) - ?) < ? AND high = low
             GROUP BY 1 HAVING count(*) >= ?
+            -- §1 (§13.73): 显式顶层 ORDER BY —— 结果集行序必须确定 (§0 可复现性)。
+            -- 消费者把它折成 set (见下方 return), 故此句**零结果漂移**。
+            ORDER BY 1
             """,
             [asof_date, asof_date, _ST_LIMIT_BAND, _ST_BAND_TOL, _ST_MIN_SEALED],
         ).fetchall()

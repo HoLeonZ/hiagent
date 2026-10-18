@@ -154,9 +154,43 @@ def _is_time_series_query(query: str) -> bool:
     return time_series_table and has_bare_date
 
 
+_OVER_RE = re.compile(r"\bOVER\s*\(", re.IGNORECASE)
+
+
+def _strip_window_clauses(sql: str) -> str:
+    """去掉所有 `OVER (...)` 窗口子句。
+
+    ⚠️ §13.73: 窗口子句里的 `ORDER BY` **只排窗口内的行, 不决定结果集的行序**
+    (`ROW_NUMBER() OVER (PARTITION BY code ORDER BY date)` 里的那个)。
+    因此它**不满足** §1 的"结果集行序确定"要求。
+    **注入实证**: 删掉 `chase_up/data.py` 的**顶层** `ORDER BY` (保留窗口里那个)
+    ⇒ 改动前 **7 passed 不响**。
+    """
+    out: list[str] = []
+    i = 0
+    while True:
+        m = _OVER_RE.search(sql, i)
+        if not m:
+            out.append(sql[i:])
+            break
+        out.append(sql[i:m.start()])
+        j = m.end() - 1                      # 指向 '('
+        depth = 0
+        while j < len(sql):
+            if sql[j] == "(":
+                depth += 1
+            elif sql[j] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        i = j + 1
+    return "".join(out)
+
+
 def _has_order_by(query: str) -> bool:
-    """Check if SQL query has ORDER BY clause."""
-    return bool(re.search(r"\bORDER\s+BY\b", query, re.IGNORECASE))
+    """Check if SQL query has a **顶层** ORDER BY clause (窗口子句里的不算, §13.73)。"""
+    return bool(re.search(r"\bORDER\s+BY\b", _strip_window_clauses(query), re.IGNORECASE))
 
 
 def _collect_strings(node, out) -> None:
