@@ -6027,3 +6027,58 @@ monkeypatch `_all_conditions` 使其**只在第一次 `next()` 时为真** ⇒ *
 
 #### (h) §5 记账
 审计节, 不产生策略评估 ⇒ `n_comparisons` 不变 (186)。
+
+
+### 13.68 ✅ §13.66 的**同类清扫**: 只有**一处**同类缺陷; 而那句错误前提**在第二个文件里复现了**
+
+#### (a) 扫了什么
+全部 `*_4engine` / `*_engine` 家族文件 (17 个), 并用 **pytest 的收集结果**做精确的
+"文件 × 族"覆盖矩阵 (名字匹配会漏掉参数化与循环式覆盖, 所以用收集结果而不是 grep)。
+
+#### (b) 找到的同类缺陷 (**只有一处**): `tests/test_cost_cash_rejection_4engine.py`
+* 扫描集里有 **`short_reversal/portfolio.py`** —— **该路径从来不存在** (短仓引擎是
+  `replay_strategy_v3.py`), 它被扫描器里的 `if not path.exists(): continue` **静默跳过**
+  (§13.43 记过的同一形状)。此处**当前是惰性的** (断言用 `any()` 跨三键, 另两键是真的),
+  但"静默跳过"本身就该被断言挡住。
+* **`cycle_price_action` 根本不在扫描集里**, 依据是文件头那句
+  *"cycle_price_action: uses cerebro (different pattern, **skip**)"* ——
+  **而那句话是错的**: `cycle_price_action/portfolio.py:69` 就是 `class Portfolio`,
+  `:170` 就是 `if cost > free_cash + epsilon:`; 实测扫描器能为该族报出
+  `guard_lines=[170, 239]`。
+  ⇒ **一整族从未被这条 §2 守卫检查过 —— 而它其实有守卫。**
+
+#### (c) ★ 那句错误前提的**第二次出现**
+§13.66(c) 记的是它在 `test_all_in_sizing_fraction_preservation.py` 里;
+本节是它在 `test_cost_cash_rejection_4engine.py` 里的**同一句**。
+> **一句未被核实的注释, 被复制进多个守卫文件, 每次让一整族失明。**
+> 这是 §9.2 / §10.1 那条的**第三次**: **"我们没做 X, 因为 Y" 里的 Y 要核实。**
+
+#### (d) 修了什么 (**只改测试 ⇒ 零漂移**)
+发现式扫描集 (`*/portfolio.py` + short_reversal 的两个真实引擎);
+删掉不存在的路径; 加 **存在性断言** + **族覆盖断言** (两张 `FAMILY_ENGINES` 对照);
+**新增 `cycle_price_action` 的守卫测试**。
+
+#### (e) §6 双向验证
+| 检查 | 结果 |
+|---|---|
+| 还原态 | **6 passed** |
+| **退回手写清单 (把 cycle 从扫描集里拿掉)** | **2 条红** (cycle 的守卫测试 + 族覆盖断言) ✅ |
+| 再还原 | 6 passed ✅ |
+
+#### (f) 顺带一个**"排除"结论** (与"发现"同样是产出)
+把同一标准扫遍整个家族后, **只有上面那一处**。其余在覆盖矩阵里显示"缺族"的全是
+**名字式假报**:
+* `test_volume_cap_4engine.py` 只做 chase/uptrend —— 但 cycle 的 §4 量能上限由
+  `test_volume_cap_low_bar.py` (提及 cycle 3 次)、`test_section4_microstructure_gap.py` (11 次)、
+  `test_cycle_portfolio.py` 覆盖, 且 cycle 的实现在 `portfolio.py:281` 调用**共享**的
+  `volume_cap_fill` ⇒ **无缺口**;
+* `test_round28_4engine_strict_comparison_drift.py` 的 generic 测试
+  (`reserve` / `release_margin`) 覆盖的是**共享助手**, 名字里不出现族名 ⇒ 假报;
+* `test_3layer_architecture_chase_uptrend.py` 按名字就是两族。
+
+> ⇒ **§13.66 那类缺陷不是系统性的。** 这条排除把"**发现一处、不知还有多少处**"
+> 变成"**发现一处、其余已核干净**" —— 本册第 4 次说这句 (§12.7 / §13.10 / §13.19 / 本节),
+> **而每次它都成立**。
+
+#### (g) §5 记账
+审计节, 不产生策略评估 ⇒ `n_comparisons` 不变 (186)。
