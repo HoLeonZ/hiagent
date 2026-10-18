@@ -13,6 +13,10 @@ CLAUDE.md §5 铁律: 简单 grid-search 找 max Sharpe 是 banned, 必须 WFV�
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 from dataclasses import dataclass
 from datetime import date
 
@@ -35,6 +39,41 @@ class WalkForwardWindow:
         return getattr(self, key)
 
 
+def window_coverage(windows: list[WalkForwardWindow]) -> tuple[list[int], list[int]]:
+    """相邻 test 窗的**重叠月数**与**空档月数**(纯函数,便于单测)。
+
+    返回 `(overlaps, gaps)`,长度都是 `len(windows) - 1`(没有相邻对时为空)。
+
+    为什么需要它:`roll_months < test_months` ⇒ 相邻 **test 窗重叠**(同一段行情被
+    多个窗口重复计入);`roll_months > test_months` ⇒ 中间**留空档**(那段行情没人看)。
+    两者都不报错、也不提示,而已有的一条 OOS 测试的 docstring 写着"无 sample overlap"
+    —— 那句话**只在窗口内**成立(train_end < test_start),跨窗口并不成立:
+    实测默认参数(train 12 / test 12 / roll 6)下两个 test 窗**重叠 6 个月(50%)**。
+
+    重叠本身可以是一种选择(更多折),**但必须被说出来**:聚合层(跨窗均值/中位数、
+    DSR)会把"N 个窗"当成 N 份独立证据,而重叠时并不独立。
+    """
+    def month_index(d: date) -> int:
+        return d.year * 12 + d.month
+
+    overlaps: list[int] = []
+    gaps: list[int] = []
+    for prev, nxt in zip(windows, windows[1:]):
+        # 以**月序号**为准(而不是天数差):delta = 下一窗开始的月份 - 本窗结束的月份。
+        #   delta <= 0 ⇒ 有重叠,共享 (1 - delta) 个**日历月**;
+        #   delta == 1 ⇒ 首尾相接(不重不漏);
+        #   delta >  1 ⇒ 中间空档 (delta - 1) 个月。
+        # 注意口径:共享月数按**日历月**计 —— 默认参数(roll 6 / test 12)下
+        # 2025-01..2025-12 与 2025-07..2026-06 共享 7..12 共 **6** 个月。
+        # (我第一版写成 `-delta`,把 6 报成 5 —— 差一个月,报告里的数就不能用了。)
+        delta = month_index(nxt.test_start) - month_index(prev.test_end)
+        if delta <= 0:
+            overlaps.append(1 - delta)
+        elif delta > 1:
+            gaps.append(delta - 1)
+    return overlaps, gaps
+
+
 def walkforward_windows(
     start: date,
     end: date,
@@ -45,7 +84,20 @@ def walkforward_windows(
     """生成 train/test split WFV 窗口 (cycle_price_action 风格).
 
     每个窗口: train_months 训练 + test_months 测试, 然后向前 roll_months。
-    train_end < test_start 强制 (OOS testing)。
+    train_end < test_start 强制 (OOS testing) —— 这是**窗口内**的 OOS。
+
+    ## 跨窗口的语义(附七十五 写清)
+
+    `roll_months` 与 `test_months` 的关系决定相邻 **test 窗**的关系:
+
+    | 关系 | 后果 |
+    |---|---|
+    | `roll < test` | test 窗**重叠**(默认 6 < 12 ⇒ 相邻窗重叠 50%)—— 同一段行情被多个窗口重复计入 |
+    | `roll == test` | test 窗首尾相接,不重不漏 |
+    | `roll > test` | 中间**留空档**,那段行情没人评估 |
+
+    重叠/空档都不报错(它们是选择,不是 bug),但本函数会**告警**并给出具体月数 ——
+    聚合层(跨窗均值/中位数、DSR)若无此信息,会把"N 个窗"当成 N 份**独立**证据。
     """
     if (end.year - start.year) * 12 + (end.month - start.month) < train_months + test_months:
         raise ValueError("horizon too short for train+test windows")
@@ -67,6 +119,20 @@ def walkforward_windows(
             )
         )
         train_start = _add_months(train_start, roll_months)
+
+    overlaps, gaps = window_coverage(windows)
+    if overlaps:
+        logger.warning(
+            "§5 WFV: 相邻 test 窗**重叠** %s 个月(roll_months=%d < test_months=%d)"
+            " —— %d 个窗并非 %d 份独立证据;聚合均值/中位数与 DSR 的 T 口径要把这一点说清。",
+            overlaps, roll_months, test_months, len(windows), len(windows),
+        )
+    if gaps:
+        logger.warning(
+            "§5 WFV: 相邻 test 窗之间**留空档** %s 个月(roll_months=%d > test_months=%d)"
+            " —— 这些月份没有被评估。",
+            gaps, roll_months, test_months,
+        )
     return windows
 
 
