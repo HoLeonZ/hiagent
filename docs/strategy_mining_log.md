@@ -5895,3 +5895,76 @@ raise AssertionError("GAP CAPTURED: ...")
 
 #### (f) §5 记账
 本节是审计, 不产生策略评估 ⇒ `n_comparisons` 不变 (186)。
+
+
+### 13.66 ⛔ **一个"扫不存在的文件"的守卫**: §2 的 `position_fraction` 一致性检查, 三个族里**三个空转**
+
+> **这是本册"空泛守卫"已知形态里 ② 与 ③ 的****同一处同时命中******
+> (② `skipif`/清单写死不存在的路径 ⇒ 永远跳过; ③ `assert "X" in SRC` 被别处无关出现满足)。
+
+#### (a) 怎么发现的: **缺陷注入** (不是读代码)
+按记忆里的固定流程给 §2 的四引擎一致性测试做注入 —— 往
+`short_reversal/replay_strategy_v3.py:792` 把 `self.p.position_fraction` 换成常数 `1.0`
+(即"半仓静默变满仓"), 运行 `tests/test_all_in_sizing_fraction_preservation.py`:
+**毫无反应。**
+
+#### (b) 根因一: 手写路径清单里有**不存在的文件**
+`PORTFOLIO_FILES` 写死三个路径, 其中 **`short_reversal/portfolio.py` 从来不存在**
+(该族引擎是 `short_reversal/replay_strategy_v3.py`)。
+⇒ 那条测试查一个不存在的 key ⇒ `has_portfolio_class=False` ⇒ **early-return, 空转**;
+而**真正的引擎文件从未被扫过**。文件头 D 节把它写作 `short_reversal/portfolio.py:try_enter` ——
+这个路径从来没有过。
+
+#### (c) 根因二: 一个**未被核实的前提**, 让一整族没有被检查过
+文件头 D 节: "`cycle_price_action`: **no Portfolio class** (uses cerebro), skip" ——
+**这句话是错的**: `cycle_price_action/portfolio.py:69` 就是 `class Portfolio`。
+⇒ `cycle_price_action` **不在清单里, 一条测试都没有。**
+> 与 §9.2/§10.1 同一条教训: **"我们没做 X, 因为 Y" 里的 Y 要核实。** 这次 Y 是错的, 代价是一族失明。
+
+#### (d) 根因三: 判据只问"文件里**出现过**吗"
+同文件 245 行的**行为式**守卫自己就写明了: *"上面那几个 AST 扫描只断言源码里「出现」标识符 ——
+一条 fail-fast 断言也能满足它。"* —— 而那条行为式守卫**只给 uptrend 补了**。
+
+#### (e) 修了什么 (**只改测试, 不动生产代码 ⇒ 零漂移**)
+1. **发现式取文件** (`*/portfolio.py` + short_reversal 的真实引擎);
+2. **断言每个被扫路径存在** + **断言每个族都被扫到** (§13.43/§13.45 的同一手段);
+3. 判据从"文件里出现过"收紧为"**出现在赋值给预算变量的表达式里**";
+4. `chase_up` / `cycle_price_action` 的"preset 声明了、引擎不读"改成**自失效豁免** (§13.24 形状)。
+
+#### (f) §6 双向验证 (**这次被验的是守卫自己**)
+| 检查 | 结果 |
+|---|---|
+| 还原态 | 5 passed, 2 xfailed, **0 failed** |
+| **注入: 把 short_reversal 的引擎换回那个不存在的路径** | **2 条立刻红** (存在性 + 族覆盖) ✅ |
+| 再还原 | 绿 ✅ |
+
+#### (g) ⚠️ 但它**仍然抓不到分支级的注入** —— **实测, 不是推断**
+把 792 行改成常数, 本文件**不变红** (768 行的 atr 分支也读它, "至少一处"仍成立)。
+试过更严的规则「**每一处**预算赋值都必须引用 `position_fraction` 或 `max_positions`」:
+**抓得到那两次注入, 但产生 5 处假报** —— 全是合法形态:
+* `slot_value = cash_only` (all_in 分支, 分数恒为 1.0);
+* `slot_value = cash_only * kelly_fraction` (kelly 分支, §2 认可的另一种模式);
+* `budget = min(slot_value, pf.free_cash)` (下游钳制; 那个 `pf` 是**持仓对象**, 同名巧合)。
+⇒ **假报的守卫与不响的守卫是同一回事** (§13.19/§13.58 的同一病) ⇒ **该规则已收回。**
+⇒ **AST 无法证明 §2 这条性质**; 能证明它的只有**行为式**守卫, 而**四族里只有 uptrend 有**。
+
+#### (h) 覆盖现状 (修完之后)
+| 族 | AST 断言 | 行为式守卫 |
+|---|---|---|
+| `uptrend_pullback` | ✅ | ✅ |
+| `short_reversal` | ✅ (真实引擎; **修好前是空转**) | ❌ |
+| `chase_up` | **xfail** (登记: 22/22 声明, 引擎不读) | ❌ |
+| `cycle_price_action` | **xfail** (登记: 21/21 声明, 无该参数) | ❌ |
+
+#### (i) **未做 (下一轮入口)**
+给 `short_reversal` / `cycle_price_action` / `chase_up` 各补一条**行为式**守卫
+(`chase_up`/`uptrend` 是 pandas `simulate_portfolio`; `short_reversal`/`cycle` 走 backtrader ⇒ 各写一份 fixture)。
+**这是唯一能真正证明"声明 → 下单规模"的手段。**
+
+#### (j) ⚠️ 计数说明 (免得日后对不上账)
+本文件的 `failed` 由 **1 → 0**, **不是因为修好了任何东西** —— 是 `chase_up` 那条从
+`AssertionError` 改成了**登记在案的严格自失效豁免**。**真实覆盖是上升的**
+(两个"空转 / 缺失"变成了真断言), 但**红灯数下降会看起来像好转**, 必须记下原因。
+
+#### (k) §5 记账
+审计节, 不产生策略评估 ⇒ `n_comparisons` 不变 (186)。
