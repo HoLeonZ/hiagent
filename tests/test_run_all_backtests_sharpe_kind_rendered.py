@@ -20,6 +20,7 @@ Sharpe 格渲染成「数字 + 量纲小标签」(全名放 `title`,悬停可见
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 
 import pytest
@@ -137,3 +138,26 @@ def test_full_page_render_carries_kind_and_css() -> None:
     assert "日年化" in html and "逐笔近似" in html
     assert "sharpe_kind = daily_returns_annualized" in html
     assert "<td class='num good'>" in html, "Sharpe 格的 td class 丢了(CSS 会失效)"
+
+
+def test_dd_table_puts_the_smallest_drawdown_first() -> None:
+    """**标题必须与表一致**(附七十二)。
+
+    `max_dd` 是负数,故"回撤最小在前"= **降序**。修前传 `ascending=True` ⇒ 升序 ⇒
+    **回撤最大**的排 #1,而标题写着"回撤最小" —— 实测:rows=[dd=-0.05, dd=-0.30]
+    时 -0.30 在 #1。这条断言把"标题声称的"与"表里真实的"绑在一起。
+    """
+    mod = _load_tool()
+    html = mod._render_cross_strategy({"strategies": [{"name": "s", "title": "T", "rows": [
+        _row("small_dd", "daily_returns_annualized"),
+        {**_row("BIG_dd", "daily_returns_annualized"), "max_dd": -0.30},
+    ]}]})
+    seg = html[html.index("按 max_dd"):]
+    order = [
+        re.findall(r"<td[^>]*>(.*?)</td>", ln)[2]
+        for ln in re.findall(r"<tr>.*?</tr>", seg) if re.findall(r"<td[^>]*>(.*?)</td>", ln)
+    ]
+    assert order and order[0] == "small_dd", (
+        f"回撤榜第一行是 {order[0] if order else '?'},而标题声称「回撤最小在前」 —— 标题与表相反"
+    )
+    assert "回撤最小在前" in seg[:200], "标题未说明方向"

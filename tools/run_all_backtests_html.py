@@ -610,7 +610,11 @@ def _render_cross_strategy(report: dict[str, Any]) -> str:
 
     cagr_top = render_rank("cagr", top_n=8)
     sharpe_top = render_rank("sharpe", top_n=8)
-    dd_best = render_rank("max_dd", top_n=8, ascending=True)
+    # 附七十二:`max_dd` 是**负数**(-0.30 = 回撤 30%)。此前传 ascending=True ⇒
+    # 升序 ⇒ **回撤最大**的排在最前,而标题写的是"回撤最小"。实测:
+    # rows=[dd=-0.05, dd=-0.30] ⇒ 表里 -0.30 在 #1。故改为降序(-0.05 在前),
+    # 让**标题与表一致**(变量名 dd_best 本来就是这个意思)。
+    dd_best = render_rank("max_dd", top_n=8, ascending=False)
 
     return (
         "<section class='strategy'><h2>🏆 跨策略排名(TOP-8)</h2>"
@@ -623,13 +627,13 @@ def _render_cross_strategy(report: dict[str, Any]) -> str:
         "(每行的 Sharpe 格上已直接渲染量纲标注,悬停可见 <code>sharpe_kind</code> 全名);"
         "③ cycle_price_action 的 Sharpe / CAGR / max_dd 是<b>无法定义</b>"
         "(横截面研究,按每股独立账户),显示为 — 且不参与排名。"
-        "max_dd 升序榜在策略间可比性最好。"
+        "回撤榜(max_dd 降序,回撤最小在前)在策略间可比性最好。"
         "</p>"
         "<h3 style='margin:14px 0 4px;font-size:14px;color:#475569;'>按 CAGR 排序</h3>"
         + cagr_top +
         "<h3 style='margin:18px 0 4px;font-size:14px;color:#475569;'>按 Sharpe 排序</h3>"
         + sharpe_top +
-        "<h3 style='margin:18px 0 4px;font-size:14px;color:#475569;'>按 max_dd (升序,回撤最小) 排序</h3>"
+        "<h3 style='margin:18px 0 4px;font-size:14px;color:#475569;'>按 max_dd (降序,回撤最小在前) 排序</h3>"
         + dd_best +
         "</section>"
     )
