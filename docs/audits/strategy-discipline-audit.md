@@ -5440,3 +5440,107 @@ uptrend_pullback/iter_reverse.py:285 n_returns 引用了模块级数字常量 WI
   —— **七处里五处是"验证方法本身"的问题**,而不是结论错。已把两条固化成文:
   (a) 两向验证须同时**复现形状**且**确认工具看得见**;(b) 写守卫时问的是
   "**把被测的东西删掉,它会不会红**"。
+
+---
+
+## 附六十八 —— 兄弟函数里的**同一处单位混用**:Bonferroni p 量级错约 15 个数量级,**印的是事实的反面**
+
+按上一轮的建议,把审计从"DSR 的**输入**"转到"DSR 的**公式**"。第一个撞上的不是公式,
+而是**同文件里没被一起修的兄弟函数**。
+
+### 1 · 缺陷
+
+`dna_stats/deflated.py::sharpe_significance_pvalue` 修前:
+
+```python
+se = 1.0 / math.sqrt(n_returns - 1)
+z = observed_sharpe / se
+```
+
+而 `observed_sharpe` 按本模块**约定是年化值**(见同文件 `deflated_sharpe_ratio` 的
+docstring 与 `annualized_sharpe()`),`se` 却是**逐期**标准误 ⇒ z 被放大约
+`sqrt(243) ≈ 15.6` 倍 ⇒ p 被压到 ~0。实测(真值用逐期公式**独立**复算):
+
+| 年化 SR | T | 修前 | 真值 |
+|---|---|---|---|
+| 0.84 | 1071 | **0.0** | 0.039 |
+| 0.50 | 250 | 1.6e-15 | **0.306** |
+| 0.30 | 243 | 1.5e-06 | **0.382** |
+| 1.00 | 42 | 7.6e-11 | **0.341** |
+| 2.00 | 252 | 0.0 | **0.021** |
+
+另一个旁证:参数 `trading_days_per_year` 修前**被接受但完全没用**(不参与任何运算)——
+单位换算根本没落地。
+
+### 2 · 后果:**报告印的是事实的反面**
+
+`dna_stats/walkforward_report.py` 印出来的 **Bonferroni p 正是由它算**:
+
+| 年化 SR | T | k | 修前的 p_bonf | 修后的 p_bonf |
+|---|---|---|---|---|
+| 0.84 | 42 | 19 | **7.1e-07** | 1.0000 |
+| 1.50 | 42 | 23 | **0.0** | 1.0000 |
+| 0.60 | 42 | 50 | 3.1e-03 | 1.0000 |
+| 2.00 | 243 | 100 | **0.0** | 1.0000 |
+
+修前:那行对**全部**这些情形都印"极其显著";修后印"不显著"。也就是说,
+**这条路此前把每一个 Sharpe 都报成显著** —— §5 的多重比较惩罚在这一行上完全不存在。
+
+> 如实说明修后的形态:对这些 2 个月窗口(T≈42)与 k=19~100 的组合,修正后的 p
+> **饱和在 1.0** —— 这不是公式的毛病,而是一句**真话**:42 个观测 + 几十次比较,
+> 本来就压不倒 H0。它是"测试设计给不出这个显著性"的信息,方向也是保守的。
+
+### 3 · 为什么它活到今天:三个原因叠在一起
+
+**(a) 同一处混用在兄弟函数上被修过,没一起修。**
+`deflated_sharpe_ratio` 在 **2026-10-13** 就修了这处(那版注释写明症状:
+"年化 Sharpe=0.84 / k=19 / T=1071 被判成 DSR=0.000 … 把「有边际优势」误读成
+「毫无优势」")——**修一处 ≠ 修一族**,又一例。
+
+**(b) 还有一条测试把 bug 写成了期望。**
+
+```python
+def test_sharpe_significance_basic():
+    """V7: 高 Sharpe + 大样本 → 极低 p-value。"""
+    p = sharpe_significance_pvalue(observed_sharpe=2.0, n_returns=252)
+    assert p < 0.001          # ← 正确值是 ~0.021
+```
+
+年化 2.0 在 252 个观测上只是 **约 2σ**(p≈0.021),而这条断言要求它"极低"。
+**它断言的就是那个单位错误** —— 于是修复反而打红它。(与附六十 那条"要求常数存在"的
+家族守卫同形:守卫站在缺陷那一侧。)
+
+**(c) 自称校验"单位口径"的那条守卫,自己两边用了不同的年化常量。**
+`tests/test_deflated_sharpe_units.py` 的参考实现 `trading_days: int = 252`,而被测实现
+用 **243**,差值 0.008~0.013,恰好被 `abs=0.02` 的容差吞掉(实测:实现与 **243** 参考
+一致到 **1e-10**)。
+**一个守不住自己要守的东西的守卫比没有守卫更糟:它提供的是虚假的安心。**
+
+### 4 · 改动
+
+| 位置 | 改动 |
+|---|---|
+| `dna_stats/deflated.py::sharpe_significance_pvalue` | 年化 → 逐期再乘 `sqrt(T-1)`(与 `deflated_sharpe_ratio` **同一换算**);docstring 里记下量级表与因果 |
+| `tests/test_dna_stats_deflated.py::test_sharpe_significance_basic` | 期望从 `p < 0.001` 改成 `≈0.021`,并写明"那条旧断言本身就是单位错误" |
+| `tests/test_deflated_sharpe_units.py` | 参考实现改用 `core.trade_schema.TRADING_DAYS_PER_YEAR`(单源);容差 `abs=0.02` → **1e-9** |
+
+### 5 · 守卫(3 组,全部双向验证)
+
+| 用例 | 钉住 |
+|---|---|
+| `test_pvalue_matches_reference`(6 组参数) | 与独立参考实现一致(`abs=1e-9`) |
+| `test_pvalue_is_not_absurdly_small_for_a_modest_sharpe` | **非空转钳制**:年化 0.5 的 p 必须落在 0.05~0.8 —— 1e-15 那种数量级只可能来自"年化当逐期" |
+| `test_pvalue_actually_uses_the_annualization_parameter` | 该参数必须**真的参与换算**(修前它被忽略) |
+
+**双向验证**:`git checkout -- dna_stats/deflated.py` ⇒ **9 条红**;恢复 ⇒ **27 passed**。
+
+### 6 · 给下一步的线索
+
+公式本身(`_norm_ppf`、`expected_max`、非正态项、自相关项)我对着论文逐项核过,并与
+stdlib 的 `NormalDist` 独立复算一致(见 `tests/test_deflated_sharpe_units.py` 的
+`_reference_dsr`,现已把它的常量也接到单源上)。
+**但有一处合同问题留着**(登记,未改):`deflated_sharpe_ratio` 的 `kurtosis` 参数
+**默认 3.0(原始峰度)**、公式按原始峰度使用(`(γ4−1)/4`,正态时给 0.5 ✓),
+而 docstring 写着「**We accept excess** here」——**文档与实现相反**。
+当前所有调用点都不传该参数(默认 3.0),故**行为正确**;但只要有人按 docstring 传
+"超额峰度"(正态=0),就会静默算错。**登记,留给下一步**(改文档还是改实现是个口径决定)。
