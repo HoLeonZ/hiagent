@@ -390,6 +390,11 @@ th {
 }
 tr:hover td { background: #f8fafc; }
 td.num { font-variant-numeric: tabular-nums; }
+span.kind {
+  font-size: 0.72em; color: var(--neutral); margin-left: 4px;
+  border: 1px solid #e2e8f0; border-radius: 3px; padding: 0 3px;
+  vertical-align: 1px; cursor: help;
+}
 td.good { color: var(--good); font-weight: 600; }
 td.bad  { color: var(--bad);  font-weight: 600; }
 td.neutral { color: var(--neutral); }
@@ -433,6 +438,37 @@ def _fmt_num(x: float, d: int = 2) -> str:
     if x is None or not math.isfinite(x):
         return "—"
     return f"{x:,.{d}f}"
+
+
+#: `sharpe` 的**量纲**短名(附七十一)。全名放在 `title` 里,读者悬停可见。
+#: 未知 kind **原样显示**而不是留空 —— 留空会让"这一格没有量纲信息"与"量纲恰好为空"
+#: 无法区分(本仓库反复吃过"静默的零"的亏)。
+_SHARPE_KIND_SHORT = {
+    "daily_returns_annualized": "日年化",
+    "per_trade_ratio_approx": "逐笔近似",
+}
+
+
+def _sharpe_cell(sharpe, kind) -> str:
+    """Sharpe 格的**内容**:数字 + 量纲标注。
+
+    为什么要渲染它:跨策略排名段落早就写着「**Sharpe 在三个引擎里不是同一个量** …
+    每行的 `sharpe_kind` 已随数据发布」—— 而 HTML 里此前**从不显示**它:
+    读者看到的只有一个数字,那条警示指向的是他在页面上看不见的东西。
+    (kind 一直写在行数据里、也进了 JSON;缺的是**渲染**这一步。)
+
+    ⚠️ 本函数只返回 `<td>` 的**内容** —— 外层 `<td class='num …'>` 由调用方保留。
+    (我第一版把 `<td>` 一起包进来,于是 CSS 里的 `td.num` / `td.good` / `td.bad`
+    全部失效:选择器对的是 td,不是 span。)
+    """
+    num = _fmt_num(sharpe)
+    if not kind:
+        return num
+    tag = _SHARPE_KIND_SHORT.get(str(kind), str(kind))
+    return (
+        f"{num}<span class='kind' title='sharpe_kind = {escape(str(kind))}'>"
+        f"{escape(tag)}</span>"
+    )
 
 
 def _cls(v: float, good_if_pos: bool = True) -> str:
@@ -499,7 +535,7 @@ def _render_table(rows: list[dict[str, Any]]) -> str:
             f"<td class='num'>{n}</td>"
             f"<td class='num {_cls(win, good_if_pos=True)}'>{_fmt_pct(win)}</td>"
             f"<td class='num'>{bar_html}</td>"
-            f"<td class='num {_cls(sharpe, good_if_pos=True)}'>{_fmt_num(sharpe)}</td>"
+            f"<td class='num {_cls(sharpe, good_if_pos=True)}'>{_sharpe_cell(sharpe, r.get('sharpe_kind'))}</td>"
             f"<td class='num {_cls(max_dd, good_if_pos=False)}'>{_fmt_pct(max_dd)}</td>"
             f"<td class='num'>{_fmt_num(eq, 0)}</td>"
             f"<td class='num'>{tp}/{sl}/{tm}/{eod}</td>"
@@ -556,7 +592,7 @@ def _render_cross_strategy(report: dict[str, Any]) -> str:
                 f"<td>{escape(r['preset'])}</td>"
                 f"<td class='num'>{_fmt_pct(r.get('win_rate', 0))}</td>"
                 f"<td class='num'>{_fmt_pct(r.get('cagr', 0))}</td>"
-                f"<td class='num'>{_fmt_num(r.get('sharpe', 0))}</td>"
+                f"<td class='num'>{_sharpe_cell(r.get('sharpe', 0), r.get('sharpe_kind'))}</td>"
                 f"<td class='num'>{_fmt_pct(r.get('max_dd', 0))}</td>"
                 f"<td class='num'>{r.get('trades', 0)}</td>"
                 f"</tr>"
@@ -584,7 +620,7 @@ def _render_cross_strategy(report: dict[str, Any]) -> str:
         "<code>daily_returns_annualized</code>(日收益年化),short_reversal 是"
         "<code>per_trade_ratio_approx</code>(逐笔比率);"
         "故「按 Sharpe 排序」<b>跨策略没有意义</b>,只在同一策略内可比"
-        "(每行的 <code>sharpe_kind</code> 已随数据发布);"
+        "(每行的 Sharpe 格上已直接渲染量纲标注,悬停可见 <code>sharpe_kind</code> 全名);"
         "③ cycle_price_action 的 Sharpe / CAGR / max_dd 是<b>无法定义</b>"
         "(横截面研究,按每股独立账户),显示为 — 且不参与排名。"
         "max_dd 升序榜在策略间可比性最好。"
