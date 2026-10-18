@@ -4858,3 +4858,107 @@ DSR 守卫不可见(既不能说它违规,也不能说它干净)。这条是**�
   (**偏悲观**)。处置与附三十二 一致(那次也只修口径并标注)。
 * 从今往后:任何把 `n_returns` 写成常数(字面量**或**模块级变量)或不再从运行取 T 的
   脚本,这套守卫都会红。
+
+---
+
+## 附六十一 —— 消费端:`render_top5_presets_html.py` 的 short_reversal 路径**自己反推日期**(实测 11/16 错,其中两笔错了一个月)
+
+前面几十条的战场都在引擎/守卫;这一条换到**消费端** —— 谁读这些指标、读得对不对。
+`tools/render_top5_presets_html.py` 是五份 HTML 报告的产出者,其中 **4 份**走
+short_reversal 路径。
+
+### 1 · 缺陷 A:反推日期,而记录里本来就有日期
+
+```python
+"""Convert raw short_reversal trade dict to canonical TRADE_COLS row.
+   Reverse-engineers entry_date / exit_date via build_trade_dates' approach.
+   Synthesizes net_pnl / gross_pnl / fees / net_return from price+size+net%."""
+mask = (kline["open"].astype(float) - ep).abs() < 0.001      # ← 全部候选
+entry_date = pd.Timestamp(kline.loc[mask, "date"].iloc[0])    # ← **取第一根**
+...
+for _, row in after.iterrows():
+    if lo - 1e-9 <= xp <= hi + 1e-9: exit_date = ...; break   # ← 第一根"装得下"的
+if exit_date is None and not after.empty:
+    exit_date = pd.Timestamp(after["date"].iloc[min(hold_days - 1, len(after) - 1)])  # ← **编一个**
+```
+
+而引擎**早就**把 `entry_date` / `exit_date` / `exit_reason` 放进记录里了
+(`_canonical_trade_record`,附五十二 之后还带着 `gross_pnl/fees/net_pnl/net_return`)。
+
+**实测**(`2026-06-01..2026-08-31`,`v44_ratio02_buf07`,16 笔):
+
+| | |
+|---|---|
+| 日期与记录**不符** | **11 / 16 笔(69%)** |
+| 典型 | 记录 `2026-06-09→06-11`,工具 `06-09→06-10`(早一天) |
+| **最严重** | `003033.SZ` 记录 `06-29→07-01`,工具给你 `05-27→05-29`(**错一个月**) |
+| 同上 | `002605.SZ` 记录 `08-03→08-05`,工具 `05-29→06-01`(**错两个月**) |
+
+更值得记的是**这段代码是什么**:它是 `short_reversal/render_html_report.build_trade_dates`
+那套启发式的**第二份实现**,而且——本审计早前已经把那套启发式**修好过**
+(`test_ambiguous_entry_price_picks_the_candidate_that_validates`、
+`test_no_validating_candidate_is_marked_unverified`:歧义时选**能通过校验**的那根、
+无候选时标 `unverified`)。**活下来的这一份是修之前的那一版**:歧义取第一根、无候选就编。
+§6「一条规则一处实现」的反例,而且反的那一面是最坏的。
+
+### 2 · 缺陷 B:权益曲线是**合成**的,而引擎发布真曲线
+
+原实现用**逐笔** `net_return` 复利造一条 equity:
+
+```python
+cum = (1.0 + trades_sorted["net_return"].fillna(0.0)).cumprod()
+```
+
+它把 `max_positions>1`(多仓同时持有)、未满仓期、以及**逐 bar 回撤**全部抹平 ——
+曲线形状与任何由它推出的风险指标都不可信。而引擎发布的真曲线就在同一次调用里:
+实测 **141 行**,列为 `date / cash / holdings_value / equity / drawdown / free_cash`。
+
+### 3 · 一条**被实测推翻**的怀疑(如实记账)
+
+我一开始把这段里第三处也当成缺陷:**"用旧兼容字段 `net` 合成 `net_pnl`"**
+(`net_pnl = raw["net"] × (entry_price × size)`),理由是审计已知 `net` 是百分比率
+back-compat shim、且平行 workstream 修过几处"用了 `net`"。
+
+**实测推翻**:`net × (ep × size)` 与 canonical `net_pnl` **逐分一致**
+(两个 preset 共 30 笔,合计差 **0.00**,单笔最大差 0.00;胜率 37.5% vs 37.5%、
+42.9% vs 42.9%)。原因很直白:`net = gross_pct − 费用比率`,乘回名义额就是
+`gross_pnl − fees`,与 canonical 定义**同一个量**;`net` 与 `net_return` 的差别在
+**分母**(是否含 `entry_fee`),只在"聚合"时才咬人,不在单笔 P&L。
+
+**故这三行没改。** 这是本审计里第三次"测量更正了我的读法"(前两次见附五十二 §1、
+附五十七 §2 的自查)—— 记在这里是因为它比前两次更能说明问题:**"与已知缺陷同形的代码"
+不代表"就是缺陷"**,判据必须落到"两个数是不是同一个量"。
+
+### 4 · 改动与守卫(4 条,全部双向验证)
+
+| 改动 | 内容 |
+|---|---|
+| `_normalize_short_reversal_trade` | 字段**只从记录取**;缺 canonical 键 ⇒ `raise KeyError`(不再静默反推)。`klines` 参数保留(调用方还要它画指标),但本函数不再读它 |
+| `_run_short_reversal` | 权益曲线改为读引擎的 `equity_curve`;为 `None`(ensemble 路径)⇒ `raise RuntimeError`(宁可**可见地**失败,也不合成一张假曲线) |
+
+| 守卫 | 钉住 |
+|---|---|
+| `test_short_reversal_rows_take_dates_and_pnl_from_the_record` | **构造与记录矛盾的 klines**(没有一根 open≈ep、没有一根含 xp)⇒ 仍必须给出记录里的日期;旧实现在此返回 `None`(整笔从报告里消失) |
+| `test_short_reversal_missing_canonical_key_fails_loudly` | 缺 `net_pnl` ⇒ `KeyError` |
+| `test_short_reversal_equity_comes_from_the_engine` | 权益逐行等于引擎那张(mock `run_backtest_v3`) |
+| `test_short_reversal_missing_equity_curve_fails_loudly` | `equity_curve=None` ⇒ `RuntimeError` |
+
+双向验证:把工具文件还原到修复前(`git checkout --`)⇒ **这 4 条全红**;恢复 ⇒ 11 passed。
+
+**端到端复验**(真跑一次渲染:`--only short_reversal --start 2026-06-01 --end 2026-08-31`,
+4 份报告全部产出):
+
+| | 修复前(工具自造) | 修复后 |
+|---|---|---|
+| 报告里 `003033.SZ` 的日期 | `2026-05-27 → 05-29`(**错一个月**) | `2026-06-29 → 07-01`(记录值) |
+| 权益曲线 | 逐笔台阶(≈笔数行) | **引擎的 141 行逐日曲线**(带逐 bar 回撤) |
+
+> 副作用(有意):`main()` 对每个 preset 是 `except Exception: print("ERROR ...")`,
+> 故 ensemble 路径现在会打印 ERROR 而不是渲染一张假曲线报告。**可见的失败优于静默的伪造。**
+
+### 5 · 没做(与既有登记一致)
+
+`tests/test_render_top5_tool_consistency.py` 的 docstring 早已登记:该工具**展示层**还在
+重述 `_compute_short_indicators`(逐 bar 指标序列)与 `_build_entry_reasons_*`(A/B/C 文案),
+消解它需要引擎暴露逐 bar 指标序列 —— 属重构。本条**只**处理了"日期/权益这两处会给出
+**错误数字**的重复",没去动"重复但结论一致"的那部分。
