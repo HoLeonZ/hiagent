@@ -213,6 +213,67 @@ def _scan_silent_except_sites() -> list[tuple[str, int, str, str]]:
 
 
 # ---------------------------------------------------------------------------
+# 2026-10-19 (§13.48): **把判据与它声明的目标对齐**
+#
+# `_scan_silent_except_sites()` **完全不看异常类型** —— 只查处理体是不是
+# `continue` / `pass` / 裸 `return` / `rows.append`。于是它把两类东西都算了进来:
+#
+#   (i) `sweep` / `grid` / `walkforward` **脚本**里的逐项容错 ——
+#       而 CLAUDE.md §0 明写 "Scan/grid loops allow warn-log + continue" ⇒ **合规**;
+#   (ii) 用了**具体**异常类型的 `continue`(如 `except (IndexError, ValueError): continue`)——
+#       而**兄弟审计** `test_exception_specificity_audit.py` 恰恰把"具体类型"当作 GOOD (§13.47)。
+#
+# **实测这 17 处的构成** (2026-10-19):
+#     引擎/其它 + 具体类型   4
+#     脚本       + 具体类型   9
+#     脚本       + 宽类型     4
+#     引擎/其它 + **宽类型**  **0**     ← §0 真正针对的那一类
+# ⇒ **那条 `>= 12` 的阈值是在噪声上红**: 计数里**一个目标类样本都没有**。
+#
+# ⇒ 修正: 判据改为 **宽/裸类型 ∧ 非扫描脚本**; 断言改为**严格为零**(比 `>=12` 更强),
+#   同时给原始检测器留一条**非空转下限**(否则"检测器坏了"也会表现为零)。
+BROAD_TYPES = {"", "Exception", "BaseException"}
+SCAN_TOOL_TOKENS = ("sweep", "grid", "walkforward", "wf_", "compare", "rerun")
+
+
+def _handler_type_name(handler: ast.ExceptHandler) -> str:
+    """处理器捕获的类型名; `except:` 记作空串。"""
+    if handler.type is None:
+        return ""
+    node = handler.type
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Tuple):
+        return ",".join(n.id for n in node.elts if isinstance(n, ast.Name))
+    return ast.dump(node)
+
+
+def _is_scan_tool(rel: str) -> bool:
+    """是否是"逐项容错"的扫描/网格脚本 (§0 明文允许 warn-log + continue)。"""
+    name = rel.rsplit("/", 1)[-1]
+    return any(tok in name for tok in SCAN_TOOL_TOKENS)
+
+
+def _scan_target_violations() -> list[tuple[str, int, str, str]]:
+    """**§0 真正针对的那一类**: 宽/裸异常类型 ∧ 非扫描脚本 ⇒ 静默吞掉。"""
+    out = []
+    for rel, line, pattern, snippet in _scan_silent_except_sites():
+        if _is_scan_tool(rel):
+            continue
+        # 找到该站点所属的处理器类型
+        tree = ast.parse((REPO_ROOT / rel).read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ExceptHandler) and node.body:
+                body_lines = {st.lineno for st in node.body}
+                if line in body_lines:
+                    tname = _handler_type_name(node)
+                    if tname in BROAD_TYPES:
+                        out.append((rel, line, tname or "<bare>", snippet))
+                    break
+    return out
+
+
+# ---------------------------------------------------------------------------
 # RED: Silent except sites beyond Tick 44's known 4
 # ---------------------------------------------------------------------------
 
@@ -237,30 +298,24 @@ def test_silent_except_sites_beyond_tick44() -> None:
       - handlers with `raise` (re-raise)
       - handlers around `import` (optional deps)
     """
-    sites = _scan_silent_except_sites()
+    raw = _scan_silent_except_sites()
+    targets = _scan_target_violations()
 
-    # Currently expect ≥12 silent except sites (4 from Tick 44 + ≥8 new)
-    if len(sites) >= 12:
-        # Document the gap with file:line citations
-        sample = sites[:15]
-        raise AssertionError(
-            f"§0 FAIL-FAST VIOLATION: {len(sites)} silent except sites "
-            f"found across production code (Tick 55 deep scan).\n"
-            f"Tick 44 found 4 production hot-path sites; Tick 55 found "
-            f"{len(sites)} total (Tick 44 sites + {len(sites) - 4}+ new).\n"
-            f"Sites:\n" +
-            "\n".join(
-                f"  {file}:{line} [{pattern}] — {snippet}"
-                for file, line, pattern, snippet in sample
-            ) +
-            (f"\n  ... ({len(sites) - len(sample)} more)" if len(sites) > len(sample) else "") +
-            f"\n\nExempt patterns (NOT flagged):\n"
-            f"  - handlers with `raise` (re-raise preserves fail-fast)\n"
-            f"  - handlers around `import` (optional deps)\n"
-            f"\nGREEN fix: either add explicit `raise` re-raise, log + "
-            f"raise custom exception, or add `# noqa: BLE001` + comment\n"
-            f"documenting why silent swallow is acceptable here."
-        )
+    # ---- 反空转下限: 原始检测器必须**确实在工作** ----
+    # 若它坏了(返回空), 下面的"零"就毫无意义。所以先钉住"它还能看见东西"。
+    # 17 是 2026-10-19 的实测值; 下限设 10, 留正常增减余地。
+    assert len(raw) >= 10, (
+        f"原始静默检测器只命中 {len(raw)} 处 (<10) —— 检测器可能坏了, "
+        f"此时『目标类为零』不构成任何证据。"
+    )
+
+    # ---- 真判据 (2026-10-19, §13.48): §0 针对的那一类必须**严格为零** ----
+    assert not targets, (
+        f"§0 FAIL-FAST VIOLATION: {len(targets)} 处**静默吞掉宽/裸异常**且在**非扫描脚本**里:\n"
+        + "\n".join(f"  {f}:{l} [{k}] — {sn}" for f, l, k, sn in targets)
+        + "\n\n(判据: 类型为裸/Exception/BaseException ∧ 文件不是 sweep/grid/walkforward 类工具。"
+        "扫描类工具的逐项容错由 §0 明文允许, 不计入。)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -300,17 +355,26 @@ def test_tick44_known_sites_are_in_silent_list() -> None:
     sites = _scan_silent_except_sites()
     files_found = {file for file, _, _, _ in sites}
 
-    expected_tick44 = {
-        "short_reversal/scan_signals.py",
+    # ⚠️ 2026-10-19 (§13.48): 原名单有 **4** 个文件, 其中
+    #   `short_reversal/scan_signals.py` **已被修好** —— 它现在收窄到具体类型
+    #   (`except (ValueError, KeyError, OSError) as e:`) **并 `raise RuntimeError(...) from e`**
+    #   (见该文件 :124-134 的注释 "Round 11 / Tick 40")。
+    #   ⇒ 它**正确地不再出现**在静默列表里。**原断言钉的是一个已经过时的状态 ⇒ 假红。**
+    # ⇒ 改成两面: 剩下这 3 个必须仍在 (证明扫描器没坏); 那一个必须**不在** (钉住它保持修好)。
+    expected_still_silent = {
         "chase_up/sweep.py",
         "uptrend_pullback/grid.py",
         "short_reversal/grid_runner.py",
     }
 
-    missing = expected_tick44 - files_found
+    missing = expected_still_silent - files_found
     assert not missing, (
         f"Scanner regression: Tick 44's known silent except sites not "
         f"detected by new scanner. Missing: {sorted(missing)}\n"
         f"This means the scanner is missing some patterns that Tick 44 "
         f"caught. Investigate scanner AST logic."
+    )
+    assert "short_reversal/scan_signals.py" not in files_found, (
+        "回归: `short_reversal/scan_signals.py` 又出现了**静默** except —— "
+        "它曾在 Round 11 / Tick 40 被修成『收窄到具体类型 + re-raise』(见该文件 :124-134 的注释)。"
     )

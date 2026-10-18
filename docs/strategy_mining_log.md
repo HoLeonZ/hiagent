@@ -4420,3 +4420,68 @@ if not _is_specific_exception_type(node):
 
 > **⇒ "发现式"不是一律更好。** 判据是: **放宽之后, 那条断言量的是不是它声称要量的东西。**
 > 前六处是"量对了但量少了"; 这一处是"量多了就量错了"。
+
+### 13.48 ⛔ **一条红的守卫, 它的 17 个"违规"里属于目标类的有 0 个** —— 判据改为与声明的目标对齐
+
+#### (a) 现象: 阈值测试红了 17 处
+`tests/test_fail_fast_deep_scan_section2.py::test_silent_except_sites_beyond_tick44`
+断言 `if len(sites) >= 12: raise` —— 实测 **17 处**。
+
+#### (b) 量化: 这 17 处的构成
+| 桶 | 处数 |
+|---|---|
+| 引擎/其它 + **具体类型** | 4 |
+| 脚本 + 具体类型 | 9 |
+| 脚本 + 宽类型 | 4 |
+| **引擎/其它 + 宽类型** | **0** ← §0 真正针对的那一类 |
+
+#### (c) 根因: 检测器**完全不看异常类型**
+`_scan_silent_except_sites()` 只查处理体是不是 `continue` / `pass` / 裸 `return` / `rows.append`。
+于是它把两类东西都算了进来:
+* **`sweep`/`grid`/`walkforward` 脚本**里的逐项容错 —— 而 §0 明写
+  *"Scan/grid loops allow warn-log + continue"* ⇒ **合规**;
+* **用了具体异常类型**的 `continue`(如 `except (IndexError, ValueError): continue`)——
+  **而兄弟审计 `test_exception_specificity_audit.py` 恰恰把"具体类型"当作 GOOD (§13.47)。**
+
+> **⇒ 同一个仓库里的两条守卫用着互补的判据: 一条把另一条认为好的东西记成违规。**
+> 而那条 `>= 12` 的阈值因此**没有区分力**: 计数里一个目标类样本都没有。
+
+#### (d) 修法: 判据与**声明的目标**对齐, 且断言**更强**而不是更松
+* 新判据: **宽/裸类型 ∧ 非扫描脚本** → 见 `_scan_target_violations()` / `_is_scan_tool()` /
+  `_handler_type_name()`;
+* 断言从 `>= 12`(松阈值)改为 **严格为零**: `assert not targets`;
+* **并留一条反空转下限**: `assert len(raw) >= 10` ——
+  否则"检测器坏了(返回空)"也会表现为"目标类为零", 那正是 §13.19 的坑。
+⇒ **在目标类上比原来强, 在噪声上不再计数。**
+
+#### (e) 第二条红是**陈旧名单** —— 而它钉的是"别人修好了"
+`test_tick44_known_sites_are_in_silent_list` 要求这 4 个文件出现在静默列表里。
+但 `short_reversal/scan_signals.py` **已经被修好了**:
+```python
+except (ValueError, KeyError, OSError) as e:
+    # §0 Fail-Fast: ... Narrow to specific exception types; let KeyboardInterrupt/
+    # MemoryError/programming errors propagate naturally.
+    raise RuntimeError(f"scan_signals cerebro.run failed for {code}: {e}") from e
+```
+(该文件 :124-134 的注释写着 "Round 11 / Tick 40")
+⇒ 它**正确地不再出现** ⇒ **原断言钉的是一个过时状态 ⇒ 假红。**
+
+**改成两面**: 剩下那 3 个必须仍在(证明扫描器没坏); **那一个必须不在**(钉住它保持修好)。
+
+#### (f) §6 四向验证 (改了判据就更要证明它还会咬)
+| 检查 | 结果 |
+|---|---|
+| 还原态 | passed × 2 ✅ |
+| 注入: **宽类型 + 静默 + 非扫描脚本**(`core/`) | **1 failed** ✅ |
+| 注入: **宽类型 + 静默 + 文件名含 `sweep`**(`chase_up/`) | **passed** ✅ ← 刻意豁免 (§0 明文允许) |
+| 让 `scan_signals.py` **回到静默形态** | **1 failed** ✅(钉住它保持修好) |
+| 全部还原 | passed × 2 ✅ |
+
+#### (g) 这一条与 §13.47 合起来给出一条**判据**
+§13.47 是"放宽会吃掉余量、量错总体" ⇒ **不放宽**;
+§13.48 是"红的是噪声、计数不含目标类" ⇒ **收窄总体 + 断言更强**。
+
+> **⇒ "放宽"与"收窄"本身都不是答案。**
+> **判据只有一句: 改完之后, 那条断言量的是不是它**声称要量**的东西。**
+> §13.42/§13.45 放宽是为了**量全**; §13.47 不放宽是因为放宽后**量的不是它**;
+> §13.48 收窄是因为原来的计数**根本不含目标**。三次的判断依据是同一个。
