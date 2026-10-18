@@ -63,6 +63,9 @@ def test_main_board_only_returns_main_board_data(temp_db):
     universe = load_universe_data(
         str(temp_db), date(2025, 1, 1), date(2025, 9, 21),
     )
+    # 2026-10-19 (§13.57): 补"非空"守卫 —— 循环体内**只有断言**, 而本测试的主题正是
+    # "main board only 只返回主板数据"; 若 universe 为空, 这个循环**一次都不执行** ⇒ 恒通过。
+    assert universe, "universe 不得为空 —— 否则下面的循环一次都不执行 (空转)"
     for code, slice in universe.items():
         assert isinstance(slice.df, pd.DataFrame)
         assert {"date", "open", "high", "low", "close", "volume", "amount"} <= set(slice.df.columns)

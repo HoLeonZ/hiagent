@@ -4941,3 +4941,55 @@ assert s_small == cap, "..."                 # 见 (d)
 > 而且这次抓到的两条**同名、跨两族** —— 逐轮碰的话我很可能**先在 chase_up 里改掉一条**,
 > 而 uptrend 那条要等到**不知哪一轮**才会被撞上 (或永远撞不上)。
 > **⇒ 凡是一类缺陷已经被命名(§13.55 把它命名了), 下一步就该是扫这一类, 而不是再碰下一条。**
+
+### 13.57 ✅ **把剩下的候选**一次分完** —— 8 处里 6 处**本来就有守卫**, 3 处补上
+
+#### (a) 延续 §13.56 的方法: 分类 > 逐条
+§13.56 的扫描在"迭代运行时集合"上留了 **8 处未查**(另 32 处的迭代对象是字面量/`range`, 不可能为空)。
+本轮**一次读完 8 处**, 按"前面有没有非空/长度守卫"分类:
+
+| 站点 | 迭代对象 | 守卫 | 判定 |
+|---|---|---|---|
+| `test_cycle_backtest.py:46` | `result.trades` | ✅ 前一行 `assert result.metrics["n_trades"] >= 1` | 安全 |
+| `test_cycle_price_action_layout_c_invariants.py:115` | `preset_dicts` | ✅ `assert preset_dicts` | 安全 |
+| `test_core_walkforward.py:54` | `windows` | ✅ `assert len(windows) >= 4` | 安全 |
+| `test_cycle_walkforward.py:20` | `windows` | ✅ `assert len(windows) >= 4` | 安全 |
+| `test_sweep_thresholds_oos_compliance.py:41` | `windows` | ✅ `assert len(windows) >= 1` | 安全 |
+| `test_short_reversal_v8_plumbing.py:50` | `PRESETS.items()` | 无, 但是**仓库常量**(非空) | 安全 |
+| **`test_cycle_data_feed.py:66`** | `universe.items()` | ❌ **无** | **补** |
+| **`test_core_walkforward.py:176`** | `windows` | ❌ **无** | **补** |
+| **`test_indicators_bt.py:176`** | `zip(...)` | ❌ **无** | **补** |
+
+⇒ **8 处里 6 处本来就有守卫** —— 这条线比 §13.53/§13.54 那两次**健康得多**。
+(读一遍 8 处 = 一轮; 逐条碰 = 8 轮。)
+
+#### (b) 补掉的三处, 各自的形状都值得记
+1. **`test_cycle_data_feed.py::test_main_board_only_returns_main_board_data`** ——
+   最坏的一种: **它名字与 docstring 声称的主题正是"只返回主板数据", 而只要 `universe` 为空,
+   循环零次 ⇒ 恒通过** ⇒ **"声称测了 X"与"X 存在吗"两件事**。
+2. **`test_core_walkforward.py:176`** —— `windows` 无守卫, 而**同一文件 :54 处的另一条
+   `windows` 断言有 `assert len(windows) >= 4`** ⇒ **族内不对称的最小尺度: 一个文件之内。**
+3. **`test_indicators_bt.py:176`** —— `zip(a[-n:], b[-n:])`: `n_bars == 0` 时 zip 为空 ⇒ 零次。
+
+#### (c) §6 双向验证 (三处**逐一注入**, 全部锚在**唯一**文本上)
+| 文件 | 还原 | 注入 | 再还原 |
+|---|---|---|---|
+| `test_cycle_data_feed.py` | 1 passed | **1 failed** ✅ | 1 passed |
+| `test_core_walkforward.py` | 12 passed | **1 failed** ✅ | 12 passed |
+| `test_indicators_bt.py` | 10 passed | **1 failed** ✅ | 10 passed |
+
+(注入分别是 `universe = {}` / `windows = []` / `n_bars = 0`。)
+⚠️ 第一次跑时我的脚本**自己拦下了一处不可靠锚点**(`universe = load_universe_data(` 在该文件出现 **2 次**)
+—— 这条自检是 §13.55 那两次锚点失误之后加的, 本轮第一次发挥作用。
+
+#### (d) 这一条线 (§13.53 → §13.57) 的**总账**
+| 节 | 发现 | 处理 |
+|---|---|---|
+| §13.53 | `test_no_post_window_entries` 空转(重复断言 + 恒真) | 重写为"post-window entry 必须在缓冲内" |
+| §13.54 | `test_tp_exit` 从不测 TP(fixture 故意让 TP 不可达) | 造新 fixture + 精确断言 |
+| §13.55 | `test_volume_participation_cap...` 循环零次(入场在最后一根) | 两点式 + 两条断言 |
+| §13.56 | **同名跨两族**的 `atr_pct` 两条空转 | `ENTRY_IDX=22` + 无条件断言 |
+| §13.57 | 3 处缺非空守卫(其中 6 处本来就有) | 补守卫 |
+
+> **⇒ 共修 8 条空转/名不副实; 而"本来就有守卫"的 6 处说明: 这类缺陷是**局部**的, 不是系统性的。**
+> 这个"有多少是好的"的读数, 只有**扫过一遍**才拿得到 —— 逐条碰永远得不到分母。
