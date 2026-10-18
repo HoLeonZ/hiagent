@@ -100,5 +100,36 @@ def test_the_gate_has_teeth(tmp_path: Path) -> None:
         "    return deflated_sharpe_ratio(1.0, n_trials=len(s))\n",
         encoding="utf-8",
     )
-    for p in (bad1, bad2, bad3):
+    # **赋值形式**:`n_trials = len(rows)`,而 rows 所在的循环里 `continue` 跳过了 append
+    # (本工具第一版只看调用点的关键字 ⇒ 漏掉了 `uptrend_pullback/iter_reverse.py`)
+    bad4 = tmp_path / "bad4.py"
+    bad4.write_text(
+        "def f(xs):\n"
+        "    rows = []\n"
+        "    for x in xs:\n"
+        "        if bad(x):\n"
+        "            continue\n"
+        "        rows.append(x)\n"
+        "    n_trials = len(rows)\n"
+        "    return deflated_sharpe_ratio(1.0, n_trials=n_trials)\n",
+        encoding="utf-8",
+    )
+    for p in (bad1, bad2, bad3, bad4):
         assert mod.find_n_trials_that_drop_failures(p), f"没认出来:{p.name}"
+
+    # 合法:数**枚举数**(把跳过的也算上)—— 不得误报
+    good2 = tmp_path / "good2.py"
+    good2.write_text(
+        "def f(xs):\n"
+        "    rows = []\n"
+        "    n_errors = 0\n"
+        "    for x in xs:\n"
+        "        if bad(x):\n"
+        "            n_errors += 1\n"
+        "            continue\n"
+        "        rows.append(x)\n"
+        "    n_trials = len(rows) + n_errors\n"
+        "    return deflated_sharpe_ratio(1.0, n_trials=n_trials)\n",
+        encoding="utf-8",
+    )
+    assert mod.find_n_trials_that_drop_failures(good2) == [], "合法形状(len(rows)+n_errors)被误报"

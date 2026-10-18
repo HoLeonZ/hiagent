@@ -220,6 +220,10 @@ def main() -> None:
     print(f"[base] v33_long_reverse_v19 (current Pareto opt)")
 
     rows: list[dict] = []
+    # §5 (附八十二): 失败的迭代**没有进 rows**(下一段 `continue`),但它**是一次迭代**
+    # —— 配置被采样、被送去评分,搜索为它花了预算。§5 Iterative-Tuning Accounting 的原话
+    # 是"每一次迭代都计入",故单独计数,最后并入 n_trials。
+    n_errors = 0
     t_start = time.time()
     for i in range(args.iter):
         cfg = sample_preset(base, rng)
@@ -229,6 +233,7 @@ def main() -> None:
         if "error" in res:
             if not args.quiet:
                 print(f"  [{i+1:>3}/{args.iter}] [{dt:>5.1f}s] ERR: {res['error']}", flush=True)
+            n_errors += 1
             continue
         row = {
             "iter": i + 1,
@@ -291,9 +296,14 @@ def main() -> None:
     #
     # 口径(与仓库既有约定一致):
     #   observed = **被选中那个配置**的窗口中位 Sharpe(即 rank-1 那一行);
-    #   n_trials = **实际评分的配置数**(§5 Iterative-Tuning Accounting 要的是累计
-    #              试验数,不是窗口数)—— 用 len(rows) 而不是 args.iter,因为失败的
-    #              迭代并没有被评分;
+    #   n_trials = **试过的配置数** = 评出分的 + 评分时崩掉的(§5 Iterative-Tuning
+    #              Accounting 要的是累计试验数,不是窗口数)。
+    #   (附八十二 更正:此处原为 `len(rows)`,理由是"失败的迭代并没有被评分"——
+    #    这句话只对了一半:它确实没有**分数**,但它**被采样、被送进评分器**,
+    #    是一次已付出的尝试。§5 的原话是"每一次迭代都计入";同仓库另 10 处同形状
+    #    的少计也一并改了。`n_returns`/`observed` 不变 —— 选择只在**有数的**配置间发生。)
+    #   注:`args.iter` 仍不是正确答案:循环内的显式跳过与提前退出会让"枚举数"虚高,
+    #    只有"评出分 + 崩掉"才是真实尝试数。
     #   n_returns = 单窗交易日数。
     #
     # ⚠️ 仍须说清楚:TOP-K 是在**同一批窗口**上选出来的(selection in-sample)。
@@ -306,7 +316,7 @@ def main() -> None:
         from dna_stats.deflated import bonferroni_correct, deflated_sharpe_ratio
 
         observed = float(rows[0]["sharpe_med"])
-        n_trials = len(rows)
+        n_trials = len(rows) + n_errors
         # 附六十六:T 取自本次运行(每个窗口的 `n_daily_returns`,引擎发布;
         # 见 uptrend_pullback/backtest.py),在评分时已折成标量带上。
         n_returns = rows[0].get("n_daily_returns")
@@ -323,7 +333,7 @@ def main() -> None:
         )
         print(
             f"\n§5 DSR(rank-1 配置) | observed_sharpe={observed:+.3f} | "
-            f"n_trials={n_trials}(实际评分的配置数) | "
+            f"n_trials={n_trials}(试过的配置数:评出分 {len(rows)} + 崩掉 {n_errors}) | "
             f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
             f"expected_max={dsr['expected_max_sharpe']:.3f} | "
             f"raw_p={dsr['dsr_p_value']:.4f} | "

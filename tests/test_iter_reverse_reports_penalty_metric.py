@@ -108,11 +108,17 @@ def test_script_states_that_selection_is_in_sample() -> None:
     )
 
 
-def test_search_reports_dsr_with_the_scored_config_count(monkeypatch) -> None:
-    """行为验证:把搜索桩化,断言输出的 `n_trials` = **实际评分的配置数**。
+def test_search_reports_dsr_with_the_count_of_configs_tried(monkeypatch) -> None:
+    """行为验证:把搜索桩化,断言输出的 `n_trials` = **试过的配置数**。
 
-    关键设计:`--iter 4` 但**第 3 次迭代失败**(返回 `error`)→ 实际评分的配置数是 3。
-    这样 `len(rows)`(=3)与 `args.iter`(=4)**不相等**,测试才真的能区分两种口径。
+    关键设计:`--iter 4` 但**第 3 次迭代失败**(返回 `error`)→ 若按"评出分的配置数"算,
+    n_trials 是 3;若按"试过多少"算,是 4。**两者不相等,测试才真的能区分两种口径。**
+
+    (附八十二 更正:本用例的**判据**此处原为前者(`n_trials=3`),并写明了理由
+     "用 `--iter`(=4)会把没被评分的迭代也算进去"。那个理由**与 §5 相反** ——
+     §5 的原话是"每一次迭代都计入",崩掉的那次配置被采样、被送进评分器,是一次已付出的
+     尝试。`--iter` 仍然**不是**正确答案(循环内的显式跳过/提前退出会让枚举数虚高),
+     正确答案是"评出分 + 崩掉",两者都印出来。)
 
     (第一版没设失败迭代,于是 `len(rows) == args.iter`,把 `n_trials` 改成 `args.iter`
     仍然全绿 —— 那是一条**空转**的守卫。)
@@ -152,10 +158,14 @@ def test_search_reports_dsr_with_the_scored_config_count(monkeypatch) -> None:
         mod.main()
     out = buf.getvalue()
 
-    assert "n_trials=3" in out, (
-        "n_trials 应为**实际评分的配置数** 3(4 次迭代中有 1 次失败)—— "
-        "用 `--iter`(=4)会把没被评分的迭代也算进去。实际输出:\n"
-        + "\n".join(l for l in out.splitlines() if "DSR" in l)
+    assert "n_trials=4" in out, (
+        "n_trials 应为**试过的配置数** 4(4 次迭代,其中 1 次评分时崩掉 —— 那次同样算试过)。"
+        "§5 Iterative-Tuning Accounting:\"每一次迭代 —— 包括对评估窗口本身的改动 —— "
+        "都递增 n_trials\";崩掉的那次配置被采样、被送进评分器,搜索为它花了预算。"
+        "实际输出:\n" + "\n".join(l for l in out.splitlines() if "DSR" in l)
+    )
+    assert "崩掉 1" in out, (
+        "少计时必须**印出来**(评出分 3 + 崩掉 1),否则读者会以为 n_trials 就是结果行数。"
     )
     # 被量化的是**被选中配置**的 Sharpe(score 第一 → sharpe 0.30),不是全场的 max
     assert "observed_sharpe=+0.300" in out, (
