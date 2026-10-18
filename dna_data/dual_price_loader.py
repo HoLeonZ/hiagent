@@ -13,7 +13,9 @@ and portfolio mark-to-market). See sql/migrate_v_daily_dual.sql.
 
 Default columns returned:
     thscode, date,
-    adj_open, adj_high, adj_low, adj_close,   — forward-adjusted (for indicators)
+    adj_open, adj_high, adj_low, adj_close,   — **backward-adjusted / 后复权**(v_daily_hfq;
+                                                 实测与 v_daily_hfq.close 100% 一致。
+                                                 原写 "forward-adjusted" 是错标 —— hfq ≠ 前复权)
     raw_open, raw_high, raw_low, raw_close,   — raw (for execution)
     raw_prev_close,                           — for limit-up detection
     volume, amount                            — shared
@@ -21,6 +23,9 @@ Default columns returned:
 The column naming convention follows CLAUDE.md §3:
   * "ALWAYS use Forward-Adjusted Prices (adj_close) for mathematical
      indicators (MACD, Wyckoff mappings, Volatility)."
+     ⚠️ 附七十六:**契约原文写的是 "Forward-Adjusted",而本仓库实际一律用后复权**
+     (四引擎 + 本视图,实测一致)。此处保留契约原文以便对读,但**别按字面理解**:
+     方向不是本仓库的口径,「用复权价算指标、用原始价执行」才是。
   * "ALWAYS use Raw Prices (raw_close) for evaluating limit order triggers,
      stop-losses, and portfolio physical cash mark-to-market."
 """

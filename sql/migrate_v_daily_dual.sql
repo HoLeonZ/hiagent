@@ -1,5 +1,13 @@
 -- V3a (2026-09-22, CLAUDE.md §3): Dual-Price System.
--- Create v_daily_dual view joining forward-adjusted (v_daily_hfq) with
+-- Create v_daily_dual view joining **backward-adjusted / 后复权** (v_daily_hfq) with
+--
+-- ⚠️ 2026-10-18 更正(附七十六):此处原写 "forward-adjusted (v_daily_hfq)" ——
+-- `hfq` 是**后复权**(backward-adjusted),`qfq` 才是前复权。实测:v_daily_dual.adj_close
+-- 与 v_daily_hfq.close **100.00%** 一致(10,364,755 行全中),与 v_daily_qfq.close 只有 5.06%。
+-- 这个错标传播到了 dna_data/dual_price_loader.py 的 docstring 与
+-- tools/*/audit_phantom.py 的 qfq 校准(附五十八 §4 已登记)。
+-- 选后复权是对的:**前复权的历史价位会随之后每次分红而变**(同一份代码在不同日期
+-- 跑出不同数字),而后复权不会 —— 与 §0 的可复现性要求一致。
 -- raw (raw_kline_daily) prices so strategies can:
 --   * Compute indicators (MACD / Wyckoff / Volatility) on adj_close.
 --   * Evaluate SL/TP triggers and portfolio mark-to-market on raw_close.
