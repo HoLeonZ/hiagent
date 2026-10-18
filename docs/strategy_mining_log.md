@@ -3449,3 +3449,75 @@ uptrend 上 (126→136→144→162), 而 chase_up 的字段从未变过。
 #### (e) 顺带: 生成器与测试的计数**互相印证**
 生成器独立数出 `1 + 44 = 45` 个缺失, 与测试报的 `45/81` **完全一致** ——
 两个独立实现的判据给出同一个数, 这是这次"缺口是真的"的一层额外证据。
+
+#### (f) 一处**非预期但无害**的改动 —— 如实记下
+我的写盘语句统一用了 `"\n".join(lines) + "\n"`, 于是**连一个没有插入任何 header 的文件
+(`chase_up/presets.py`)也被重写了一遍** —— 唯一的差别是**补上了文件末尾缺失的换行**
+(原文件是 `No newline at end of file`)。
+
+* 它**不属于**本次意图 (§3: 每个改动行都应追溯到请求);
+* 但它 direction 上是无害的 (POSIX 文本文件应当以换行结尾, 且多数 linter 会告警);
+* **未回退, 但必须写明**。
+
+**并且借这次差异做了一次强校验**: 本次提交里 `*/presets.py` 的**全部新增行**中,
+除注释外只剩两条 `return out` / `return PRESETS[name]` —— 而它们**正是那两个
+"末尾缺换行"的文件最后一行**在 diff 里的删-加假象, **不是真编辑**。
+⇒ **"只加了注释"这件事是被差异本身证明的**, 不是靠我说的。
+
+### 13.33 把剩余失败**分类**: "红灯"里到底有几类东西 (§13.28(h)/§13.29(g) 的收口)
+
+#### (a) 当前全貌
+`49 failed, 929 passed, 18 skipped, 2 xfailed, 3 errors`(上一轮 57 → 本轮 −8: golden 基线重生成)。
+
+对剩余 49 条逐条取失败原因后分类:
+
+| # | 类别 | 条数 | 性质 |
+|---|---|---|---|
+| 1 | **§3 event-sourced 公司行动** | 6 | **真债** —— `test_corporate_actions_gap` ×3 + `test_corporate_actions_dividend_deposit` ×3;§13.26 已给它们**实测暴露** |
+| 2 | **cycle 缺涨停守卫** | 6 | **真债** —— `test_cycle_limit_up_guard` ×4(行为层)+ `test_limit_up_guard_cross_engine` ×2(形式层) |
+| 3 | **产物未产出** (equity_curve.csv / cash_walk.csv / per-preset metrics) | 9 | **真债** —— 与 §13.20 同族 |
+| 4 | **`min_cash_ratio=None` 造成的 TypeError** | 5 | **真债** —— §13.21 的同一根因 (`unsupported operand type(s) for *: 'float' and 'NoneType'`) |
+| 5 | **cycle 的 PIT 默认值** | 2 | ⚠️ **不是生产 bug, 但默认值是陷阱** —— 见 (c) |
+| 6 | **cycle 无 pinned baseline** | 1 | **真债** (§13.30(g)) |
+| 7 | **审计 / 集合成员 / 其它** | ~20 | **本轮未逐条核实** —— 只按文件与原因归类, 见 (d) |
+
+⇒ **趋势是清楚的**: 上一轮清掉"形式钉桩造成的假红"后, 剩下的**压倒性是真实债务**
+(类别 1–4 已占 26 条), 不再是"测试自己坏了"。
+
+#### (b) 本轮已收口的一条
+`test_tp_sl_compliance_header*` 的 **5 条**(类别 3 的一支)已由 §13.32 修绿。
+
+#### (c) ⚠️ 类别 5 值得单独说清: **一个"默认值陷阱"**, 不是 bug
+`tests/test_cycle_survivorship_bias.py` 的 2 条要求: 窗口内**中途退市**的票必须进宇宙
+(§3: "Delisted assets must remain in the simulation until their physical delisting date")。
+
+它们**不传 `asof_date`**, 于是命中 `load_universe_data` 的**文档化回退**:
+```python
+def load_universe_data(db_path, start, end, *, asof_date: date | None = None):
+    """… 若不传则回退到 `end` (保持旧行为) …"""
+    ref_pit = asof_date if asof_date is not None else end
+```
+⇒ `ref_end = end` ⇒ `MAX(date) >= end` ⇒ 中途退市的票被**整段丢掉** —— 正是存活偏差。
+
+**但生产调用点是对的**: `cycle_price_action/backtest.py:101`
+`load_universe_data(db_path, start, end, asof_date=start)` ← **传了**。
+全库**只有这一处生产调用**, 其余 12 处都在测试里。
+
+⇒ **生产没有 bug; 有 bug 的是"默认值"。** 任何**漏传** `asof_date` 的调用者会
+**静默**拿到存活偏差 —— 按 §0 "Do not silently bypass", 正确修法应是
+**让这个参数成为必需**(或把默认值从 `end` 改成 `start`)。
+
+**为什么不改**: 这是一次 **API 语义变更**(要动 7 个测试调用点), 而生产行为本来就对
+⇒ 按既有授权 **登记, 不擅自改**。
+**登记事项**: `load_universe_data` 的默认路径是 §3 违反;两个调用者漏传即静默出错。
+
+#### (d) 类别 7 的**诚实边界**
+这一 ~20 条我只做到**按文件名 + 一行失败原因归类**, **没有**像前几轮那样逐条读断言
+并判定"真债 / 假红 / 测试坏了"。它们混着审计类、集合成员类与 phase2 行为类。
+⇒ **不引用它们支撑任何结论**;下一轮若要继续, 从这一组开始。
+
+#### (e) 这条线的总收口 (把三个数字的意义写死)
+> **"失败数"既不是债务量, 也不与正确性同向。** 到本轮为止, 已识别的成分是:
+> **真债 / 形式钉桩造成的假红 / 断言恒真 / 测试自己坏掉 / 代码动了我忘了翻转 pin /
+> 已修但基线未重生成 / 默认值陷阱(生产无 bug)。**
+> **⇒ 引用这个数字时必须带分类; 只说"49 条红"等于什么也没说。**
