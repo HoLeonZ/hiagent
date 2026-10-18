@@ -36,7 +36,15 @@ PARAM_METADATA: dict[str, dict[str, dict[str, Any]]] = {
         "pct_chg_high": {"label": "涨幅上界", "type": "float", "unit": "比例"},
         "below_ratio_60": {"label": "低于MA60占比", "type": "float", "unit": "比例"},
         "close_ma60_buffer": {"label": "MA60缓冲", "type": "float", "unit": "比例"},
-        "d_mode": {"label": "D 模式", "type": "str", "choices": ["converge_strict", "converge", "any"]},
+        "d_mode": {"label": "D 模式", "type": "str",
+                   # choices 必须覆盖引擎的三条实际分支（conditions.py:240-249）：
+                   #   'converge_strict' → dif<0 & dea<0 & |bar| < |prev_bar|*0.5
+                   #   'd_only'          → 仅 dif<0
+                   #   其它（含默认 'strict'，即 v50_slope 所用的值）→
+                   #                      dif<0 & dea<0 & |bar| < |prev_bar|
+                   # 旧 choices 列了引擎并不区分的 'converge'/'any'，却漏掉了
+                   # 引擎默认与预设实值 'strict' —— 会让严格 choices 校验误拒合法值。
+                   "choices": ["strict", "converge_strict", "d_only"]},
         # --- A/B/E 条件（conditions.py:205-229）---
         "a_condition": {"label": "A 条件模式", "type": "str",
                         "choices": ["default", "cascade_price"]},
@@ -63,7 +71,8 @@ PARAM_METADATA: dict[str, dict[str, dict[str, Any]]] = {
                                    "help": "5日/20日均成交额比率上界"},
         # --- I 条件：RSI 超卖（replay_strategy_v3.py:243-251）---
         "require_rsi_oversold": {"label": "启用RSI超卖过滤", "type": "bool"},
-        "rsi_oversold_threshold": {"label": "RSI超卖阈值", "type": "int", "unit": "RSI值"},
+        "rsi_oversold_threshold": {"label": "RSI超卖阈值", "type": "float", "unit": "RSI值",
+                                   "help": "RSI(14) 低于此值算超卖；引擎按数值比较，允许小数"},
         # --- J 条件：止损冷却（replay_strategy_v3.py:252-258）---
         "sl_cooldown_days": {"label": "止损后冷却期", "type": "int", "unit": "交易日"},
         # --- K 条件：日内反转（replay_strategy_v3.py:259-269）---
@@ -127,7 +136,12 @@ PARAM_METADATA: dict[str, dict[str, dict[str, Any]]] = {
 
 
 def split_params(engine: str, preset: str) -> dict[str, Any]:
-    """把一个预设拆成 `{tunable, declarations, metadata}`。"""
+    """把一个预设拆成 `{tunable, declarations, metadata}`。
+
+    **返回值是调用方私有**：底层来自 `all_presets()` 的深拷贝，`tunable` /
+    `declarations` 里的嵌套 dict/list/tuple 与引擎模块的全局 `PRESETS`
+    不共享引用，可安全原地修改。
+    """
     presets = all_presets()
     if engine not in presets:
         raise KeyError(f"unknown engine: {engine}")
@@ -152,12 +166,16 @@ def validate_overrides(engine: str, preset: str, overrides: dict[str, Any]) -> d
     三类拒绝：
       - declaration：声明字段受 §2/§3/§4/§5 约束，不可在 UI 修改
       - unknown：未知键（静默忽略会让用户以为改了但没改）
-      - type：类型与元数据不符
+      - type：类型/取值范围/枚举与元数据不符（含 bool 冒充数值、可调键缺元数据）
+
+    先调 `split_params` 校验引擎与预设合法性，**再**处理空 overrides 的短路——
+    否则 `validate_overrides('bogus', 'bogus', {})` 会对一个不存在的引擎静默成功。
     """
+    # 先校验 engine/preset 合法（未知引擎/预设在此抛 KeyError）。
+    out = split_params(engine, preset)
     if not overrides:
         return {}
 
-    out = split_params(engine, preset)
     tunable, declarations, meta = out["tunable"], out["declarations"], out["metadata"]
 
     bad_decl = sorted(set(overrides) & set(declarations))
@@ -175,18 +193,46 @@ def validate_overrides(engine: str, preset: str, overrides: dict[str, Any]) -> d
     for key, value in overrides.items():
         spec = meta.get(key)
         if not spec:
-            continue
+            # 可调键却没有元数据 = 元数据缺口（既漏 UI 又把校验洞打开）。
+            # fail-fast，绝不 `continue` 静默放行。
+            raise OverrideError(
+                f"type error: no metadata for tunable key {key!r} — "
+                "PARAM_METADATA is missing this key (metadata gap); refusing to "
+                "skip validation"
+            )
         want = spec.get("type")
-        if want == "float" and not isinstance(value, (int, float)):
+        if want == "bool":
+            if not isinstance(value, bool):
+                raise OverrideError(
+                    f"type error: {key} expects bool, got {type(value).__name__}"
+                )
+        elif isinstance(value, bool):
+            # bool 是 int 的子类：True/False 绝不能冒充数值参数
+            # （isinstance(True, (int, float)) 为真）。先判 bool 再判数值。
+            raise OverrideError(
+                f"type error: {key} received a bool; expected {want}"
+            )
+        elif want == "float" and not isinstance(value, (int, float)):
             raise OverrideError(f"type error: {key} expects float, got {type(value).__name__}")
-        if want == "int" and not isinstance(value, int):
+        elif want == "int" and not isinstance(value, int):
             raise OverrideError(f"type error: {key} expects int, got {type(value).__name__}")
-        if want == "str" and not isinstance(value, str):
+        elif want == "str" and not isinstance(value, str):
             raise OverrideError(f"type error: {key} expects str, got {type(value).__name__}")
+        elif want == "list" and not isinstance(value, list):
+            raise OverrideError(f"type error: {key} expects list, got {type(value).__name__}")
+        elif want == "dict" and not isinstance(value, dict):
+            raise OverrideError(f"type error: {key} expects dict, got {type(value).__name__}")
+
         lo_hi = spec.get("range")
-        if lo_hi and isinstance(value, (int, float)):
+        if lo_hi and isinstance(value, (int, float)) and not isinstance(value, bool):
             lo, hi = lo_hi
             if not (lo <= float(value) <= hi):
                 raise OverrideError(f"type error: {key}={value} outside range [{lo}, {hi}]")
+
+        choices = spec.get("choices")
+        if choices is not None and value not in choices:
+            raise OverrideError(
+                f"type error: {key}={value!r} not one of {sorted(choices)}"
+            )
 
     return dict(overrides)

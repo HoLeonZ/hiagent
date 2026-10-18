@@ -85,3 +85,152 @@ def test_overrides_rejects_an_unknown_key():
 def test_overrides_rejects_a_non_numeric_value_for_a_numeric_param():
     with pytest.raises(OverrideError, match="type"):
         validate_overrides("short_reversal", "v50_slope", {"tp_pct": "high"})
+
+
+# --- Important 1: bool/list/dict 三类此前零校验 ---
+
+
+def test_overrides_rejects_a_string_for_a_bool_param():
+    """Important 1: bool 参数此前任意值放行，现必须类型校验。"""
+    with pytest.raises(OverrideError, match="type"):
+        validate_overrides("short_reversal", "v50_slope", {"require_ma20_slope_neg": "notabool"})
+
+
+def test_overrides_accepts_a_real_bool():
+    got = validate_overrides("short_reversal", "v50_slope", {"require_ma20_slope_neg": True})
+    assert got == {"require_ma20_slope_neg": True}
+
+
+def test_overrides_rejects_a_string_for_a_list_param():
+    """Important 1: list 参数（periods / ensemble_substrategies）此前任意值放行。"""
+    with pytest.raises(OverrideError, match="type"):
+        validate_overrides("cycle_price_action", "PRESET_V1", {"periods": "abc"})
+
+
+def test_overrides_accepts_a_list_for_a_list_param():
+    got = validate_overrides("cycle_price_action", "PRESET_V1", {"periods": [3, 5, 8]})
+    assert got == {"periods": [3, 5, 8]}
+
+
+def test_overrides_rejects_a_string_for_a_dict_param():
+    """Important 1: dict 参数（signal / regime）此前任意值放行。"""
+    from web.catalog import all_presets
+
+    eng = "chase_up"
+    preset = next(iter(all_presets()[eng]))
+    with pytest.raises(OverrideError, match="type"):
+        validate_overrides(eng, preset, {"signal": "notadict"})
+
+
+def test_overrides_accepts_a_dict_for_a_dict_param():
+    from web.catalog import all_presets
+
+    eng = "chase_up"
+    preset = next(iter(all_presets()[eng]))
+    got = validate_overrides(eng, preset, {"signal": {"foo": 1}})
+    assert got == {"signal": {"foo": 1}}
+
+
+# --- Minor 6: bool 是 int 子类，不得冒充数值 ---
+
+
+def test_overrides_rejects_bool_for_a_numeric_param():
+    """Minor 6: isinstance(True, (int, float)) 为真，`{"tp_pct": True}` 必须被拒。"""
+    with pytest.raises(OverrideError, match="type"):
+        validate_overrides("short_reversal", "v50_slope", {"tp_pct": True})
+    with pytest.raises(OverrideError, match="type"):
+        validate_overrides("short_reversal", "v50_slope", {"max_hold": False})
+
+
+# --- Important 2: 空 overrides 不得绕过引擎/预设合法性 ---
+
+
+def test_empty_overrides_still_validates_engine_and_preset():
+    """Important 2: 同一个未知引擎，空 overrides 之前静默过、非空抛错——现在都抛。"""
+    with pytest.raises(KeyError, match="unknown engine"):
+        validate_overrides("bogus", "bogus", {})
+    with pytest.raises(KeyError, match="unknown engine"):
+        validate_overrides("bogus", "bogus", None)
+    # 未知预设（引擎合法）也要抛
+    with pytest.raises(KeyError, match="unknown preset"):
+        validate_overrides("short_reversal", "no_such_preset", {})
+
+
+def test_empty_overrides_on_a_real_preset_is_still_a_no_op():
+    assert validate_overrides("short_reversal", "v50_slope", {}) == {}
+    assert validate_overrides("short_reversal", "v50_slope", None) == {}
+
+
+# --- Important 3: 无元数据的可调键 fail-fast + choices 校验 ---
+
+
+def test_tunable_key_without_metadata_fails_fast(monkeypatch):
+    """Important 3: 可调键漏登记元数据时必须抛错，绝不 `continue` 静默放行。"""
+    import web.params as params_mod
+
+    patched = {eng: dict(meta) for eng, meta in params_mod.PARAM_METADATA.items()}
+    del patched["short_reversal"]["tp_pct"]  # 制造一个元数据缺口
+    monkeypatch.setattr(params_mod, "PARAM_METADATA", patched)
+    with pytest.raises(OverrideError, match="type"):
+        validate_overrides("short_reversal", "v50_slope", {"tp_pct": 0.05})
+
+
+def test_overrides_rejects_a_value_outside_choices():
+    """Important 3: choices 此前从不被校验，`{"d_mode": "zzz"}` 会通过。"""
+    with pytest.raises(OverrideError, match="type"):
+        validate_overrides("short_reversal", "v50_slope", {"d_mode": "zzz"})
+
+
+def test_overrides_accepts_every_declared_choice():
+    for choice in ("strict", "converge_strict", "d_only"):
+        got = validate_overrides("short_reversal", "v50_slope", {"d_mode": choice})
+        assert got == {"d_mode": choice}
+
+
+# --- Important 4: 返回深拷贝，与引擎全局不共享嵌套结构 ---
+
+
+def test_split_params_periods_is_not_the_engine_global():
+    """Important 4 要求的 `is not` 实测：cycle 的 periods（tuple）不再同引用。"""
+    import cycle_price_action.presets as cp
+
+    out = split_params("cycle_price_action", "PRESET_V1")
+    assert out["tunable"]["periods"] is not cp.PRESET_V1["periods"]
+
+
+def test_catalog_output_is_detached_from_engine_globals():
+    """Important 4: 任何嵌套容器都不得与引擎模块的全局 PRESETS 同引用。
+
+    覆盖四个引擎的每一个预设：逐键比对容器型取值（dict/list/tuple）的 identity，
+    并证明原地改返回结构不会污染引擎全局。
+    """
+    import importlib
+
+    from web.catalog import ENGINES, all_presets
+
+    presets = all_presets()
+    for eng, ps in presets.items():
+        mod = importlib.import_module(ENGINES[eng])
+        if hasattr(mod, "PRESETS"):
+            engine_globals = mod.PRESETS
+        else:
+            engine_globals = {
+                n: getattr(mod, n)
+                for n in dir(mod)
+                if n.startswith("PRESET_") and isinstance(getattr(mod, n), dict)
+            }
+        for name, cfg in ps.items():
+            global_cfg = engine_globals[name]
+            for key, value in cfg.items():
+                if isinstance(value, (dict, list, tuple)):
+                    assert value is not global_cfg[key], (
+                        f"{eng}/{name}.{key} 与引擎全局同引用（浅拷贝没修干净）"
+                    )
+            # 原地改返回副本，全局必须不动
+            for key, value in cfg.items():
+                if isinstance(value, dict):
+                    value["__poison__"] = 1
+                    assert "__poison__" not in global_cfg[key]
+                elif isinstance(value, list):
+                    value.append("__poison__")
+                    assert "__poison__" not in global_cfg[key]
