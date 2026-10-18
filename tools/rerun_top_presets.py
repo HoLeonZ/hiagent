@@ -95,6 +95,7 @@ def _load_old_strategies(names: tuple[str, ...]) -> list[dict]:
 
 
 def main() -> int:
+    failures = 0   # §0(附六十三): 失败计数进退出码
     started = datetime.now(timezone.utc)
     t_total = time.time()
 
@@ -116,6 +117,7 @@ def main() -> int:
             elapsed = time.time() - t0
             print(f"  [{i:2d}/{len(CHASE_PRESETS)}] {name}: ERROR {e} ({elapsed:.1f}s)",
                   flush=True)
+            failures += 1   # §0(附六十三)
             continue
         chase_rows.append(row)
     print(f"  chase_up total: {time.time() - t:.1f}s", flush=True)
@@ -138,6 +140,7 @@ def main() -> int:
             elapsed = time.time() - t0
             print(f"  [{i}/{len(UP_PRESETS)}] {name}: ERROR {e} ({elapsed:.1f}s)",
                   flush=True)
+            failures += 1   # §0(附六十三)
             continue
         up_rows.append(row)
     print(f"  uptrend total: {time.time() - t:.1f}s", flush=True)
@@ -207,7 +210,17 @@ def main() -> int:
     NEW_REPORT.write_text(json.dumps(report, indent=2, default=str))
     print(f"\nWrote: {NEW_REPORT}", flush=True)
     print(f"Total elapsed: {time.time() - t_total:.1f}s", flush=True)
-    return 0
+
+    # §0 (附六十三): 失败要进退出码(此前是 print(ERROR) → return 0)。
+    from core.cli_verdict import cli_verdict
+
+    _attempted = len(CHASE_PRESETS) + len(UP_PRESETS)
+    _code, _msg = cli_verdict(
+        failures=failures, attempted=_attempted, succeeded=_attempted - failures,
+        what="preset 重跑",
+    )
+    print(f"\n{_msg}", flush=True)
+    return _code
 
 
 def _short_preset_names() -> set[str]:

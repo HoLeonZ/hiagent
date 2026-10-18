@@ -1152,6 +1152,7 @@ def main(argv: list[str] | None = None) -> int:
 
     only = set(args.only.split(",")) if args.only else None
     outputs = []
+    failures = 0
     for strategy, preset in TOP5:
         if only and strategy not in only:
             continue
@@ -1166,12 +1167,20 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  ERROR {strategy}/{preset}: {e}")
             import traceback
             traceback.print_exc()
+            failures += 1          # §0(附六十三): 失败必须进退出码,不能只进 stdout
             continue
 
     print(f"\n=== Done: {len(outputs)} HTML files in {args.out_dir} ===")
     for p in outputs:
         print(f"  {p}")
-    return 0
+    from core.cli_verdict import cli_verdict
+
+    code, msg = cli_verdict(
+        failures=failures, attempted=len(TOP5), succeeded=len(outputs),
+        what="HTML 报告渲染",
+    )
+    print(f"\n{msg}")
+    return code
 
 
 if __name__ == "__main__":

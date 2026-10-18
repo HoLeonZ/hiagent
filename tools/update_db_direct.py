@@ -95,6 +95,19 @@ def fetch_historical(
     raise RuntimeError(f"failed after {max_retries} retries: {last_err}")
 
 
+def update_verdict(inserted: int, skipped: int, errors: int) -> tuple[int, str]:
+    """本工具的口径 —— 委托给共享实现 `core.cli_verdict`(§0 单一实现)。
+
+    `attempted = inserted + skipped`(有数据回包的目标数),`succeeded = inserted`。
+    """
+    from core.cli_verdict import cli_verdict
+
+    return cli_verdict(
+        failures=errors, attempted=inserted + skipped, succeeded=inserted,
+        what="行情库更新",
+    )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True)
@@ -198,7 +211,12 @@ def main() -> int:
     print(f"  max(date): {cur_max} -> {new_max}")
     print(f"  elapsed:   {time.time() - t0:.0f}s")
     con.close()
-    return 0
+
+    # §0 (附六十三): 结论落在**退出码**上 —— 部分失败必须非零,否则 pipeline 会把
+    # 一次半更新当成成功,下游回测随即读到不一致的行情库。
+    code, msg = update_verdict(inserted, skipped, errors)
+    print(f"\n[update_db_direct] {msg}")
+    return code
 
 
 if __name__ == "__main__":

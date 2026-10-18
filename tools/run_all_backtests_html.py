@@ -738,7 +738,17 @@ def main() -> int:
         encoding="utf-8",
     )
     logger.info("JSON written: %s", json_path)
-    return 0
+
+    # §0 (附六十三): 这个脚本**本来就在数 error_count**,但一直 `return 0` ——
+    # 于是"跑了 100 个 preset、20 个炸了"对 pipeline 而言与"全部成功"不可区分。
+    from core.cli_verdict import cli_verdict
+
+    _code, _msg = cli_verdict(
+        failures=error_count, attempted=len(rows),
+        succeeded=len(rows) - error_count, what="全 preset 回测",
+    )
+    logger.info("%s", _msg)
+    return _code
 
 
 if __name__ == "__main__":
