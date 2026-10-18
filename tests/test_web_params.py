@@ -254,3 +254,61 @@ def test_catalog_output_is_detached_from_engine_globals():
                 elif isinstance(value, list):
                     value.append("__poison__")
                     assert "__poison__" not in global_cfg[key]
+
+
+# --- Minor: 非 dict 的 overrides 必须是 400（OverrideError），不能漏成 500 ---
+
+
+def test_non_dict_overrides_are_rejected_as_override_error():
+    """非 dict 入参必须走 OverrideError（接入方用它映射 400）。
+
+    实测旧行为：`['tp_pct']` → AttributeError（:193 的 `.items()`）、`5` → TypeError
+    （:189 的 `set()`）、`[]` → **静默返回 {}**（最坏：冒充“无覆盖”）。三者在 HTTP 层
+    都不是 400。修后：None 仍表示无覆盖，其它非 dict 一律 OverrideError。
+    """
+    for bad in (["tp_pct"], 5, [], (1, 2), "tp_pct", {1, 2}):
+        with pytest.raises(OverrideError, match="type"):
+            validate_overrides("short_reversal", "v50_slope", bad)
+
+
+def test_none_overrides_is_still_a_no_op():
+    """None 仍合法（表示“无覆盖”），不得被上面的类型守卫误伤。"""
+    assert validate_overrides("short_reversal", "v50_slope", None) == {}
+
+
+def test_non_dict_overrides_still_validates_engine_and_preset_first():
+    """引擎/预设非法时先抛 KeyError，类型守卫不掩盖它。"""
+    with pytest.raises(KeyError, match="unknown engine"):
+        validate_overrides("bogus", "bogus", ["tp_pct"])
+    with pytest.raises(KeyError, match="unknown preset"):
+        validate_overrides("short_reversal", "no_such_preset", 5)
+
+
+# --- 语义: declaration 判定对照全局 DECLARATION_KEYS，而非该 preset 的子集 ---
+
+
+def test_declaration_rejection_does_not_depend_on_preset_membership(monkeypatch):
+    """键在 DECLARATION_KEYS 里、但该 preset 未声明时，仍须报 declaration 而非 unknown。
+
+    用户改的是 §2/§3/§4/§5 契约字段，拒绝理由与它是否出现在这个 preset 里无关。
+    现状：全部 101 个 preset 都声明了全部 10 个契约键，故需用 monkeypatch 剥掉
+    `max_positions` 才能触发这条分支（旧写法会把它降级成 `unknown`）。
+    """
+    import web.params as params_mod
+    from web.catalog import all_presets
+
+    real = all_presets()
+    stripped = {
+        eng: {
+            name: {k: v for k, v in p.items() if k != "max_positions"}
+            for name, p in ps.items()
+        }
+        for eng, ps in real.items()
+    }
+    monkeypatch.setattr(params_mod, "all_presets", lambda: stripped)
+
+    with pytest.raises(OverrideError, match="declaration"):
+        validate_overrides("short_reversal", "v50_slope", {"max_positions": 5})
+    # 同一预设里**已声明**的契约键依旧报 declaration（现有行为不得被破坏）
+    with pytest.raises(OverrideError, match="declaration"):
+        validate_overrides("short_reversal", "v50_slope", {"position_fraction": 0.5})

@@ -163,22 +163,39 @@ def split_params(engine: str, preset: str) -> dict[str, Any]:
 def validate_overrides(engine: str, preset: str, overrides: dict[str, Any]) -> dict[str, Any]:
     """校验并清洗 overrides。
 
-    三类拒绝：
+    四类拒绝：
       - declaration：声明字段受 §2/§3/§4/§5 约束，不可在 UI 修改
       - unknown：未知键（静默忽略会让用户以为改了但没改）
-      - type：类型/取值范围/枚举与元数据不符（含 bool 冒充数值、可调键缺元数据）
+      - type：类型/取值范围/枚举与元数据不符（含 bool 冒充数值、可调键缺元数据），
+        以及 `overrides` 整体不是 mapping（客户端传错容器类型）
+      - KeyError：引擎/预设不存在
 
     先调 `split_params` 校验引擎与预设合法性，**再**处理空 overrides 的短路——
     否则 `validate_overrides('bogus', 'bogus', {})` 会对一个不存在的引擎静默成功。
     """
     # 先校验 engine/preset 合法（未知引擎/预设在此抛 KeyError）。
     out = split_params(engine, preset)
+    # None 表示“无覆盖”；除此以外必须是 mapping。非 mapping（list/int/str/…）此前会在
+    # 下面的 `.items()` / `set()` 处漏成 AttributeError / TypeError（HTTP 层 → 500），
+    # 而正确语义是“客户端传错容器类型”的 400。空容器（[] / ""）尤其危险：`not []` 为真，
+    # 会静默返回 {} 冒充“无覆盖”。故在空短路**之前**显式断言 dict。
+    if overrides is None:
+        return {}
+    if not isinstance(overrides, dict):
+        raise OverrideError(
+            f"type error: overrides must be a mapping (dict) or None, "
+            f"got {type(overrides).__name__}"
+        )
     if not overrides:
         return {}
 
-    tunable, declarations, meta = out["tunable"], out["declarations"], out["metadata"]
+    tunable, meta = out["tunable"], out["metadata"]
 
-    bad_decl = sorted(set(overrides) & set(declarations))
+    # 声明检查对照**全局** DECLARATION_KEYS，而非该 preset 的 declarations 子集：
+    # 用户改的是 §2/§3/§4/§5 契约字段，拒绝理由与它是否出现在这个 preset 里无关。
+    # （旧写法用 `set(declarations)` 会把“在 DECLARATION_KEYS 里、但本 preset 未声明”
+    # 的键降级成 unknown —— 语义错误。）
+    bad_decl = sorted(set(overrides) & set(DECLARATION_KEYS))
     if bad_decl:
         raise OverrideError(
             f"declaration field(s) are read-only: {bad_decl} — "

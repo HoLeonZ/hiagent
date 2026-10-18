@@ -34,12 +34,25 @@ def test_cycle_price_action_is_not_silently_dropped():
 
 
 def test_every_preset_is_json_serialisable():
-    """tuple（如 cycle 的 periods）必须能被前端吃到。"""
+    """清单必须能被前端原样消费：每个 preset 的取值只能是 JSON 原生类型。
+
+    具名回归：preset 里混入非 JSON 原生值（如 numpy.int64、decimal.Decimal、
+    datetime.date）——引擎在 Python 层跑得动，但 API 序列化时 `json.dumps` 抛
+    TypeError → HTTP 500。这条测试把该回归钉死在单测层。
+
+    早先版本写的是 `json.dumps(params, default=list)`：实测对全部 101 个 preset，
+    `default` 回调被调用 **0 次**——tuple 本就是 JSON 原生类型，那条“tuple 要能被
+    前端吃到”的声明从未经过这条测试；`default=list` 还会把 set 这类可迭代的非原生值
+    悄悄转成 list 放行。去掉 `default` 后，任何非原生值都会真的变红。
+    """
     import json
 
     for eng, presets in all_presets().items():
         for name, params in presets.items():
-            json.dumps(params, default=list)  # 不抛即通过
+            try:
+                json.dumps(params)
+            except TypeError as exc:
+                pytest.fail(f"{eng}/{name} 含非 JSON 原生值，前端序列化会 500: {exc}")
 
 
 def test_declaration_keys_are_the_ten_contract_fields():
