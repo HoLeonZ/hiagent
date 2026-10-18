@@ -4219,3 +4219,69 @@ for scan_dir in SCAN_DIRS:
 + 新增 `test_scan_scope_lists_point_at_real_dirs.py`(2 条)。
 ⇒ 当前应为 `52 failed / 935 passed / 3 xfailed`(未再跑全套件 —— 上面那次已覆盖第 136–146 轮,
 本轮只动了两个测试文件, 且各自单独跑过)。
+
+### 13.45 ✅ **§1 禁用函数守卫也改成发现式** —— 顺带发现"目录列表结构上够不到散文件"
+
+#### (a) 形态(第五次)与一处**结构性的**新面
+`tests/test_banned_functions_section1.py` 原先:
+```python
+SCAN_DIRS = ["chase_up", "uptrend_pullback", "short_reversal",
+             "cycle_price_action", "core", "dna_stats"]
+
+for scan_dir in SCAN_DIRS:
+    base = REPO_ROOT / scan_dir
+    if not base.exists():
+        continue          # ← 静默跳过 (§13.43 的形态)
+    for path in base.rglob("*.py"): ...
+```
+⇒ 漏掉 **`tools/`** 与 **`dna_data/`**。
+
+> ⚠️ **但这里还有一层新的**: "**目录列表 + `rglob`**" 这种写法
+> **结构上就够不到仓库根的散文件** —— 目录列表里放不进一个文件。
+> 本仓库根下就有两个:`hiagent_config.py` 与 `run_sizing_comparison.py`。
+> **这不是"列表漏了一项", 而是"这种枚举方式没有表达散文件的位置"。**
+> ⇒ 与前四次不同: 前四次都能靠"把列表补全/改对"解决, **这一次必须换枚举方式**。
+
+#### (b) 改为发现式: 把"要扫哪些"换成"只排除哪些"
+与 §13.42 对 ORDER BY 守卫做的同一件事。覆盖面 **106 → 119 个文件**, 多出的 13 个:
+```
+dna_data/{__init__,dual_price_loader,dual_price_resolver}.py
+tools/{compare_rolling_24m,render_top5_presets_html,rerun_top_presets,
+       run_all_backtests_html,update_db_direct}.py
+tools/cross_section/{cross_section2,cs_final,cs_holdout}.py   ← §13.41 抢救进来的
+hiagent_config.py                                             ← 根散文件
+run_sizing_comparison.py                                      ← 根散文件
+```
+
+#### (c) ✅ **放宽的结果是干净的**: 新增 **0** 处
+在扩展范围下, §1 的三个模式各扫一遍:
+| 模式 | 当前范围 | 扩展后 | **新增** |
+|---|---|---|---|
+| `bfill` / `ffill` | 0 | 0 | **0** |
+| `.shift(-N)` | 0 | 0 | **0** |
+| `.rolling(center=True)` | 0 | 0 | **0** |
+⇒ **那 13 个此前从未被 §1 守卫看过的文件, 全部干净。**
+(这是**否定结果**, 但它把"§1 干净"从"在那 6 个目录里干净"升级为"**在全仓干净**"。)
+
+#### (d) 反空转对照 + §6 双向验证
+* `test_section1_scan_is_discovery_based_and_reaches_root_files` —— 断言扫描
+  (i) 越出旧 6 目录, (ii) **够得到根目录散文件**, (iii) 含 `tools/cross_section/cs_holdout.py`;
+* 注入验证:
+| 注入 | 结果 |
+|---|---|
+| 往 `tools/` 放 `df.shift(-1)` | **1 failed** ✅(旧范围看不见 `tools/`) |
+| 往**仓库根**放 `x.py` 内含 `df.bfill()` | **1 failed** ✅(**旧机制结构上做不到**) |
+| 两个探针都删除 | 5 passed ✅ |
+
+#### (e) 同一族问题的**五个面** (汇总)
+| 节 | 那个面 | 修法 |
+|---|---|---|
+| §13.22 | 列表**只覆盖作者已修过的文件** | 改发现式 |
+| §13.23 | 手写三个 `main.py`, 第四个抄一份就看不见 | 改 `glob("*/main.py")` |
+| §13.42 | 手写 `SQL_FILES`, `tools/`/`dna_data/` 从不在内 | 改遍历仓库 |
+| §13.43 | 列表里**一项拼错了**, 兜底是 `continue` | 修错 + **加"项必须存在"的守卫** |
+| **§13.45** | **枚举方式本身够不到散文件** | **改遍历仓库**(补列表没用) |
+
+> **五次的共同根源是同一个: 用"枚举"表达"范围"。**
+> 而**每一次**放宽都立刻证明了两件事之一: 要么发现了此前看不见的东西(§13.42 的 5 条时序查询),
+> 要么第一次证明了"那部分本来就是干净的"(本节)。
