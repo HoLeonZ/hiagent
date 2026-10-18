@@ -162,7 +162,7 @@ def run_backtest(
         # plumb 到 sizing, 否则该键被静默忽略 (0.x 会变成全仓)。
         position_fraction=p.get("position_fraction", 1.0),
         # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System execution source。
-        price_source_for_execution=p.get("price_source_for_execution", "adj_close"),
+        price_source_for_execution=p.get("price_source_for_execution", "raw_close"),
         # V8 (2026-09-22, CLAUDE.md §4): preset→strategy explicit plumbing。
         intraday_tiebreak=p.get("intraday_tiebreak", "sl_first"),
         max_volume_participation=p.get("max_volume_participation", 0.10),

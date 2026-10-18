@@ -6998,3 +6998,56 @@ assert has_dsr_call, "…图 GAP CAPTURED … never calls deflated_sharpe_ratio"
 
 #### (i) §5 记账
 审计节, `n_comparisons` 不变 (186)。
+
+
+### 13.84 ✅ **§3 的执行价来源默认值在**错的一侧** —— 10 处, 已改 (零漂移已测)
+
+#### (a) 性质
+§3 要求 **SL/TP/限价触发用 raw 价**。而 `chase_up` / `uptrend_pullback` 的
+`price_source_for_execution` **形参默认值与 `.get(...)` 兜底都是 `"adj_close"`** —— 正好是错的那一侧。
+
+#### (b) 分布 (实测) —— **族内不对称**
+| 族 | 以 `adj_close` 为默认/兜底的点 |
+|---|---|
+| `chase_up` | **5** (`backtest.py:133` · `backtrader_engine.py:115/222/273` · `portfolio.py:272`) |
+| `uptrend_pullback` | **5** (`portfolio.py:238` · `backtest.py:165` · `backtrader_engine.py:98/297/350`) |
+| `short_reversal` | **0** (在 feed 侧按 key 切换) |
+| `cycle_price_action` | **0** (走 preset 显式值) |
+
+#### (c) **今天零暴露** —— 所以这是**潜伏陷阱** (§13.21 的直系同形)
+实测: **全部 82 个 preset 都声明了 `raw_close`** (chase 22/22 · uptrend 4/4 · short 55/55 · cycle 1/1)。
+⇒ 今天没有任何 preset 走到那个默认值。
+⇒ 但**任何省略该键的调用方**(新脚本 / 直接构造 / 将来某个 preset)会**静默**拿到复权价执行 SL/TP。
+
+#### (d) 为什么把它改成 `raw_close` **严格不差**
+代码自己的设计就是"**求 raw, 缺列就回退 adj**":
+```python
+415|            if price_source_for_execution == "raw_close" and "raw_close" in pi:
+...
+510|                    if price_source_for_execution == "raw_close" and "raw_open" in pi:
+515|                    if price_source_for_execution == "raw_close" and "raw_prev_close" in pi:
+```
+⇒ `raw_close` + 回退 **≥** `adj_close` **无条件**。**在"错"与"对"之间, 默认值原本选了错的那个。**
+
+#### (e) 改动 + **两级**验证
+把 10 处全部改为 `"raw_close"` (改动面: 6 个文件, 落地核对后残留 **0** 处)。
+
+| 范围 | 结果 |
+|---|---|
+| 10 个 dual-price 相关文件 | `10 failed / 90 passed` → **逐条一致** |
+| **大范围 252 个测试** (chase / uptrend / dual_price / backtrader / sha256 / 4engine / preset / corporate / section4) | **`24 failed / 228 passed / 7 skipped / 3 xfailed` → 逐条一致** ✅ |
+
+⇒ **零漂移** ⇒ 按既有授权"**契约违反 ⇒ 直接修**"执行 (§3 项, 且改动使默认值与契约同侧)。
+
+#### (f) ⚠️ 我在本轮**又犯了 §13.64 那个错**
+第一次跑基线时用了 `$TESTS` 变量 ⇒ **zsh 默认不做词分割** ⇒ `no tests ran`,
+而 `diff` 于是会报"一致" —— **一个恒真的对照**。改用 `bash -c 'pytest $(ls …)'` 后正常。
+> **同一个坑我踩了第二次 (§13.64 → 本节)。** 而这已经是一天内**第三次**"检查/对照本身出错":
+> §13.81 (按变量名 `size` 找而漏 `shares`) · §13.83 (核残留时自己的新注释引用了旧句) · **本节 (词分割)**。
+
+#### (g) 定性
+这不是"守卫不响", 而是 **"守卫的输入默认值在错的一侧"** —— 与 §13.21 (`min_cash_ratio=None`)
+**同形**: 声明出来的默认值本身不可用/不正确, 而生产路径靠**带外注入**绕开它。
+
+#### (h) §5 记账
+审计节, `n_comparisons` 不变 (186)。

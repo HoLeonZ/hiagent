@@ -235,7 +235,7 @@ def simulate_portfolio(
     # "raw_close" → SL/TP 触发用 raw_high/raw_low/raw_close (除权日 raw > adj,
     # 实际止损触发价更高, 这是真实的 physical market event)。
     # "adj_close" (或 legacy 默认) → 用 adj high/low/close, 保持旧行为。
-    price_source_for_execution: str = "adj_close",
+    price_source_for_execution: str = "raw_close",
     kelly_fraction: float | None = None,
     # §2 (CLAUDE.md All-In Sizing 2026-09-21): preset 声明的 position_fraction
     # 必须真正生效。all_in + 1.0 (当前全部 preset) 下为 no-op; 若 preset 给 0.x

@@ -95,7 +95,7 @@ def _verify_trade_with_backtrader(
     tp_price: float,
     sl_price: float,
     max_hold: int,
-    price_source_for_execution: str = "adj_close",
+    price_source_for_execution: str = "raw_close",
 ) -> tuple[float, float, pd.Timestamp | None]:
     """对单笔交易跑 backtrader，返回 (net_pnl, exit_price_actual, exit_date_actual)。
 
@@ -294,7 +294,7 @@ def run_backtrader_backtest(
         slippage=p.get("slippage", 0.0),
         atr_slip_scale=p.get("atr_slip_scale", 0.0),
         # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System execution source。
-        price_source_for_execution=p.get("price_source_for_execution", "adj_close"),
+        price_source_for_execution=p.get("price_source_for_execution", "raw_close"),
         # V8 (2026-09-22, CLAUDE.md §4): preset→strategy explicit plumbing。
         intraday_tiebreak=p.get("intraday_tiebreak", "sl_first"),
         max_volume_participation=p.get("max_volume_participation", 0.10),
@@ -347,7 +347,7 @@ def run_backtrader_backtest(
         net_pnl_bt, exit_px_bt, exit_date_bt = _verify_trade_with_backtrader(
             panel, t.thscode, pd.Timestamp(t.entry_date),
             entry_price, size, tp_p, sl_p, max_hold,
-            price_source_for_execution=p.get("price_source_for_execution", "adj_close"),
+            price_source_for_execution=p.get("price_source_for_execution", "raw_close"),
         )
         phase1_pnl = float(t.net_pnl)
         # warning 路径（exit_px == entry_price 且 exit_date is None）意味着 backtrader

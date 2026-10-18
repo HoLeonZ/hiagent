@@ -112,7 +112,7 @@ def _verify_trade_with_backtrader(
     tp_price: float,
     sl_price: float,
     max_hold: int,
-    price_source_for_execution: str = "adj_close",
+    price_source_for_execution: str = "raw_close",
 ) -> tuple[float, float, pd.Timestamp | None]:
     """对单笔交易跑 backtrader,返回 (net_pnl, exit_price_actual, exit_date_actual)。
 
@@ -219,7 +219,7 @@ def run_backtrader_backtest(
         slippage=p.get("slippage", 0.0),
         atr_slip_scale=p.get("atr_slip_scale", 0.0),
         # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System execution source。
-        price_source_for_execution=p.get("price_source_for_execution", "adj_close"),
+        price_source_for_execution=p.get("price_source_for_execution", "raw_close"),
         # V8 (2026-09-22, CLAUDE.md §4): preset→strategy explicit plumbing。
         intraday_tiebreak=p.get("intraday_tiebreak", "sl_first"),
         max_volume_participation=p.get("max_volume_participation", 0.10),
@@ -270,7 +270,7 @@ def run_backtrader_backtest(
             # V3a+ (2026-09-22, CLAUDE.md §3): feed 必须与 portfolio.py Phase 1
             # 同价格域, 否则 backtrader strategy 跑在 qfq 域 → phantom SL/TP
             # (audit 揭露 v3 backtrader output: 4/59 SL phantom, exit_px ≈ qfq_open)。
-            price_source_for_execution=p.get("price_source_for_execution", "adj_close"),
+            price_source_for_execution=p.get("price_source_for_execution", "raw_close"),
         )
         phase1_pnl = float(t.net_pnl)
         # Round 29c (2026-09-28, CLAUDE.md §0): sentinel `exit_px_bt ==

@@ -269,7 +269,7 @@ def simulate_portfolio(
     # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System execution source。
     # "raw_close" → SL/TP 触发用 raw_high/raw_low/raw_close (除权日 raw > adj)。
     # "adj_close" (或 legacy 默认) → 用 adj high/low/close, 保持旧行为。
-    price_source_for_execution: str = "adj_close",
+    price_source_for_execution: str = "raw_close",
     # V8 (2026-09-22, CLAUDE.md §4): preset→strategy explicit plumbing。
     # intraday_tiebreak='sl_first': 同 bar SL+TP 双触发时, 假设 SL 命中 (Pessimistic)。
     # max_volume_participation=0.10: Bar_Volume × 0.10 volume cap, 默认按模块常量。
