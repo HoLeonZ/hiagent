@@ -5968,3 +5968,62 @@ raise AssertionError("GAP CAPTURED: ...")
 
 #### (k) §5 记账
 审计节, 不产生策略评估 ⇒ `n_comparisons` 不变 (186)。
+
+
+### 13.67 ✅ 给 `short_reversal` 补上**行为式**守卫 (§13.66(i) 的执行); 并把"**收不到**"与"**不用**"分成两条断言
+
+#### (a) 做了什么
+§13.66 实测: **AST 无法证明 §2 这条性质** (792 行改成常数仍绿, 因为 768 行的 atr 分支也读它),
+唯一能证明的是**行为式**守卫 —— 而四族里只有 `uptrend_pullback` 有。本轮补上 `short_reversal` 的。
+
+#### (b) 手法 (与 `test_short_reversal_limit_down_guard.py` 同源)
+monkeypatch `_all_conditions` 使其**只在第一次 `next()` 时为真** ⇒ **恰好开一笔** ⇒ 规模可比。
+同一 panel 在 `position_fraction = 1.0 / 0.5` 下各跑一次, 断言规模相差**不超过一手**。
+
+#### (c) §6 双向验证
+| 检查 | 结果 |
+|---|---|
+| 还原态 | 8 passed, 4 xfailed, **0 failed** |
+| **注入: 792 行 `position_fraction → 1.0`** | **恰好 1 条红** —— 就是这条行为式; **AST 那条仍然绿** (与 §13.66 的实测一致) ✅ |
+| 再还原 | 绿 ✅ |
+| **签名断言自验**: 假装 `chase_up` 收得到该参数 | 它的豁免**立刻失效变红** ✅ |
+
+#### (d) ⚠️ 中途一次**我怀疑错了对象** (记下来)
+量到 `pf=1.0 → 99,900` / `pf=0.5 → 50,000` (比例 1.998), 我第一反应是怀疑引擎。
+**实际是 §2 的 Margin Gatekeeper 在满仓边界上削掉一手**: 满仓时 `Target_Qty × price`
+恰好用光 `free_cash`, 加手续费就超了 —— 而 §2 明文要求
+*"reject or downsize by 1 share to prevent margin borrowing"*。
+⇒ **断言写成"精确 2 倍"是我的错**; 正确不变式是"**差不超过一手**"。已改,
+并把"99900 / 50000"这个读数与解释写进测试注释, 免得下一个人重新怀疑引擎。
+
+#### (e) ★ 新增区分: "**收得到但不用**" vs "**根本收不到**"
+用 `inspect.signature` **逐族核引擎入口的形参表**:
+
+| 族 | 引擎签名里有 `position_fraction`? | 该族 preset 声明 |
+|---|---|---|
+| `uptrend_pullback` | ✅ | 4/4 |
+| `short_reversal` | ✅ | 55/55 |
+| **`chase_up`** | ❌ **不在签名里** | **22/22** |
+| **`cycle_price_action`** | ❌ **不在签名里** | **21/21** |
+
+⇒ **更正 §13.65/§13.66 里我自己写的一句话**: 我写 `chase_up` *"sizing 只用 `cash_only / max_positions`,
+从不读 `position_fraction`"* —— **那是低估**。它的**引擎签名里根本没有这个形参**,
+该键在 **preset→engine 边界上就被静默丢弃** (属 `[[preset-engine-api-conformance-gap]]` 那一类;
+`test_preset_to_engine_api_conformance.py` 里那条**已经在红**, 所以这一条**已有守卫**)。
+
+#### (f) 覆盖现状 (本轮之后)
+| 族 | AST 断言 | **行为式**守卫 | **签名 API** 断言 |
+|---|---|---|---|
+| `uptrend_pullback` | ✅ | ✅ | ✅ |
+| `short_reversal` | ✅ | ✅ (本轮新增) | ✅ |
+| `chase_up` | xfail | **不可构造** | xfail |
+| `cycle_price_action` | xfail | **不可构造** | xfail |
+
+#### (g) 为什么 `chase_up` / `cycle` 的行为式守卫是**"不可构造"**而不是"未做"
+引擎签名里没有该形参, 传进去就是 `TypeError` ⇒ **在补参数之前没有可测对象**。
+这不是 §9.2 的"功效不足", 而是更前面一层: **断言的对象尚不存在**。
+⇒ 已把这一条写进 `REGISTERED_DEBT` 的文本 (两族的豁免都是**自失效**的:
+一旦引擎开始接受该参数, 对应断言立刻红, 提示删除豁免)。
+
+#### (h) §5 记账
+审计节, 不产生策略评估 ⇒ `n_comparisons` 不变 (186)。

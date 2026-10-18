@@ -68,12 +68,15 @@ ALTERNATIVE_ALLOWED = {"max_positions"}
 # ⛔ 登记的债 (§13.66): 这些族的 preset **声明了** position_fraction, 而引擎**不读**它。
 # **修好后必须删掉对应那一行** —— 下面的断言会在债还清时立刻变红。
 REGISTERED_DEBT = {
-    "chase_up": "§13.66 —— 22/22 preset 声明 position_fraction, 而 "
-                "chase_up/portfolio.py 的 sizing 只用 `cash_only / max_positions`, "
-                "从不读 position_fraction。修它属**结果变更** (半仓会真的变半仓), 按授权只登记。",
-    "cycle_price_action": "§13.66 —— 21/21 preset 声明 position_fraction, 而 "
-                          "cycle_price_action/portfolio.py 的 Portfolio 里没有 "
-                          "position_fraction 这个参数 (只有类常量 MAX_POSITION_PCT=1.0)。"
+    "chase_up": "§13.66/§13.67 —— 22/22 preset 声明 position_fraction, 而 "
+                "chase_up 的引擎**签名里根本没有这个参数** (`inspect.signature("
+                "chase_up.portfolio.simulate_portfolio)` 无该形参) ⇒ 该键在 "
+                "preset→engine 边界上被**静默丢弃** (属 [[preset-engine-api-conformance-gap]] "
+                "那一类的 174 个键之一; 已有红灯守卫 test_preset_to_engine_api_conformance)。"
+                "补它属**结果变更** (半仓会真的变半仓), 按授权只登记。",
+    "cycle_price_action": "§13.66/§13.67 —— 21/21 preset 声明 position_fraction, 而 "
+                          "cycle_price_action/portfolio.py 的 `Portfolio.__init__` "
+                          "**签名里没有这个参数** (只有类常量 MAX_POSITION_PCT=1.0)。"
                           "补它属**架构变更**, 按授权只登记。",
 }
 
@@ -290,4 +293,135 @@ def test_uptrend_pullback_position_fraction_scales_order_size() -> None:
         f"§2 POSITION_FRACTION IGNORED: position_fraction=0.5 应下 500 股, "
         f"实际 {half} (1.0 时为 {full})。等值说明该 preset 键被引擎静默忽略 —— "
         f"半仓变全仓, 实际风险 2× 于 preset 声明。"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 行为式守卫 (backtrader 族) —— §13.66: 本族此前只有**空转的 AST 断言**
+# ---------------------------------------------------------------------------
+
+
+def test_short_reversal_position_fraction_scales_order_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§2 行为式: short_reversal 必须真正按 position_fraction 缩放下单规模。
+
+    **为什么必须有这一条** (§13.66): 本族此前的守卫扫的是 `short_reversal/portfolio.py`
+    —— **一个不存在的路径** ⇒ 那条断言一直在空转。而 AST 补不上来 (同文件末尾的说明:
+    792 行改常数仍绿, 因为 768 行的 atr 分支也读它)。**只有行为能证明。**
+
+    fixture 手法与 `test_short_reversal_limit_down_guard.py` 同源:
+    monkeypatch `_all_conditions` 使其**只在第一次 next() 时为真** ⇒ 恰好开一笔 ⇒ 规模可比。
+    """
+    import backtrader as bt
+    import pandas as pd
+
+    from short_reversal.feed_bt import AShareData
+    from short_reversal.replay_strategy_v3 import Phase3V3Strategy
+
+    def _panel() -> pd.DataFrame:
+        dates = pd.date_range("2025-09-01", periods=80, freq="B")
+        return pd.DataFrame([
+            {"thscode": "600000.SH", "date": d, "open": 10.0, "high": 10.001,
+             "low": 9.999, "close": 10.0, "volume": 1e6, "amount": 5e7}
+            for d in dates
+        ])
+
+    state = {"called": False}
+
+    def _first_bar_only(self, d):  # noqa: ANN001
+        if not state["called"]:
+            state["called"] = True
+            return True
+        return False
+
+    monkeypatch.setattr(Phase3V3Strategy, "_all_conditions", _first_bar_only)
+
+    def _size(position_fraction: float) -> int:
+        state["called"] = False          # 每次重置, 否则第二次跑不会开仓
+        cerebro = bt.Cerebro(stdstats=False)
+        cerebro.broker.setcash(100_000.0)
+        cerebro.broker.setcommission(commission=0.0)
+        cerebro.adddata(AShareData(dataname=_panel(), plot=False), name="600000.SH")
+        holder: dict = {"cash": 100_000.0, "trades": [], "max_dd": 0.0}
+        cerebro.addstrategy(
+            Phase3V3Strategy, result_holder=holder, min_cash_ratio=0.05,
+            position_fraction=position_fraction, max_positions=1,
+        )
+        cerebro.run()
+        assert holder["trades"], (
+            f"fixture 未开出任何仓位 (position_fraction={position_fraction}) —— "
+            f"本测试会空转, 必须先修 fixture。"
+        )
+        return int(holder["trades"][0]["size"])
+
+    full, half = _size(1.0), _size(0.5)
+
+    # ⚠️ 满仓那一侧**不会**恰好是半仓的两倍 —— 差**一手**: 满仓时
+    # `Target_Qty × price` 恰好用光 free_cash, 加手续费就超了, 于是 §2 的
+    # Margin Gatekeeper 削掉一手 (§2 明文: "reject or downsize by 1 share to
+    # prevent margin borrowing")。半仓时有余量, 不受此影响。
+    # ⇒ 不变式是"**差不超过一手**", 不是"精确 2 倍"。第一版断言写成精确 2 倍,
+    #   量到 99900 / 50000 后**先怀疑了自己的断言**, 而不是先怀疑引擎。
+    LOT = 100
+    assert full > 0, f"满仓规模为 {full} —— fixture 不对"
+    assert abs(full - 2 * half) <= LOT, (
+        f"§2 POSITION_FRACTION IGNORED (short_reversal): position_fraction=0.5 下 "
+        f"{half} 股, 1.0 下 {full} 股 —— 相差 {abs(full - 2 * half)}, 超过一手 ({LOT})。\n"
+        f"⇒ half-position preset 会**静默变满仓**, 实际风险 2× 于声明。"
+    )
+    assert half == 50_000, (
+        f"§2: position_fraction=0.5 应为 initial_capital×0.5/10 取整到一手 = 50000 股, "
+        f"实际 {half} —— 绝对值不对说明 sizing 的**基准**变了 (不只是比例)。"
+    )
+
+
+# ---------------------------------------------------------------------------
+# §13.67: 引擎**收不收得到**这个参数 —— 与"收到了但不用"是两件事
+# ---------------------------------------------------------------------------
+
+# 每族的引擎入口 + 取形参名的方式。**签名里没有** ⇒ preset 的那个键在
+# preset→engine 边界上就被**静默丢弃**了 (属 [[preset-engine-api-conformance-gap]]) ——
+# 这比"参数收到了但没用在 sizing 上"更早一层。
+def _engine_params(fam: str) -> set[str] | None:
+    import inspect
+
+    if fam in ("chase_up", "uptrend_pullback"):
+        mod = __import__(f"{fam}.portfolio", fromlist=["simulate_portfolio"])
+        return set(inspect.signature(mod.simulate_portfolio).parameters)
+    if fam == "short_reversal":
+        from short_reversal.replay_strategy_v3 import Phase3V3Strategy
+        return set(Phase3V3Strategy.params._getkeys())
+    if fam == "cycle_price_action":
+        import cycle_price_action.portfolio as cp
+        return set(inspect.signature(cp.Portfolio.__init__).parameters)
+    return None
+
+
+@pytest.mark.parametrize("fam", _families())
+def test_engine_api_accepts_position_fraction(fam: str) -> None:
+    """§13.67: 引擎要么**收得到** position_fraction, 要么在 REGISTERED_DEBT 里具名。
+
+    为什么需要这条 (而不是只靠上面的 AST / 行为式): 对 `chase_up` 与
+    `cycle_price_action`, **行为式守卫根本无法构造** —— 引擎签名里没有该参数,
+    传进去就是 `TypeError`。而它们的 preset **都声明了**它 ⇒
+    这个键在 preset→engine 边界上被静默丢弃。
+    ⇒ 本节把"收得到但不用"与"根本收不到"**分成两条断言**, 免得后者藏在前者里。
+    """
+    params = _engine_params(fam)
+    if params is None:
+        pytest.skip(f"{fam}: 未登记引擎入口 —— 请在本文件补一条分派")
+
+    accepts = "position_fraction" in params
+
+    if fam in REGISTERED_DEBT:
+        assert not accepts, (
+            f"{fam} 现在**已经收得到** position_fraction 了 —— 说明那笔登记的债已还清。"
+            f"请把 REGISTERED_DEBT 里 `{fam}` 这一条删掉, 并在 §13.67 记下结果漂移。"
+        )
+        pytest.xfail(f"{fam}: 登记在案 —— {REGISTERED_DEBT[fam]}")
+
+    assert accepts, (
+        f"§13.67: {fam} 的本族 preset 声明了 position_fraction, 但引擎入口 "
+        f"**签名里没有这个形参** ⇒ 该键在 preset→engine 边界被静默丢弃。"
     )
