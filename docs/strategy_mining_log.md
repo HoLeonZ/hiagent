@@ -4825,3 +4825,65 @@ def test_tp_exit():
 外加 `hold_days <= 4`;`test_cascade_triggers_entry_and_exits` 无条件断言成交存在 + 字段完整;
 `test_cash_path_does_not_go_negative` 断言 `cash > 0`(弱但真)。
 ⇒ **4 条里 3 条真、1 条名不副实** —— 而这 1 条恰好是名字最"专项"的那条。
+
+### 13.55 ⛔ **第三条空转**: 断言体是 `for t in trades:`, 而该场景成交数实测为 **0**
+
+#### (a) 触发: 同一条线(救活了 ≠ 有效)
+上轮给 `test_volume_participation_cap_enforced_for_short_entry` 补了 `min_cash_ratio` 把它救活。
+本轮问它的断言有没有对象 —— **没有**:
+
+```python
+max_fill = int(1000 * MAX_VOL_PARTICIPATION / 100) * 100
+for t in trades:                       # ← 前面**没有**"必须有成交"的守卫
+    assert t["size"] <= max_fill, (...)
+```
+**实测该场景成交数 = 0** ⇒ 循环零次 ⇒ **恒通过**。
+
+#### (b) 而它注释里写的**原因是错的**
+> "由于 vol cap 把所有入场全砍光 …, 至少应不崩溃。如果有 trade, size 必须 ≤ 100"
+
+**实测 (逐参数二分)**: 真正的阻断者是 **`max_hold=20`** ——
+`max_hold=5` ⇒ **1 笔成交**;`max_hold=20` ⇒ **0 笔**;而改 `initial_capital` / `margin_rate` /
+`commission_rate` / `stamp_duty_rate` / `sl_pct` **都不解除**。
+
+**机制**: 面板 210 根, 入场在 bar≈200, `max_hold=20` 时仓位**在数据结束前无法平仓** ⇒
+holder 里**不产生"已平仓"记录**。⇒ **不是 vol cap 砍掉了入场, 是持仓未平仓。**
+
+#### (c) 修法: 两点式 + **两条**断言
+```python
+small = _run_vol_cap_probe(1_000.0)          # 上限 = 100 股
+assert small, "本场景必须产生**已平仓**成交 —— 否则下面的循环一次都不执行"
+assert s_small == cap, "..."                 # 见 (d)
+```
+外加把 `max_hold` 改为 5 让仓位能在面板内平掉。
+
+#### (d) ⚠️ 我这一条判据**第一版也是假的** —— 注入把它抓出来了
+第一版写的是"大小 bar 对比": `assert s_small < big[0]["size"]`。
+**注入实测 (关掉参与率 `max_volume_participation=1.0`)**:
+| | 小 bar (vol=1000) | 大 bar (vol=5,000,000) |
+|---|---|---|
+| 默认 (0.10) | **100** | 4500 |
+| 关掉 cap | **1000** | 4500 |
+⇒ 关掉 cap 后小 bar 的 size 是 **1000** —— 那是被 **bar 成交量本身**限住的, **仍然 < 4500**
+⇒ **那条断言在"有 cap"与"没 cap"两个世界里都成立** ⇒ **不是判据**。
+
+⇒ 改成 **`assert s_small == cap`** —— 才说明成交由**参与率规则**决定, 而不是被成交量决定。
+
+#### (e) §6 双向验证 (这次**两个注入都打在了探针函数体内**, 用 `finally` 保证还原)
+| 检查 | 结果 |
+|---|---|
+| ① 还原态 | pass ✅ |
+| ② 注入: 关掉 `max_volume_participation` (⇒ size=1000 ≠ cap=100) | **1 failed** ✅ |
+| ③ 注入: 回到旧配置 `max_hold=20` (⇒ 0 笔成交) | **1 failed** ✅(`assert small` 拦住了原来的空转) |
+| ④ 再还原 | pass ✅ |
+
+#### (f) ⚠️ 顺带记下我在本节**连错两次注入锚点** (第 4、5 次同类失误)
+* 第一次: 改**模块常量** `MAX_VOL_PARTICIPATION` —— 而**策略读的是 `self.p.max_volume_participation`**,
+  改前者只改了"期望值", 没关掉"上限" ⇒ **注入没打在被断言的对象上**;
+* 第二次: 用 `str.replace(..., 1)` 注入, 而那个锚点在文件里出现 **4 次** ⇒ **打在了别的函数上**,
+  还因为重复 kwarg 把文件改坏(最后靠 `git checkout` 恢复)。
+
+> **⇒ 两次都是同一个错: 我以为我在改 A, 实际改了 B。**
+> 而这次能立刻发现, 是因为**注入之后必须核对"它变红了吗"** ——
+> 若不核对, ②那条会"看起来验证过了"。§13.18(c) 的判据又一次奏效。
+> **并且它留下一条可复用的做法: 注入要锚定在"被断言的那个函数体"之内, 并用 `finally` 还原。**
