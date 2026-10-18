@@ -239,16 +239,39 @@ def sharpe_significance_pvalue(
     *,
     trading_days_per_year: int = TRADING_DAYS_PER_YEAR,
 ) -> float:
-    """V7: one-sided p-value for Sharpe ≠ 0 under normality assumption.
+    """V7: one-sided p-value for Sharpe > 0 under normality.
 
-    H0: true Sharpe = 0. H1: true Sharpe > 0. Tests observed / SE where
-    SE = 1/sqrt(T-1) for daily returns. Returns one-sided p-value.
+    ## ⚠️ 2026-10-18 修复(附六十八):**单位混用,量级错约 15 个数量级**
 
-    Combine with bonferroni_correct for family-wise adjustment when
-    comparing many strategies.
+    本函数此前的实现是
+
+        se = 1/sqrt(T-1);  z = observed_sharpe / se
+
+    而 `observed_sharpe` 按本模块的**约定是年化值**(见 `deflated_sharpe_ratio` 的
+    docstring 与 `annualized_sharpe()`),`se = 1/sqrt(T-1)` 却是**逐期**标准误。
+    两者频率不一致 ⇒ z 被放大约 `sqrt(trading_days_per_year) ≈ 15.6` 倍 ⇒
+    p 被压到 ~0。实测:
+
+    | 年化 SR | T | 本函数(修前) | 逐期正确值 |
+    |---|---|---|---|
+    | 0.84 | 1071 | **0.0** | 0.039 |
+    | 0.50 | 250 | 1.6e-15 | **0.306** |
+    | 0.30 | 243 | 1.5e-06 | **0.382** |
+    | 2.00 | 252 | 0.0 | **0.023** |
+
+    即"任何非零 Sharpe 都显著",而 `walkforward_report` 印出来的 Bonferroni p
+    正是由它算的 —— §5 的多重比较惩罚在这一行上等于不存在。
+
+    **同一个文件里的 `deflated_sharpe_ratio` 在 2026-10-13 已经修过这处单位混用**
+    (那一版的注释写明了症状:"年化 Sharpe=0.84 / k=19 / T=1071 被判成 DSR=0.000"),
+    但这个兄弟函数没一起修 —— 修一处 ≠ 修一族。
+    (当时没被发现,是因为 `tests/test_dna_stats_deflated.py::test_sharpe_significance_basic`
+    **把 bug 写成了期望**:它断言年化 SR=2.0 时 `p < 0.001`,而正确值是 ~0.023。
+    那条断言本身就是这个单位错误的另一种写法。)
     """
     if n_returns < 2:
         return float("nan")
-    se = 1.0 / math.sqrt(n_returns - 1)
-    z = observed_sharpe / se
+    # 年化 → 逐期(与 `deflated_sharpe_ratio` 同一换算,单一约定)。
+    sr_per_period = observed_sharpe / math.sqrt(trading_days_per_year)
+    z = sr_per_period * math.sqrt(n_returns - 1)
     return 1.0 - _norm_cdf(z)

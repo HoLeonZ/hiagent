@@ -105,9 +105,20 @@ def test_bonferroni_significant_preserved():
 
 
 def test_sharpe_significance_basic():
-    """V7: 高 Sharpe + 大样本 → 极低 p-value。"""
+    """年化 Sharpe=2.0、252 个观测 ⇒ **约 2σ**,p ≈ 0.021(不是"极低")。
+
+    附六十八 更正:本用例原断言 `p < 0.001`,原注释写"高 Sharpe + 大样本 → 极低
+    p-value"。而按本模块的约定 `observed_sharpe` 是**年化**值 ⇒ 逐期 Sharpe =
+    2.0/sqrt(243) ≈ 0.128,z ≈ 2.0 ⇒ 单侧 p ≈ 0.021。
+
+    旧实现把年化 Sharpe 直接除以逐期标准误(`1/sqrt(T-1)`),z 被放大约
+    `sqrt(243) ≈ 15.6` 倍 ⇒ p 被压到 ~0 —— **那条 `< 0.001` 的断言正是这个单位错误
+    的另一种写法**(它把 bug 写成了期望,于是修复反而会打红它)。
+    """
     p = sharpe_significance_pvalue(observed_sharpe=2.0, n_returns=252)
-    assert p < 0.001
+    assert p == pytest.approx(0.021, abs=0.003), (
+        f"年化 SR=2.0 / T=252 的单侧 p 应 ≈0.021(约 2σ),实际 {p}"
+    )
 
 
 def test_sharpe_significance_zero():
