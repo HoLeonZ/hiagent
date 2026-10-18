@@ -189,17 +189,28 @@ def main() -> None:
                 raise ValueError(
                     "§5: detail 缺 n_daily_returns,无法确定 DSR 的观测数 T —— 不许用常数兜底"
                 )
+            # §5 (附八十二): `n_trials` 是"**试过多少个 preset**",不是"有多少个 preset
+            # 的 mean_sharpe 不是 NaN"。某个 preset 的所有窗口都失败时它的 `mean_sharpe`
+            # 是 NaN,会被 `dropna()` 剔除 ⇒ n_trials 少计、DSR 偏乐观。
+            # §5 Iterative-Tuning Accounting:"每一次迭代都计入"。
+            _n_tried = int(len(summary))
+            _n_ok = int(len(sharpes))
             dsr = deflated_sharpe_ratio(
-                observed_sharpe=observed, n_trials=len(sharpes),
+                observed_sharpe=observed, n_trials=_n_tried,
                 n_returns=int(df["n_daily_returns"].mean()),
             )
             print(
                 f"\n§5 DSR (across-presets sweep) | "
                 f"observed_sharpe={observed:.3f} | "
-                f"n_trials={len(sharpes)} | "
+                f"n_trials={_n_tried} | "
                 f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
                 f"p_value={dsr['dsr_p_value']:.4f}"
             )
+            if _n_tried != _n_ok:
+                print(
+                    f"  ⚠️ 其中 {_n_tried - _n_ok} 个 preset 的 mean_sharpe 是 NaN"
+                    f"(全部窗口失败)—— 它们同样计入 n_trials(§5:每次迭代都算)"
+                )
 
 
 if __name__ == "__main__":

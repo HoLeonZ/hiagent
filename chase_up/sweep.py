@@ -144,17 +144,29 @@ def main() -> None:
             # —— 而上面这句注释里量的 242~243 是对的,**正确的数字和错误的代码躺在同一个 hunk 里**。
             # 现改走 `core.walkforward.window_trading_days`(单源,按窗口区间计数,空窗口 fail-fast);
             # 保留 chase 自己的 `− 1`(期数→收益数)口径。
+            # §5 (附八十二): `n_trials` 是"**试过多少个配置**",不是"有多少个配置算出了
+            # 有限的 Sharpe"。上面的 except 分支会给失败配置落一行(只有 `error`、没有
+            # `sharpe`)⇒ 它被 `dropna()` 剔除 ⇒ **n_trials 少计、分母偏小、DSR 偏乐观**。
+            # §5 Iterative-Tuning Accounting 的原话是"每一次迭代都计入" —— 崩掉的那次也是
+            # 一次迭代(搜索确实为它花了预算)。故取**全部落盘行数**。
+            _n_tried = int(len(df))
+            _n_ok = int(len(sharpes))
             dsr = deflated_sharpe_ratio(
-                observed_sharpe=observed, n_trials=len(sharpes),
+                observed_sharpe=observed, n_trials=_n_tried,
                 n_returns=window_trading_days(panel, args.start, args.end) - 1,
             )
             print(
                 f"\n§5 DSR | observed_sharpe={observed:.3f} | "
-                f"n_trials={len(sharpes)} | "
+                f"n_trials={_n_tried} | "
                 f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
                 f"expected_max={dsr['expected_max_sharpe']:.3f} | "
                 f"p_value={dsr['dsr_p_value']:.4f}"
             )
+            if _n_tried != _n_ok:
+                print(
+                    f"  ⚠️ 其中 {_n_tried - _n_ok} 个配置**抛异常**(见 `error` 列)—— "
+                    f"它们同样计入 n_trials(§5:每次迭代都算)"
+                )
             # §5 (audit 2026-10-15): 本脚本在**单一窗口**上选优,必须自己说清楚。
             # DSR 量化的正是「从 k 个配置里挑最好」带来的虚高,但**它不能替代**
             # 样本外验证 —— 而本仓库**已经有**滚动窗口版本(`chase_up/wf_sweep_all.py`),

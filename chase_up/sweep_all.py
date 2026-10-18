@@ -116,17 +116,27 @@ def main() -> None:
                     "§5: metrics 缺 n_daily_returns,无法确定 DSR 的观测数 T —— "
                     "不许用常数兜底"
                 )
+            # §5 (附八十二): 失败的 preset 走 except 分支进了 `failed`,**没进 `rows`**
+            # ⇒ `len(sharpes)` 只数了成功的那批 ⇒ n_trials 少计、DSR 偏乐观。
+            # §5 Iterative-Tuning Accounting:"每一次迭代都计入" —— 崩掉的那次也是迭代。
+            _n_tried = int(len(rows) + len(failed))
+            _n_ok = int(len(sharpes))
             dsr = deflated_sharpe_ratio(
-                observed_sharpe=observed, n_trials=len(sharpes),
+                observed_sharpe=observed, n_trials=_n_tried,
                 n_returns=max(t_obs),
             )
             print(
                 f"\n§5 DSR | observed_sharpe={observed:.3f} | "
-                f"n_trials={len(sharpes)} | "
+                f"n_trials={_n_tried} | "
                 f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
                 f"expected_max={dsr['expected_max_sharpe']:.3f} | "
                 f"p_value={dsr['dsr_p_value']:.4f}"
             )
+            if _n_tried != _n_ok:
+                print(
+                    f"  ⚠️ 其中 {_n_tried - _n_ok} 个 preset **抛异常**(见上方 FAILED 清单)"
+                    f"—— 它们同样计入 n_trials(§5:每次迭代都算)"
+                )
             # §5 (audit 2026-10-15): 同 `sweep.py` —— 单一窗口选优必须显式声明,
             # 并把读者引向本仓库已有的滚动窗口版本。
             print(

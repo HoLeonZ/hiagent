@@ -4,8 +4,11 @@
 (`--start 2025-09-19 → --end 2026-09-19`)上给一批配置排序,并报告 DSR。
 
 它们**做对了**的部分(先记下来,免得读者以为整条都不合格):
-  · `observed = max(sharpes)` 配 `n_trials = len(sharpes)` —— max 取 k 项、按 k 折减 ✓
-    同一次选择(与附十三/十四/十六同一条原则);
+  · `observed = max(sharpes)` 配 `n_trials = 试过的配置数` —— 同一次搜索、同一个折减对象 ✓
+    (附八十二 更正:原先此处写的是 `n_trials = len(sharpes)`,即**只数跑成功的那批**;
+     而 §5 要求"每一次迭代都计入" —— 抛异常的、没产出信号的也是一次迭代。
+     现在 `n_trials` 数**全部落盘行**,并把它与成功数之差**印出来**。两者故意不等,
+     但仍同源于同一次搜索:`observed` 只在有数的配置间取 max,折减按试过的个数。);
   · `n_returns=252` —— 对 **12 个月**窗口而言是 `21 × 12`,与 walk-forward 家族的
     既有口径(6 个月 = 126)**一致** ✓,不是缺陷(这一点我核对过,免得误报)。
 
@@ -52,19 +55,64 @@ def test_single_window_sweep_points_at_the_walk_forward_sibling(name: str, path:
     )
 
 
-def test_max_and_n_trials_stay_paired() -> None:
-    """回归守卫:`observed = max(sharpes)` 必须与 `n_trials=len(sharpes)` 成对。
+#: 「试过多少个」的表达式 —— 必须是**全部落盘行**(成功 + 失败),不是"跑成功的那批"。
+#: 改动理由见 `tests/test_n_trials_counts_failures.py`(附八十二)。
+_TRIED_EXPR = {
+    "sweep": "_n_tried = int(len(df))",
+    "sweep_all": "_n_tried = int(len(rows) + len(failed))",
+}
 
-    这一对是**对的**(max 取 k 项 + 按 k 折减)。若有人只改一半(例如把 max 换成
-    全场的最大、却仍按自身长度折减,或反之),就退化成附十三那种不匹配。
+
+def _assert_max_and_n_trials_describe_the_same_search(src: str, name: str) -> None:
+    """`observed` 与 `n_trials` 必须描述**同一次搜索**。
+
+    * `observed = max(sharpes)` —— 选择只在**有数的**配置之间发生(m 个);
+    * `n_trials` —— 折减用的是**试过的**个数 k ≥ m(§5:每一次迭代都计入,
+      含抛异常的与没产出信号的)。
+
+    两者**故意不等**,但必须同源于**同一次搜索**:`n_trials` 不得小于成功数
+    (那会把"从 m 个里挑"说成"从更少的里面挑",虚高),也不得凭空来自别处。
     """
-    for name, path in SCRIPTS.items():
-        code = "\n".join(
-            l for l in path.read_text(encoding="utf-8").splitlines()
-            if not l.strip().startswith("#")
-        )
-        assert "observed = max(sharpes)" in code, f"{name}: observed 不再是 max(sharpes)"
-        assert "n_trials=len(sharpes)" in code, f"{name}: n_trials 不再与 max 同源"
+    code = "\n".join(
+        l for l in src.splitlines() if not l.strip().startswith("#")
+    )
+    assert "observed = max(sharpes)" in code, f"{name}: observed 不再是 max(sharpes)"
+    assert _TRIED_EXPR[name] in code, (
+        f"{name}: `n_trials` 不再数「试过多少」—— 期望 `{_TRIED_EXPR[name]}`"
+        "(§5:每一次迭代都计入,含失败的)"
+    )
+    assert "n_trials=_n_tried" in code, f"{name}: n_trials 没有用 _n_tried"
+    assert "_n_ok = int(len(sharpes))" in code, f"{name}: 没有把成功数算出来对比"
+    assert "if _n_tried != _n_ok:" in code, (
+        f"{name}: 少计发生时没有**印出来** —— 读者会以为 n_trials 就是结果行数"
+    )
+
+
+@pytest.mark.parametrize("name,path", sorted(SCRIPTS.items()))
+def test_max_and_n_trials_describe_the_same_search(name: str, path: Path) -> None:
+    _assert_max_and_n_trials_describe_the_same_search(
+        path.read_text(encoding="utf-8"), name
+    )
+
+
+def test_the_pairing_check_has_teeth() -> None:
+    """**牙齿**:把 `n_trials` 退回"只数成功的那些",必须被认出来。"""
+    good = (
+        "observed = max(sharpes)\n"
+        "_n_tried = int(len(df))\n"
+        "_n_ok = int(len(sharpes))\n"
+        "dsr = deflated_sharpe_ratio(observed_sharpe=observed, n_trials=_n_tried)\n"
+        "if _n_tried != _n_ok:\n    pass\n"
+    )
+    _assert_max_and_n_trials_describe_the_same_search(good, "sweep")   # 不得误报
+
+    regressed = good.replace("_n_tried = int(len(df))", "_n_tried = int(len(sharpes))")
+    with pytest.raises(AssertionError):
+        _assert_max_and_n_trials_describe_the_same_search(regressed, "sweep")
+
+    silent = good.replace("if _n_tried != _n_ok:", "if False:")
+    with pytest.raises(AssertionError):
+        _assert_max_and_n_trials_describe_the_same_search(silent, "sweep")
 
 
 def test_sweep_all_prints_the_disclosure(monkeypatch, tmp_path) -> None:

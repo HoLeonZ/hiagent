@@ -163,16 +163,27 @@ def main():
                 "§5: 无法取得观测数 T(metrics 缺 n_trading_days)—— "
                 "不许用常数兜底,那正是本项要修的缺陷"
             )
+        # §5 (附八十二): `n_trials` 是"**试过多少个配置**",不是"有多少个配置跑成功了"。
+        # `grid()` 对每个取值都 append 一行(失败的那行只有 `error`)⇒ 上面用
+        # `r.get("error") is None` 过滤掉失败行 ⇒ **n_trials 少计、DSR 偏乐观**。
+        # §5 Iterative-Tuning Accounting:"每一次迭代都计入" —— 崩掉的那次也是迭代。
+        _n_tried = int(len(all_rows))
+        _n_ok = int(len(sharpes))
         dsr = deflated_sharpe_ratio(
-            observed_sharpe=observed, n_trials=len(sharpes), n_returns=n_obs,
+            observed_sharpe=observed, n_trials=_n_tried, n_returns=n_obs,
         )
         print(
             f"\n§5 DSR | observed_sharpe={observed:.3f} | "
-            f"n_trials={len(sharpes)} | "
+            f"n_trials={_n_tried} | "
             f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
             f"expected_max={dsr['expected_max_sharpe']:.3f} | "
             f"p_value={dsr['dsr_p_value']:.4f}"
         )
+        if _n_tried != _n_ok:
+            print(
+                f"  ⚠️ 其中 {_n_tried - _n_ok} 个配置**抛异常**(见 CSV 的 `error` 列)"
+                f"—— 它们同样计入 n_trials(§5:每次迭代都算)"
+            )
 
 
 if __name__ == "__main__":

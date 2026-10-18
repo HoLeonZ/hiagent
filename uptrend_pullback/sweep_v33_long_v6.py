@@ -204,16 +204,29 @@ def main():
         sharpes = df["sharpe"].dropna().tolist()
         if sharpes:
             observed = max(sharpes)
+            # §5 (附八十二): `n_trials` 是"**试过多少个配置**",不是"有多少个配置产出了信号"。
+            # `sweep()` 对没信号的 combo 直接 `continue`(**不落行**)⇒ `len(sharpes)` 少计
+            # ⇒ E[max] 偏小 ⇒ **DSR 偏乐观**。§5 Iterative-Tuning Accounting 的原话是
+            # "每一次迭代都计入" —— 网格**枚举出 combo 就是在算它的信号**,故枚举数才是
+            # "试过多少"。(`observed` 仍取成功者的最大:选择只在有数的配置间发生。)
+            _n_tried = len(list(itertools.product(*grid.values())))
+            _n_ok = int(len(sharpes))
             dsr = deflated_sharpe_ratio(
-                observed_sharpe=observed, n_trials=len(sharpes), n_returns=window_trading_days(panel, START, END)
+                observed_sharpe=observed, n_trials=_n_tried, n_returns=window_trading_days(panel, START, END)
             )
             print(
                 f"\n§5 DSR | observed_sharpe={observed:.3f} | "
-                f"n_trials={len(sharpes)} | "
+                f"n_trials={_n_tried} | "
                 f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
                 f"expected_max={dsr['expected_max_sharpe']:.3f} | "
                 f"p_value={dsr['dsr_p_value']:.4f}"
             )
+            if _n_tried != _n_ok:
+                print(
+                    f"  ⚠️ 其中 {_n_tried - _n_ok} 个配置**没产出信号**"
+                    f"(sweep 里 `entries.empty → continue`)—— 它们同样计入 n_trials"
+                    f"(§5:每次迭代都算)"
+                )
 
 
 if __name__ == "__main__":
