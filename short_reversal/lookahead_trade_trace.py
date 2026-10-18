@@ -208,6 +208,13 @@ def run() -> dict:
         pct_chg_high=cfg.get("pct_chg_high", 0.06),
         a_condition=cfg.get("a_condition", "default"),
         margin_rate=MARGIN_RATE,
+        # 2026-10-19 (§13.51): `min_cash_ratio` 的默认值是 **None**, 而那是**刻意的 fail-fast
+        # 设计**(见 replay_strategy_v3.py:176-178: "默认 None, engine 必须显式从 preset 传入
+        # —— 忘传时 cash_gate_threshold 计算报 TypeError 而非 silently 0.05")。
+        # ⇒ **坏的是这个调用者, 不是那个默认值。** 本工具是 `Phase3V3Strategy` 的子类,
+        #   却从未注入它 ⇒ `run_trace()` 直接抛 TypeError ⇒ 依赖它的 LAHEAD-001 三条测试
+        #   只能 ERROR。这里按 engine.py:170 的同一写法补上。
+        min_cash_ratio=cfg.get("min_cash_ratio", 0.05),
         commission_rate=COMMISSION_RATE,
         stamp_duty_rate=STAMP_DUTY_RATE,
         initial_capital=INITIAL_CAPITAL,

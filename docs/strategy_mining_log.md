@@ -2575,6 +2575,11 @@ docstring 都写着 "实测 Calmar 60→63→81→101→116" —— 同属 §4 �
 > **不响的断言、不跑的守卫、以及 —— 跑了却不可能失败的守卫。**
 > 第三种最贵, 因为它**消耗运行时间**并**伪装成覆盖**。
 
+> ⛔ **2026-10-19 (§13.51) 更正 —— 本节的归因只到了第一层, 结论里的理由要改。**
+> 那 3 个 ERROR 的真因不是 `min_cash_ratio=None`, 而是 `TraceStrategy`
+> **覆写了 `_fill_pending_entries` / `_close` 却都不调 `super()`** ⇒ 绕开父类的结算状态机
+> (```locked_margin``` 恒为 0)。**补参数不会让它工作。** 详见 §13.51。
+
 ### 13.21 ⛔ **登记**: 一个参数只有**一条构造路径**能用 ⇒ 直构路径 3 处 ERROR (既有, 非本轮引入)
 
 #### (a) 现象
@@ -4574,3 +4579,59 @@ except (ValueError, KeyError, OSError) as e:
 而这次复查之所以便宜, 是因为**每一轮的注入锚点都留在了登记册里** ——
 §13.42–§13.48 每节都写了"注入什么、结果如何"。
 **⇒ 记下验证方式, 使它在下一轮可以低成本重跑。** 这是这套登记册到这里最实用的一条副产品。
+
+### 13.51 ⛔ **那 3 个 ERROR 的真因不是 `min_cash_ratio`** —— 那个 trace 工具是**旧引擎的分叉**
+
+#### (a) §13.21 的归因**不完整**
+§13.21 把 `test_short_reversal_no_lookahead.py` 的 3 个 ERROR 归给
+`replay_strategy_v3.py:178` 的 `min_cash_ratio=None`(TypeError)。
+那个归因**是错的**(或者说:只到了第一层)。
+
+按作者的**刻意设计**(`replay_strategy_v3.py:176-178`):
+> "默认 None, engine 必须显式从 preset 传入 (**fail-fast: 忘传时 cash_gate_threshold
+>  计算报 TypeError 而非 silently 0.05**)。engine.py:170 通过 `cfg.get('min_cash_ratio', 0.05)`
+>  保证生产路径总有值。"
+
+⇒ **`None` 是设计, 坏的是调用者。** 我按同一写法给
+`short_reversal/lookahead_trade_trace.py` 的 `addstrategy` 补上了
+`min_cash_ratio=cfg.get("min_cash_ratio", 0.05)`(与 §13.35 给测试补的那处同型)。
+
+#### (b) 补完之后**它仍然 ERROR**, 而新的报错才是真因
+```
+replay_strategy_v3.py:494: in next
+replay_strategy_v3.py:1056: in _charge_margin_fees
+ValueError: margin fee 234.87 > locked_margin 0.00 — reject (no leverage)
+```
+
+追下去: `short_reversal/lookahead_trade_trace.py` 里的
+**`TraceStrategy(Phase3V3Strategy)` 覆写了两个父类方法, 而两个都没有调 `super()`**:
+| 覆写 | 它实际做的事 |
+|---|---|
+| `_fill_pending_entries` (该文件 :60) | **完整的重新实现** —— 而且用的是**早期的 sizing 公式** `self.cash * self.p.position_fraction`, 不是父类的 `free_cash / max_positions` + 保证金闸门 |
+| `_close` (该文件 :102) | 同样是重新实现 |
+
+⇒ 它**从不进入父类的结算状态机** ⇒ `locked_margin` 永远是 0 ⇒ 父类的
+`_charge_margin_fees` 一查就抛。
+
+#### (c) ⇒ **它不是"坏了的工具", 是"旧引擎的分叉"** —— 这比坏了更糟
+| | 后果 |
+|---|---|
+| **坏工具** | 一跑就崩 ⇒ **响亮地**告诉你它不能用 |
+| **旧分叉**(本条) | 如果它**能**跑, 它产出的 trace 描述的是**另一个引擎**(旧 sizing、无保证金闸门、无 §4 的跳空/涨跌停改动) ⇒ **安静地给出误导性的事实** |
+
+**而那 3 条 LAHEAD-001 断言(§1 的 pre-window / post-window 不得有成交)
+从来没有真正跑过** ⇒ 如果把它们"修好", 它们断言的是**一个陈旧副本**的行为。
+
+> 这与整条审计线的主题是同一个: **最危险的失效不是崩溃, 是"看起来在测、其实测的是另一个东西"。**
+
+#### (d) 本节**做了什么、没做什么** (避免被读成"修好了")
+* **做了**: 给调用者补 `min_cash_ratio`(那一处**独立地正确** —— 按作者的设计, 调用者必须注入);
+* **没做**: 修那个分叉。正确处理是**把子类改写成包装**(记录 trace 包在 `super()` 外面),
+  而**不是**给分叉打补丁 —— 后者只会让一个旧引擎"看起来能跑"。
+* **为什么不这轮做**: 那是一次**工具重构**, 而它的输出会喂给**从未跑过**的 3 条断言;
+  一旦跑起来, 那 3 条断言本身可能也需要重新审。属一个独立的工作单元。
+
+#### (e) 对 §13.21 的更正
+§13.21 的**结论**(登记不修)不变, 但**理由要改**:
+> 那 3 个 ERROR 不是"一个参数默认值不可用", 而是
+> **"一个诊断工具从两个覆写处绕开了父类的状态机"** —— 补参数不会让它工作。
