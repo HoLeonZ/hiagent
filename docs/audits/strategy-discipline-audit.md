@@ -5189,3 +5189,80 @@ n_returns=max(n_windows * 63, 100)    # rough estimate: ~63 trading days/month
   (上表:`0.995` vs `0.072`)。处置与附三十二/六十 一致。
 * `wfv_eval.py` 自身**没改** —— 它传的是 df,列补上之后自动被用上。这一点是有意的:
   修在**数据的来源**,而不是在每个调用点各写一遍。
+
+---
+
+## 附六十五 —— DSR 输入守卫的**第三种形状**;以及 cycle 里一段**永不执行**的 §5 块
+
+两件相邻的事,都是顺着附六十四 那条线摸出来的。
+
+### 1 · 守卫的空隙:内联表达式里的常数
+
+附六十 给 DSR 输入加了两条规则:字面量(`n_returns=252`)、模块级常量
+(`n_returns=WINDOW_TRADING_DAYS`)。而附六十四 那个**真实**形状是第三种:
+
+```python
+n_returns=max(n_windows * 63, 100)      # 注释自认 "rough estimate"
+```
+
+既不是字面量、也不是模块级名字 ⇒ **两条规则都看不见它**。它就这样带着一个能把 DSR 从
+**0.072** 抬到 **0.995** 的假设活到了被读到为止。**守卫的三种形状,只拦住了前两种。**
+
+**新增第三条规则**:`n_returns` 的表达式里**不得出现 0/1 以外的数字字面量** ——
+有,就是把某个假设烤进了 T。
+
+判据的边界是想清楚的:**"由本次运行算出"的写法都不需要烤任何数**。
+实测当前全库 **20 处**调用点全部通过:
+
+| 写法 | 走这条规则 | 性质 |
+|---|---|---|
+| `n_returns=_observed_t`(14 处) | ✓ | 变量(附六十 刚改的) |
+| `n_returns=n_obs` | ✓ | 变量(附三十二 的 fail-fast 版) |
+| `n_returns=int(panel["date"].nunique())`(6 处) | ✓ | 由面板算 |
+| `n_returns=int(m["n_trades"])` | ✓ | 由产物算(见 §2) |
+| `n_returns=max(n_windows * 63, 100)` | ✗ | 烤了 63 与 100 |
+| `n_returns=252` / `WINDOW_TRADING_DAYS` | ✗ | 前两条规则已拦 |
+
+配**元测试**:构造旧形状 ⇒ 必红;合法写法(`int(panel['date'].nunique())`、
+`len(panel) - 1`)⇒ 不得误伤。双向验证:把旧形状写回 `sweep_thresholds.py` ⇒ 该规则红。
+
+### 2 · `cycle_price_action/main.py` 里那段 §5 块**从不执行**
+
+```python
+# 此处直接输出以满足 §5。
+sharpe = m.get("sharpe")
+if sharpe is not None and m.get("n_trades", 0) > 0:
+    dsr = deflated_sharpe_ratio(...)
+```
+
+而 `cycle_price_action/metrics.py` 按设计让 `sharpe` **恒为 `None`**(它是"每股独立账户"
+的引擎,组合级 `cagr`/`sharpe`/`max_dd` 无定义 —— 模块 docstring 明写)。
+
+**实测确认**(不是读出来的):一次真实运行 `sharpe = None`,`n_trades = 495`
+(顺带:那次运行的日志里出现了附五十五 加的 `[broker-shadow]` 告警,说明那处修复也在正常发声)。
+⇒ 那个 `if` **从未成立**,DSR 一次都没打印过,而注释写的是"**此处直接输出以满足 §5**"。
+**注释声称的 §5 满足,从未发生。**
+
+**处置**:不伪造一个组合级 Sharpe(本引擎确实没有这个量),而是把"**不报**"这件事
+**显式说出来** —— 抽成纯函数 `dsr_notice(sharpe, n_trades, preset)`:
+
+* `sharpe is None` ⇒ 说明"每股独立账户,组合级 Sharpe 无定义 ⇒ 不报 DSR(不伪造)",
+  并带上 `n_trades` 让读者知道这次窗口的量级;
+* 有 `sharpe` ⇒ 照旧报 DSR(单 preset 单 trial,n_trials=1)。
+
+另加一条**前提守卫**:`test_cycle_metrics_really_has_no_sharpe` —— 钉住"cycle 没有组合级
+Sharpe"这个前提;若哪天它真的发布了,该用例变红,提示把说明改回报 DSR。
+**双向验证**:还原 `main.py` ⇒ 2 条红(无 `dsr_notice`);恢复 ⇒ 9 passed。
+
+### 3 · 一小段总结(三分之二的 §5 问题都在同一处)
+
+本审计在 §5 上落了五条(附五十九、六十、六十四、六十五,连同附三十二 的老底),
+**全部**是同一个量:DSR 的输入。
+它的形状在四种写法之间迁移过 —— 字面量 `252` → 模块级常量 `WINDOW_TRADING_DAYS` /
+`n_windows × 63` → 内联表达式 `max(n_windows*63, 100)` —— 而每一次"看起来已经修过",
+是因为**改了写法,没改性质**(总有个数不是从运行里来的)。
+
+> 这解释了为什么这类缺陷能连着活过两轮审计:每一轮的修复都对准了**当时那个形状**,
+> 而守卫也就跟着钉那个形状。真正该钉的是**性质**:"这个数是不是来自本次运行"。
+> 现在三条规则合起来才勉强逼近它 —— 而 `run_all_backtests_html` 那条"**已经在数
+> `error_count` 却仍返回 0**"(附六十三)是同一族的另一种表现:**量已经有了,没人读**。
