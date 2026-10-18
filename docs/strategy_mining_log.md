@@ -3399,3 +3399,53 @@ uptrend 上 (126→136→144→162), 而 chase_up 的字段从未变过。
 只有 **13 / 22** 个 chase preset 有基线文件 ⇒ 本守卫覆盖那 13 个。
 其余 9 个**连钉子都没有**(与 §13.30(f) 的 v15–v19 同源: 该族 22 个 preset 里
 只有 8 个有测试、13 个有基线文件)。
+
+### 13.32 ✅ **§4 的 compliance header:45/81 个 preset 缺 —— 按 preset **自身取值**生成补上**
+
+#### (a) 契约原文与缺口
+§4 (verbatim):
+> Stop-loss and take-profit exit thresholds are policy decisions, NOT execution costs.
+> They MAY be either fixed (e.g., `sl_pct=0.0005`) or ATR-based (`sl_pct = atr × mult`).
+> Both are valid; **document the choice in the preset's compliance header.**
+
+实测: `tests/test_tp_sl_compliance_header.py` 报
+> `AssertionError: 45/81 presets lack the 'CLAUDE.md §4' marker`
+
+⇒ **这不是陈旧钉桩, 是均一的真缺口** —— 81 个 preset 里有 45 个从未有过 header
+(`short_reversal` 44 个 + `uptrend_pullback` 1 个; `chase_up` 22 个全部已有)。
+
+#### (b) 修法: **从 preset 自己的取值生成**, 不写"应该是什么"
+生成器读每个 preset 的实际字段, 输出:
+
+```
+# CLAUDE.md §4 TP/SL compliance header
+# exit_policy: fixed | atr_based        ← 由 atr_sl_mult/atr_tp_mult 是否为 None 判定
+# sl_pct: <值> | atr × <mult>           ← 取 preset 真实值
+# tp_pct: <值> | atr × <mult>
+# max_hold: <N>
+# atr_period: <N>                       ← 仅 atr_based 时
+# Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+```
+
+> **判据: 文档必须由被文档的对象生成, 而不是由作者的印象生成。**
+> 这样它**不会**变成一页与代码脱节的说明 —— 而那正是本项目反复出现的形态
+> (§13.22 的"注释与代码相反"、§13.28 的"注释承诺了一条不存在的断言")。
+
+#### (c) 零漂移证明 (**两条独立证据**)
+1. **逐值**: 写盘前后各解析一次 `PRESETS`, `json.dumps(sort_keys=True)` **逐文件相等**
+   (`chase_up` / `uptrend_pullback` / `short_reversal` 三份都是 `True`);
+2. **端到端**: `tests/test_chase_up_no_lookahead.py` + `test_uptrend_pullback_sha256_baseline.py`
+   —— 它们把 preset 喂进引擎并对成交列表取哈希 —— **36 passed**(与改动前一致)。
+
+#### (d) §6 双向验证
+| 注入 | 结果 |
+|---|---|
+| 摘掉其中一个 header | `2 failed, 2 passed` ✅ 断言真会响 |
+| 还原 | `4 passed` ✅ |
+
+收口: `test_tp_sl_compliance_header.py` + `test_tp_sl_compliance_header_4engine.py`
+**8 passed**(改前 5 红)。
+
+#### (e) 顺带: 生成器与测试的计数**互相印证**
+生成器独立数出 `1 + 44 = 45` 个缺失, 与测试报的 `45/81` **完全一致** ——
+两个独立实现的判据给出同一个数, 这是这次"缺口是真的"的一层额外证据。

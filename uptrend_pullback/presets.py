@@ -239,6 +239,12 @@ PRESETS: dict[str, dict] = {
     #
     # §5 n_comparisons = 121 + 5 (= v21 自报 121 + 本轮该改动在五个窗口上的评估)
     # 本节不记数字 (§7)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.021
+    # tp_pct: 0.2628
+    # max_hold: 18
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v33_long_reverse_v22": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",

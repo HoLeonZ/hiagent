@@ -634,6 +634,12 @@ PRESETS: dict[str, dict] = {
     # v46_mh4/mh7 单点 sweep 在 12m 上 v44 vs v46_mh4 同 n=425 win% +1.6pp CAGR -8% DD 持平;
     # 24m 行为可能不同(震荡段 yield 不同分布)。
     # 实验设计:每次只改 1 个参数, 跑 24m 对比 v44。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 6
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v50_mh6": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -668,6 +674,12 @@ PRESETS: dict[str, dict] = {
     # 最大回撤全部大幅更低; CAGR 只在 IND 一个窗口更优。
     # 即: **按风险调整口径本 preset 已不是最优, 按纯 CAGR 口径仍是**。
     # 口径选择登记在案, 未擅自改写"最优"声明。本节不记数字 (§7)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v50_slope": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -693,6 +705,12 @@ PRESETS: dict[str, dict] = {
     },
     # v50_slope_strict (2026-10-12): v50_slope 加强版, slope ≤ -0.003/day。
     # 要求更严格的下降趋势 (5 日累计 -1.5% 以上), 进一步过滤反弹中段。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v50_slope_strict": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -726,6 +744,12 @@ PRESETS: dict[str, dict] = {
     #   v51_weak_combo: 三窗口叠加 (持续弱势, 防止只是短期回调)
     # 与 F 互补: F 测短期动量 (rate of change), G 测中期水平 (cumulative loss)。
     # v51_weak_1m (2026-10-12): 1M 累计跌幅 ≥ 5%。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v51_weak_1m": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -750,6 +774,12 @@ PRESETS: dict[str, dict] = {
         "weak_1m_threshold": -0.05,
     },
     # v51_weak_3m (2026-10-12): 3M 累计跌幅 ≥ 10%。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v51_weak_3m": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -773,6 +803,12 @@ PRESETS: dict[str, dict] = {
         "weak_3m_threshold": -0.10,
     },
     # v51_weak_6m (2026-10-12): 6M 累计跌幅 ≥ 15%。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v51_weak_6m": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -796,6 +832,12 @@ PRESETS: dict[str, dict] = {
         "weak_6m_threshold": -0.15,
     },
     # v51_weak_combo (2026-10-12): 三窗口叠加 (持续弱势, 最严过滤)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v51_weak_combo": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -834,6 +876,12 @@ PRESETS: dict[str, dict] = {
     #   v52_dryup_085: 5d/20d ≤ 0.85  (轻微萎缩 15%+, 宽松)
     #   v52_dryup_strict: 组合 (0.5 + 3M cumret ≤ -10%, 卖压枯竭 + 中期弱势)
     # v52_dryup_07 (2026-10-12): 5d/20d 成交额比率 ≤ 0.70 (起点假设)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v52_dryup_07": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -858,6 +906,12 @@ PRESETS: dict[str, dict] = {
         "amount_dryup_threshold": 0.70,
     },
     # v52_dryup_05 (2026-10-12): 5d/20d 成交额比率 ≤ 0.50 (严重萎缩)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v52_dryup_05": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -881,6 +935,12 @@ PRESETS: dict[str, dict] = {
         "amount_dryup_threshold": 0.50,
     },
     # v52_dryup_085 (2026-10-12): 5d/20d 成交额比率 ≤ 0.85 (轻微萎缩, 宽松)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v52_dryup_085": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -905,6 +965,12 @@ PRESETS: dict[str, dict] = {
     },
     # v52_dryup_combo (2026-10-12): H (严重萎缩 0.5) + G (3M 累计 ≤ -10%)。
     # 假设: 同时满足"近期资金枯竭"和"中期已下跌"是最纯粹的 dead-cat bounce。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v52_dryup_combo": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -940,6 +1006,12 @@ PRESETS: dict[str, dict] = {
     #   v53_rsi_35:  RSI(14) < 35  (轻微超卖, 宽松)
     #   v53_rsi_30_slope: I 30 + F (MA20 5d slope ≤ 0, 组合双确认)
     # v53_rsi_30 (2026-10-12): 经典 RSI<30 超卖。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v53_rsi_30": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -964,6 +1036,12 @@ PRESETS: dict[str, dict] = {
         "rsi_oversold_threshold": 30,
     },
     # v53_rsi_25 (2026-10-12): 极端超卖 RSI<25。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v53_rsi_25": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -987,6 +1065,12 @@ PRESETS: dict[str, dict] = {
         "rsi_oversold_threshold": 25,
     },
     # v53_rsi_35 (2026-10-12): 轻微超卖 RSI<35 (宽松, 起点对照)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v53_rsi_35": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1011,6 +1095,12 @@ PRESETS: dict[str, dict] = {
     },
     # v53_rsi_30_slope (2026-10-12): I 30 + F (MA20 slope ≤ 0) 组合双确认。
     # 假设: 同时满足"超卖"+"下降趋势未结束"是最强 dead-cat bounce setup。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v53_rsi_30_slope": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1043,6 +1133,12 @@ PRESETS: dict[str, dict] = {
     #   v54_sl_005:   SL 0.0005→0.005 (10x 放宽, 中位)
     #   v54_tp10_sl01: TP 0.08→0.10 + SL 0.01 (TP/SL 都放宽, 10:1 风险比)
     # v54_sl_01 (2026-10-12): 仅 SL 放宽 20x, TP 不变。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.01
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v54_sl_01": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1065,6 +1161,12 @@ PRESETS: dict[str, dict] = {
         "require_ma20_slope_neg": True,  # v50 F 条件
     },
     # v54_sl_005 (2026-10-12): SL 放宽 10x (中位)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v54_sl_005": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1087,6 +1189,12 @@ PRESETS: dict[str, dict] = {
         "require_ma20_slope_neg": True,
     },
     # v54_tp10_sl01 (2026-10-12): TP+SL 都放宽 (10:1 风险比)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.01
+    # tp_pct: 0.1
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v54_tp10_sl01": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1228,6 +1336,12 @@ PRESETS: dict[str, dict] = {
     # 验证逻辑: 若任一 Calmar ≥ 9.76 → 弱股比斜率更适合定义 downtrend;
     #   若全部 < 9.76 → v50_slope 已达工程最优.
     # v55_swap_1m (2026-10-12): 用 1M 累计跌幅替代 MA20 5d slope 定义 downtrend。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v55_swap_1m": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1253,6 +1367,12 @@ PRESETS: dict[str, dict] = {
         "weak_1m_threshold": -0.05,
     },
     # v55_swap_3m (2026-10-12): 用 3M 累计跌幅替代 MA20 slope。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v55_swap_3m": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1277,6 +1397,12 @@ PRESETS: dict[str, dict] = {
         "weak_3m_threshold": -0.10,
     },
     # v55_swap_6m (2026-10-12): 用 6M 累计跌幅替代 MA20 slope。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v55_swap_6m": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1301,6 +1427,12 @@ PRESETS: dict[str, dict] = {
         "weak_6m_threshold": -0.15,
     },
     # v55_swap_combo (2026-10-12): 三窗口叠加 (持续弱势最严), 替代 MA20 slope。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v55_swap_combo": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1338,6 +1470,12 @@ PRESETS: dict[str, dict] = {
     # 验证逻辑: 若 v56_mh_07/10 Calmar ≥ 9.76 → max_hold 是新维度, 可继续调;
     #   若全部 < 9.76 → 5 个方向全部工程上限, v50_slope 为最终 best.
     # v56_mh_07 (2026-10-12): max_hold 5→7, 温和扩展。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 7
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v56_mh_07": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1360,6 +1498,12 @@ PRESETS: dict[str, dict] = {
         "require_ma20_slope_neg": True,
     },
     # v56_mh_10 (2026-10-12): max_hold 5→10, 激进扩展。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 10
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v56_mh_10": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1382,6 +1526,12 @@ PRESETS: dict[str, dict] = {
         "require_ma20_slope_neg": True,
     },
     # v56_mh_03 (2026-10-12): max_hold 5→3, 反向缩短, 测 SL 主导假说。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 3
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v56_mh_03": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1410,6 +1560,12 @@ PRESETS: dict[str, dict] = {
     # 冷却窗口对所有候选 stock 都生效 (与 per-symbol 冷却不同)。
     # 三档: 3 / 5 / 7 个交易日, 与 v50_slope baseline 平行测试。
     # v57_cd_03 (2026-10-12): 冷却 3 日, 保守档。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v57_cd_03": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1433,6 +1589,12 @@ PRESETS: dict[str, dict] = {
         "sl_cooldown_days": 3,     # J 条件
     },
     # v57_cd_05 (2026-10-12): 冷却 5 日, 中档。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v57_cd_05": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1456,6 +1618,12 @@ PRESETS: dict[str, dict] = {
         "sl_cooldown_days": 5,
     },
     # v57_cd_07 (2026-10-12): 冷却 7 日, 激进档。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v57_cd_07": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1493,6 +1661,12 @@ PRESETS: dict[str, dict] = {
     # **三个窗口全部**优于 v50_slope, 最大回撤全部大幅更低; CAGR 在 IND 更高、
     # 另两个窗口更低。⇒ 按风险调整口径, 本 preset 是当前最优; 按纯 CAGR 口径
     # 仍是 v50_slope。口径选择登记在案。本节不记数字 (§7)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v58_mp_2": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1516,6 +1690,12 @@ PRESETS: dict[str, dict] = {
     },
     # v58_mp_3 (2026-10-13): max_positions=3, 单笔 sizing 33% free_cash。
     # 多仓 sweep 的「极端点」,看 N 进一步增大时 curve 是否仍下降。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v58_mp_3": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1543,6 +1723,12 @@ PRESETS: dict[str, dict] = {
     # 假设: 当日内从低点回收 ≥ 60% 区间 + 收阳, 买盘在日内接住卖压
     #   → 但因整体仍下降 (F 确认), 次日大概率回吐 (死猫跳)。
     # 单独启用 (无 F), 测 K 是否独立有效。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v61_k": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1570,6 +1756,12 @@ PRESETS: dict[str, dict] = {
     # v61_kf (2026-10-13): F + K 加性堆叠。两者必须同时过。
     # 这是「正交方向: 加性多条件堆叠」的真正测试 — 在 v50 基础上加 K,
     # 测 K 是否能在 F 之上提供独立信息(而不只是替换 F 的子集信号)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v61_kf": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1611,6 +1803,12 @@ PRESETS: dict[str, dict] = {
     # 引擎实现: short_reversal/engine.py::_run_ensemble 递归调用 run_backtest_v3,
     #   汇总等权 PnL + 保守 max_dd (worst-case across subs)。
     # 注意: 单元持仓 max_positions=1 per sub, 合计 ≈ 2 个独立子仓。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: None
+    # tp_pct: None
+    # max_hold: None
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v63_ensemble": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1629,6 +1827,12 @@ PRESETS: dict[str, dict] = {
     # 目的: 测 ensemble 容量 — 第 3 个更严格的趋势子策略能否进一步分散 DD。
     # 假设: strict 只在最强下行趋势入场 (更少但更高质量的信号), 与 v50/v44 错峰。
     # n_trials=14 (per §5)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: None
+    # tp_pct: None
+    # max_hold: None
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v64_ensemble_3leg": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1653,6 +1857,12 @@ PRESETS: dict[str, dict] = {
     # 配置: trailing_stop_pct=0.02 (2% 回撤即止盈出场), activation=0.02
     #   (浮盈 ≥ 2% 才激活 trailing, 避免过早收紧)。
     # n_trials=15 (per §5)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v65_trailing": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1683,6 +1893,12 @@ PRESETS: dict[str, dict] = {
     #   (多数票在 MA20 之下 = 熊市) 才允许入场。
     # 与所有个股级条件 (A-K) 正交: 这是 market-level 维度。
     # n_trials=16 (per §5)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v66_regime": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1721,6 +1937,12 @@ PRESETS: dict[str, dict] = {
     # §5 Iterative-Tuning Accounting: n_comparisons = 37 + 9
     #   (v58 自报 37; 本轮新增 N=4/5/6 × 三个窗口 = 9 次评估)
     # 本节不记数字 (§7)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v58_mp_4": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1768,6 +1990,12 @@ PRESETS: dict[str, dict] = {
     # §5 Iterative-Tuning Accounting: n_comparisons = 46 + 6
     #   (46 = v58_mp_4 累计; 本轮新增 3 个 cascade_price 变体 + 3 个 up_streak 取值)
     # 本节不记数字 (§7)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v67_mp2_bounce1": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1814,6 +2042,12 @@ PRESETS: dict[str, dict] = {
     #   (52 = v67 累计; 本轮 3 个 W2 流动性探针 + 3 个 liq_low 跨窗口
     #    + 3 个 liq_high 跨窗口 + 3 个 holdout = 12)
     # 本节不记数字 (§7)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v68_liq_wide": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1859,6 +2093,12 @@ PRESETS: dict[str, dict] = {
     # §5 Iterative-Tuning Accounting: n_comparisons = 64 + 8
     #   (64 = v68 累计; 本轮 N=3/4/5 在 W2 + N=4 在 IND/IS1/IS2/HOLD + N=2 在 HOLD)
     # 本节不记数字 (§7)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v69_liq_wide_n4": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1909,6 +2149,12 @@ PRESETS: dict[str, dict] = {
     #
     # §5 n_comparisons = 80 (= 72 + 3 个 W2 松绑探针 + 4 个跨窗口 + 1 个 0.20 对照)
     # 本节不记数字 (§7)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v70_pct_wide": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -1957,6 +2203,12 @@ PRESETS: dict[str, dict] = {
     #
     # §5 n_comparisons = 86 (= 80 + 2 个 W2 取值 + 4 个跨窗口)
     # 本节不记数字 (§7)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v71_dmode_strict": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -2001,6 +2253,12 @@ PRESETS: dict[str, dict] = {
     #
     # §5 n_comparisons = 95 (= 86 + 5 个回退探针 + 4 个跨窗口)
     # 本节不记数字 (§7)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.06
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v72_tp_default": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
@@ -2049,6 +2307,12 @@ PRESETS: dict[str, dict] = {
     #
     # §5 n_comparisons = 109 + 12 (= 95 基线 + 本轮库重扫 6 + W2 探针 9 + 跨窗口 13,
     # 保守计) ⇒ 121。本节不记数字 (§7)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.06
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v73_trailing": {
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
