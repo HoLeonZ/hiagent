@@ -4131,3 +4131,66 @@ v5 成交数: 38 | 涉及的票数: 37
 | 往 `tools/`(旧清单**看不见**的目录)放一条缺 ORDER BY 的时序查询 | **1 failed** ✅(新断言抓到) |
 | 删除该文件 | 7 passed ✅ |
 | *(对照)* 同一条注入在改为发现式**之前** | 旧清单压根不扫 `tools/` ⇒ **不可能红** |
+
+### 13.43 ⛔ **一个拼写错误让审计静默漏掉了一整个族** —— 而失败方式是 `continue`
+
+#### (a) 实据
+`tests/test_assert_vs_raise_audit.py`:
+```python
+SCAN_DIRS = [
+    "chase_up",
+    "uptrend_pulback",     # ← 少一个 l
+    "short_reversal", ...
+]
+
+for scan_dir in SCAN_DIRS:
+    base = REPO_ROOT / scan_dir
+    if not base.exists():
+        continue           # ← **静默跳过**
+```
+⇒ 路径解析不到 ⇒ `continue` ⇒ **`uptrend_pullback` 从这个审计里彻底消失, 而没有任何东西发出提示。**
+
+**量化**: 修好后该审计覆盖 **78 → 106** 个生产文件 ——
+**`uptrend_pullback` 那 28 个(占 26%)此前被静默排除**。
+
+> ⚠️ **这是 §0 「Do not silently bypass」落在守卫自己身上**。
+> 一个把范围写在手写列表里、又用 `if not exists: continue` 兜底的守卫,
+> **任何拼错 / 改名 / 搬目录都会悄悄缩小它的覆盖面** ——
+> 而它在 `-rs` 里长得**跟正常通过一模一样**。
+
+#### (b) 这是同一族问题的**第四个面**
+| 节 | 那个面 |
+|---|---|
+| §13.22 | 手写列表**只覆盖作者已修过的文件** |
+| §13.23 | 手写的三个 `main.py`, **第四个文件**抄一份就看不见 |
+| §13.42 | 手写的 `SQL_FILES`, **`tools/` / `dna_data/` 从来不在范围内** |
+| **§13.43** | 手写列表里的**一项拼错了**, 而兜底是 `continue` |
+
+前三个是"**列表里少了本该有的**", 这个是"**列表里的写错了**"。
+⇒ **四种面的共同根源是同一个: 手写枚举 + 静默跳过。**
+
+#### (c) 扫了一遍同类: 10 个守卫用手写列表当扫描范围
+用 AST 找出"模块级列表被当作扫描范围遍历"的守卫, 共 **10** 个, 其中 4 个是 `SCAN_DIRS`
+形的目录清单(`assert_vs_raise_audit` / `banned_functions_section1` /
+`exception_specificity_audit` / `fail_fast_deep_scan_section2`),
+另 3 个是族清单(`FAMILIES` / `ENGINES` / `ENGINE_DIRS`)。
+**逐项核对: 除那一处拼写错误外, 其余全部指向真实目录**(由下面这条新守卫全库确认)。
+
+#### (d) 新增守卫: `tests/test_scan_scope_lists_point_at_real_dirs.py`
+* **判别式**: 只挑"**像扫描范围**"的模块级列表 —— 判据是**其中至少一项**能在仓库根解析成
+  **已存在的目录**(这条过滤掉了 `NUMERIC_COLUMNS` / `REQUIRED_FIELDS` /
+  `ATTR_CHAIN_FINAL_NAMES` 那类纯字符串清单);
+* 然后断言**每一项**都解析成已存在的目录;
+* **反空转对照**: 必须真找到 ≥3 个这样的列表 (已知有 `SCAN_DIRS` / `FAMILIES` / `ENGINE_DIRS`)。
+
+**§6 双向验证**:
+| 注入 | 结果 |
+|---|---|
+| 把 `"uptrend_pullback"` 改回 `"uptrend_pulback"` | **1 failed** ✅, 且报出 `test_assert_vs_raise_audit.py:67 SCAN_DIRS 里的 'uptrend_pulback' 不是仓库根下的目录` |
+| 还原 | 2 passed ✅ |
+
+#### (e) ⚠️ 这条守卫的**诚实边界** (它管不了什么)
+它只检查"列表里的项**存在**", **不检查"列表是否**完整**"** ——
+一个列表若**整族漏掉**(而不是写错), 它照样绿。
+⇒ 完整性那一侧由 §13.22/§13.23 的**发现式改写**去处理(逐个改);
+**存在性**这一侧现在有了常驻守卫。两者是**互补**的, 不是一回事。

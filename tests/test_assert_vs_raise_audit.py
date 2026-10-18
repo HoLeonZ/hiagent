@@ -66,7 +66,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 SCAN_DIRS = [
     "chase_up",
-    "uptrend_pulback",
+    "uptrend_pullback",
     "short_reversal",
     "cycle_price_action",
     "core",
