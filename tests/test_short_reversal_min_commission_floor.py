@@ -123,33 +123,47 @@ def test_exit_fee_enforces_min_commission_floor_small_notional() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_trace_entry_fee_enforces_min_commission_floor() -> None:
-    """§0 MEDIUM: TraceStrategy._fill_pending_entries inherits the floor gap."""
+def test_trace_entry_fee_inherits_the_min_commission_floor() -> None:
+    """§0: TraceStrategy 的入场费必须与父类**同一份逻辑** (因此必然含 ¥5 下限)。
+
+    ⚠️ 2026-10-19 (§13.59): 本条此前是**源码文本钉桩** —— 它要求
+    `TraceStrategy._fill_pending_entries` 的**方法体内**出现 `max(self.p.min_commission, …)`。
+    §13.52 把该覆写改成**包装**(调 `super()` 后只做记录) ⇒ 那段文本搬回了父类 ⇒ 本条变红。
+    **而性质并没有丢**: 覆写不再自己算费用 ⇒ **不可能**与父类不一致。
+    ⇒ 改为断言**"委派"这个事实**(它正是性质成立的原因), 并确认父类确实含下限。
+    """
     from short_reversal.lookahead_trade_trace import TraceStrategy
-    block = _method_source_block(TraceStrategy, "_fill_pending_entries")
-    has_floor = bool(re.search(
-        r"max\s*\(\s*(?:self\.p\.min_commission|MIN_COMMISSION)",
-        block,
-    ))
-    assert has_floor, (
-        "§0/§3 VIOLATION: lookahead_trade_trace.TraceStrategy._fill_pending_entries "
-        "entry_fee does NOT enforce MIN_COMMISSION floor. Trace report "
-        "systematically undercharges per-trade fee on small-notional trades."
+    from short_reversal.replay_strategy_v3 import Phase3V3Strategy
+
+    override = _method_source_block(TraceStrategy, "_fill_pending_entries")
+    assert "super()._fill_pending_entries()" in override, (
+        "TraceStrategy._fill_pending_entries 必须**委派**给父类 —— 一旦它自己重算费用, "
+        "就会与父类分叉 (§13.51 记过的那次分叉正是这样发生的)"
+    )
+    parent = _method_source_block(Phase3V3Strategy, "_fill_pending_entries")
+    assert re.search(r"max\s*\(\s*(?:self\.p\.min_commission|MIN_COMMISSION)", parent), (
+        "§0/§3 VIOLATION: 父类 Phase3V3Strategy._fill_pending_entries 未含 ¥5 最低佣金下限 "
+        "—— 那么 trace 的入场费也会随之失去下限"
     )
 
 
-def test_trace_exit_fee_enforces_min_commission_floor() -> None:
-    """§0 MEDIUM: TraceStrategy._close inherits the floor gap."""
+def test_trace_exit_fee_inherits_the_min_commission_floor() -> None:
+    """§0: TraceStrategy 的出场费必须与父类**同一份逻辑** (因此必然含 ¥5 下限)。
+
+    见上一条 (§13.59) 的说明 —— 同一处文本钉桩、同一次重构 (§13.52)、同一个改法。
+    """
     from short_reversal.lookahead_trade_trace import TraceStrategy
-    block = _method_source_block(TraceStrategy, "_close")
-    has_floor = bool(re.search(
-        r"max\s*\(\s*(?:self\.p\.min_commission|MIN_COMMISSION)",
-        block,
-    ))
-    assert has_floor, (
-        "§0/§3 VIOLATION: lookahead_trade_trace.TraceStrategy._close exit_fee "
-        "does NOT enforce MIN_COMMISSION floor. Trace report `notional_pnl` "
-        "systematically overstates per-trade PnL by ¥2.50-5.00."
+    from short_reversal.replay_strategy_v3 import Phase3V3Strategy
+
+    override = _method_source_block(TraceStrategy, "_close")
+    assert "super()._close(" in override, (
+        "TraceStrategy._close 必须**委派**给父类 —— 一旦它自己重算费用/PnL, "
+        "就会与父类分叉 (§13.51 记过的那次分叉正是这样发生的)"
+    )
+    parent = _method_source_block(Phase3V3Strategy, "_close")
+    assert re.search(r"max\s*\(\s*(?:self\.p\.min_commission|MIN_COMMISSION)", parent), (
+        "§0/§3 VIOLATION: 父类 Phase3V3Strategy._close 未含 ¥5 最低佣金下限 "
+        "—— 那么 trace 的 `notional_pnl` 也会随之高估小额成交的净利"
     )
 
 
