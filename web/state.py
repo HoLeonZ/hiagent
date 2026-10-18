@@ -4,8 +4,8 @@
 """
 from __future__ import annotations
 
+import functools
 import os
-import subprocess
 from pathlib import Path
 
 #: 覆盖用环境变量
@@ -18,6 +18,22 @@ def state_home() -> Path:
     return Path(override) if override else Path.home() / ".hiagent_platform"
 
 
+@functools.lru_cache(maxsize=1)      # 仓库根在一个进程里不会变
+def repo_root() -> Path | None:
+    """本平台所在仓库的根目录。**从本文件的位置推出，不依赖 cwd。**
+
+    为什么不能靠 cwd 或 `git rev-parse`：平台可以从任意目录启动（`cwd=/` 是一例），
+    那时 `git rev-parse` 失败，而"失败"被当成"不在仓库内"→ **闸静默放行**，
+    账本照样落进仓库。**闸的判据不能依赖调用者的 cwd**——那等于把闸交给环境。
+
+    顺带：不再 fork 子进程，每次调用都快。
+    """
+    for parent in Path(__file__).resolve().parents:
+        if (parent / ".git").exists():   # 普通仓库是目录；worktree 里 .git 是文件，exists 两者都覆盖
+            return parent
+    return None
+
+
 def assert_outside_repo(path: Path) -> None:
     """断言 `path` 不在 Git 仓库内。
 
@@ -25,26 +41,20 @@ def assert_outside_repo(path: Path) -> None:
     写到仓库外同时满足 §7，且不受 .gitignore 疏漏影响——
     这正是上一次审计被一个新测试文件的字典键名解除武装的教训。
     """
-    try:
-        root = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, check=True, cwd=path if path.exists() else Path.cwd(),
-        ).stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return  # 不在仓库内（或没有 git），无需拒绝
-    if not root:
-        return
-    root_p = Path(root).resolve()
+    root = repo_root()
+    if root is None:
+        return          # 本文件不在任何仓库内（例如被拷到别处运行）——没有可违反的 §7
     target = path.resolve()
-    if target == root_p or root_p in target.parents:
+    if target == root or root in target.parents:
         raise RuntimeError(
-            f"state directory {target} is inside the git repository ({root_p}); "
+            f"state directory {target} is inside the git repository ({root}); "
             "run artifacts would be committable — set HIAGENT_PLATFORM_HOME to a path outside the repo"
         )
 
 
-#: 已验证过的根目录。**每个进程每个路径只验一次**——`assert_outside_repo` 要 fork
-#: `git rev-parse`，不该每次调用都付这个代价。
+#: 已验证过的根目录。**每个进程每个路径只验一次**——写盘路径每次调用都要过闸，
+#: 而 `path.resolve()` 会打真实文件系统（网络盘/软链上不免费），验过就不必重复付。
+#: 注意这里缓存的是**结果**、不是判据：判据（`repo_root`）本身来自本文件位置，不受环境变化影响。
 _ASSERTED: set[Path] = set()
 
 

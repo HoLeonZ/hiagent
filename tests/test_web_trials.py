@@ -5,7 +5,12 @@ import json
 
 import pytest
 
-from web.trials import append_trial, count_trials, distinct_manual_configs
+from web.trials import (
+    append_trial,
+    count_trials,
+    distinct_manual_configs,
+    recent_runs,
+)
 
 
 @pytest.fixture
@@ -79,3 +84,17 @@ def test_count_is_per_engine_and_preset(home):
     assert count_trials("short_reversal", "v50_slope") == 1
     assert count_trials("chase_up", "v19") == 1
     assert count_trials("short_reversal", "v44_ratio02_buf07") == 0
+
+
+def test_recent_runs_returns_newest_first_and_honours_the_limit(home):
+    """`recent_runs` 是"历史/对比"面板的数据源：**倒序**，且 `limit` 只截尾部。
+
+    它是 `web.trials` 的公开 API，却一度没有任何测试——改坏了没人知道。
+    账本是 append-only，故"最近"就是文件尾部；倒序错了面板会把最老的运行
+    当成"最近一次"，`limit` 失效则会把整部账本倒给前端。
+    """
+    for rid in ("r1", "r2", "r3"):
+        append_trial(run_id=rid, engine="short_reversal", preset="v50_slope",
+                     param_diff={}, start="2024-01-01", end="2025-01-01", mode="full")
+    assert [r["run_id"] for r in recent_runs()] == ["r3", "r2", "r1"], "必须是倒序"
+    assert [r["run_id"] for r in recent_runs(limit=2)] == ["r3", "r2"], "limit 取最近的 N 条"

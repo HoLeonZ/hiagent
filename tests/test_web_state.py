@@ -58,6 +58,32 @@ def test_the_gate_fires_for_every_write_path_not_just_run_dir(monkeypatch):
         "闸没拦住——账本写进仓库了"
 
 
+def test_the_gate_does_not_depend_on_the_current_working_directory(monkeypatch):
+    """**闸的判据不能依赖调用者从哪启动。**
+
+    原实现在目标路径不存在时用 `Path.cwd()` 跑 `git rev-parse`；平台若从仓库外启动
+    （`cwd=/` 是一例），`git rev-parse` 失败 → 被当成"不在仓库内" → **静默放行**，
+    账本照样写进仓库。这条测试就是要把它钉死：**cwd 在仓库外时，闸仍然要拦。**
+    """
+    import subprocess
+    from pathlib import Path as _P
+
+    from web import state as state_mod
+    from web.trials import append_trial
+
+    repo = _P(subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                             capture_output=True, text=True, check=True).stdout.strip())
+    monkeypatch.setenv("HIAGENT_PLATFORM_HOME", str(repo / "would_be_in_repo"))
+    monkeypatch.chdir("/")                 # ← 关键：cwd 在仓库外
+    state_mod._ASSERTED.clear()
+
+    with pytest.raises(RuntimeError, match="inside the git repository"):
+        append_trial(run_id="r1", engine="short_reversal", preset="v50_slope",
+                     param_diff={}, start="2024-01-01", end="2025-01-01", mode="full")
+    assert not (repo / "would_be_in_repo" / "trials.jsonl").exists(), \
+        "闸没拦住——账本写进仓库了"
+
+
 def test_run_dir_is_created_under_home(monkeypatch, tmp_path):
     monkeypatch.setenv("HIAGENT_PLATFORM_HOME", str(tmp_path))
     d = run_dir("abc123")
