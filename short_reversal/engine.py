@@ -59,7 +59,11 @@ METRICS_BASIS = {
     "sharpe": "equity",
     "cagr_denominator": "evaluated_days",
     "win_rate_field": "net_pnl",
-    "max_dd": "worst_subwindow_max_dd",
+    # ⚠️ §13.91: 原写 `"worst_subwindow_max_dd"` —— **那是错的**, 且是我上一轮引入的。
+    # 主路径 `_metrics_from_holder` 报的 `max_dd` 取自 **同一条 NAV 序列** (与 chase/uptrend 同口径);
+    # `max(sub_i.max_dd)` 只是 **v63 ensemble 那一个函数**的汇总法 (且因分散效应**偏保守**)。
+    # 我当时的错是把**一个函数的 docstring 当成了整族的做法**。
+    "max_dd": "nav_mtm",  # ensemble 路径例外: 见 _run_ensemble 的 max(sub_i)
 }
 
 # Re-export for back-compat: tests/golden baselines reference this constant.

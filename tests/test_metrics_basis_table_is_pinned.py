@@ -128,7 +128,7 @@ PINNED_BASIS = {
                          "max_dd": "nav_mtm"},
     "short_reversal": {"trading_days": 252, "sharpe": "equity",
                        "cagr_denominator": "evaluated_days", "win_rate_field": "net_pnl",
-                       "max_dd": "worst_subwindow_max_dd"},
+                       "max_dd": "nav_mtm"},
     "cycle_price_action": {"trading_days": 252, "sharpe": "equity",
                            "cagr_denominator": "evaluated_days", "win_rate_field": "pnl",
                            "max_dd": "realized_no_mtm"},

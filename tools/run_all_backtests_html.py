@@ -559,7 +559,7 @@ def _render_cross_strategy(report: dict[str, Any]) -> str:
         "③ short_reversal 因 CAGR 体量级差异(数千%), CAGR/Sharpe 榜会被其包揽;\n"
         "④ ⚠️ **原写「max_dd 升序榜更有跨策略可比性」——那一句是错的**: max_dd 恰是\n"
         "   四者中**最不可比**的一个 (chase/uptrend 用 NAV 盯市回撤; short_reversal 取\n"
-        "   **各子窗口 max_dd 的最大值**; cycle 用**已实现权益(不盯市)**)。\n"
+        "   **v63 ensemble 取子策略最大值**(该路径例外); cycle 用**已实现权益(不盯市)**)。\n"
         "逐族口径见每族 metrics 里的 `metrics_basis` 自披露。"
         "</p>"
         # §13.90: 口径**从引擎导入**, 不再手打 —— 这段表格就是四族的 `metrics_basis`。
