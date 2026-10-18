@@ -149,6 +149,84 @@ def test_unknown_run_cancel_raises_keyerror(home):
         jobs_mod.cancel("deadbeef")
 
 
+def test_running_always_implies_a_live_child_process(home, fast_child):
+    """**不变量：读到 `running` ⇒ `job.proc` 一定存在且活着。**
+
+    这是 `cancel()` 能生效的**前提**。原实现先发 `status = "running"`、
+    后发 `job.proc = proc`，两次发布之间有一个窗口。实测（40 次紧轮询）：
+      · **33/40** 次观察到 `running` 而 `proc is None`；
+      · 排进那个窗口的 `cancel()` **静默失效、白烧一整轮 5–8 分钟的全量回测**（39/40）。
+    三者在同一临界区发布后，这个不变量应当恒成立。
+
+    **这条靠采样，天然有漏检概率**，所以：① 紧轮询（`sleep(0.001)`）提高落进窗口的机会；
+    ② 断言是"任意一次采样落在窗口内即失败"；③ 它**不是**主证据——
+    主证据是 `test_cancelling_a_running_job_actually_stops_it`
+    （断言 `not proc.is_alive()`，不依赖采样）。
+    """
+    rid = jobs_mod.submit("short_reversal", "v50_slope", None,
+                          "2024-01-01", "2025-01-01", "full")
+    seen_running = 0
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        j = jobs_mod.get(rid)
+        if j.status == "running":
+            seen_running += 1
+            assert j.proc is not None, \
+                "看到 running 却没有子进程 —— 正是 cancel() 会静默失效的那个窗口"
+            assert j.proc.is_alive(), "running 的作业必须有一个活着的子进程"
+        if j.status in {"done", "failed", "cancelled"}:
+            break
+        time.sleep(0.001)
+    assert seen_running > 0, "一次都没采到 running —— 这条测试没有真正执行过它的断言"
+    jobs_mod.wait(rid, timeout=60)
+
+
+def test_wait_returns_on_a_cancelled_job_instead_of_timing_out(home, fast_child):
+    """`wait()` 的终止集合必须包含 `cancelled`。
+
+    原实现是 `{"done", "failed"}`，于是对**已被取消**的作业调 `wait()`
+    会一直空转到 timeout、再抛 `TimeoutError` —— 与它自己那句
+    "阻塞到作业结束"的 docstring 直接矛盾。（实测复现过。）
+    """
+    first = jobs_mod.submit("short_reversal", "v50_slope", None,
+                            "2024-01-01", "2025-01-01", "full")
+    second = jobs_mod.submit("short_reversal", "v44_ratio02_buf07", None,
+                             "2024-01-01", "2025-01-01", "full")
+    assert jobs_mod.cancel(second) == "cancelled"
+    got = jobs_mod.wait(second, timeout=10)        # 必须**返回**，不是抛 TimeoutError
+    assert got.status == "cancelled"
+    jobs_mod.wait(first, timeout=60)
+
+
+def test_one_broken_job_does_not_kill_the_worker(home, fast_child, monkeypatch):
+    """**worker 是唯一的一条命。**
+
+    循环体若没有异常护栏，一次异常就让那**唯一**的 worker 线程死掉，
+    此后所有作业永远停在 `queued`，且**没有任何错误可见**——用户看到的是"一直在排队"。
+
+    注入一次故障验证：该作业变成 `failed` 且**原因可见**，而**后续作业照常完成**。
+    """
+    calls = {"n": 0}
+    real = jobs_mod._run_one
+
+    def boom(run_id):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("注入的故障")
+        return real(run_id)
+
+    monkeypatch.setattr(jobs_mod, "_run_one", boom)
+    bad = jobs_mod.submit("short_reversal", "v50_slope", None,
+                          "2024-01-01", "2025-01-01", "full")
+    assert jobs_mod.wait(bad, timeout=60).status == "failed", "坏掉的作业必须变成 failed"
+    assert "worker crashed" in (jobs_mod.get(bad).error or ""), \
+        "失败原因必须可见，不能只是一句'失败了'"
+    good = jobs_mod.submit("short_reversal", "v50_slope", None,
+                           "2024-01-01", "2025-01-01", "full")
+    assert jobs_mod.wait(good, timeout=60).status == "done", \
+        "后续作业必须照常完成 —— 一次异常不能杀死唯一的 worker"
+
+
 @pytest.mark.skipif(_db() is None, reason=SKIP_REASON)
 def test_a_real_preview_run_completes_in_a_subprocess(home):
     """不经测试缝、真跑一次 preview，确认子进程路径端到端可用。"""

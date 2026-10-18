@@ -110,52 +110,75 @@ def _child_body(conn, engine, preset, overrides, start, end, mode) -> None:
 
 
 def _worker() -> None:
+    """唯一的工作线程。
+
+    **循环体必须被异常护栏整个包住**（见 `_run_one` 的说明）——它是唯一的一条命。
+    """
     while True:
         run_id = _QUEUE.get()
-        job = _JOBS.get(run_id)
-        if job is None or job.status == "cancelled":     # 排队期间被取消
-            _QUEUE.task_done()
-            continue
-
-        ctx = mp.get_context("spawn")
-        parent_conn, child_conn = ctx.Pipe(duplex=False)
-        proc = ctx.Process(
-            target=_child_entry,
-            args=(child_conn, job.engine, job.preset, job.overrides,
-                  job.start, job.end, job.mode,
-                  str(state_home() / "runs" / job.run_id / "run.log")),
-            daemon=True,
-        )
-        # **`proc.start()`、`job.proc`、`status="running"` 三件事必须在同一个临界区里发布。**
-        # 分开做（计划原文先置 status、后建 proc）会让两条不变式都只剩"碰巧成立"：
-        #   ① `running ⇒ 有活着的子进程`——实测紧轮询下 **40 次里 33 次**观察到
-        #      `status == "running"` 而 `job.proc is None`；测试"子进程必须真的死了/真的活着"
-        #      的判据正建立在这条不变式上，于是随机 AttributeError 红。
-        #   ② `cancel() 看到 queued ⇒ 子进程尚未启动`——否则在"排队→运行"的缝里取消会**静默失效**：
-        #      cancel 见 queued 便不 terminate，worker 随后照启子进程，白烧一次全量回测。
-        with _LOCK:
-            if job.status == "cancelled":            # 临界区内刚被取消：一个子进程都不许起
-                parent_conn.close()
-                child_conn.close()
-                _QUEUE.task_done()
-                continue
-            job.proc = proc
-            proc.start()
-            job.status = "running"
-        child_conn.close()               # 父进程不持有子进程那一端（否则 poll 永远等不到 EOF）
-
         try:
-            if parent_conn.poll(JOB_TIMEOUT_SECONDS):
-                payload = parent_conn.recv()
-            else:
-                payload = {"ok": False,
-                           "error": f"timeout: job exceeded {JOB_TIMEOUT_SECONDS}s"}
-        except EOFError:
-            payload = {"ok": False, "error": "child process died without sending a result"}
+            _run_one(run_id)
+        except Exception as exc:          # noqa: BLE001
+            # **worker 是唯一的一条命。** 这个循环体里任何一次异常若逃出去，
+            # 线程就死了，此后**所有**作业永远停在 queued
+            #（后续 submit 只会挂进队列，没人来取），而且**没有任何错误可见** ——
+            # 用户看到的是"一直在排队"，会以为是自己点得不够。
+            # 所以：兜住一切，把该作业标成 failed、原因留在 `job.error`，然后继续下一个。
+            job = _JOBS.get(run_id)
+            if job is not None and job.status not in {"done", "cancelled"}:
+                job.status = "failed"
+                job.error = f"worker crashed: {type(exc).__name__}: {exc}"
+            print(f"[jobs] ERROR: worker 处理 {run_id} 时抛异常: "
+                  f"{type(exc).__name__}: {exc}", flush=True)
         finally:
-            parent_conn.close()
-            proc.join(timeout=5)
+            _QUEUE.task_done()
 
+
+def _run_one(run_id: str) -> None:
+    """跑一个作业。抽成独立函数，是为了让 `_worker` 的异常护栏能**完整**包住它。"""
+    job = _JOBS.get(run_id)
+    if job is None or job.status == "cancelled":     # 排队期间被取消
+        return
+
+    ctx = mp.get_context("spawn")
+    parent_conn, child_conn = ctx.Pipe(duplex=False)
+    proc = ctx.Process(
+        target=_child_entry,
+        args=(child_conn, job.engine, job.preset, job.overrides,
+              job.start, job.end, job.mode,
+              str(state_home() / "runs" / job.run_id / "run.log")),
+        daemon=True,
+    )
+    # **`proc.start()`、`job.proc`、`status="running"` 三件事必须在同一个临界区里发布。**
+    # 分开做（先置 status、后建 proc）会让两条不变式都只剩"碰巧成立"：
+    #   ① `running ⇒ 有活着的子进程`——实测紧轮询下 **40 次里 33 次**观察到
+    #      `status == "running"` 而 `job.proc is None`；测试"子进程必须真的死了/真的活着"
+    #      的判据正建立在这条不变式上，于是随机 AttributeError 红。
+    #   ② `cancel() 看到 queued ⇒ 子进程尚未启动`——否则在"排队→运行"的缝里取消会**静默失效**：
+    #      cancel 见 queued 便不 terminate，worker 随后照启子进程，白烧一次全量回测。
+    with _LOCK:
+        if job.status == "cancelled":            # 临界区内刚被取消：一个子进程都不许起
+            parent_conn.close()
+            child_conn.close()
+            return
+        proc.start()
+        job.proc = proc
+        job.status = "running"
+    child_conn.close()               # 父进程不持有子进程那一端（否则 poll 永远等不到 EOF）
+
+    try:
+        if parent_conn.poll(JOB_TIMEOUT_SECONDS):
+            payload = parent_conn.recv()
+        else:
+            payload = {"ok": False,
+                       "error": f"timeout: job exceeded {JOB_TIMEOUT_SECONDS}s"}
+    except EOFError:
+        payload = {"ok": False, "error": "child process died without sending a result"}
+    finally:
+        parent_conn.close()
+        proc.join(timeout=5)
+
+    with _LOCK:
         if job.status == "cancelled":
             pass                          # 用户取消：结果丢弃（不覆盖 status）
         elif payload.get("ok"):
@@ -163,15 +186,18 @@ def _worker() -> None:
                                    payload["start"], payload["end"],
                                    payload["metrics"], payload["trades"])
             job.status = "done"
-            try:
-                _persist_result(job, payload)
-            except OSError as exc:      # 落盘失败不该把一次成功的回测判成失败
-                print(f"[jobs] WARNING: 结果落盘失败 {job.run_id}: {exc}", flush=True)
         else:
             job.status = "failed"
             job.error = payload.get("error") or "unknown error"
         job.proc = None
-        _QUEUE.task_done()
+        # 落盘只在**真的成功**时做：被取消的作业即使子进程恰好回了 ok 也不留结果。
+        should_persist = job.status == "done"
+
+    if should_persist:
+        try:
+            _persist_result(job, payload)
+        except OSError as exc:      # 落盘失败不该把一次成功的回测判成失败
+            print(f"[jobs] WARNING: 结果落盘失败 {job.run_id}: {exc}", flush=True)
 
 
 def _persist_result(job: "Job", payload: dict) -> None:
@@ -324,7 +350,12 @@ def get(run_id: str) -> Job | None:
 
 
 def wait(run_id: str, timeout: float | None = None) -> Job:
-    """阻塞到作业结束（供测试用；HTTP 层用轮询，不调用这个）。"""
+    """阻塞到作业结束（供测试用；HTTP 层用轮询，不调用这个）。
+
+    ⚠️ **`cancelled` 也算"结束"。** 原先的终止集合是 `{"done", "failed"}`，
+    于是对**已被取消**的作业调 `wait()` 会一直空转到 timeout 再抛 `TimeoutError`
+    —— 与"阻塞到作业结束"这句 docstring 直接矛盾（实测复现过）。
+    """
     import time
 
     deadline = None if timeout is None else time.monotonic() + timeout
@@ -332,7 +363,7 @@ def wait(run_id: str, timeout: float | None = None) -> Job:
         job = _JOBS.get(run_id)
         if job is None:
             raise KeyError(run_id)
-        if job.status in {"done", "failed"}:
+        if job.status in {"done", "failed", "cancelled"}:
             return job
         if deadline is not None and time.monotonic() > deadline:
             raise TimeoutError(f"job {run_id} still {job.status} after {timeout}s")
