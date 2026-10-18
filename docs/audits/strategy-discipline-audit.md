@@ -5888,3 +5888,84 @@ _TOP5_CAVEAT = ("=== TOP 5 (Sharpe DESC, CAGR DESC, max_dd ASC) ===", …)
 `_TOP5_CAVEAT[0]` 改为 `(Sharpe DESC, CAGR DESC, max_dd DESC)`,并在源码里注明
 "这行是**可机检的声称**,由 tests/test_report_self_consistency.py 解析后与实际顺序比对"。
 —— 声称从此**由守卫保证为真**,而不是靠作者记得同步。
+
+---
+
+## 附七十四 —— `wfv_eval` 自称"§5 合规的 **WFV** 评估器",却**没有 OOS 划分**;而三处引用指向一个不存在的机制
+
+继续 §5 这条线,这次落在**评估器自己**身上。
+
+### 1 · 缺陷:名字叫 WFV,行为是**样本内**
+
+`uptrend_pullback/wfv_eval.py` 的 docstring 首行原文:
+
+> `"""§5 合规的 preset 评估器 — **WFV** + DSR。`
+
+而它的窗口来自 `core.walkforward.monthly_windows` —— **滚动、无 train/test 划分**;
+默认 **2 月窗 / 1 月步** ⇒ 相邻窗**重叠 50%**。实测:`grep -n "train|test|split"` 全文件
+只命中**两处注释**(其中一处还是"迭代期用 train 段;结论用 holdout 段"这条**人工约定**),
+没有任何 `--train-months/--test-months` 之类的参数。
+
+§5 逐字要求:
+
+> **Walk-Forward Validation:** Optimization logic must **enforce** WFV with strict
+> **out-of-sample (OOS)** testing windows.
+
+`wfv_eval` **没有** enforce 任何东西:OOS 靠操作者自己换 `--start-month/--end-month`。
+直接后果:**搜索日志里分不出哪一行是结论期的** —— 那一行 JSON 只带 `start_month/end_month`,
+不带"这段区间扮演什么角色"。而 §5 要的恰恰是"结论必须来自 OOS"。
+
+### 2 · 同一件事的第二个面:三处引用**不存在的机制**
+
+| 位置 | 原文 |
+|---|---|
+| `iter_reverse.py:301`(注释) | 「要把某个 config 当作结论,必须另外跑 OOS —— 见 `wfv_eval.py` 的 **train/test 划分**。」 |
+| `iter_reverse.py:332`(打印) | 「请走 uptrend_pullback/wfv_eval.py 的 **train/test 划分**。」 |
+| `tests/test_iter_reverse_reports_penalty_metric.py`(docstring) | 「要下结论须另跑 `wfv_eval.py` 的 **train/test**。」 |
+
+**那个划分不存在。** 三处都把一个"应该有的机制"当成了"已有的机制"——
+与附四十六(契约禁令)、附五十四(presets 注释)的"引用不存在的东西"同族,
+只是这次被引用的东西**是本该存在的那一个**(§5 要的 OOS 划分)。
+
+### 3 · 修法:让它**必须**被声明(与 `--n-trials` 同法)
+
+§5 的这两半(迭代计数、样本外)有一个共同点:**它们都只能由调用方声明**。前半已经这么做了
+(`--n-trials` 是 `required=True`);这次把后半也补上:
+
+* `--window-role {iteration,holdout}` —— **必需**参数,写进 JSON 记录 `window_role`;
+* 打印里说清:**"窗口为滚动无划分(默认 2 月窗/1 月步 ⇒ 重叠 50%)⇒ 本次是样本内评估"**,
+  以及该角色的含义(`holdout`:应只跑一次;此后若再改 candidate,则本行不再有效);
+* docstring 去掉「§5 合规 …WFV」的过度声称,写明它实际是什么;
+* 解析器抽成 `build_parser()` —— **好让"哪些参数必需"能被行为性验证**(而不是靠人读代码);
+* 三处假引用改成实话(并写明**本仓库没有代码强制的划分**);
+* `docs/uptrend_pullback_preset_search.md` 的两条示例命令补上 `--window-role` ——
+  否则照抄会**直接报错**(属"文档给出不可执行的指引",与本仓库早前修过的 `--save-trades`
+  死引用同类)。
+
+### 4 · 登记(口径决定,留给你)
+
+**要不要把 train/test 划分做进代码**(即改成 `walkforward_windows` 那样在 **test 窗**上评估)?
+—— 方向清楚(§5 要 OOS),但它会**让既往的搜索日志行失去可比性**(那些行是在滚动样本内
+算出来的)。故**不擅自改默认**;现在的处置是"**让角色必须被声明并落盘**",
+于是至少:新写的每一行都能分辨,而旧行不会被我单方面改写。
+
+### 5 · 守卫(7 条,双向验证)
+
+| 用例 | 钉住 |
+|---|---|
+| `test_window_role_is_required` | 缺 `--window-role` ⇒ `SystemExit`(行为验证,不是读代码) |
+| `test_window_role_choices_are_constrained` | 只允许 `iteration` / `holdout` |
+| `test_n_trials_is_still_required` | 这次改动没碰掉 §5 的另一半 |
+| `test_record_carries_the_window_role` | JSON 记录带 `window_role`(AST) |
+| `test_print_says_the_windows_are_not_split` | 打印含"无划分"与"样本内" |
+| `test_doc_commands_include_the_required_flag` | 文档示例命令都带该参数(否则照抄失败) |
+| `test_doc_says_the_windows_are_in_sample` | 文档写明口径,不只给命令 |
+
+**双向验证**:退化 `required` / 记录字段 / 打印措辞 / 文档命令 ⇒ **4 条红**;恢复 ⇒ 7 passed。
+
+### 6 · 这一条的性质
+
+**不改任何数字** —— 改的是:①工具不再自称它是它不是的东西;②产物带上了角色声明;
+③文档命令重新可执行;④"哪些参数必需"从此可被机器验证。
+`--window-role` 会在**既有用法**上强制一次显式声明 —— 这是有意的:§5 的两半都要求
+调用方**说出**自己在做什么。
