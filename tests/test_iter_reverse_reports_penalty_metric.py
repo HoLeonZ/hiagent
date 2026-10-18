@@ -52,14 +52,52 @@ def test_script_calls_a_penalty_metric() -> None:
     assert "bonferroni_correct" in code, "§5: 多 trial 搜索未做 Bonferroni 校正"
 
 
-def test_window_trading_days_matches_the_repo_convention() -> None:
-    """`n_returns` 用的 21 交易日/月必须取自仓库既有口径(6 个月 = 126),不得另发明。"""
-    code = SCRIPT.read_text(encoding="utf-8")
-    m = re.search(r"WINDOW_TRADING_DAYS_PER_MONTH\s*=\s*(\d+)", code)
-    assert m, "未定义 WINDOW_TRADING_DAYS_PER_MONTH"
-    assert int(m.group(1)) == 21, (
-        "21 = 126/6(仓库 walk-forward 家族的既有口径)。改动它等于改 DSR 的 SE 项。"
+def test_n_returns_comes_from_the_run_not_an_estimate() -> None:
+    """§5: T 取自**本次运行**(`n_daily_returns`),不得用「21 交易日/月 × 月数」估。
+
+    ## 附七十八 自查:本条此前守的是**相反**的事,而且它已经空转了
+
+    原用例 (`test_window_trading_days_matches_the_repo_convention`) 断言
+    `WINDOW_TRADING_DAYS_PER_MONTH = 21` **存在且等于 21**,理由写的是"取自仓库既有口径
+    (6 个月 = 126),不得另发明"—— 而那个"既有口径"126 本身就是附六十 修掉的一个猜。
+
+    附六十六 把该常量删掉、改为取运行的 `n_daily_returns` 之后,**这条用例居然仍然通过** ——
+    因为我在同一次修改里写的**更正注释**恰好含 `WINDOW_TRADING_DAYS_PER_MONTH = 21`
+    这串字面量,而判据是 `re.search(...)` 找字符串。**守卫被注释满足了。**
+    (套件当时是绿的;只有"回头量自己新加的东西"才把它翻出来。)
+
+    现按新契约判,三条都用 AST(注释再也满足不了):
+      (a) 那个估计常量**没有赋值**(提都不许提不算 —— 赋值才算);
+      (b) 取值处确实**读取**了运行产物的 `n_daily_returns`;
+      (c) 取不到时**抛错**(不兜底)。
+    """
+    import ast as _ast
+
+    tree = _ast.parse(SCRIPT.read_text(encoding="utf-8"))
+
+    # (a) 估计常量不得再被赋值
+    assigned = {
+        t.id for node in tree.body if isinstance(node, _ast.Assign)
+        for t in node.targets if isinstance(t, _ast.Name)
+    }
+    assert "WINDOW_TRADING_DAYS_PER_MONTH" not in assigned, (
+        "§5: 仍在用「每月交易日数 × 月数」估 T —— 那是附六十六 修掉的形状"
     )
+
+    # (b) 必须从运行产物的键里读
+    reads_key = any(
+        isinstance(n, _ast.Subscript) and isinstance(n.slice, _ast.Constant)
+        and n.slice.value == "n_daily_returns"
+        for n in _ast.walk(tree)
+    )
+    assert reads_key, "§5: 没有从运行产物读取 n_daily_returns"
+
+    # (c) 取不到必须抛错(而不是退回一个估计)
+    raises_about_t = any(
+        isinstance(n, _ast.Raise) and "n_daily_returns" in _ast.unparse(n)
+        for n in _ast.walk(tree)
+    )
+    assert raises_about_t, "§5: 取不到 T 时没有 fail-fast(会退回估计值)"
 
 
 def test_script_states_that_selection_is_in_sample() -> None:

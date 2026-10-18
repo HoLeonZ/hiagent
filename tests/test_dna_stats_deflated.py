@@ -119,10 +119,21 @@ def test_sharpe_significance_basic():
     `sqrt(243) ≈ 15.6` 倍 ⇒ p 被压到 ~0 —— **那条 `< 0.001` 的断言正是这个单位错误
     的另一种写法**(它把 bug 写成了期望,于是修复反而会打红它)。
     """
+    # 附七十八 自查:这里原本是 `approx(0.021, abs=0.003)` —— 一个**魔法数 + 宽容差**。
+    # 它够用来抓单位 bug(那个会把 p 压到 ~0),但沿用了"当年那版实现"的期望值写法;
+    # 改为**独立复算**(stdlib NormalDist,与 test_deflated_sharpe_units.py 同法),
+    # 容差随之收紧到 1e-12 —— 于是"实现变了多少"这件事由复算本身约束,不靠人记住一个数。
+    from statistics import NormalDist
+
+    from core.trade_schema import TRADING_DAYS_PER_YEAR
+
+    z = (2.0 / (TRADING_DAYS_PER_YEAR ** 0.5)) * ((252 - 1) ** 0.5)
+    expect = 1.0 - NormalDist().cdf(z)
     p = sharpe_significance_pvalue(observed_sharpe=2.0, n_returns=252)
-    assert p == pytest.approx(0.021, abs=0.003), (
-        f"年化 SR=2.0 / T=252 的单侧 p 应 ≈0.021(约 2σ),实际 {p}"
+    assert p == pytest.approx(expect, abs=1e-12), (
+        f"年化 SR=2.0 / T=252 的单侧 p 应为 {expect:.6f}(约 2σ),实际 {p}"
     )
+    assert p > 0.01, f"p={p:.3e} 不像「约 2σ」该给的量级(单位混用会给 ~0)"
 
 
 def test_sharpe_significance_zero():
