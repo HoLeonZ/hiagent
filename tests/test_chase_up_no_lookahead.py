@@ -200,7 +200,12 @@ def test_simulate_portfolio_records_atr_pct_per_trade():
     })
     panel_ind = compute_indicators(panel)
 
-    last_date = panel["date"].iloc[-1]
+    # ⚠️ 2026-10-19 (§13.56): 入场原先放在**最后一根** bar ⇒ 面板 30 根、`max_hold=5`
+    # 需要入场之后还有 5 根才能平仓 ⇒ **仓位永远不产生"已平仓"记录** ⇒ `trades` 为空
+    # ⇒ 下面那句 `if not trades.empty:` 为假 ⇒ **断言一次都不执行 (空转)**。
+    # 实测: 入场放最后一根 ⇒ 0 笔; 放第 22 根 ⇒ 1 笔。
+    ENTRY_IDX = 22          # ma20 需 ≥20 根预热; 且之后必须留 ≥5 根给 max_hold
+    last_date = panel["date"].iloc[ENTRY_IDX]
     last_row = panel_ind[panel_ind["date"] == last_date].iloc[0]
     entries = pd.DataFrame([{
         "date": last_date,
@@ -226,14 +231,18 @@ def test_simulate_portfolio_records_atr_pct_per_trade():
         end_date=panel["date"].iloc[-1].strftime("%Y-%m-%d"),
         atr_tp_mult=3.0, atr_sl_mult=2.0,
     )
-    if not trades.empty:
-        assert "atr_pct" in trades.columns
-        assert "sub_signal_type" in trades.columns
-        for v in trades["atr_pct"]:
-            assert pd.notna(v), "trade.atr_pct 不能是 NaN"
-            assert 0.0 < v < 1.0
-        for v in trades["sub_signal_type"]:
-            assert v in ("A", "B", "C", "AB", "AC", "BC", "ABC", ""), (
+    assert not trades.empty, (
+        "本场景必须产生**已平仓**成交 —— 否则下面的循环一次都不执行 (这正是本条此前的毛病)"
+    )
+    # 2026-10-19 (§13.56): 此处原为 `if not trades.empty:` —— 已改为**无条件**
+    # (上方已先 `assert not trades.empty`)。
+    assert "atr_pct" in trades.columns
+    assert "sub_signal_type" in trades.columns
+    for v in trades["atr_pct"]:
+        assert pd.notna(v), "trade.atr_pct 不能是 NaN"
+        assert 0.0 < v < 1.0
+    for v in trades["sub_signal_type"]:
+        assert v in ("A", "B", "C", "AB", "AC", "BC", "ABC", ""), (
                 f"sub_signal_type 必须是 A/B/C 组合,得到 {v}"
             )
 
