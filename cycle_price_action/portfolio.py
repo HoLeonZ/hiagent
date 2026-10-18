@@ -97,8 +97,9 @@ class Portfolio:
     # Round 10 (2026-09-28, CLAUDE.md §2): NAV-floor cash gate threshold。
     # 当 NAV (cash + 持仓 mark-to-market 浮盈) 跌到 initial_capital ×
     # NAV_GATE_RATIO 以下时, 拒绝新开仓 — 已持仓仍按 SL/TP/time exit 正常执行。
-    # 与 chase_up/portfolio.py:56 + uptrend_pullback/portfolio.py:49 +
-    # short_reversal/replay_strategy_v3.py:156 (min_cash_ratio=0.05) 口径一致。
+    # ⚠️ §13.63: 本族默认 0.05; short_reversal 的同类参数 (`min_cash_ratio`) 默认
+    # **None**(故意的 fail-fast 哨兵)。一致的是**闸门语义**, 不是默认值 ——
+    # 旧注释引用的三个行号 (chase_up:56 / uptrend:49 / replay_strategy_v3:156) 均已不存在。
     NAV_GATE_RATIO = 0.05
 
     def __init__(

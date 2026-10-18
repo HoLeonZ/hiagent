@@ -150,7 +150,9 @@ MAX_VOL_PARTICIPATION = 0.10
 # 防穿仓 (R1, 2026-09-21): NAV-floor cash gate 阈值。
 # Round 14 (2026-09-28, CLAUDE.md §2): 从 module-level 常量改为 simulate_portfolio
 # 参数 (默认 0.05), preset 可通过 `nav_gate_ratio` key 覆盖。
-# 与 short_reversal/replay_strategy_v3.py:64 (min_cash_ratio=0.05) 口径一致。
+# ⚠️ §13.63: 本族默认 **0.05**; short_reversal 的同类参数 (`min_cash_ratio`) 默认
+# **None**(故意的 fail-fast 哨兵)。一致的是**闸门语义**, 不是默认值 —— 旧注释
+# "与 replay_strategy_v3.py:64 (min_cash_ratio=0.05) 口径一致" 的行号与值都已不存在。
 
 # 同一天内 NAV gate 触发只打一次 warning
 _nav_gate_logged_dates: set = set()
@@ -245,8 +247,8 @@ def simulate_portfolio(
     intraday_tiebreak: str = "sl_first",
     max_volume_participation: float = 0.10,
     # Round 14 (2026-09-28, CLAUDE.md §2): NAV-floor cash gate threshold。
-    # Preset 可通过 `nav_gate_ratio` key 覆盖; 默认 0.05 与原 module-level 常量
-    # 行为一致 (back-compat — 所有现有 preset 不声明此 key 时仍得 0.05)。
+    # Preset 可通过 `nav_gate_ratio` key 覆盖; 本族当前**没有** preset 声明该 key
+    # ⇒ 一律走此默认值 (§13.63)。
     nav_gate_ratio: float = 0.05,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """逐日模拟组合，返回 (trades_df, equity_df)。

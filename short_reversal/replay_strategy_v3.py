@@ -174,9 +174,12 @@ class Phase3V3Strategy(bt.Strategy):
         min_commission=MIN_COMMISSION,
         initial_capital=1_000_000.0,
         lot_size=100,
-        # Round 14 (2026-09-28, CLAUDE.md §2): 默认 None, engine 必须显式从 preset
-        # 传入 (fail-fast: 忘传时 cash_gate_threshold 计算报 TypeError 而非 silently 0.05)。
-        # engine.py:170 通过 cfg.get('min_cash_ratio', 0.05) 保证生产路径总有值。
+        # Round 14 (2026-09-28, CLAUDE.md §2): 默认 None 是**故意的 fail-fast 哨兵**,
+        # engine 必须显式传入 —— **不是**"关闭闸门"的开关 (代码里没有 value is None 的分支)。
+        # ⚠️ §13.63: 三族兄弟 (chase_up / uptrend_pullback / cycle_price_action) 的同类
+        #   参数**默认 0.05**; 本族**有意与它们不同**。一致的是**闸门语义**
+        #   (NAV < initial_capital × ratio ⇒ 拒绝新开仓), 不是默认值。
+        # 生产路径由 engine 的 addstrategy 调用注入 cfg.get('min_cash_ratio', 0.05)。
         min_cash_ratio=None,
         # V5' (2026-09-22, CLAUDE.md §4): ATR-aware slippage (R5 mirror)。
         # 当 atr_slip_scale > 0, 在 entry 时 slippage = atr_pct × participation × scale
@@ -319,6 +322,18 @@ class Phase3V3Strategy(bt.Strategy):
                 f"全局单变量 (为 max_positions=1 设计), N>1 时任意一只票的止损会"
                 f"冻住整个组合的入场。要么设 sl_cooldown_days=0, 要么把冷却改成"
                 f"per-symbol 语义 (需先设计并声明)。"
+            )
+        # §0 Fail-Fast (§13.63): `min_cash_ratio` 的默认 None 是**故意的哨兵**。
+        # Round 14 的注释把"忘传时 cash_gate_threshold 计算报 TypeError"当作 fail-fast ——
+        # 但那不是 fail-fast: 它出在组合模拟**中途**的乘法里, 报的是 `float * None`,
+        # 既非"立刻"也不解释原因 (§0 要求 throw immediately, do not silently bypass)。
+        # ⇒ 与上面 sl_cooldown 守卫**同形**: 构造时显式拒绝。
+        if self.p.min_cash_ratio is None:
+            raise ValueError(
+                "min_cash_ratio=None 未注入: 它是 fail-fast 哨兵, 不是'关闭 NAV 闸门'"
+                "的语义 (代码里没有 value is None 的分支)。生产路径由 engine 从 preset"
+                "注入; 直接构造 (测试/工具) 必须显式传入一个比例 (本库其余三族的"
+                "同类默认值都是 5%)。"
             )
         # 关键：只迭代 data feed，不迭代后续 __init__ 期间被加进来的 indicator
         # backtrader 的 Lines_LineSeries __slots__ 不允许任意属性注入
