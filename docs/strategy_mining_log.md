@@ -5106,3 +5106,53 @@ FAILED test_short_reversal_min_commission_floor.py::test_trace_exit_fee_enforces
 
 > **前三次的教训是"改代码要跟着改钉桩"; 这一次补上后半句: 还要**跑一遍全套件**。
 > 只做前者, 你不知道自己漏了哪一条 —— 而漏掉的那条会以"红灯"的形式出现在**七轮之后**。**
+
+### 13.60 ✅ **把"跑全套件"变便宜**: 改了哪些文件 → 该跑哪些测试
+
+#### (a) 起因: §13.59 那次跳过的**真实原因是成本**
+§13.59 记了: 我改了 trace 工具却**七轮没跑全套件**, 于是没发现自己打红了两条。
+而**为什么没跑** —— 套件要 **37 分钟**。
+
+> **⇒ 当一条规矩的执行成本很高时, 人会跳过它; 而"跳过"的代价会在七轮后以红灯的形式出现。**
+> 所以正确的补救不是"下次记得跑", 而是**把这件事变便宜**。
+
+#### (b) 交付: `tools/affected_tests.py`
+输入"改动的生产文件"(或直接读 `git status`), 输出**相关的测试文件**与一条可直接跑的命令。
+
+#### (c) 为什么按**符号名**匹配, 而不是按 import
+**这一条是关键, 而且正是 §13.59 教我的**:
+那两条钉桩**没有 import 被测的模块** —— 它们用 `inspect.getsourcefile()` **读源码文本**再正则匹配。
+⇒ **一个"找 import"的映射工具会恰好漏掉促使本工具诞生的那次回归。**
+⇒ 本工具改成按**顶层类名/函数名 + 模块路径**匹配, `TraceStrategy` 正是这样被找出来的。
+
+#### (d) 验收 (用**真实的那次回归**当用例, 不是合成的)
+```
+$ python tools/affected_tests.py short_reversal/lookahead_trade_trace.py
+改动的生产文件 1 个; token: ['TraceStrategy', 'lookahead_trade_trace', ...]
+⇒ 相关测试 5 个:
+   test_exception_specificity_audit.py          ← lookahead_trade_trace
+   test_fail_fast_deep_scan_section2.py         ← …
+   test_lookahead_trade_trace_net_closure.py    ← TraceStrategy, …
+   test_short_reversal_min_commission_floor.py  ← TraceStrategy, …     ★ 就是 §13.59 变红的那两条
+   test_short_reversal_no_lookahead.py          ← …
+```
+* **§13.59 变红的那个文件在名单里** ✅ —— 而它跑完只要 **0.06 秒**(不是 37 分钟);
+* 它还翻出一个我**没想到**的 `test_lookahead_trade_trace_net_closure.py`。
+
+#### (e) 边界检查
+| 输入 | 行为 |
+|---|---|
+| 非 `.py` 改动 (`README.md`) | "改动的生产文件 0 个" + 提醒仍应定期跑全套件 ✅ |
+| 无参数 | 读 `git status` ✅(实测能认出本工具自身那个新文件, 且正确地报"没有测试提及") |
+
+#### (f) ⚠️ 诚实的限度
+那次改动的完整相关集里有一个 **5 分钟**的文件(`test_short_reversal_no_lookahead.py`),
+所以**它不总是秒级**。它的价值是**点名正确的文件**(而不是"跑得快"), 而这次**决定性的那个恰好是秒级**。
+⇒ **本工具是让那条纪律变便宜, 不是取消定期全套件。**
+
+#### (g) 它把 §13.59 的教训补完
+| 教训 | 落在哪 |
+|---|---|
+| 改代码要跟着改钉桩 | §13.28 / §13.29 / §13.43 / §13.59 |
+| 改完要**跑一遍**才知道漏了哪条 | §13.59 |
+| **而"跑一遍"要便宜, 否则会被跳过** | **本节** |
