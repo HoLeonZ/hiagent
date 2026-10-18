@@ -49,6 +49,7 @@ from core.preset_contract import (  # §0/§2/§3 (audit 2026-10-15)
     resolve_volume_participation,
 )
 from core.trade_schema import annualized_years  # §2 年化单源 (audit 2026-10-15)
+from core.walkforward import window_trading_days  # §5 窗口交易日数单源 (附八十一)
 
 INITIAL_CAPITAL = 1_000_000.0
 # §4 (audit P2-11, 2026-10-15): 融券年化费率改为 core 单源并再导出
@@ -489,8 +490,17 @@ def run_backtest_v3(
     cerebro.run()
     # §2 单源 (audit 2026-10-15): 年化用**窗口内的交易日数**(面板去重日期),
     # 而不是日历日跨度 —— 与 chase_up / uptrend_pullback 同口径。
+    # §2 单源 / §5 (附八十一): 年化与 DSR 都要**窗口内**的交易日数 ——
+    # 而这里此前传的是 `panel["date"].nunique()`,即**整张面板**(含暖机缓冲,
+    # 且两端都外扩;实测:2 个月窗口 43 个交易日,面板却报 197,并含窗口之后的日期)。
+    # 后果:①CAGR 的年化分母大 ~4 倍 ⇒ 短窗口 CAGR 被系统性压低
+    #      (而各 walk-forward 汇总正是逐窗 CAGR);②附六十 把同一个数当成 DSR 的 T
+    #      ⇒ T 被高估、DSR 偏乐观。
+    # 口径现收到 `core.walkforward.window_trading_days` 单源(全库 8 处同缺陷,见附八十一);
+    # 窗口内一个交易日都没有时它在内部 fail-fast。
     metrics = _metrics_from_holder(
-        holder, start, end, cfg, n_trading_days=int(panel["date"].nunique())
+        holder, start, end, cfg,
+        n_trading_days=window_trading_days(panel, start, end),
     )
     # §5 Attribution Mandate(此前全库无实现,2026-10-16 补齐)
     metrics.update(_benchmark_block(panel, float(metrics["total_yield"])))

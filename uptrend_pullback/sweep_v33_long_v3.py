@@ -20,6 +20,7 @@ from uptrend_pullback.data import load_panel
 from uptrend_pullback.portfolio import simulate_portfolio
 from uptrend_pullback.signals import compute_indicators, select_entries_v33_long_mirror
 from dna_stats.deflated import deflated_sharpe_ratio
+from core.walkforward import window_trading_days  # §5 窗口交易日数单源 (附八十一)
 from uptrend_pullback.universe import load_universe
 
 START, END = "2025-09-16", "2026-09-16"
@@ -174,7 +175,7 @@ def main():
         if all_sharpes:
             observed = max(all_sharpes)
             dsr = deflated_sharpe_ratio(
-                observed_sharpe=observed, n_trials=len(all_sharpes), n_returns=int(panel["date"].nunique())
+                observed_sharpe=observed, n_trials=len(all_sharpes), n_returns=window_trading_days(panel, START, END)
             )
             print(
                 f"\n§5 DSR | observed_sharpe={observed:.3f} | "

@@ -23,6 +23,10 @@ from core.dual_price import (
     COMMISSION_RATE,
     MIN_COMMISSION,
     STAMP_DUTY_RATE,  # Round 9 (2026-09-28): canonical 万5 sell-only stamp duty
+    # 附八十一: `_fee()` 在 `atr_slip_scale > 0` 的分支里调用它,而这个名字**此前没被 import**
+    # ⇒ 一旦打开 ATR 滑点(§4 原则上有此要求,现为待决口径:全库 preset 的 atr_slip_scale
+    # 都是 0),broker 会在**第一笔成交**上 `NameError`。之所以没人发现:那段代码从未被执行。
+    effective_slippage,
 )
 
 logger = logging.getLogger(__name__)

@@ -19,6 +19,11 @@ from core.walkforward import walkforward_windows as core_walkforward_windows  # 
 from dna_stats.deflated import deflated_sharpe_ratio
 
 from short_reversal.engine import run_backtest_v3
+# §5 (附八十一): 下面 DSR 段要用它取 preset 的 `n_comparisons`。
+# 此前**没有 import** ⇒ 那段一执行就 `NameError: get_preset`,`--out` 落盘也永远走不到。
+# (引入该调用的是 4acfc2e "walk-forward DSR was fed the window count as the number of trials"
+#  —— 加了调用没加 import。姊妹脚本 wf_v*_focused.py 都 import 了,只有这里漏。)
+from short_reversal.presets import get_preset  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

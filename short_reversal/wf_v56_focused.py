@@ -72,9 +72,14 @@ def main():
         _cfg = get_preset(preset) if isinstance(preset, str) else preset
         # §5 (附六十): T 必须来自本次运行,不许用常数兜底。
         _observed_t = int(round(sum(t_days) / len(t_days)))
+        # 附八十一: 这里原先**只在调用点内联** `int(_cfg["n_comparisons"])`,而下面的
+        # 摘要 f-string 却打印裸名 `{n_trials}` —— 那个名字**从未绑定** ⇒ 摘要一打印就
+        # NameError,整条脚本跑不完(与其他 wf_* 脚本不同:那些打印的是表达式)。
+        # 现绑成变量,调用点与打印**同源**。
+        n_trials = int(_cfg["n_comparisons"])
         dsr = deflated_sharpe_ratio(
             observed_sharpe=observed,
-            n_trials=int(_cfg["n_comparisons"]),
+            n_trials=n_trials,
             n_returns=_observed_t,
         )
         avg_yield = sum(yields) / len(yields)

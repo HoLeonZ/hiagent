@@ -21,6 +21,7 @@ from chase_up.data import load_panel
 from chase_up.signals import compute_indicators
 from chase_up.universe import load_universe
 from dna_stats.deflated import deflated_sharpe_ratio
+from core.walkforward import window_trading_days  # §5 窗口交易日数单源 (附八十一)
 
 from hiagent_config import DB_PATH
 
@@ -133,13 +134,19 @@ def main() -> None:
         sharpes = df["sharpe"].dropna().tolist()
         if sharpes:
             observed = max(sharpes)
-            # §5 (audit 2026-10-16): T 来自**本次窗口**,不是常数。此前写死 252,
+            # §5 (audit 2026-10-16): T 来自**本次窗口**,不是常数 —— 此前写死 252,
             # 而 chase 的 sharpe 是 `mean/std × sqrt(243)`(T = 日收益数);
-            # 实测窗口 2025-09 起的同类 sweep 只有 242~243 个交易日 ⇒ 高估 T 约 4%,
-            # 低估标准误约 2% ⇒ DSR 偏乐观。panel 就在本函数作用域内。
+            # 实测窗口 2025-09 起的同类 sweep 只有 242~243 个交易日 ⇒ 高估 T 约 4%。
+            #
+            # §5 (附八十一): 但那次修复**取错了量** —— 它写的是 `panel["date"].nunique()`,
+            # 而 `load_panel` 的起点是 `args.start − 400 天`(暖机缓冲)⇒ 面板有 510 个交易日,
+            # 不是 243。于是 T 从「252 高估 4%」变成「509 高估 **2.10 倍**」,**比修之前更乐观**
+            # —— 而上面这句注释里量的 242~243 是对的,**正确的数字和错误的代码躺在同一个 hunk 里**。
+            # 现改走 `core.walkforward.window_trading_days`(单源,按窗口区间计数,空窗口 fail-fast);
+            # 保留 chase 自己的 `− 1`(期数→收益数)口径。
             dsr = deflated_sharpe_ratio(
                 observed_sharpe=observed, n_trials=len(sharpes),
-                n_returns=int(panel["date"].nunique()) - 1,
+                n_returns=window_trading_days(panel, args.start, args.end) - 1,
             )
             print(
                 f"\n§5 DSR | observed_sharpe={observed:.3f} | "

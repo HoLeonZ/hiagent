@@ -74,6 +74,37 @@ def window_coverage(windows: list[WalkForwardWindow]) -> tuple[list[int], list[i
     return overlaps, gaps
 
 
+def window_trading_days(panel: pd.DataFrame, start: str, end: str) -> int:
+    """面板里**属于 `[start, end]` 窗口**的交易日数(CLAUDE.md §5 单源)。
+
+    **为什么需要它**(附八十一 实测):各引擎的 `load_panel()` 都会把起点往前推
+    一个暖机缓冲(`WARMUP_DAYS = 400`,chase / uptrend / short_reversal 同构),
+    所以 `panel` **不是**窗口,而是 `[start − 400 天, end]`。于是
+    `panel["date"].nunique()` 量的是**面板**长度,不是**窗口**长度 —— 而这个名字
+    长得像窗口统计量,极容易被当成窗口用。
+
+    它被用错的地方会同时污染两个量(实测 T 高估 **2.10 倍**):
+      * CAGR 的年化分母 ⇒ 短窗口 CAGR 被系统性压低;
+      * DSR 的 `n_returns` ⇒ T 高估 ⇒ DSR **偏乐观**。
+
+    早先多处写成 `int(panel["date"].nunique())`,其中至少一处(附六十)还是**为了
+    "把猜的常数换成实测值"**才这么写的 —— 一次意在提高诚实度的修复,反而把指标推得
+    更宽松。故此处单源,并在窗口为空时 fail-fast(不许退化成面板长度)。
+    """
+    days = int(
+        panel.loc[
+            (panel["date"] >= pd.Timestamp(start)) & (panel["date"] <= pd.Timestamp(end)),
+            "date",
+        ].nunique()
+    )
+    if days == 0:
+        raise ValueError(
+            f"§5: 窗口 {start}..{end} 在面板里一个交易日都没有 —— "
+            f"年化与 DSR 的分母无从谈起(不许退化成面板长度 {int(panel['date'].nunique())})"
+        )
+    return days
+
+
 def walkforward_windows(
     start: date,
     end: date,
