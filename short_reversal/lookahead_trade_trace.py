@@ -11,9 +11,16 @@
   4. 算每类的 PnL 贡献（sum net × size × entry_price 的近似 = 仓位现金 = 实际 nav）
   5. 估算去污染后 CAGR
 
-PnL 模型：cerebro broker 不记账,strategy 用 NAV-based 记账:
-  cash_final = cash_initial + sum_over_trades( net_per_share × entry_price × size )
-  net_per_share = (entry - exit)/entry - commission_rate
+PnL 模型：cerebro broker 不记账, strategy 用 NAV-based 记账:
+  cash_final = cash_initial + sum_over_trades( notional_pnl )        ← **精确**
+  notional_pnl = canonical 记录里的 `net_pnl` (**双边费用后**的净额)
+
+⚠️ 2026-10-19 (§13.52 / §13.62): 本文件**曾经**写的是
+    cash_final = cash_initial + sum_over_trades( net_per_share × entry_price × size )
+    net_per_share = (entry - exit)/entry - commission_rate
+**那两行都已过期** —— `TraceStrategy` 不再自己算 net, 而是从 canonical 记录取
+`net_pnl` / `net_return` (§13.52 把两个覆写从"分叉"改成了"包装")。
+`net_return` 的分母含 `buy_commission` ⇒ 上面那个**乘法恒等式只是近似**; 精确的是用 `notional_pnl`。
 """
 from __future__ import annotations
 

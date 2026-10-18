@@ -5187,3 +5187,65 @@ $ python tools/affected_tests.py short_reversal/lookahead_trade_trace.py
 cycle 缺涨停守卫、产物未产出、`§6.1` 基线 …)。
 **本循环这一阶段做的是"把守卫修到可信", 不是"把红变绿"**;
 而"可信"之后, 那 47 条才有资格被当作**真的债**来读。
+
+### 13.62 ✅ **§13.52 那一次重构的**第三个**牺牲者** —— 而它是**上一轮那个工具**帮我找到的
+
+#### (a) §13.60 的工具**当场兑现**
+§13.60 交付了 `tools/affected_tests.py`(改了哪些文件 → 该跑哪些测试)。
+本轮我用它列出的 5 个相关测试里, **有一个是我自己没想到的**:
+`test_lookahead_trade_trace_net_closure.py` —— 而它**确实是红的**(§13.59 只修了另一个)。
+
+> **⇒ 工具在它被造出来的下一轮就付清了自己的成本。**
+> 而这也说明 §13.59 的"人工回想哪些测试相关"**本身就是不可靠的** —— 我漏了一个文件。
+
+#### (b) 两条钉桩: 与 §13.59 **同一类、同一处重构**
+`test_lookahead_trade_trace_net_closure.py` 的两条要求**本文件**里出现:
+* `"total_fee_ratio"`(Round 19 的双边费率口径);
+* `notional_pnl = float(pnl − exit_fee − entry_fee)`(含入场费)。
+
+§13.52 把 `_close` 改成**包装** ⇒ 这两段都搬回了父类 ⇒ 文本不在本文件里 ⇒ 红。
+
+#### (c) 修法: 仍是**"委派 + 父类那一份"** (§13.59 的形状)
+```python
+    assert "super()._close(" in src                 # ① 必须委派
+    assert "total_fee_ratio" in 父类源码             # ② canonical 口径在父类那一份里
+    assert legacy not in src and legacy not in 父类   # ③ 旧的单费率写法两处都不得有
+    assert '"net_pnl"' in src                       # ④ notional_pnl 取自 canonical `net_pnl`
+```
+
+#### (d) ⚠️ 顺带修掉一处**过期散文**: 模块 docstring 里那个恒等式
+本文件开头一直写着:
+```
+  cash_final = cash_initial + sum_over_trades( net_per_share × entry_price × size )
+  net_per_share = (entry - exit)/entry - commission_rate
+```
+**两行都已过期**: §13.52 之后 `net_per_share` 取自 canonical 的 `net_return`,
+而 `net_return` 的**分母含 `buy_commission`** ⇒ 那个**乘法恒等式只是近似**, 不再精确。
+精确的是用 `notional_pnl`(= canonical `net_pnl`)。**已改成**:
+```
+  cash_final = cash_initial + sum_over_trades( notional_pnl )        ← 精确
+  notional_pnl = canonical 记录里的 `net_pnl` (双边费用后净额)
+```
+
+> **⇒ 这是 §13.59 那条教训再向外一层:
+> 改动一个**工具的语义**(不只是它的代码), 会同时让
+> ①钉在它身上的**测试**、与 ②描述它的**散文** 失效 —— 两类都要跟着改。**
+
+#### (e) §6 双向验证
+| 检查 | 结果 |
+|---|---|
+| 还原态 | **2 passed** ✅ |
+| 注入: 去掉 `_close` 的 `super()` 委派 | **2 failed** ✅ |
+| 再还原 | **2 passed** ✅ |
+(另跑 docstring 修改后的语法检查与那两条钉桩, 均通过。)
+
+#### (f) §13.52 那一次重构的**总账**: 5 个相关文件里坏了 2 个, 现已全部修好
+| 相关文件 | 状态 |
+|---|---|
+| `test_short_reversal_min_commission_floor.py` | 坏 → **§13.59 修好** |
+| `test_lookahead_trade_trace_net_closure.py` | 坏 → **本节修好** |
+| `test_exception_specificity_audit.py` / `test_fail_fast_deep_scan_section2.py` / `test_short_reversal_no_lookahead.py` | 一直通过 ✅ |
+
+> **⇒ 一次"把分叉改成包装"的重构, 波及 5 个测试文件、坏 2 个。**
+> 而发现它们的顺序值得记: 第 1 个靠**定期跑全套件**(§13.59), 第 2 个靠**上一轮才造出来的工具**(本节)。
+> **两个都不可省 —— 工具不知道它不知道什么, 全套件太慢不能每轮跑。**
