@@ -3244,6 +3244,9 @@ AttributeError: module 'short_reversal.engine' has no attribute 'duckdb'
 | − 本轮翻转 cycle 量比 pin (我自己的回归) | −1 |
 | **预期** | **57** |
 
+**实测 (全套件)**: `57 failed, 921 passed, 18 skipped, 2 xfailed, 3 errors` ⇒ **逐位吻合**。
+(`failed` 62 → 57 恰等于四处修复之和: 3 形式钉桩 + 1 坏测试 + 1 我自己未翻转的 pin。)
+
 #### (g) 元结论 (修正 §13.28(h))
 §13.28(h) 说"61 个失败混合了三种东西"。本轮再加一种:
 > **真债 / 形式钉桩造成的假红 / 测试自己坏掉 / **以及"代码动了我忘了翻转 pin"**。**
