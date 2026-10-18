@@ -6762,3 +6762,63 @@ monkeypatch `_all_conditions` 使其**只在第一次 `next()` 时为真** ⇒ *
 
 #### (g) §5 记账
 审计节, `n_comparisons` 不变 (186)。
+
+
+### 13.80 ✅ **自洽性守卫已验证为「活」**(逐位复现 §13.16), 并**收口整族扫描**
+
+#### (a) `test_metrics_self_consistency_4engine.py` —— **验证为活** (不是发现, 是排除)
+它现场跑引擎, 把**同一次运行**的两个输出 (metrics 与权益曲线) 对起来 —— **单位是最强的一档**
+(同一次运行的两份产物, 不是别的文件/别的字符串)。按判据做**反向注入**:
+把 §13.16 修好的那处**反过来** (`final_capital` 从 NAV 退回 `holder["cash"]`):
+
+```
+E  AssertionError: short_reversal: total_yield 报 -0.08174736732747734
+   与它自己权益曲线的 -0.0751033673 不符
+FAILED … 1 failed in 171.42s
+```
+
+* **守卫正确触发** ✅; 基线为 `1 passed in 169.36s`。
+* **而且这两个数与 §13.16 登记的漂移逐位吻合** (`total_yield` 由 −7.51% 报成 −8.17%)
+  ⇒ 这是对 §13.16 的**独立再导出** (那次是量出来的, 这次是**注入复现**的)。
+* ⇒ **这条守卫是活的**, 且它保护的正是一个**钱的口径**。
+
+#### (b) cycle 那一臂: 是**纯函数测试**, 但它**供给了** `final_equity` —— 非缺口
+`test_cycle_price_action_cagr_is_self_consistent` **手搓** `AllocationResult(final_equity=eq[-1])`
+再调 `portfolio_metrics(res)` ⇒ 它验证的是**公式**, 而"分配器算出的 `final_equity` 对不对"
+**不在它的覆盖内** (它把那个值**喂进去了**) —— 这正是 §13.16 的形状。
+**但这不是缺口**: 那个维度由 `test_cycle_allocator.py` /
+`test_equity_curve_physical_invariant.py` / `test_cash_walk_and_metrics_provenance.py` 覆盖;
+且 `cycle_price_action/allocator.py:124` 确实是 `final_equity=equity[-1]`。
+⇒ **登记为"已核, 非缺口"** (排除同样是产出)。
+
+#### (c) `test_round28_4engine_strict_comparison_drift.py` —— **行为锚定**
+11 条里 8 条是**真构造 `Portfolio` 对象**再调 `reserve_for_entry` / `release_margin`
+(含 `pytest.approx` 容差断言 + 真短缺必须 raise)。另 3 条是源码文本守卫, 但与行为式**同性质且冗余**。
+⇒ 判据在它身上**咬合弱** ⇒ 同样登记为"已核"。
+
+#### (d) ★ **整族扫描收口** (17 个 `*_4engine` / `*_engine` 文件)
+| 结论 | 文件 |
+|---|---|
+| **有真缺陷 (12 个)** | `all_in_sizing` (§13.66/67) · `cost_cash_rejection` (§13.68) · `settlement_isolation` (§13.70) · `atomic_cash_locks` (§13.71) · `random_seed_pinning` (§13.72) · `sql_order_by_discipline` (§13.73) · `cost_constants_single_source` (§13.74) · `tp_sl_compliance_header` (§13.75) · `cost_model_canonical_conformance` (§13.76) · `wfv_runner_existence` (§13.77) · `pit_universe` (§13.78) · `volume_cap` (§13.79) |
+| **已验证为活 / 已核非缺口 (5 个)** | `single_bullet_capacity_gate` · `immutable_state` · `iterrows_sort_discipline` · `metrics_self_consistency` · `round28_drift` |
+
+> **12 / 17 有真缺陷** —— 这不是"个别失手", 而是**这个方法本身的系统性偏差**。
+
+#### (e) 判据的**六问** (最终形态, 按发现的先后)
+| 问 | 出处 |
+|---|---|
+| 改掉**被检查的东西**, 断言会怎样? | §13.66 / §13.67 / §13.70 |
+| 这条测试**断言了什么**? | §13.71 / §13.74 |
+| 它的**扫描单位**在这一族存在吗? | §13.75 |
+| 有没有**兜底**把「没看见」翻译成「合规」? | §13.76 |
+| 它的**单位**是什么 —— 文件 / 文本 / 真能跑的东西? | §13.77 / §13.78 |
+| 它认的**名字/文本**, 会不会也被一个**做别的事**的东西满足? | §13.79 |
+
+**共同的一句话**: **写守卫的人默认"提到"= "做到"。** 十二处全都是这两者之间的缝。
+
+**给验证者自己的纪律** (三次栽过, 已写死): **注入之后先确认它真的落地** ——
+打印被改的行, 或**直接调扫描器看它是否看见** —— 再解释结果。
+**"不响"有两种含义, 而默认的那一种是"我的注入没生效"。**
+
+#### (f) §5 记账
+审计节, `n_comparisons` 不变 (186)。
