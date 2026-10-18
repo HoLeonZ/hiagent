@@ -7303,3 +7303,61 @@ METRICS_BASIS = {"trading_days": …, "sharpe": "equity",
 
 #### (h) §5 记账
 审计节, `n_comparisons` 不变 (186)。
+
+
+### 13.90 ⛔ **一份 shipped 报表告诉读者「`max_dd` 榜更有跨策略可比性」—— 而它恰是四者中最不可比的**; 已修并接进门禁
+
+#### (a) 起点 (§13.89 的产物侧)
+三个跨族报表生成器, **一个口径标注都没有**:
+* `tools/run_all_backtests_html.py` —— docstring 自陈 *"**跨策略排序(CAGR / Sharpe / max_dd 三张榜)**"*;
+* `tools/rerun_top_presets.py:156` —— 把**四族合并**后按 `(Sharpe DESC, CAGR DESC, max_dd ASC)` 排 TOP-5;
+* 二者均无任何口径披露。
+
+#### (b) 量化: 年化常数造成的**系统性抬升**
+`√(252/243) = **1.01835**` ⇒ 同一份日收益序列, 换常数后 `sharpe` 相差 **1.84%**
+⇒ **跨族按 sharpe 排序时, 用 252 的两个族被系统性抬高 1.84%。**
+
+#### (c) ★ 而 HTML 报告里那句手写警告是**错的**
+原文:
+> ⚠ short_reversal 因 CAGR 体量级差异(数千%), CAGR/Sharpe 榜会被其包揽; **`max_dd` 升序榜更有跨策略可比性**。
+
+实测 `max_dd` 是**四者中最不可比的一个** —— **四种口径**:
+| 族 | `max_dd` 口径 |
+|---|---|
+| `chase_up` / `uptrend_pullback` | NAV 盯市峰谷回撤 |
+| **`short_reversal`** | **`max(sub_i.max_dd)` over all windows** (自陈"最坏子窗口, 保守口径") —— 这是**另一种聚合**, 不只是另一条曲线 |
+| **`cycle_price_action`** | **已实现权益(不盯市)** (自陈"真实回撤不会比它小, 但日内浮亏不计入") |
+
+⇒ **报告让读者去信那一个恰恰最不可信的量。**
+
+#### (d) ⚠️ 这同时暴露了**我自己上一轮那张表**的洞
+§13.87/§13.89 的 `METRICS_BASIS` 只有 4 个键, **根本没有 `max_dd`** ——
+被 §13.13 点名过的那一个量, 在我那张"口径对照表"里**缺席**。
+
+#### (e) 修 (全部**零数字漂移**)
+1. 四族 `METRICS_BASIS` 补 `max_dd`: `nav_mtm` / `worst_subwindow_max_dd` / `realized_no_mtm`;
+2. HTML 工具: **导入**四族披露并渲染成表 (**不再手打数字**); 那句假主张已删, 换成四条真实说明;
+3. `rerun_top_presets.py`: 打榜**之前**先打一段各族口径;
+4. 门禁扩到 **18 条**: `PINNED_BASIS` 补 `max_dd` 行 + **跨族工具必须披露** (发现式 + 具名豁免 + 反空转)。
+
+#### (f) 具名豁免 (写清理由)
+`tools/render_top5_presets_html.py` 提到 2 个族名, 但**为每个 preset 各自输出一份 HTML, 不合并不排序**
+⇒ **无跨族并列** ⇒ 豁免。反空转断言同时保证 **豁免不得吞掉整个总体**。
+
+#### (g) ⚠️⚠️ **我的门禁第一版自己犯了本册记了 15 轮的那个病**
+判据写成 `_imports_basis(rel) -> bool`: **"有没有 import `METRICS_BASIS`"**。
+而那两个工具**从四个族各导一次** ⇒ **删掉其中一个照样为真**。
+**注入实证: 删掉 `rerun_top_presets` 里 chase_up 的披露 import ⇒ 仍然 `18 passed`, 不响。**
+⇒ 改判**逐个族**: *"提到哪个族, 就得披露哪个族"* ⇒ **注入立刻红**。
+> **本册那条形态("任一处匹配即满足")第一次出现在我自己刚写下的守卫里, 而且在同一轮内被双向验证抓到。**
+
+#### (h) §6 双向验证 + 漂移对照
+| 检查 | 结果 |
+|---|---|
+| 还原态 | **18 passed** |
+| **删掉 `rerun_top_presets` 里 chase_up 的披露 import** | **红** ✅ (改判前: 18 passed 不响) |
+| 再还原 | 18 passed ✅ |
+| 相关测试 (`html_smoke` / `metrics_output_conformance` / `backtest_metrics_canonical_schema`) | `4 failed / 33 passed` → **逐条一致** (那 4 条是**既有红**: 产物缺失类) ✅ |
+
+#### (i) §5 记账
+审计节, `n_comparisons` 不变 (186)。

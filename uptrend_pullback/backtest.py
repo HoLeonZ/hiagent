@@ -33,6 +33,7 @@ METRICS_BASIS = {
     "sharpe": "equity",
     "cagr_denominator": "evaluated_days",
     "win_rate_field": "net",
+    "max_dd": "nav_mtm",
 }
 
 

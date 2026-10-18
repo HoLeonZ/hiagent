@@ -121,13 +121,17 @@ _BASIS_MODULE = {
 # 各族的**自披露**应当与上表一致 —— 这是"表"与"引擎"之间的唯一接缝。
 PINNED_BASIS = {
     "chase_up": {"trading_days": 243, "sharpe": "equity",
-                 "cagr_denominator": "evaluated_days", "win_rate_field": "net"},
+                 "cagr_denominator": "evaluated_days", "win_rate_field": "net",
+                 "max_dd": "nav_mtm"},
     "uptrend_pullback": {"trading_days": 243, "sharpe": "equity",
-                         "cagr_denominator": "evaluated_days", "win_rate_field": "net"},
+                         "cagr_denominator": "evaluated_days", "win_rate_field": "net",
+                         "max_dd": "nav_mtm"},
     "short_reversal": {"trading_days": 252, "sharpe": "equity",
-                       "cagr_denominator": "evaluated_days", "win_rate_field": "net_pnl"},
+                       "cagr_denominator": "evaluated_days", "win_rate_field": "net_pnl",
+                       "max_dd": "worst_subwindow_max_dd"},
     "cycle_price_action": {"trading_days": 252, "sharpe": "equity",
-                           "cagr_denominator": "evaluated_days", "win_rate_field": "pnl"},
+                           "cagr_denominator": "evaluated_days", "win_rate_field": "pnl",
+                           "max_dd": "realized_no_mtm"},
 }
 
 
@@ -195,3 +199,109 @@ def test_every_family_discloses_single_source_in_source(fam: str) -> None:
                         f"`dict(METRICS_BASIS)` 而是 `{ast.unparse(v)}` ⇒ 又是「同名两份」。"
                     )
     assert found >= 1, f"§13.89: {fam} 的 metrics dict 里**找不到** metrics_basis 键"
+
+
+# ---------------------------------------------------------------------------
+# §13.90: 跨族**报表生成器**必须披露口径 (发现式 + 具名豁免)
+# ---------------------------------------------------------------------------
+
+_FAMS = ("chase_up", "uptrend_pullback", "short_reversal", "cycle_price_action")
+
+# 具名豁免: 提到 ≥2 个族名, 但**不做跨族并列** (按 preset 各自出报告, 不合并不排序)。
+_EXEMPT = {
+    "tools/render_top5_presets_html.py":
+        "§13.90 —— 该脚本为 5 个 preset **各自**输出一份 HTML, 只在选加载器时分支到族名, "
+        "既不合并行也不跨族排序 ⇒ **没有跨族并列**, 无需口径披露。",
+}
+
+
+def _cross_family_tools() -> list:
+    """发现式: `tools/` 下**同时提到 ≥2 个族名**的 `.py`。"""
+    from pathlib import Path as _P
+    root = _P(__file__).resolve().parents[1] / "tools"
+    out = []
+    for p in sorted(root.rglob("*.py")):
+        try:
+            s = p.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if sum(1 for f in _FAMS if f in s) >= 2:
+            out.append(p.relative_to(root.parent).as_posix())
+    return out
+
+
+# 族名 → 承载其披露的模块
+_BASIS_MODULE_OF_FAMILY = {
+    "chase_up": "chase_up.backtest",
+    "uptrend_pullback": "uptrend_pullback.backtest",
+    "short_reversal": "short_reversal.engine",
+    "cycle_price_action": "cycle_price_action.allocator",
+}
+
+
+def _families_mentioned(rel: str) -> set:
+    from pathlib import Path as _P
+    src = (_P(__file__).resolve().parents[1] / rel).read_text(encoding="utf-8")
+    return {f for f in _FAMS if f in src}
+
+
+def _families_disclosed(rel: str) -> set:
+    """该文件**真的 import 了**哪些族的 `METRICS_BASIS` (AST 判定)。
+
+    ⚠️ §13.90: 第一版是 `return True`——**只要有一处 import 就算满足**。
+    注入实证: 四族里删掉一个 ⇒ **仍然 18 passed 不响**。
+    这正是本册记了 15 轮的「任一处匹配即满足」。⇒ 改判**逐个族**:
+    **提到哪个族, 就得披露哪个族** (否则被并列的那些数里, 有人的口径没人说)。
+    """
+    import ast
+    from pathlib import Path as _P
+    src = (_P(__file__).resolve().parents[1] / rel).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    out: set = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.ImportFrom) and n.module in _BASIS_MODULE_OF_FAMILY.values():
+            for a in n.names:
+                if a.name == "METRICS_BASIS":
+                    for fam, mod in _BASIS_MODULE_OF_FAMILY.items():
+                        if mod == n.module:
+                            out.add(fam)
+    return out
+
+
+def test_discovery_finds_cross_family_tools() -> None:
+    """发现式扫描必须真的找到东西 —— 否则下面的断言全是空的 (§13.19 的教训)。"""
+    found = _cross_family_tools()
+    assert len(found) >= 2, f"只发现 {len(found)} 个跨族工具: {found} —— 发现逻辑坏了"
+
+
+def test_every_cross_family_tool_discloses_basis_or_is_exempt() -> None:
+    """§13.90: 会**跨族并列**的报表生成器**必须**从引擎导入 `metrics_basis` 并报出来。
+
+    这与 §13.13 那条禁令是同一件事的产物侧: 禁令说"不得把这四个量当作跨族可比指标引用",
+    而**报表正是最容易发生那次引用的地方** (三张榜单)。
+    """
+    found = _cross_family_tools()
+    gaps = {}
+    for t in found:
+        if t in _EXEMPT:
+            continue
+        missing = _families_mentioned(t) - _families_disclosed(t)
+        if missing:
+            gaps[t] = sorted(missing)
+    assert not gaps, (
+        f"§13.90: 这些工具**提到**了某些族, 却没披露它们的口径: {gaps}\n"
+        f"⇒ 请为每个被并列的族 import 它的 `METRICS_BASIS` 并把差异报进产出; "
+        f"若某个族名只是顺带提到、并未并列其数字, 请把该工具加入 `_EXEMPT` 并写明理由。"
+    )
+
+
+def test_exemptions_do_not_swallow_the_whole_population() -> None:
+    """反空转: 豁免名单不得大到把整个总体吞掉 (否则这条守卫等于没有)。"""
+    found = _cross_family_tools()
+    assert len(_EXEMPT) < len(found), (
+        f"§13.90: 豁免 {len(_EXEMPT)} 个, 而发现只有 {len(found)} 个 ⇒ 豁免把总体吞光了"
+    )
+    for rel in _EXEMPT:
+        assert rel in found, (
+            f"§13.90: 豁免里的 `{rel}` 已经不在发现集里 ⇒ 那条豁免该删了"
+        )

@@ -552,16 +552,56 @@ def _render_cross_strategy(report: dict[str, Any]) -> str:
 
     return (
         "<section class='strategy'><h2>🏆 跨策略排名(TOP-8)</h2>"
-        "<p class='desc'>⚠ short_reversal 因 CAGR 体量级差异(数千%),"
-        "CAGR/Sharpe 榜会被其包揽; max_dd 升序榜更有跨策略可比性。"
+        "<p class='desc'>⛔ **本榜不具备跨策略可比性** (§13.13/§13.90):\n"
+        "① `cagr`/`sharpe`/`max_dd`/`win_rate` 四个量在四族**定义不同**;\n"
+        "② 年化常数 chase/uptrend=**243**, short/cycle=**252** ⇒ 同一份日收益序列的\n"
+        "   sharpe 相差 **1.84%**, 按 sharpe 排序时 252 的两族被系统性抬高;\n"
+        "③ short_reversal 因 CAGR 体量级差异(数千%), CAGR/Sharpe 榜会被其包揽;\n"
+        "④ ⚠️ **原写「max_dd 升序榜更有跨策略可比性」——那一句是错的**: max_dd 恰是\n"
+        "   四者中**最不可比**的一个 (chase/uptrend 用 NAV 盯市回撤; short_reversal 取\n"
+        "   **各子窗口 max_dd 的最大值**; cycle 用**已实现权益(不盯市)**)。\n"
+        "逐族口径见每族 metrics 里的 `metrics_basis` 自披露。"
         "</p>"
-        "<h3 style='margin:14px 0 4px;font-size:14px;color:#475569;'>按 CAGR 排序</h3>"
+        # §13.90: 口径**从引擎导入**, 不再手打 —— 这段表格就是四族的 `metrics_basis`。
+        + _basis_table_html()
+        + "<h3 style='margin:14px 0 4px;font-size:14px;color:#475569;'>按 CAGR 排序</h3>"
         + cagr_top +
         "<h3 style='margin:18px 0 4px;font-size:14px;color:#475569;'>按 Sharpe 排序</h3>"
         + sharpe_top +
         "<h3 style='margin:18px 0 4px;font-size:14px;color:#475569;'>按 max_dd (升序,回撤最小) 排序</h3>"
         + dd_best +
         "</section>"
+    )
+
+
+# §13.90: 口径自披露 —— 直接从各族引擎导入, **不手打**
+from chase_up.backtest import METRICS_BASIS as _BASIS_CHASE            # noqa: E402
+from uptrend_pullback.backtest import METRICS_BASIS as _BASIS_UPTREND  # noqa: E402
+from short_reversal.engine import METRICS_BASIS as _BASIS_SHORT        # noqa: E402
+from cycle_price_action.allocator import METRICS_BASIS as _BASIS_CYCLE  # noqa: E402
+
+_FAMILY_BASIS = {
+    "chase_up": _BASIS_CHASE,
+    "uptrend_pullback": _BASIS_UPTREND,
+    "short_reversal": _BASIS_SHORT,
+    "cycle_price_action": _BASIS_CYCLE,
+}
+
+
+def _basis_table_html() -> str:
+    """把四族**自己报出的**口径渲染成一张小表。"""
+    rows = []
+    keys = sorted({k for b in _FAMILY_BASIS.values() for k in b})
+    head = "".join(f"<th style='padding:2px 8px;'>{k}</th>" for k in keys)
+    for fam in ("chase_up", "uptrend_pullback", "short_reversal", "cycle_price_action"):
+        b = _FAMILY_BASIS[fam]
+        cells = "".join(
+            f"<td style='padding:2px 8px;'>{b.get(k, '—')}</td>" for k in keys
+        )
+        rows.append(f"<tr><td style='padding:2px 8px;'><b>{fam}</b></td>{cells}</tr>")
+    return (
+        "<table style='border-collapse:collapse;font-size:12px;margin:6px 0;'>"
+        f"<tr><th style='padding:2px 8px;'>族</th>{head}</tr>" + "".join(rows) + "</table>"
     )
 
 

@@ -46,6 +46,7 @@ METRICS_BASIS = {
     "sharpe": "equity",
     "cagr_denominator": "evaluated_days",
     "win_rate_field": "pnl",
+    "max_dd": "realized_no_mtm",
 }
 
 

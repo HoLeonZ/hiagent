@@ -164,6 +164,15 @@ def main() -> int:
                        (r["max_dd"] if r["max_dd"] is not None else 1e9)),
     )
     top5 = ranked[:5]
+    # §13.90: 先说清口径 —— 这张榜**不具备跨策略可比性** (四量定义不同, 年化常数 243 vs 252)。
+    from chase_up.backtest import METRICS_BASIS as _B_CU
+    from uptrend_pullback.backtest import METRICS_BASIS as _B_UP
+    from short_reversal.engine import METRICS_BASIS as _B_SR
+    from cycle_price_action.allocator import METRICS_BASIS as _B_CY
+    print("\n[口径] 本榜跨族**不可比** (§13.13/§13.90):")
+    for _f, _b in (("chase_up", _B_CU), ("uptrend_pullback", _B_UP),
+                   ("short_reversal", _B_SR), ("cycle_price_action", _B_CY)):
+        print(f"   {_f:18s} {_b}")
     print("\n=== TOP 5 (Sharpe DESC, CAGR DESC, max_dd ASC) ===", flush=True)
     for i, r in enumerate(top5, 1):
         print(f"  #{i}  {r['preset']:50s}  "

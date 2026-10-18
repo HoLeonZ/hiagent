@@ -59,6 +59,7 @@ METRICS_BASIS = {
     "sharpe": "equity",
     "cagr_denominator": "evaluated_days",
     "win_rate_field": "net_pnl",
+    "max_dd": "worst_subwindow_max_dd",
 }
 
 # Re-export for back-compat: tests/golden baselines reference this constant.
