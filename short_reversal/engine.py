@@ -143,7 +143,26 @@ def _equity_sharpe(equity_curve: list[dict] | None) -> float | None:
 
 def _metrics_from_holder(holder: dict, start: str, end: str, cfg: dict) -> dict:
     """从 result_holder + 区间算出最终 metrics dict。"""
-    final_capital = float(holder["cash"])
+    # §2/§3 族内不对称 (2026-10-19 第 10 处): `cagr`/`total_yield` 此前用 `holder["cash"]`
+    # —— 那是**已实现现金**, 不含未平仓头寸的浮盈浮亏。而:
+    #   * 三个姊妹引擎 (`chase_up`/`uptrend` 的 `final_equity = float(eq[-1])`、
+    #     `cycle` 的 `res.final_equity`) **全部用 NAV**;
+    #   * **本引擎自己的 `max_dd`** 也是从**同一条 NAV 序列**算的。
+    # ⇒ 于是同一个 metrics dict 里的 `cagr` 与 `max_dd` 描述的是**两个不同的组合**。
+    #
+    # 实测 (v58_mp_2 / 2025-07-01..2025-09-30): 报告 `final_capital`=918,252.63 (cash),
+    # 而权益曲线末行 NAV=924,896.63 (cash 918,252.63 + 持仓 6,644.00) ⇒ 差 **+0.72%**,
+    # `total_yield` 由 −7.51% 变成 −8.17%。偏差**没有固定方向** —— 符号取决于期末
+    # 未平仓头寸的盈亏 ⇒ 它不是"系统性虚增/虚减", 而是**口径不一致**。
+    #
+    # 判定为可直接修 (而非登记): 姊妹引擎与**本引擎自己的 max_dd** 都站在 NAV 一侧,
+    # 而 NAV 正是 §3「portfolio physical cash **mark-to-market**」要求的那个量。
+    # 结果漂移已在同一次提交里登记。
+    _eq = holder.get("equity_curve") or []
+    if _eq and _eq[-1].get("equity") is not None:
+        final_capital = float(_eq[-1]["equity"])   # NAV (盯市)
+    else:
+        final_capital = float(holder["cash"])      # 退化: 无权益曲线时退回已实现现金
     trades = holder["trades"]
     trades_count = len(trades)
 
