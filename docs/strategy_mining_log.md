@@ -6884,3 +6884,59 @@ FAILED … 1 failed in 171.42s
 
 #### (f) §5 记账
 审计节, `n_comparisons` 不变 (186)。
+
+
+### 13.82 ⛔ **§5 的账本「写进去了、但没人读」**: `n_comparisons` 是**只写字段**, 而所有 DSR 都用**本次**的 N (第十三处)
+
+#### (a) 动机: 上一节查到 `n_comparisons` 逐级累加 (19 → 100 → 121 → **162**), 于是问一句老问题 ——
+**"谁读它?"** (§13.13 的"同名不等于一致"换到 §5 的账上。)
+
+#### (b) 实测: **没有任何生产代码读 preset 的 `n_comparisons`**
+全仓 `n_comparisons` 的出现分三类:
+| 类型 | 例子 |
+|---|---|
+| **写** (preset 定义) | `v33_long_reverse_v22: n_comparisons=162` 等 |
+| **构造一个新的 dict** | `cycle_price_action/sweep_thresholds.py:113 n_comparisons=len(thresholds)` |
+| **测试断言"该键 ≥ 1"** | `test_compliance_audit_all_presets` / `test_claudemd_full_audit` / `test_preset_to_engine_api_conformance` |
+⇒ **`n_comparisons` 是只写字段**: 被声明、被断言 ≥1, **从不进入任何 DSR/Bonferroni 计算**。
+
+#### (c) 而每一个 DSR 调用的 `n_trials` 都是**本地量**
+逐点核对全部调用 (21 处生产 + 测试):
+| 实参形态 | 出现处 |
+|---|---|
+| `n_trials=len(sharpes)` / `len(all_sharpes)` | 全部 `sweep*` / `wf_*` 脚本 —— **本次跑出来的候选数** |
+| `n_trials=1` | `cycle_price_action/main.py:203`("cycle 无 sweep, n_trials=1 → DSR=PSR") |
+| `args.n_trials` | `uptrend_pullback/wfv_eval.py:122` —— **CLI 参数** |
+| `n_trials=n_comparisons` | `dna_stats/walkforward_report.py:71` —— 但它的入参默认 `1`, 由调用方给 |
+
+⇒ **没有一处读 preset 的 `n_comparisons`。**
+
+#### (d) ★ 后果 (§5 自己的规则)
+§5 逐字: *"**Iterative-Tuning Accounting**: Manual preset iteration against a fixed target window
+IS optimization. Every iteration … **increments `n_trials` for DSR/Bonferroni purposes**."*
+累积暴露对 `v33_long_reverse_v22` 是 **162**; 而它那一族的 sweep 若报 DSR, 用的是
+`len(sharpes)` —— **本次**的候选数。
+> **⇒ 每一个报告出来的 DSR 都相对"跨轮迭代"的累积暴露是欠校正的** (N 小 ⇒ DSR 偏高 ⇒ 偏乐观)。
+> **方向是危险的那一侧** —— 只是它改不动任何判定 (四型早已判"不可用")。
+
+#### (e) 而**守卫线也是"存在性"的** (同一族的第 13 处)
+`tests/test_wfv_rigor_gap.py` 的全部判据都是:
+```python
+has_dsr_call = bool(re.search("deflated_sharpe_ratio\\s*\\(", src))
+assert has_dsr_call, "…图 GAP CAPTURED … never calls deflated_sharpe_ratio"
+```
+—— **"脚本里有没有调用它"**, 以及 `has_wfv = "walkforward" in src.lower()`。
+**没有一条检查传进去的 `n_trials` 是什么。**
+⇒ 与 §13.79 完全同形: **判据认的是"提到了/调用了", 不是"用的是哪个数"。**
+
+#### (f) 登记, **不修** (属结果变更)
+把 `n_comparisons` 接进 DSR ⇒ **每一个 DSR / p-value 都会变** ⇒ 按授权**登记**。
+(修补方向: 让 `format_walkforward_stats` 的调用方从 preset 取 `n_comparisons`, 而不是从 CLI/本次候选数。)
+
+#### (g) 这一族的**一句话**再次成立, 而且这次落在 §5 自己身上
+> **写守卫的人默认「提到」= 「做到」。**
+§5 要求了记账、版里也**真的记了账** —— 但那条账**没有消费者**, 而守卫只查"有没有调 DSR"。
+**"账记得很整齐"与"账被用了"是两件事。**
+
+#### (h) §5 记账
+审计节, `n_comparisons` 不变 (186)。
