@@ -4068,3 +4068,66 @@ v5 成交数: 38 | 涉及的票数: 37
 #### (e) 顺带: 这批脚本**不在任何守卫的覆盖内**
 `tools/` 不在 `test_sql_order_by_discipline` 之类的扫描范围里 ⇒ **新的 `tools/*.py` 可以带着
 非确定查询进来而没有任何东西拦它**。**登记** (本轮不扩大守卫范围 —— 那要先定"哪些目录算引擎")。
+
+### 13.42 ✅ **ORDER BY 守卫又是"作者记得的那几个文件"** —— 改为发现式; 而我头两步都做错了, 都由注入拦下
+
+#### (a) 形态: **同一族问题的第三次**
+`tests/test_sql_order_by_discipline_4engine.py` 原先用一张**手写的 `SQL_FILES` 字典**
+枚举要扫哪些文件(`data.py` / `portfolio.py` / `backtrader_engine.py` / `engine.py` /
+`scan_signals*.py` / `data_feed.py` / `replay_broker.py`)。
+> **那张表就是"作者当时想起来的那几个文件"。** 于是 `tools/` / `core/**` / `dna_data/` /
+> 各种 `render_*.py` **从来不在任何守卫的视野里**。
+⇒ 与 §13.22 / §13.23 记过的形态是同一个: **守卫的覆盖面 = 作者已修过的东西。**
+
+**实测的覆盖面增益** (改为遍历仓库、只按目录排除之后):
+| 顶层目录 | 时序查询条数 | 旧清单覆盖? |
+|---|---|---|
+| `short_reversal` | 6 | ✅ |
+| `uptrend_pullback` | 5 | ✅ |
+| `cycle_price_action` | 4 | ✅ |
+| `chase_up` | 1 | ✅ |
+| **`dna_data`** | **2** | ⛔ ← §9 说的"共享双价层" |
+| **`tools`** | **3** | ⛔ ← §13.41 刚从 `/tmp` 抢救进来的 §7 复现脚本 |
+⇒ **5 条时序查询此前不在任何守卫的视野里。**
+
+#### (b) ⚠️ 我的**第一步**就错了: 扫描器读的是 f-string 的**片段**
+第一版扫描器逐个 `ast.Constant` 判"有没有 ORDER BY"。而 **f-string 在 AST 里是 `JoinedStr`,
+字面量部分是若干个分散的 `Constant`** ⇒ `ORDER BY` 落在**另一个片段**里 ⇒
+**一条合规的查询被误报成违规**。它当时在全库报出 **3 处** "缺 ORDER BY":
+`dna_data/dual_price_loader.py:52` / `short_reversal/render_html_report.py:66` /
+`uptrend_pullback/render_trades_html.py:532`。
+
+**而这三处全都有 ORDER BY。** 修正收集器(遇到 `JoinedStr` 不下钻、把片段拼回一条查询)后:
+**全库 0 处。**
+
+> **差一点去"修"三个本来就正确的文件。**
+> 更难堪的是: **这个坑仓库自己早就记下来了** ——
+> `cycle_price_action/data_feed.py` 里留着一句:
+> *"multi-line f-strings split into multiple Constants, **hiding ORDER BY from the
+> AST-based auditor**"* —— **我在本会话里读过那句话, 还是栽了。**
+
+#### (c) ⚠️ 我的**第二步**也错了: 扫得更宽, 但**没人对新扫到的目录断言**
+把枚举改成遍历仓库之后, **四个既有测试各自只断言自己那一族的键** ⇒
+`tools` / `dna_data` 里的查询**被扫到却无人断言**。
+**实测**: 往 `tools/` 放一条缺 ORDER BY 的时序查询, **七个测试全绿** ⇒
+**"放宽覆盖面"当时只是名义上的。**
+
+⇒ 补上真正的性质: **`test_every_scanned_time_series_query_has_order_by`** ——
+不问是哪个族, **凡被扫到的时序查询都必须有 ORDER BY**。
+
+> **"扫到" 与 "断言过" 是两件事。** 这是本会话第 4 次"工具自己造假象",
+> 而 4 次**都是靠注入拦下的**(§13.18(c) 的判据又一次奏效)。
+
+#### (d) 两条**反空转对照** (§13.19 的教训)
+1. `test_scan_is_discovery_based_and_covers_more_than_the_old_list` ——
+   扫描必须看到**四个族之外**的目录; 否则说明它退化成了旧的手写清单;
+2. `test_fstring_queries_are_not_split_into_fragments` ——
+   直接构造一条带 ORDER BY 的 f-string 查询, 断言 `_collect_strings` 把它拼成**一段**
+   且**看得到 ORDER BY**。**这条守的是扫描器自己的那个陷阱**, 不是被扫的代码。
+
+#### (e) §6 双向验证
+| 注入 | 结果 |
+|---|---|
+| 往 `tools/`(旧清单**看不见**的目录)放一条缺 ORDER BY 的时序查询 | **1 failed** ✅(新断言抓到) |
+| 删除该文件 | 7 passed ✅ |
+| *(对照)* 同一条注入在改为发现式**之前** | 旧清单压根不扫 `tools/` ⇒ **不可能红** |
