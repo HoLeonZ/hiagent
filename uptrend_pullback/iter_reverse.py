@@ -126,6 +126,20 @@ def sample_preset(base: dict, rng: random.Random) -> dict:
     return cfg
 
 
+def _mean_window_returns(windows: list[dict]) -> int | None:
+    """各窗口 `n_daily_returns` 的均值(四舍五入)—— 即 DSR 的 T。
+
+    **取均值而不是求和**:2 月窗 / 1 月步之间**重叠**,相加会把不独立的东西当独立、
+    反而低估标准误;单窗口径在方向上偏保守,符合 §0(与附六十/六十四 同口径)。
+
+    窗口缺该键 ⇒ 返回 None(由调用方 fail-fast,**不许用"每月天数 × 月数"的估计兜底**)。
+    """
+    ts = [int(w["n_daily_returns"]) for w in windows if w.get("n_daily_returns") is not None]
+    if not ts:
+        return None
+    return int(round(sum(ts) / len(ts)))
+
+
 def score_windows(
     cfg: dict,
     windows: list[tuple[str, str]],
@@ -231,6 +245,9 @@ def main() -> None:
             "n_total": res["n_total"],
             "avg_trades": res["avg_trades"],
             "elapsed_s": dt,
+            # 附六十六:把该配置的**窗口观测数**在评分时就折成一个标量带上
+            # (row 是从 res 里挑键重建的,原来的 `windows` 明细不会进 row)。
+            "n_daily_returns": _mean_window_returns(res.get("windows") or []),
         }
         rows.append(row)
         if not args.quiet and ((i + 1) % 5 == 0 or i + 1 == args.iter):
@@ -287,17 +304,14 @@ def main() -> None:
 
         observed = float(rows[0]["sharpe_med"])
         n_trials = len(rows)
-        # 附六十六:T 取自本次运行 —— 每个窗口的 `n_daily_returns`(引擎发布,
-        # 见 uptrend_pullback/backtest.py)取**均值**,即"一个窗口的观测数"。
-        # 不把各窗口相加:2 月窗 / 1 月步之间重叠,相加会把不独立的东西当独立。
-        _win = rows[0].get("windows") or []
-        _ts = [w["n_daily_returns"] for w in _win if w.get("n_daily_returns") is not None]
-        if not _ts:
+        # 附六十六:T 取自本次运行(每个窗口的 `n_daily_returns`,引擎发布;
+        # 见 uptrend_pullback/backtest.py),在评分时已折成标量带上。
+        n_returns = rows[0].get("n_daily_returns")
+        if n_returns is None:
             raise ValueError(
-                "§5: 取不到窗口的真实观察数(daily_returns)—— 不许用"
+                "§5: 取不到窗口的真实观察数(n_daily_returns)—— 不许用"
                 "「每月天数 × 月数」的估计兜底,那正是本项要修的缺陷(附六十六)"
             )
-        n_returns = int(round(sum(_ts) / len(_ts)))
         dsr = deflated_sharpe_ratio(
             observed_sharpe=observed, n_trials=n_trials, n_returns=n_returns,
         )

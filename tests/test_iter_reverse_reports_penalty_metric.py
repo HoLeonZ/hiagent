@@ -98,7 +98,12 @@ def test_search_reports_dsr_with_the_scored_config_count(monkeypatch) -> None:
         sh, sc = item
         return {"score": sc, "median_ret": 0.01, "mean_ret": 0.01, "worst_ret": -0.01,
                 "best_ret": 0.02, "sharpe_med": sh, "avg_dd": 0.05, "worst_dd": 0.09,
-                "n_pos": 1, "n_total": 1, "avg_trades": 3.0, "windows": []}
+                "n_pos": 1, "n_total": 1, "avg_trades": 3.0,
+                # 附六十六:每个窗口必须带**引擎发布的**观察数(`n_daily_returns`)——
+                # T 现在从它取(此前是 `21 × window_months` 的估计)。给空列表会让
+                # iter_reverse 按 §5 fail-fast 抛错,那是刻意的。
+                "windows": [{"start": "2024-09-01", "end": "2024-10-31",
+                             "n_daily_returns": 42}]}
 
     monkeypatch.setattr(mod, "score_windows", fake_score)
     monkeypatch.setattr(sys, "argv", ["iter_reverse", "--iter", "4", "--quiet", "--out", ""])
