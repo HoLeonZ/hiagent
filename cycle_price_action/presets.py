@@ -13,6 +13,10 @@ Compliance declaration (CLAUDE.md audit 2026-09-22):
 """
 from __future__ import annotations
 
+# §4 TP/SL: hybrid —— tp_pct/sl_pct 为固定基准, atr_sl_mult 提供 ATR 自适应
+# (exit 路径见 cycle_price_action/portfolio.py 的 SL/TP + intraday tiebreak)。
+# §13.75: 这一行此前缺失, 而守卫查不到它 —— 因为该族的 preset 是**调用形态**,
+# 而旧扫描器只遍历字面量 dict ⇒ 那条守卫结构上不可能失败。
 PRESET_V1 = dict(
     threshold=2.0,
     min_dim=1.0,

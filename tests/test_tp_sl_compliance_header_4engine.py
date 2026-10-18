@@ -137,15 +137,59 @@ def _has_compliance_marker(comment_text: str) -> bool:
     return False
 
 
+def _iter_preset_candidates(tree: ast.AST):
+    """产出 (节点, 类 dict 的 preset, 名字覆盖)。
+
+    ⚠️ §13.75: 原实现**只遍历 `ast.Dict`** ⇒ 对**工厂调用形态**的 preset
+    (`PRESET_V1 = make(...)`) **一个都看不到**。cycle 的 `presets.py` 正是这种形态
+    (实测 **0 个 `ast.Dict`**) ⇒ `test_cycle_price_action_tp_sl_compliance_header`
+    **结构上不可能失败** —— 而它的 docstring 写着 "§4 RED: cycle … lack §4 compliance"
+    (作者本来**预期**它是红的)。⇒ 现在把 kwargs 构成的调用也当 preset 看。
+    """
+    # 调用形态: 赋值目标名作为 preset 名
+    call_names: dict[int, str] = {}
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Assign) and isinstance(n.value, ast.Call):
+            for t in n.targets:
+                if isinstance(t, ast.Name):
+                    call_names[id(n.value)] = t.id
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            try:
+                d = ast.literal_eval(node)
+            except (ValueError, SyntaxError):
+                continue
+            if isinstance(d, dict):
+                yield node, d, "<unknown>"
+        elif isinstance(node, ast.Call) and id(node) in call_names:
+            d: dict = {}
+            ok = True
+            for kw in node.keywords:
+                if kw.arg is None:
+                    ok = False
+                    break
+                try:
+                    d[kw.arg] = ast.literal_eval(kw.value)
+                except (ValueError, SyntaxError):
+                    ok = False
+                    break
+            if ok and d:
+                yield node, d, call_names[id(node)]
+
+
 def _scan_presets_for_compliance(
     file_path: Path,
-) -> list[tuple[str, int, str, str]]:
-    """Scan preset file for presets without §4 compliance header.
+) -> tuple[int, list[tuple[str, int, str, str]]]:
+    """扫描 preset 文件里缺 §4 合规头的 preset。
 
-    Returns list of (preset_name, line, policy, preceding_comments).
+    Returns **(被检查的 preset 数, 违规列表)** —— 第一个数用于**非空下限** (§13.75):
+    "一个都没检查到"与"全都合规"在结果上不可区分, 而那正是本条长期空转的原因。
     """
     if not file_path.exists():
-        return []
+        return 0, []
+
+    inspected = 0
 
     try:
         source = file_path.read_text(encoding="utf-8")
@@ -156,19 +200,8 @@ def _scan_presets_for_compliance(
 
     non_compliant: list[tuple[str, int, str, str]] = []
 
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Dict):
-            continue
+    for node, preset_dict, name_override in _iter_preset_candidates(tree):
         if not hasattr(node, "lineno"):
-            continue
-
-        # Convert dict to Python object for inspection
-        try:
-            preset_dict = ast.literal_eval(node)
-        except (ValueError, SyntaxError):
-            continue
-
-        if not isinstance(preset_dict, dict):
             continue
 
         # Skip non-preset dicts (e.g., signal sub-dicts)
@@ -185,17 +218,19 @@ def _scan_presets_for_compliance(
         if policy == "MISSING":
             continue  # No TP/SL keys at all — different concern
 
-        # Find the preset name (the dict key in the parent Dict)
-        # Walk up to find the enclosing Dict where this is a value
-        preset_name = "<unknown>"
-        for parent in ast.walk(tree):
-            if isinstance(parent, ast.Dict):
-                for key_node, value_node in zip(parent.keys, parent.values):
-                    if value_node is node and isinstance(key_node, ast.Constant):
-                        preset_name = str(key_node.value)
+        inspected += 1
+
+        # Find the preset name: 字面量 dict ⇒ 父 dict 的键; 调用形态 ⇒ 赋值目标
+        preset_name = name_override
+        if preset_name == "<unknown>":
+            for parent in ast.walk(tree):
+                if isinstance(parent, ast.Dict):
+                    for key_node, value_node in zip(parent.keys, parent.values):
+                        if value_node is node and isinstance(key_node, ast.Constant):
+                            preset_name = str(key_node.value)
+                            break
+                    if preset_name != "<unknown>":
                         break
-                if preset_name != "<unknown>":
-                    break
 
         preceding = _extract_compliance_comments_above(
             source_lines, node.lineno
@@ -206,7 +241,7 @@ def _scan_presets_for_compliance(
                 (preset_name, node.lineno, policy, preceding[:200])
             )
 
-    return non_compliant
+    return inspected, non_compliant
 
 
 def _engine_red_message(
@@ -238,15 +273,25 @@ def _engine_red_message(
 
 def test_chase_up_tp_sl_compliance_header() -> None:
     """§4 RED: chase_up presets lack explicit exit-threshold compliance header."""
-    violations = _scan_presets_for_compliance(PRESET_FILES["chase_up"])
+    inspected, violations = _scan_presets_for_compliance(PRESET_FILES["chase_up"])
+    assert inspected >= 1, (
+        f"§4 (§13.75): 「chase_up」的 preset **一个都没被检查到** ⇒ 本测试会**空转通过**。"
+        f"扫描器当前只认字面量 dict 与 kwargs 调用两种形态; 若该族换了形态(或没有 tp/sl 键), "
+        f"必须先让扫描器认出来, 而不是让它静默通过。"
+    )
     if violations:
         raise AssertionError(_engine_red_message("chase_up", violations))
 
 
 def test_uptrend_pullback_tp_sl_compliance_header() -> None:
     """§4 RED: uptrend_pullback presets lack §4 exit-threshold compliance."""
-    violations = _scan_presets_for_compliance(
+    inspected, violations = _scan_presets_for_compliance(
         PRESET_FILES["uptrend_pullback"]
+    )
+    assert inspected >= 1, (
+        f"§4 (§13.75): 「uptrend_pullback」的 preset **一个都没被检查到** ⇒ 本测试会**空转通过**。\n"
+        f"扫描器当前只认字面量 dict 与 kwargs 调用两种形态; 若该族的 preset 换了形态\n"
+        f"(或没有 tp/sl 键), 必须先让扫描器认出来, 而不是让它静默通过。"
     )
     if violations:
         raise AssertionError(
@@ -257,7 +302,12 @@ def test_uptrend_pullback_tp_sl_compliance_header() -> None:
 def test_short_reversal_tp_sl_compliance_header() -> None:
     """§4 RED: short_reversal presets use FIXED TP/SL (line 62-63 example)
     without explicit §4 compliance comment."""
-    violations = _scan_presets_for_compliance(PRESET_FILES["short_reversal"])
+    inspected, violations = _scan_presets_for_compliance(PRESET_FILES["short_reversal"])
+    assert inspected >= 1, (
+        f"§4 (§13.75): 「short_reversal」的 preset **一个都没被检查到** ⇒ 本测试会**空转通过**。"
+        f"扫描器当前只认字面量 dict 与 kwargs 调用两种形态; 若该族换了形态(或没有 tp/sl 键), "
+        f"必须先让扫描器认出来, 而不是让它静默通过。"
+    )
     if violations:
         raise AssertionError(
             _engine_red_message("short_reversal", violations)
@@ -266,8 +316,13 @@ def test_short_reversal_tp_sl_compliance_header() -> None:
 
 def test_cycle_price_action_tp_sl_compliance_header() -> None:
     """§4 RED: cycle_price_action presets lack §4 exit-threshold compliance."""
-    violations = _scan_presets_for_compliance(
+    inspected, violations = _scan_presets_for_compliance(
         PRESET_FILES["cycle_price_action"]
+    )
+    assert inspected >= 1, (
+        f"§4 (§13.75): 「cycle_price_action」的 preset **一个都没被检查到** ⇒ 本测试会**空转通过**。\n"
+        f"扫描器当前只认字面量 dict 与 kwargs 调用两种形态; 若该族的 preset 换了形态\n"
+        f"(或没有 tp/sl 键), 必须先让扫描器认出来, 而不是让它静默通过。"
     )
     if violations:
         raise AssertionError(
