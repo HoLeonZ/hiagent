@@ -318,8 +318,18 @@ def test_the_jobs_table_order_matches_the_queue_order_under_concurrent_submits(h
     """
     monkeypatch.setattr(jobs_mod, "_ensure_worker", lambda: None)
     jobs_mod._JOBS.clear()
-    while not jobs_mod._QUEUE.empty():          # 清掉上个测试可能留下的
-        jobs_mod._QUEUE.get_nowait()
+
+    # ⚠️ **不要靠"排干队列"来观测顺序。**
+    # 先前测试留下的 worker 线程还活着（它是 `while True: _QUEUE.get()` 的守护线程），
+    # 会把本测试塞进去的元素**偷走** —— 那样单跑绿、全文件跑红（实测踩过），
+    # 而红的是"测试自己被别的测试干扰"，不是被测代码。
+    # 改为**记录 `put` 的调用序**：既不受别人消费影响，又正好是这条不变式的两侧之一。
+    # 替身**也不再真的入队**：先前测试留下的 worker 线程还活着（守护线程 while True 取队列），
+    # 真塞进去的作业会在 fixture 还原环境变量之后被它取走 —— 那时它去默认状态目录找
+    # `run.log`，抛 `FileNotFoundError`（实测踩过）。本测试只关心**调用序**，不需要真的排队。
+    # 判据不受影响：替身是从临界区里被调用的，若 `put` 被移出临界区，这个序仍会交错。
+    put_order: list[str] = []
+    monkeypatch.setattr(jobs_mod._QUEUE, "put", lambda item, *a, **k: put_order.append(item))
 
     import threading
 
@@ -336,12 +346,11 @@ def test_the_jobs_table_order_matches_the_queue_order_under_concurrent_submits(h
             with lock:
                 errors.append(exc)
 
-    # 跑多轮：单轮 8 线程的检出率约 5/6，多跑几轮把这个比例抬上去
+    # 跑多轮：单轮的检出率有限，多跑几轮把它抬上去
     table_order, queue_order = [], []
     for _round in range(5):
         jobs_mod._JOBS.clear()
-        while not jobs_mod._QUEUE.empty():
-            jobs_mod._QUEUE.get_nowait()
+        put_order.clear()
         ids.clear()
         threads = [threading.Thread(target=submit_one) for _ in range(8)]
         for t in threads:
@@ -351,10 +360,8 @@ def test_the_jobs_table_order_matches_the_queue_order_under_concurrent_submits(h
         assert not errors, f"并发提交报错：{errors[:2]}"
 
         table_order = list(jobs_mod._JOBS)
-        queue_order = []
-        while not jobs_mod._QUEUE.empty():
-            queue_order.append(jobs_mod._QUEUE.get_nowait())
-        assert len(queue_order) == 8, f"队列里应有 8 个，实际 {len(queue_order)}"
+        queue_order = list(put_order)
+        assert len(queue_order) == 8, f"入队调用应有 8 次，实际 {len(queue_order)}"
         if table_order != queue_order:
             break
     assert table_order == queue_order, (

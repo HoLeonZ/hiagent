@@ -358,7 +358,11 @@ def submit(
     **记账在这里发生，不在 worker 里**：一次迭代在提交时就发生了，
     即使作业随后失败或被取消也不该从账本里消失（§5）。
     """
-    assert_no_test_seam()                        # 能走到这里说明没被挡住；再喊一句
+    # ⚠️ **这里不再调 `assert_no_test_seam()`。**
+    # 我第一版把它也加在 `submit()` 上，结果是**测试自己把自己挡住了**：
+    # `fast_child` fixture 正是靠设 `HIAGENT_JOBS_FAKE_SLEEP` 让子进程快睡，
+    # 而那些测试随后就调 `submit()` —— 10 条测试因此变红（已修）。
+    # 缝的守卫属于**服务进程**（`create_app()`），不属于"有人提交了一次作业"。
     run_id = uuid.uuid4().hex[:12]
     home = run_dir(run_id)                       # 建目录 + 断言在仓库外（§7）
     trial_no = append_trial(
