@@ -216,9 +216,17 @@ def _metrics_from_holder(holder: dict, start: str, end: str, cfg: dict) -> dict:
     sharpe = _approx_sharpe(trades)
 
     # exit reason 计数
+    # §13.118 (2026-10-19): 出场原因**必须穷尽** —— 本族有**第四个** reason
+    # `nav_gate_eod` (NAV 闸门强制平仓, 见 replay_strategy_v3 的 `_close` 调用点),
+    # 而此处只数 TP/SL/time ⇒ `tp+sl+time` **可能少于** `trades`。
+    # (另两族 chase/uptrend 有 `eod_count` 覆盖它们的第四个 reason `"eod"` ⇒ 只有本族缺。)
+    # ⚠️ 方向: `nav_gate_eod` 是打在 NAV 下限上的**强制平仓**, 基本是亏损腿;
+    #    不数它 ⇒ 读 `sl_count/trades` 的人会**低估止损占比**。
+    # **加键是加法 ⇒ 对已有键零漂移。**
     tp_count = sum(1 for t in trades if t["exit_reason"] == "TP")
     sl_count = sum(1 for t in trades if t["exit_reason"] == "SL")
     time_count = sum(1 for t in trades if t["exit_reason"] == "time")
+    nav_gate_count = sum(1 for t in trades if t["exit_reason"] == "nav_gate_eod")
 
     return {
         "preset": cfg["_name"],
@@ -271,6 +279,7 @@ def _metrics_from_holder(holder: dict, start: str, end: str, cfg: dict) -> dict:
         "tp_count": tp_count,
         "sl_count": sl_count,
         "time_count": time_count,
+        "nav_gate_count": nav_gate_count,
     }
 
 
@@ -377,6 +386,7 @@ def _run_ensemble(
     tp_count = sum(1 for t in all_trades if t["exit_reason"] == "TP")
     sl_count = sum(1 for t in all_trades if t["exit_reason"] == "SL")
     time_count = sum(1 for t in all_trades if t["exit_reason"] == "time")
+    nav_gate_count = sum(1 for t in all_trades if t["exit_reason"] == "nav_gate_eod")
 
     return {
         "preset": cfg["_name"],
@@ -403,6 +413,7 @@ def _run_ensemble(
         "tp_count": tp_count,
         "sl_count": sl_count,
         "time_count": time_count,
+        "nav_gate_count": nav_gate_count,
         "ensemble_subs": sub_names,
     }
 
