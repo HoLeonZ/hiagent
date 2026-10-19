@@ -102,6 +102,14 @@ CONTRACTS: dict[str, dict[str, tuple[str, str, str]]] = {
                            "**回补**前判(做空:买 = 回补)"),
         "cycle_price_action": ("cycle_price_action/portfolio.py", r"is_limit_up\(","建仓前判"),
     },
+    "部分成交按上限缩量 (§4 IOC:未用现金**不锁定、不排队**)": {
+        "chase_up": ("chase_up/portfolio.py", r"\bsize = max_fill\b",
+                     "**先缩量再扣钱** ⇒ 未用现金根本没离开 Free_Cash"),
+        "uptrend_pullback": ("uptrend_pullback/portfolio.py", r"\bsize = max_fill\b", "同 chase"),
+        "short_reversal": ("short_reversal/replay_strategy_v3.py", r"\bsize = max_fill\b", "同上"),
+        "cycle_price_action": ("cycle_price_action/portfolio.py", r"\bshares = max_fill\b",
+                               "**变量名叫 `shares`**(口径同,拼法不同)"),
+    },
     "成交量参与上限 (§4: MIN(target, Bar_Volume × rate))": {
         "chase_up": ("chase_up/portfolio.py", r"max_fill = volume_cap_fill\(",
                      "共用 `core.dual_price.volume_cap_fill` **单源**"),

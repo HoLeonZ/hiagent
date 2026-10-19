@@ -96,9 +96,10 @@ RULE_COVERAGE: dict[str, tuple[str, str, str]] = {
         "常量来自 `core.dual_price`;四族各自套用,拼法四种(见矩阵行)",
     ),
     "Partial Fill Tolerance": (
-        "unguarded", "",
-        "**有实现、没有具名守卫**:IOC 不排队见 `cycle_price_action/replay_broker.py` 的停牌分支注释;"
-        "未用现金回退 Free_Cash 由 `tests/test_all_in_sizing_fraction_preservation.py` 间接覆盖,**不专门**",
+        "matrix", "部分成交按上限缩量 (§4 IOC:未用现金**不锁定、不排队**)",
+        "矩阵覆盖**缩量那半**(四族 `size = max_fill` / cycle 叫 `shares`)。"
+        "⚠️ 未覆盖的措辞那半:§4 写的是「未用现金**即时退回** Free_Cash」(先锁后退的流程),"
+        "而本仓库**根本不锁** —— 先缩量再扣钱,现金从未离开。两者结果等价,但守卫只能钉后者",
     ),
     "Slippage as a Function of Volatility (Execution Only)": (
         "registered", "附七十九 §4 表 #1",
@@ -146,10 +147,10 @@ RULE_COVERAGE: dict[str, tuple[str, str, str]] = {
         "README / `docs/*.md` 里不得把**指标名**与**数值**写在同一行",
     ),
     "Short-Side Feasibility": (
-        "unguarded", "",
-        "**有声明、没有具名守卫**:`short_reversal/presets.py` 的 `BORROW_ASSUMPTION`"
-        "(含 `borrow_cost_model` / `borrow_cost_rate` 与 A 股券源稀缺的现实差距说明);"
-        "但**没有任何测试**断言它还在、或断言没有它就不许跑",
+        "guard", "tests/test_short_side_borrow_model_is_declared.py",
+        "四件事:声明在 / 三键齐 / 费率与 `core.dual_price` **单源**一致 / **引擎真的消费它**"
+        "(最后一条是关键 —— 本仓库反复吃过「声明了却无人读取 = 装饰」的亏)。"
+        "另钉一条 §0:声明里必须写出 A 股券源稀缺的现实差距",
     ),
 }
 
@@ -219,7 +220,14 @@ def test_unguarded_rules_are_registered_with_a_reason() -> None:
     assert not bad, "§0: 未覆盖项的理由不足:\n  " + "\n  ".join(bad)
 
 
-@pytest.mark.parametrize("kind", ["guard", "matrix", "registered", "unguarded"])
-def test_every_kind_is_used(kind: str) -> None:
-    """四种归类都真的用到 —— 否则说明抽取或归类退化成了单值。"""
-    assert any(k == kind for k, _, _ in RULE_COVERAGE.values()), f"没有任何规则被归为 {kind}"
+def test_the_classification_has_not_degenerated() -> None:
+    """归类不得退化成单值(那样说明抽取或归类坏了)。
+
+    ⚠️ 附九十九 起**不再要求** `unguarded` 一定出现 —— 实测到本轮,§1–§7 的 18 条规范句
+    **全部**有了具名守卫或矩阵覆盖(`unguarded` 计数为 0)。原本"四种都用到"的断言在此
+    **正确地**变红,是状态变了,不是判据错了;改成"至少出现两种归类",
+    保留它防退化的本意,而不假装还有未覆盖的规则。
+    """
+    kinds = {k for k, _, _ in RULE_COVERAGE.values()}
+    assert len(kinds) >= 2, f"归类退化成了单值:{kinds}"
+    assert kinds <= {"guard", "matrix", "registered", "unguarded"}, f"出现了未知归类:{kinds}"
