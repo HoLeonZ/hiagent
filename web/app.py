@@ -1,0 +1,597 @@
+"""HTTP 边界。只做解析、校验、序列化；不含回测与图表逻辑。"""
+from __future__ import annotations
+
+import functools
+import inspect
+import json
+import math
+from pathlib import Path
+from typing import Any, Callable
+
+from fastapi import FastAPI, HTTPException
+from fastapi.datastructures import DefaultPlaceholder
+from fastapi.responses import JSONResponse, Response
+from fastapi.routing import APIRoute
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from web import jobs as jobs_mod
+from web.catalog import ENGINES, all_presets
+from web.chart import chart_payload
+from web.metrics_view import (
+    CANONICAL_KEYS,
+    METRIC_KINDS,
+    METRIC_LABELS,
+    canonical_metrics,
+)
+from web.params import OverrideError, split_params, validate_overrides
+from web.runners import RunResult
+from web.state import state_home
+from web.trials import count_trials, distinct_manual_configs
+
+STATIC_DIR = Path(__file__).parent / "static"
+#: 本平台只在本机使用（设计文档 D2）
+BIND_HOST = "127.0.0.1"
+BIND_PORT = 8765
+
+#: 允许的运行模式。`runners.effective_window` 只识别 `preview`，其余**一律当 full**——
+#: 于是拼错的 mode（`"prev"`、`"Fast"`）会静默跑成整窗回测，而界面上写着别的字。
+#: 在这里 fail-fast，别让一个标签与它实际跑的窗口不一致。
+VALID_MODES: frozenset[str] = frozenset({"full", "preview"})
+
+
+class RunRequest(BaseModel):
+    engine: str
+    preset: str
+    overrides: dict[str, Any] = {}
+    start: str
+    end: str
+    mode: str = "full"
+
+
+class ConfigRequest(BaseModel):
+    """⚠️ **必须定义在模块层，不能塞进 `create_app()`**（计划原文把它写在里面）。
+
+    本文件有 `from __future__ import annotations`，所以注解在运行时是**字符串**；
+    FastAPI 用 `call.__globals__`（**只有模块全局**，没有局部作用域）去解析它们。
+    写在 `create_app()` 里的 `ConfigRequest` 于是解析不到，FastAPI 把 `req` 当成一个
+    **必填 query 参数** —— `POST /api/configs` 对任何合法请求都回
+    `422 {"loc": ["query","req"], "msg": "Field required"}`（实测，且与出口的网无关）。
+    前端的"保存配置"按钮走的就是这个端点（`web/static/app.js`）。
+    """
+    name: str
+    engine: str
+    preset: str
+    overrides: dict[str, Any] = {}
+    note: str = ""
+
+
+def _sorted_trades(trades: list[dict]) -> list[dict]:
+    """稳定排序：`(entry_date, thscode)`。
+
+    图表端点的 `{i}` 就建立在这个顺序上——**不能用筛选后的下标**，
+    否则用户一改筛选，点同一行会看到另一笔交易。
+    """
+    return sorted(trades, key=lambda t: (str(t.get("entry_date", "")), str(t.get("thscode", ""))))
+
+
+def _load_result(run_id: str) -> RunResult:
+    """内存优先、磁盘兜底。两处导出端点共用，避免各写一遍回退逻辑。"""
+    job = jobs_mod.get(run_id)
+    result = (job.result if (job and job.result) else None) or jobs_mod.load_persisted(run_id)
+    if result is None:
+        raise HTTPException(404, detail=f"unknown or unfinished run: {run_id}")
+    return result
+
+
+def _json_safe(v: Any) -> Any:
+    """递归地把值变成**合法 JSON**：非有限数 → `None`；numpy 标量 → Python 标量。
+
+    为什么是递归、而不是在每个端点里挑字段处理：GET 的 payload 里有嵌套
+    （`bars` 列表、`rows` 列表、`metrics` dict），漏一层就漏一个 500。
+
+    **为什么要有这一层**（本会话实测）：
+    - `JSONResponse.render` 用 `allow_nan=False` → 任一 `NaN`/`±Inf` 让端点抛
+      `ValueError` → **500**，用户看到"服务器错误"而不是结果页；
+    - `json.dumps` 不认识 `np.int64` / `np.bool_` / `np.float32` → `TypeError` → 同样 500
+      （`np.float64` 是 Python `float` 的子类，能过）。
+    实测的产出方：`chase_up/backtrader_engine.py` 在 `atr_pct` 缺失时**显式写入
+    `float("nan")`** 到成交记录；`chase_up/backtest.py` 的 `profit_factor` 无亏损时为 `inf`。
+
+    **规则只写一次，接在两个必经之处**：`SafeJSONResponse.wire_safe`（写出 bytes 的那一刻）
+    与路由层 `_wire_exit_gate`（FastAPI 在响应类之前还会自己序列化一遍，故端点返回值也得先过它，
+    见那里的说明）。**没有任何端点自己处理非有限数**——计划原文在 `list_trades` 里手写的
+    `_is_nan`（只认 `nan` 不认 `inf`，且只覆盖一个端点，而 `get_run` / `equity` / `positions` /
+    `chart` 四个端点全裸奔）已删除，不留两套机制。
+    """
+    if isinstance(v, float):
+        return v if math.isfinite(v) else None
+    if isinstance(v, dict):
+        return {k: _json_safe(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_json_safe(x) for x in v]
+    if isinstance(v, (str, int, bool)) or v is None:
+        return v
+    # numpy 标量等：`.item()` 给回 Python 原生标量；拿不到就退回 str，绝不抛。
+    item = getattr(v, "item", None)
+    if callable(item):
+        try:
+            return _json_safe(item())
+        except (TypeError, ValueError):
+            pass
+    return str(v)
+
+
+class SafeJSONResponse(JSONResponse):
+    """出口的网：保证**任何**响应都不会因非有限数或非原生标量而 500。
+
+    它是"什么值可以上线"的**唯一**所有者（`wire_safe`）。两处都从它取：
+
+      · `render` —— 真正写出 bytes 的那一刻；
+      · 路由层（见 `_wire_exit_gate`）—— FastAPI 在构造响应时会**先自己序列化一遍**
+        （`fastapi.routing.serialize_response`），那一步在 `render` **之前**，
+        且**无法**从响应类覆盖。所以端点返回值必须先过同一道 `wire_safe`。
+    """
+
+    @staticmethod
+    def wire_safe(content: Any) -> Any:
+        """把 payload 变成**可以上线**的形态：非有限数 → `None`，numpy 标量 → 原生标量。"""
+        return _json_safe(content)
+
+    def render(self, content: Any) -> bytes:
+        return super().render(self.wire_safe(content))
+
+
+def _app_exit_class(app: FastAPI) -> type[Response]:
+    """`app` 的出口响应类 = `default_response_class` 的实值。"""
+    declared = app.router.default_response_class
+    return declared.value if isinstance(declared, DefaultPlaceholder) else declared
+
+
+def _wire_safe_endpoint(endpoint: Callable[..., Any],
+                        wire_safe: Callable[[Any], Any] | None) -> Callable[..., Any]:
+    """把端点的**返回值**先过一遍线规（`Response` 实例原样放行）。
+
+    ⚠️ **为什么这道网必须落在端点返回值上，而不能只落在响应类上**（本会话实测，
+    FastAPI 0.135 + pydantic 2.12）：
+
+    `fastapi/routing.py` 在把端点返回值交给响应类**之前**，一定会自己序列化一次——
+
+    | 情形 | FastAPI 先做什么 | `np.int64(7)` 的结果 |
+    |---|---|---|
+    | 有返回标注 + 默认响应类 | pydantic `dump_json`（Rust 核心直出 bytes） | `PydanticSerializationError` → **500** |
+    | 有返回标注 + 显式响应类 | `field.serialize`（python 模式） | `PydanticSerializationError` → **500** |
+    | 无返回标注 | `jsonable_encoder` | `ValueError` → **500** |
+
+    三条路都在 `SafeJSONResponse.render` **之前**，所以"只把闸装在响应类上"是装不上、
+    也抓不到的——`render` 根本没被走到。**闸必须在 FastAPI 那一遍序列化之前落地**，
+    也就是这里：端点返回值的唯一出口。
+
+    （float `NaN`/`Inf` 在第一条路上会被 pydantic 悄悄写成 `null`，所以那种接法
+    "看起来没炸"是**运气**：它只对 pydantic 恰好认识的值成立。`np.int64` 就是反例。）
+    """
+    if wire_safe is None:      # 出口类不懂线规：原样放行 —— 结果是 500，不是坏 JSON
+        return endpoint
+
+    if inspect.iscoroutinefunction(endpoint):
+        @functools.wraps(endpoint)
+        async def _async(*args, **kwargs):
+            result = await endpoint(*args, **kwargs)
+            return result if isinstance(result, Response) else wire_safe(result)
+
+        return _async
+
+    @functools.wraps(endpoint)
+    def _sync(*args, **kwargs):
+        result = endpoint(*args, **kwargs)
+        return result if isinstance(result, Response) else wire_safe(result)
+
+    return _sync
+
+
+def _wire_exit_gate(app: FastAPI) -> None:
+    """把出口的网接到 `app` 的**每一条** JSON 路由上（唯一一条接线）。
+
+    出口响应类与它的线规都取自 `app.router.default_response_class` —— **单一来源**：
+    改掉那一处，整道闸就没了（`tests/test_web_app_api.py` 的变异实验正是打这里）。
+
+    每条路由做三件事，缺一不可：
+      1. **端点返回值先过 `exit_class.wire_safe`** —— 见 `_wire_safe_endpoint`：
+         FastAPI 自己那遍序列化在响应类之前，闸不提前落地就等于没装；
+      2. **显式带出口响应类** —— `APIRoute` 若留着默认占位符，FastAPI 会走
+         `dump_json` 快路径（pydantic 直出 bytes），响应类同样不会被走到；
+      3. **`response_model=None`** —— 关掉 pydantic 的响应模型（它默认取自返回标注
+         `-> dict[str, Any]`，对 `Any` 里的 numpy 标量同样会抛）。
+    """
+    exit_class = _app_exit_class(app)
+    wire_safe = getattr(exit_class, "wire_safe", None)
+
+    class _SafeRoute(APIRoute):
+        def __init__(self, *args, **kwargs):
+            # `add_api_route` 总是以关键字传这几个参数；若哪天不是，就**响亮地**失败，
+            # 而不是悄悄退化成"闸没装上"。
+            if "endpoint" not in kwargs:
+                raise RuntimeError("SafeRoute 必须收到关键字 endpoint（FastAPI 接口变了？）")
+            kwargs["endpoint"] = _wire_safe_endpoint(kwargs["endpoint"], wire_safe)
+            # 只在路由**没有自己指定**时才钉（显式指定者意图明确，不动它）。
+            if isinstance(kwargs.get("response_class"), DefaultPlaceholder):
+                kwargs["response_class"] = exit_class
+            if isinstance(kwargs.get("response_model"), DefaultPlaceholder):
+                kwargs["response_model"] = None
+            super().__init__(*args, **kwargs)
+
+    app.router.route_class = _SafeRoute
+
+
+def _assert_no_route_bypasses_the_gate(app: FastAPI) -> None:
+    """自检：没有哪条 API 路由还带着占位符响应类或响应模型字段（那就等于绕过出口的网）。
+
+    与其等某个 `NaN` / numpy 标量在线上 500，不如在应用构造时就炸——**闸要能被证明存在**。
+    """
+    leaked = [
+        r.path for r in app.router.routes
+        if isinstance(r, APIRoute)
+        and (isinstance(r.response_class, DefaultPlaceholder) or r.response_field is not None)
+    ]
+    if leaked:
+        raise RuntimeError(
+            "这些路由绕过了出口的网（响应类仍是默认占位符，或仍有响应模型字段——"
+            f"FastAPI 会在 `SafeJSONResponse.render` 之前先自己 pydantic 序列化一遍）：{leaked}"
+        )
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(title="hiagent 策略回测平台", default_response_class=SafeJSONResponse)
+    _wire_exit_gate(app)          # ⚠️ 必须在**注册任何路由之前**——它决定路由的出口类
+
+    @app.get("/api/catalog")
+    def catalog() -> dict[str, Any]:
+        presets = all_presets()
+        out_presets = []
+        for engine in ENGINES:
+            for name in sorted(presets[engine]):
+                sp = split_params(engine, name)
+                out_presets.append({
+                    "engine": engine, "preset": name,
+                    "tunable": sp["tunable"],
+                    "declarations": sp["declarations"],
+                    "metadata": sp["metadata"],
+                    "declared_n_comparisons": sp["declarations"].get("n_comparisons"),
+                    "manual_trials": distinct_manual_configs(engine, name),
+                    "run_count": count_trials(engine, name),
+                })
+        return {
+            "engines": [{"name": e, "preset_count": len(presets[e])} for e in ENGINES],
+            "presets": out_presets,
+            # 指标表的渲染元数据（中文标签 + 类型），**单一来源**。
+            # 放在 catalog 里是因为它随预设一起、页面加载时取一次即可；
+            # 前端**不再自己写一份**标签表——两份必然会漂移，而且漂移的表现是
+            # "某一格格式不对"，不会有人注意到。
+            "metric_meta": {
+                k: {"label": METRIC_LABELS[k], "kind": METRIC_KINDS[k]}
+                for k in CANONICAL_KEYS
+            },
+        }
+
+    @app.post("/api/runs")
+    def create_run(req: RunRequest) -> dict[str, Any]:
+        """提交一次回测。**校验必须在提交前做**——见下方 ⚠️。"""
+        if req.start > req.end:
+            raise HTTPException(400, detail=f"start {req.start} is after end {req.end}")
+        if req.engine not in ENGINES:
+            raise HTTPException(404, detail=f"unknown engine: {req.engine}")
+        if req.preset not in all_presets().get(req.engine, {}):
+            raise HTTPException(404, detail=f"unknown preset: {req.preset}")
+        if req.mode not in VALID_MODES:
+            raise HTTPException(400, detail=f"unknown mode: {req.mode}")
+        # ⚠️ **`jobs.submit` 不校验 overrides**：它只入队，校验发生在**子进程**里的
+        # `runners.run`。若把校验留给那条路径，一次 `{"nope": 1}` 会先拿到 200 + run_id，
+        # 再在几秒后变成 status=failed —— 用户以为提交成功了。
+        # 故在边界处（唯一能看到请求的地方）先校验：错就 400，不入队。
+        try:
+            validate_overrides(req.engine, req.preset, req.overrides)
+        except OverrideError as exc:
+            raise HTTPException(400, detail=str(exc)) from exc
+        run_id = jobs_mod.submit(req.engine, req.preset, req.overrides,
+                                 req.start, req.end, req.mode)
+        return {"run_id": run_id}
+
+    @app.get("/api/runs/{run_id}")
+    def get_run(run_id: str) -> dict[str, Any]:
+        """内存优先；**服务重启后回退到磁盘**，所以历史不必依赖进程存活。"""
+        job = jobs_mod.get(run_id)
+        if job is None:
+            hist = jobs_mod.load_persisted(run_id)
+            if hist is None:
+                raise HTTPException(404, detail=f"unknown run: {run_id}")
+            return {"run_id": run_id, "engine": hist.engine, "preset": hist.preset,
+                    "status": "done", "error": None, "mode": None,
+                    "start": hist.start, "end": hist.end, "trial_no": None,
+                    "metrics": canonical_metrics(hist.metrics), "queue_position": None,
+                    "from_disk": True}
+        metrics = job.result.metrics if job.result else None
+        return {
+            "run_id": job.run_id, "engine": job.engine, "preset": job.preset,
+            "status": job.status, "error": job.error, "mode": job.mode,
+            "start": job.start, "end": job.end,
+            "trial_no": job.trial_no,
+            "metrics": canonical_metrics(metrics) if metrics else None,
+            # 单 worker 下"前面还有几个"是用户唯一能看到的等待依据
+            "queue_position": jobs_mod.queue_position(run_id),
+            "from_disk": False,
+        }
+
+    @app.post("/api/runs/{run_id}/cancel")
+    def cancel_run(run_id: str) -> dict[str, Any]:
+        """取消一个作业：排队中的会被跳过，运行中的会被 terminate（见 jobs.cancel）。"""
+        try:
+            status = jobs_mod.cancel(run_id)
+        except KeyError:
+            raise HTTPException(404, detail=f"unknown run: {run_id}") from None
+        return {"run_id": run_id, "status": status}
+
+    @app.get("/api/configs")
+    def list_configs() -> dict[str, Any]:
+        from web.configs import list_configs as _list
+
+        return {"configs": _list()}
+
+    @app.post("/api/configs")
+    def save_config(req: ConfigRequest) -> dict[str, Any]:
+        """保存命名配置。**存之前先校验**——存一个跑不起来的配置没有意义。"""
+        from web.configs import save_config as _save
+
+        if not req.name.strip() or "/" in req.name:
+            raise HTTPException(400, detail="配置名不能为空、也不能含 '/'（它是 URL 路径的一段）")
+        try:
+            validate_overrides(req.engine, req.preset, req.overrides)
+        except OverrideError as exc:
+            raise HTTPException(400, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(404, detail=str(exc)) from exc
+        return _save(name=req.name.strip(), engine=req.engine, preset=req.preset,
+                     overrides=req.overrides, note=req.note)
+
+    @app.delete("/api/configs/{name}")
+    def delete_config(name: str) -> dict[str, Any]:
+        from web.configs import delete_config as _del
+
+        try:
+            _del(name)
+        except KeyError:
+            raise HTTPException(404, detail=f"unknown config: {name}") from None
+        return {"deleted": name}
+
+    @app.post("/api/configs/{name}/duplicate")
+    def duplicate_config(name: str, body: dict[str, Any]) -> dict[str, Any]:
+        from web.configs import duplicate_config as _dup
+
+        try:
+            return _dup(name, str(body.get("new_name") or f"{name} 副本"))
+        except KeyError:
+            raise HTTPException(404, detail=f"unknown config: {name}") from None
+
+    @app.get("/api/runs")
+    def list_runs(limit: int = 50) -> dict[str, Any]:
+        """最近的运行历史（倒序）。服务重启后 `status` 为 null，但 `has_result` 仍为真。"""
+        return {"runs": jobs_mod.list_runs(limit=max(1, min(limit, 500)))}
+
+    # ⚠️ 路径**不能**写成 `/api/runs/compare`——它会被 `/api/runs/{run_id}` 抢先匹配，
+    # 于是 run_id="compare" 并返回 404。放 `/api/compare` 才无歧义。
+    @app.get("/api/compare")
+    def compare(ids: str) -> dict[str, Any]:
+        """并排比较若干历史运行（`?ids=a,b,c`）。**不重跑回测**——结果来自磁盘。
+
+        这正是本平台存在的理由：改了参数之后，得能看出**哪个更好**。
+        指标一律经 `canonical_metrics` 归一，缺的补 `None`（不是 0）。
+        """
+        rows = []
+        for rid in [s for s in ids.split(",") if s]:
+            job = jobs_mod.get(rid)
+            result = (job.result if (job and job.result) else None) or jobs_mod.load_persisted(rid)
+            if result is None:
+                continue
+            rows.append({
+                "run_id": rid, "engine": result.engine, "preset": result.preset,
+                "overrides": (job.overrides if job else {}),
+                "start": result.start, "end": result.end,
+                "metrics": canonical_metrics(result.metrics),
+            })
+        if not rows:
+            raise HTTPException(404, detail=f"no persisted results for ids={ids}")
+        return {"keys": list(CANONICAL_KEYS), "rows": rows}
+
+    @app.get("/api/runs/{run_id}/export/trades.csv")
+    def export_trades(run_id: str) -> Response:
+        """导出成交明细为 CSV（14 列规范顺序，取自 core/trade_schema.py 这个单源）。"""
+        import csv
+        import io
+
+        from core.trade_schema import TRADE_COLS
+
+        result = _load_result(run_id)
+        buf = io.StringIO()
+        w = csv.DictWriter(buf, fieldnames=list(TRADE_COLS), extrasaction="ignore")
+        w.writeheader()
+        # 非有限数写成**空单元格**，不是字面量 `nan`：§0 要求"这个数没有意义"与
+        # "这个数是 0"可区分，而 `nan` 在 CSV 里既不是数字也不是空——是一句谎。
+        for row in result.trades:
+            w.writerow({k: _json_safe(v) for k, v in row.items()})
+        return Response(content=buf.getvalue(), media_type="text/csv",
+                        headers={"Content-Disposition": f'attachment; filename="{run_id}_trades.csv"'})
+
+    @app.get("/api/runs/{run_id}/export/metrics.json")
+    def export_metrics(run_id: str) -> Response:
+        """导出该次运行的规范指标（与页面上看到的是同一组键）。"""
+        result = _load_result(run_id)
+        # `_json_safe` 而不是 `default=str`：后者会把 `Infinity` 静默写成**字符串**，
+        # 产出一个既非法 JSON 又骗人的 metrics.json（Global Constraints）。
+        body = json.dumps(_json_safe({
+            "run_id": run_id, "engine": result.engine, "preset": result.preset,
+            "start": result.start, "end": result.end,
+            "metrics": canonical_metrics(result.metrics),
+        }), ensure_ascii=False, indent=2)
+        return Response(content=body, media_type="application/json",
+                        headers={"Content-Disposition": f'attachment; filename="{run_id}_metrics.json"'})
+
+    @app.get("/api/runs/{run_id}/equity")
+    def equity(run_id: str) -> dict[str, Any]:
+        """净值曲线 + 基准曲线 + 回撤 + 超额。**回测的头部图表**。
+
+        ⚠️ 策略曲线必须**切到 `[start, end]`**：记录器的 `equity_curve` 覆盖的是
+        **带缓冲的面板**（`[start-180d, end+60d]`，引擎不设 fromdate/todate）。
+        不切就会把窗口外的行情画进曲线——Task 8 的口径错配是同一件事，
+        那里的后果是 CAGR 与基准不同口径，这里的后果是**曲线比它自己的标签更长**。
+
+        ⚠️ 超额收益的口径警告（会随响应一起返回，前端必须显示）：
+        基准是等权**多头**篮子，而 short_reversal 是**空头**策略，故 `strategy - benchmark`
+        **加上了方向性偏差**，在熊市被抬高——**不得当作 alpha**。
+        """
+        from hiagent_config import get_db_path
+
+        from web.benchmark import BENCHMARK_LABEL, benchmark_return, benchmark_series
+
+        result = _load_result(run_id)
+        curve = result.metrics.get("equity_curve") or []
+        rows = [r for r in curve
+                if r.get("date") is not None and result.start <= str(r["date"])[:10] <= result.end]
+        if not rows:
+            raise HTTPException(404, detail="this run has no in-window equity curve")
+        base = float(rows[0]["equity"])
+        if base <= 0:
+            raise HTTPException(500, detail="equity curve starts at a non-positive value")
+        strat = [{"date": str(r["date"])[:10], "value": float(r["equity"]) / base} for r in rows]
+
+        peak, dd = -1.0, []
+        for p in strat:
+            peak = max(peak, p["value"])
+            dd.append({"date": p["date"],
+                       "value": (peak - p["value"]) / peak if peak > 0 else 0.0})
+
+        bench = benchmark_series(get_db_path(), result.start, result.end)
+        # 每日收益：在 **API 侧**由已切片的净值序列算（前端仍不做统计）
+        prev, daily = None, []
+        for p in strat:
+            if prev is not None and prev > 0:
+                daily.append({"date": p["date"], "value": p["value"] / prev - 1.0})
+            prev = p["value"]
+
+        b_ret = benchmark_return(bench)
+        s_ret = strat[-1]["value"] - 1.0
+        return {
+            "strategy": strat,
+            "benchmark": bench,
+            "benchmark_label": BENCHMARK_LABEL,     # 界面必须如实显示它不是指数
+            "drawdown": dd,
+            "daily_returns": daily,
+            "strategy_return": s_ret,
+            "benchmark_return": b_ret,              # 无基准数据时是 None，**不是 0**
+            "excess_return": (s_ret - b_ret) if b_ret is not None else None,
+            "excess_caveat": (
+                "超额 = 策略 − 基准。基准是等权**多头**篮子而该策略是**空头**，"
+                "故此值含方向性偏差、在熊市被抬高，**不得当作 alpha**。"
+            ),
+        }
+
+    @app.get("/api/runs/{run_id}/positions")
+    def positions(run_id: str) -> dict[str, Any]:
+        """每日持仓。**从成交列表推导——引擎不记录逐日持仓，但成交列表已蕴含它。**
+
+        一笔交易在 `[entry_date, exit_date)` 期间占用仓位（退出当日已平，故不含）。
+        对 `max_positions=1` 的 short_reversal 每天至多一条；多头多仓则是并集。
+
+        「窗口内的交易日」**取自该运行的净值曲线**，与上方图表完全同步——
+        不另算一套日历，免得表与图对不上。无仓位的那天 `holdings` 是**空列表**：
+        **空 ≠ 缺**，前端要显示"空仓"而不是空白。
+        """
+        result = _load_result(run_id)
+        trades = _sorted_trades(result.trades)
+        curve = result.metrics.get("equity_curve") or []
+        days = [str(r["date"])[:10] for r in curve
+                if r.get("date") is not None
+                and result.start <= str(r["date"])[:10] <= result.end]
+        rows = []
+        for day in days:
+            held = [t for t in trades
+                    if str(t.get("entry_date"))[:10] <= day < str(t.get("exit_date"))[:10]]
+            rows.append({
+                "date": day,
+                "count": len(held),
+                "holdings": [{"thscode": t["thscode"],
+                              "entry_date": str(t["entry_date"])[:10],
+                              "entry_price": t["entry_price"],
+                              "size": t["size"]} for t in held],
+            })
+        return {"rows": rows}
+
+    @app.get("/api/runs/{run_id}/log")
+    def run_log(run_id: str, offset: int = 0) -> dict[str, Any]:
+        """**增量**读运行日志：`offset` 是客户端已读的字节数，返回新的一段。
+
+        增量而不是整份，是因为回测会持续打印，整份重传会随运行变长而越来越贵。
+        作业不在内存里（服务重启过）时视为已结束。
+        """
+        job = jobs_mod.get(run_id)
+        if job is None and jobs_mod.load_persisted(run_id) is None:
+            raise HTTPException(404, detail=f"unknown run: {run_id}")
+        p = state_home() / "runs" / run_id / "run.log"
+        if not p.exists():
+            return {"text": "", "offset": 0, "done": True}
+        data = p.read_bytes()
+        return {
+            "text": data[offset:].decode("utf-8", errors="replace"),
+            "offset": len(data),
+            "done": job is None or job.status in {"done", "failed", "cancelled"},
+        }
+
+    @app.get("/api/runs/{run_id}/trades")
+    def list_trades(run_id: str) -> dict[str, Any]:
+        job = jobs_mod.get(run_id)
+        if job is None:
+            raise HTTPException(404, detail=f"unknown run: {run_id}")
+        if job.status != "done" or job.result is None:
+            raise HTTPException(409, detail=f"run is {job.status}")
+        rows = _sorted_trades(job.result.trades)
+        return {
+            "total": len(rows),
+            # 非有限数由出口的 `SafeJSONResponse` 统一处理（原先这里手写 `_is_nan`，
+            # 只认 `nan` 不认 `inf`，且只覆盖这一个端点——已删除，见 `_json_safe` 的说明）。
+            "rows": [{"i": i, **t} for i, t in enumerate(rows)],
+            "columns": list(rows[0]) if rows else [],
+        }
+
+    @app.get("/api/runs/{run_id}/trades/{i}/chart")
+    def trade_chart(run_id: str, i: int) -> dict[str, Any]:
+        job = jobs_mod.get(run_id)
+        if job is None:
+            raise HTTPException(404, detail=f"unknown run: {run_id}")
+        if job.status != "done" or job.result is None:
+            raise HTTPException(409, detail=f"run is {job.status}")
+        rows = _sorted_trades(job.result.trades)
+        if not (0 <= i < len(rows)):
+            raise HTTPException(404, detail=f"trade index {i} out of range (0..{len(rows) - 1})")
+        from hiagent_config import get_db_path
+
+        sp = split_params(job.engine, job.preset)
+        params = dict(sp["tunable"])
+        params.update(job.overrides)
+        return chart_payload(job.engine, params, rows[i], get_db_path())
+
+    if STATIC_DIR.is_dir():
+        app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
+    _assert_no_route_bypasses_the_gate(app)
+    return app
+
+
+app = create_app()
+
+
+def main() -> None:
+    import uvicorn
+
+    # 只绑本机（设计文档 D2 / Global Constraints）
+    uvicorn.run(create_app(), host=BIND_HOST, port=BIND_PORT)
+
+
+if __name__ == "__main__":
+    main()
