@@ -248,3 +248,39 @@ def test_that_divergence_check_actually_discriminates() -> None:
     assert loose > 1_000, (
         f"阈值 1% 时只有 {loose} 行 —— 判据可能没在真的比对收益(除权日应当有大量行)"
     )
+
+
+@pytest.mark.slow
+def test_the_engine_refuses_a_window_past_the_factor_coverage() -> None:
+    """§0:引擎**不许**静默跑一个越过因子表末端的窗口。
+
+    消费者侧的 fail-fast 落在 `cycle_price_action/main.py::assert_adjusted_window_is_covered`
+    (它默认 `end = today`,而因子表止于 2026-09-18 ⇒ **默认跑法就会中**)。
+    本用例**两个方向都测**:覆盖内必须放行(否则 fail-fast 会变成"永远拒绝"),
+    越界必须抛错(否则它没在守)。
+    """
+    from datetime import date, timedelta
+
+    require_market_db()
+    from cycle_price_action.main import assert_adjusted_window_is_covered
+
+    con = _con()
+    try:
+        factor_max = con.execute("SELECT max(date) FROM calc_adjust_factor_daily").fetchone()[0]
+    finally:
+        con.close()
+
+    # ① 覆盖内(正好落在因子表最后一天)⇒ 放行
+    assert_adjusted_window_is_covered(str(DB_PATH), factor_max)
+
+    # ② 越界(末日 +1 天)⇒ 抛错,且信息里点出因子表末端与"退回原始价"
+    with pytest.raises(ValueError) as ei:
+        assert_adjusted_window_is_covered(str(DB_PATH), factor_max + timedelta(days=1))
+    msg = str(ei.value)
+    assert str(factor_max) in msg and "原始价" in msg, f"错误信息没说清:{msg}"
+
+    # ③ 顺带钉住"当前默认跑法本来就会中"这个事实,免得将来有人以为它无害。
+    #    (因子表一旦刷新到覆盖今天,这一条会自动不再触发 —— 那时它也该被删掉。)
+    if date.today() > factor_max:
+        with pytest.raises(ValueError):
+            assert_adjusted_window_is_covered(str(DB_PATH), date.today())

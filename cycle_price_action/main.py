@@ -8,6 +8,7 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 
+import duckdb
 import pandas as pd
 
 from hiagent_config import get_db_path
@@ -160,12 +161,40 @@ def _write_equity_curve(
             })
 
 
+def assert_adjusted_window_is_covered(db_path: str, end: date) -> None:
+    """§3/§0:**复权因子表覆盖之外的日子,视图会静默退回原始价** —— 不许把这种窗口跑成报告。
+
+    `v_daily_hfq` / `v_daily_qfq` 的定义是 `raw × COALESCE(factor, 1)`,而 `factor` 只覆盖到
+    `calc_adjust_factor_daily` 的最后一天(实测 2026-10-20 时止于 2026-09-18)。超出之后
+    `COALESCE` 把"没有因子"当成了"因子 = 1",即**原始价** ⇒ 复权序列在那里**跳变**,
+    产生物理上不可能的日收益(实测复权域里 **1,150 行单日 < −50%**,而 A 股上限是 ±10%/±20%)。
+    它们会直接进入 `pct_chg` 类信号与下一根 bar 的盯市。
+
+    故:窗口终点越过因子表末端时 **fail-fast**,而不是给出一份看起来正常的报告(§0)。
+    (本函数放在 `_run_backtest` 里,而不是 `_resolve_window` —— 后者是**纯**的窗口解析,
+     其"默认 end = today"的行为有自己的测试钉着;该不该默认成 today 是另一个问题。)
+    """
+    con = duckdb.connect(db_path, read_only=True)
+    try:
+        factor_max = con.execute("SELECT max(date) FROM calc_adjust_factor_daily").fetchone()[0]
+    finally:
+        con.close()
+    if factor_max is not None and end > factor_max:
+        raise ValueError(
+            f"§3/§0: 窗口终点 {end} 超出复权因子表覆盖(末 {factor_max})—— "
+            f"之后的日子 `v_daily_hfq/qfq` 会把因子当成 1(即**原始价**),"
+            f"产生物理上不可能的日收益。请把 --end 收到 {factor_max} 或更早,或先刷新 "
+            f"`calc_adjust_factor_daily`。"
+        )
+
+
 def _run_backtest(args) -> int:
     start, end = _resolve_window(args.start, args.end)
     out_dir = Path(args.out_dir) / f"run_{datetime.now():%Y%m%d_%H%M%S_%f}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     db_path = args.db if args.db else str(get_db_path())
+    assert_adjusted_window_is_covered(db_path, end)   # §3/§0 静默退回原始价 ⇒ fail-fast
     result = run_backtest(db_path=db_path, start=start, end=end, cash=args.cash)
 
     _write_trades_csv(out_dir / "trades.csv", result.trades)
