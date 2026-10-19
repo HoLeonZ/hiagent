@@ -318,6 +318,33 @@ def _ensure_worker() -> None:
             _WORKER_STARTED = True
 
 
+def assert_no_test_seam() -> None:
+    """**服务进程里不许存在测试缝** —— 设了就直接拒绝启动（§0 fail-fast）。
+
+    为什么要把"打一句警告"升级成"拒绝启动"：`HIAGENT_JOBS_FAKE_SLEEP` 一旦被设上，
+    每个作业的子进程都**跳过真实回测**、回一个 `{"metrics": {}, "trades": []}` ——
+    作业状态是 **`done`**、结果页上**指标全空、零笔成交**，看起来完全像
+    "这个策略在这段时间没找到机会"，而**它其实一次都没跑**。
+    而它**在提交时就被记进了 §5 账本**，于是账本里多出一堆没发生过的迭代。
+
+    原实现只在**子进程**里 `print` 一句警告 —— 而那发生在 `os.dup2` **之后**，
+    所以那句话只落在**这一笔自己的 `run.log`** 里，**服务端日志一句都没有**。
+    警告打在人不会看的地方，等于没有警告。
+
+    测试**不会**创建服务（`_install_fake_run` 顶掉的是 `_run_one`，不经过子进程），
+    所以这条不会挡住测试。它挡的正是"调试时设了忘了取消，然后一直用假结果"。
+    """
+    import os
+
+    fake = os.environ.get(_CHILD_FAKE_SLEEP_ENV)
+    if fake:
+        raise RuntimeError(
+            f"{_CHILD_FAKE_SLEEP_ENV}={fake} 已设置 —— 这是**仅供测试**的开关，"
+            "会让每次回测都跳过真实计算、返回空的 done 结果（并照常记进 §5 账本）。"
+            "服务进程拒绝在这种状态下启动：请 unset 它再启动。"
+        )
+
+
 def submit(
     engine: str,
     preset: str,
@@ -331,6 +358,7 @@ def submit(
     **记账在这里发生，不在 worker 里**：一次迭代在提交时就发生了，
     即使作业随后失败或被取消也不该从账本里消失（§5）。
     """
+    assert_no_test_seam()                        # 能走到这里说明没被挡住；再喊一句
     run_id = uuid.uuid4().hex[:12]
     home = run_dir(run_id)                       # 建目录 + 断言在仓库外（§7）
     trial_no = append_trial(
@@ -340,8 +368,15 @@ def submit(
     job = Job(run_id=run_id, engine=engine, preset=preset,
               overrides=dict(overrides or {}), start=start, end=end, mode=mode,
               trial_no=trial_no)
+    # ⚠️ **入表与入队必须在同一个临界区里。**
+    # 原实现先 `_JOBS[run_id] = job`、再（隔着写 job.json 与起 worker）`_QUEUE.put`，
+    # 于是两个并发 `submit` 的 **`_JOBS` 插入序可能与实际出队序相反** ——
+    # 而 `queue_position` 正是按 `_JOBS` 的插入序数"前面还有几个"，
+    # 于是界面会告诉用户一个**反的**排队位置。
+    # `_QUEUE` 无界，`put` 不会阻塞，放在锁里是安全的。
     with _LOCK:
         _JOBS[run_id] = job
+        _QUEUE.put(run_id)
     (home / "job.json").write_text(
         json.dumps({"run_id": run_id, "engine": engine, "preset": preset,
                     "overrides": job.overrides, "start": start, "end": end,
@@ -350,7 +385,6 @@ def submit(
         encoding="utf-8",
     )
     _ensure_worker()
-    _QUEUE.put(run_id)
     return run_id
 
 

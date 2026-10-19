@@ -273,6 +273,9 @@ def _assert_no_route_bypasses_the_gate(app: FastAPI) -> None:
 
 
 def create_app() -> FastAPI:
+    # 测试缝不许出现在服务进程里（§0 fail-fast）：
+    # 设了它每个作业都会跳过真实回测、返回空的 done 结果，而结果页上看不出区别。
+    jobs_mod.assert_no_test_seam()
     app = FastAPI(title="hiagent 策略回测平台", default_response_class=SafeJSONResponse)
     _wire_exit_gate(app)          # ⚠️ 必须在**注册任何路由之前**——它决定路由的出口类
 

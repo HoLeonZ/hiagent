@@ -297,3 +297,90 @@ def test_a_timeout_terminates_the_child_instead_of_leaving_an_orphan(home, fast_
         f"超时后子进程 {pid} 还活着 —— 它会在无人能取消的情况下继续烧 CPU"
         "（`job.proc` 已被置 None，`cancel()` 够不到它）"
     )
+
+
+def test_the_jobs_table_order_matches_the_queue_order_under_concurrent_submits(home, monkeypatch):
+    """**`_JOBS` 的插入序必须与实际出队序一致** —— `queue_position` 就建立在它上面。
+
+    原实现先 `_JOBS[run_id] = job`、再（隔着写 `job.json` 与起 worker）`_QUEUE.put(run_id)`，
+    两个并发 `submit` 时**两者顺序可以反过来**：`_JOBS` 里 A 在前，而队列里 B 先出队。
+    于是 `queue_position`（按 `_JOBS` 插入序数"前面还有几个"）会告诉用户一个**反的**位置。
+
+    判据就是**两个序相等**。为让它可观测，这里把 worker 顶成 no-op（没人从队列取），
+    等所有提交结束后自己把队列排干再比对。
+
+    ⚠️ **这条是竞态探测器，不是确定性的证据。** 实测（把 `put` 移出临界区的变异上连跑
+    6 次）：单轮 8 线程时 **5 红 1 绿**；改成一轮跑 5 轮之后 **6 红 0 绿**。所以：
+      · 它绿**不能**说明代码是对的（那一轮恰好没交错）；
+      · 它红则**确实**说明序反了。
+    为把检出率抬上去，一轮 8 个线程不够就跑多轮 —— 但**别把它当门禁用**，
+    真正的保证是结构性的（入表与入队在同一临界区），这条只是给结构加一道报警。
+    """
+    monkeypatch.setattr(jobs_mod, "_ensure_worker", lambda: None)
+    jobs_mod._JOBS.clear()
+    while not jobs_mod._QUEUE.empty():          # 清掉上个测试可能留下的
+        jobs_mod._QUEUE.get_nowait()
+
+    import threading
+
+    ids, errors = [], []
+    lock = threading.Lock()
+
+    def submit_one():
+        try:
+            rid = jobs_mod.submit("short_reversal", "v50_slope", None,
+                                  "2024-01-01", "2025-01-01", "full")
+            with lock:
+                ids.append(rid)
+        except Exception as exc:                 # noqa: BLE001
+            with lock:
+                errors.append(exc)
+
+    # 跑多轮：单轮 8 线程的检出率约 5/6，多跑几轮把这个比例抬上去
+    table_order, queue_order = [], []
+    for _round in range(5):
+        jobs_mod._JOBS.clear()
+        while not jobs_mod._QUEUE.empty():
+            jobs_mod._QUEUE.get_nowait()
+        ids.clear()
+        threads = [threading.Thread(target=submit_one) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert not errors, f"并发提交报错：{errors[:2]}"
+
+        table_order = list(jobs_mod._JOBS)
+        queue_order = []
+        while not jobs_mod._QUEUE.empty():
+            queue_order.append(jobs_mod._QUEUE.get_nowait())
+        assert len(queue_order) == 8, f"队列里应有 8 个，实际 {len(queue_order)}"
+        if table_order != queue_order:
+            break
+    assert table_order == queue_order, (
+        "`_JOBS` 插入序与实际出队序不一致 —— `queue_position` 会给出反的排队位置。\n"
+        f"  表序  {table_order}\n  队序  {queue_order}"
+    )
+
+
+def test_the_service_refuses_to_start_with_the_test_seam_set(monkeypatch):
+    """**测试缝不许出现在服务进程里** —— 设了就直接拒绝启动（§0 fail-fast）。
+
+    设上 `HIAGENT_JOBS_FAKE_SLEEP` 后，每个作业的子进程都**跳过真实回测**、
+    回一个 `{"metrics": {}, "trades": []}`：作业状态是 **`done`**，
+    结果页上**指标全空、零笔成交**——看起来完全像"这个策略没找到机会"，
+    而**它其实一次都没跑**。它还**在提交时就被记进了 §5 账本**。
+
+    原实现只在**子进程**里打一句警告，而那发生在 `os.dup2` **之后**，
+    所以那句话只落在**这一笔自己的 `run.log`** 里，**服务端日志一句都没有**。
+    **警告打在人不会看的地方，等于没有警告。**
+    """
+    from web.app import create_app
+
+    assert create_app() is not None, "没设缝时应当正常建应用"
+
+    monkeypatch.setenv("HIAGENT_JOBS_FAKE_SLEEP", "1")
+    with pytest.raises(RuntimeError, match="HIAGENT_JOBS_FAKE_SLEEP"):
+        create_app()
+    with pytest.raises(RuntimeError, match="HIAGENT_JOBS_FAKE_SLEEP"):
+        jobs_mod.assert_no_test_seam()
