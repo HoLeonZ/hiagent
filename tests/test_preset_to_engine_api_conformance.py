@@ -61,7 +61,47 @@ ENGINE_SOURCES = {
 # `regime` 与 `signal` 同构: 都是在调用点被 `**p["regime"]` / `**p["signal"]` 展开,
 # 其子键由被调方(compute_regime / select_entries_*)消费, 而不是作为字面量出现在
 # 引擎源码里 —— 要求它们成为字面量是误报 (见 v33_long_reverse_v21 的 regime)。
-NESTED_KEYS = {"signal", "universe", "periods", "weights", "regime"}
+#
+# §0 (附八十八): 这份名单**不再手写**,改为**推导** —— "在至少一个 preset 里是 dict 的
+# 顶层键"。手写的那版有 5 项,其中 **3 项是错的**:
+#   · `universe` —— 在 101 个 preset 里都是**字符串**(不是嵌套字典),却被当成嵌套豁免
+#     ⇒ 它在**任何**引擎里都**从未被审计过**;
+#   · `periods` —— 是**元组**,同上;
+#   · `weights` —— **任何 preset 里都不存在**,是死项。
+# 后果是这条守卫**在它本该覆盖的那一类上瞎了**:`cycle_price_action` 的 `universe`
+# 与 `periods` 声明了却从未被读取,而豁免名单正好把它们挡在审计之外。
+# (手写名单 ≠ 实际集合 —— 本会话第四次同一个形态。)
+NESTED_KEYS = {"signal", "regime"}   #: 见 test_nested_keys_are_actually_nested
+
+
+def _derived_nested_keys() -> set[str]:
+    """在 ≥1 个 preset 里取值是 dict 的**顶层**键 —— 即"嵌套配置块"的实际集合。"""
+    out: set[str] = set()
+    for engine_name, mod_path, attr in _REGISTRY_SPECS:
+        mod = importlib.import_module(mod_path)
+        reg = getattr(mod, attr)
+        presets = _as_preset_mapping(reg, attr)
+        for cfg in presets.values():
+            for k, v in cfg.items():
+                if isinstance(v, dict):
+                    out.add(k)
+    return out
+
+
+def _as_preset_mapping(reg: Any, attr: str) -> dict[str, Any]:
+    """`PRESETS` 是 name→cfg 的注册表;`PRESET_V1` 是**单个** cfg ⇒ 包一层。"""
+    if isinstance(reg, dict) and any(isinstance(v, dict) for v in reg.values()):
+        return dict(reg)
+    return {attr: reg}
+
+
+#: (引擎名, presets 模块, 属性名) —— 三处共用,免得多份名单再各自漂移。
+_REGISTRY_SPECS = (
+    ("chase_up", "chase_up.presets", "PRESETS"),
+    ("uptrend_pullback", "uptrend_pullback.presets", "PRESETS"),
+    ("short_reversal", "short_reversal.presets", "PRESETS"),
+    ("cycle_price_action", "cycle_price_action.presets", "PRESET_V1"),
+)
 
 
 # 声明型键 (declaration-only)。这几个键由 §2/§3/§5 政策钉死为固定值, 运行时引擎
@@ -79,6 +119,25 @@ DECLARATION_ONLY_KEYS = frozenset({
     "price_source_for_signal",
     "n_comparisons",
 })
+
+
+#: **登记在案的债**(不是豁免):这些键**本该被引擎读取**却读不到。
+#: 与 `DECLARATION_ONLY_KEYS` **刻意分开** —— 那一桶是"按设计没有运行时语义"
+#: (如 §2 政策常量),这一桶是"有语义、但接线没做"。合并会让人读不出哪些是缺口。
+#: 每一项写清「现在是什么样」+「接上需要做什么」;**接上之后必须删掉本项**
+#: (`test_unconsumed_declared_keys_registry_is_not_stale` 会红)。
+UNCONSUMED_DECLARED_KEYS: dict[tuple[str, str], str] = {
+    ("cycle_price_action", "periods"): (
+        "PRESET_V1['periods'] 与 cycle.py::DEFAULT_PERIODS **逐位相同**(都是 (3,5,8,13,21)),"
+        "而引擎只读后者 ⇒ 改 preset 不会有任何效果。"
+        "接上要把 periods 穿进 signals.phase_score —— 那会改变信号计算,属研究改动,故登记未做。"
+    ),
+    ("cycle_price_action", "universe"): (
+        "PRESET_V1['universe']='mainboard_only' 与 load_universe_data 里**写死的** "
+        "is_main_board 过滤一致,但引擎从不读这个键 ⇒ 改成别的值不会有任何效果、也不报错。"
+        "接上要给 load_universe_data 加 universe 参数并处理不支持的取值 —— 属加功能,故登记未做。"
+    ),
+}
 
 
 def _collect_leaf_keys(preset: dict[str, Any]) -> set[str]:
@@ -228,13 +287,15 @@ def test_cycle_price_action_presets_all_reach_engine() -> None:
         "cycle_price_action.presets",
         "PRESET_V1",
     )
-    assert not dropped, (
+    unexpected = [t for t in dropped if (t[0], t[2]) not in UNCONSUMED_DECLARED_KEYS]
+    assert not unexpected, (
         "GAP CAPTURED: cycle_price_action has preset keys declared but "
-        "NEVER referenced in engine source. Pinning this exact pattern "
-        "from Tick 30/31 (intraday_tiebreak dropped silently):\n"
-        + "\n".join(f"  - preset={p!r} key={k!r}" for _, p, k in dropped[:10])
-        + f"\n  ({len(dropped)} total dropped keys)"
+        "NEVER referenced in engine source, **且未登记**:\n"
+        + "\n".join(f"  - preset={p!r} key={k!r}" for _, p, k in unexpected)
+        + "\n接上它,或登记到 UNCONSUMED_DECLARED_KEYS 并写清「接上要做什么」。"
     )
+    # 登记过的仍然是**债**,不是"已解决" —— 在用例名与这份 registry 上都写明。
+    # 若哪天接线做完了,`test_unconsumed_declared_keys_registry_is_not_stale` 会要求删条目。
 
 
 def test_audit_detects_a_planted_dropped_key() -> None:
@@ -290,4 +351,54 @@ def test_historical_intraday_tiebreak_gap_is_closed() -> None:
     dropped_keys = {k for _, _, k in dropped}
     assert "intraday_tiebreak" not in dropped_keys, (
         "Tick 30/31 的 intraday_tiebreak 缺口重新出现了 —— 声明又一次无人消费。"
+    )
+
+# ---------------------------------------------------------------------------
+# §0 (附八十八): 名单是**推导**出来的,不是手抄的
+# ---------------------------------------------------------------------------
+def _unexpectedly_not_nested(nested: set[str]) -> list[str]:
+    """`nested` 里**不是**"在 ≥1 个 preset 里取值为 dict 的顶层键"的那些。"""
+    return sorted(nested - _derived_nested_keys())
+
+
+def test_nested_keys_are_actually_nested() -> None:
+    """豁免名单的每一项都必须**真的是**嵌套配置块。
+
+    手写的那版有 5 项,其中 3 项是错的(`universe` 是字符串、`periods` 是元组、
+    `weights` 根本不存在)⇒ 这三个键在**任何**引擎里都从未被审计过,而
+    `cycle_price_action` 的 `universe`/`periods` 声明了却读不到,正好被它们挡住。
+    **手写名单 ≠ 实际集合** —— 本会话第四次同一个形态。
+    """
+    bad = _unexpectedly_not_nested(NESTED_KEYS)
+    assert not bad, (
+        "§0: NESTED_KEYS 里这几项**不是**嵌套配置块(在没有任何 preset 里取值为 dict)"
+        f"⇒ 它们被永久豁免审计:{bad}。"
+        "若是有意豁免,请登记到 DECLARATION_ONLY_KEYS / UNCONSUMED_DECLARED_KEYS 并写明原因。"
+    )
+
+
+def test_the_nested_rule_has_teeth() -> None:
+    """**牙齿**:把 `universe`/`periods` 塞回去必须被认出来,`signal`/`regime` 不得误报。"""
+    assert _unexpectedly_not_nested({"signal", "regime"}) == []
+    assert _unexpectedly_not_nested({"signal", "universe", "periods", "weights"}) == [
+        "periods", "universe", "weights",
+    ]
+
+
+def test_unconsumed_declared_keys_registry_is_not_stale() -> None:
+    """登记表必须**跟着现实走**:接线做完了却不同步删条目 → 失败。
+
+    (与 `test_research_scripts_reference_live_presets.py` 的
+     `test_registered_debt_is_still_debt` 同型:登记表只应当变短。)
+    """
+    actual = {
+        (engine, key)
+        for engine, _p, key in _audit_preset_to_engine(
+            "cycle_price_action", "cycle_price_action.presets", "PRESET_V1"
+        )
+    }
+    stale = sorted(k for k in UNCONSUMED_DECLARED_KEYS if k not in actual)
+    assert not stale, (
+        "以下登记项**已不再是缺口**(键已被引擎读取,或键已被删除)—— "
+        f"请从 UNCONSUMED_DECLARED_KEYS 删除:{stale}"
     )
