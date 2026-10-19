@@ -250,7 +250,9 @@ def load_universe_data(
                 "ORDER BY thscode, date"
             ).format(codes_sql=codes_sql)
         ).fetchdf()
-        liquid = apply_liquidity_filter(liquidity_codes, min_avg_turnover=5e7, lookback=60)
+        liquid = apply_liquidity_filter(
+            liquidity_codes, min_avg_turnover=5e7, min_history_days=60
+        )
         final_codes = main_board & liquid
 
         universe: dict[str, StockSlice] = {}

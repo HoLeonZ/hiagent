@@ -11,7 +11,7 @@ listed = {r[0] for r in listed_rows if r[1] >= ref_end}   # ← 这一半是 as-
 liquidity_codes = con.execute(
     "SELECT thscode, date, amount FROM v_daily WHERE thscode IN (...) "
     "ORDER BY thscode, date")                              # ← **没有任何日期边界**
-liquid = apply_liquidity_filter(liquidity_codes, min_avg_turnover=5e7, lookback=60)
+liquid = apply_liquidity_filter(liquidity_codes, min_avg_turnover=5e7, min_history_days=60)
 ```
 而 `apply_liquidity_filter` 是:
 ```python

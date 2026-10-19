@@ -15,7 +15,7 @@ This drops stocks that have data within [start, end] but whose MAX(date) < ref_e
 during its trading window is silently lost — survivorship bias.
 
 Fix: include any stock whose MAX(date) >= start (i.e. had at least one trading
-day in the requested window). Liquidity filter (60d rolling mean of amount)
+day in the requested window). Liquidity filter (**all-history** mean of amount —— `apply_liquidity_filter` 此前自称 "60d rolling mean" 而实现里既无 rolling 也无 60 天, 见 §13.107)
 further narrows the universe downstream; this test pins the inclusion semantics.
 """
 from __future__ import annotations
@@ -126,7 +126,7 @@ def test_includes_stock_trading_through_end(survivorship_db):
 
 def test_universe_includes_delisted_with_padded_pre_window_liquidity(tmp_path):
     """§3 PIT Mandate end-to-end: delisted stock with sufficient in-window
-    data (and pre-window liquidity history for the 60d rolling mean) MUST
+    data (and pre-window liquidity history for the all-history mean; ⚠️ §13.107: 该描述原写 "60d rolling mean", 而实现是全历史均值) MUST
     survive BOTH the delisting filter AND the liquidity filter, even when
     OTHER stocks in the DB push db_last beyond the delisted stock's
     MAX(date) (so ref_end > MAX(date) for the delisted stock)."""
