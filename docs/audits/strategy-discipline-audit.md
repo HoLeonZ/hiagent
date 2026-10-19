@@ -3,12 +3,12 @@
 > ## ⚠️ 状态头(2026-10-19)—— 读 §0 之前先看这里
 >
 > 本报告 §0–§8 的判定是**对 `main @ 94ca15d`(2026-10-14 快照)** 的:**不合规(NO-GO)**。
-> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **94 条附录**,
+> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **95 条附录**,
 > **§0 列的 11 个 BLOCKER 族全部已处置**(修 / 登记 / 待口径决策,逐条见附七十九 §1)。
 >
 > **不要把本报告开头的 NO-GO 当成对今天代码的判定。**
 >
-> * 现在的**未结清单**只有一处权威来源:**附七十九**(收官台账),最新增补见**附九十四**。
+> * 现在的**未结清单**只有一处权威来源:**附七十九**(收官台账),最新增补见**附九十五**。
 > * 每条修复都给出文件、证据与验证方式(多数含**双向验证**与量化影响)。
 > * 有两条**结果变更**特别醒目,已发布的数字须重算(清单见附七十九 §3 + 附八十一 §5):
 >   附五十二(做空跳空止损成交价)、**附八十一/八十二(DSR 的两个分母各取错一个量:
@@ -7911,3 +7911,91 @@ uptrend_pullback(:464) 都有这道门 —— 于是 cycle 的出场阶梯会在
   13 条规范句每条都要**指名**它的守卫,于是"实现了但没人守"与"守了但搜不到"都不会再落到沉默里;
 * 跨引擎契约矩阵(9 行 × 4 列 = **36 格**)与这张表**互相校验**:
   矩阵的行必须真有其码,表里的 `matrix` 指向必须真是矩阵的行。
+
+---
+
+## 附九十五 —— §7 工件卫生:两条规矩都做到了,但**没有守卫**;顺带把标准对账补到全七节
+
+(附九十四 把 CLAUDE.md 的规范句对账,但**只覆盖 §1–§4** —— 那是它自己的一个缺口。
+这一条补全七节,并给其中此前完全没人守的 §7 建守卫。)
+
+### 1 · §7 两条机械不变量:**都做到了**
+
+§7 明文:
+
+> * **Results Stay Local**: `results/`、trades.csv、metrics JSON、生成的报告必须保持 gitignored
+>   —— "**a fresh clone must contain zero historical performance claims**";
+> * **No Numbers in Docs**:README 与设计文档**不得**嵌入历史指标(CAGR / Sharpe / 胜率表)。
+
+实测:
+
+| 检查 | 结果 |
+|---|---|
+| `git ls-files` 里的结果类产物 | **0**(唯一沾边的是 `cycle_price_action/results/.gitkeep` 占位,与 `short_reversal/docs/d_condition_explained.html` —— 后者是**文档**,`.gitignore` 的注释里点名说明过) |
+| `.gitignore` 的覆盖 | 有一整段专门讲这件事,含自陈"上面只忽略 `results/` **目录**,于是散落在别处的同名产物仍然可以被提交" |
+| 全库 5 个 markdown(含 `chase_up/README.md`)里"指标名 + 数值"同现的行 | **0** |
+
+⇒ **§7 是这一整轮审计里少见的一次"本来就做对了"** —— 而它**没有任何守卫**:
+明天一个新产物被 `git add`、或某份设计文档贴一张绩效表,都不会红。
+
+### 2 · 给它建守卫(三条不变量 + 两条防退化)
+
+`tests/test_artifact_hygiene_section7.py`:
+
+| 用例 | 钉什么 |
+|---|---|
+| `test_no_result_artifact_is_tracked_by_git` | 结果类产物不得被跟踪(占位与已登记文档例外) |
+| `test_the_artifact_patterns_are_actually_ignored` | §7 点名的每一类必须**真的**被 `.gitignore` 覆盖 —— 用 `git check-ignore` **探针**逐个试,而不只看"当前没人提交" |
+| `test_design_docs_embed_no_metric_values` | README / `docs/*.md` 里不得出现"指标名 + 数值"同现的行 |
+| `test_the_doc_scanner_is_not_vacuous` | 扫描面必须真扫到 ≥2 个文档(否则上一条恒真) |
+| `test_the_doc_scanner_has_teeth` | 种一行"Sharpe 1.42,年化 23.5%"必须被认出;只写指标名(无数值)不得误报 |
+
+**第二条是刻意用探针而不是"看现状"**:只测"当前没有被跟踪"是不够的 ——
+一个**新**产物明天就可能被提交;这一条钉的是"**规则还在**"。
+两向验证:把一个假产物 `git add -f` ⇒ 红;临时删掉 `.gitignore` 的 `trades.csv` ⇒ 红;
+往 `docs/*.md` 塞一行指标数值 ⇒ 红。
+
+### 3 · 一处**张力**,如实记下而不是绕过
+
+`docs/audits/strategy-discipline-audit.md`(这份审计报告,在 `audit/*` 分支上)**满是数字** ——
+那正是审计的证据(如 "CAGR 14.66% → 87.12%")。
+
+它与 §7 不冲突,依据是 §7 **自己**那句:**"Any number that cannot be regenerated from current
+code plus one command is treated as stale and deleted."** 报告里每个数都附了**复现方式**
+(哪条命令、哪个脚本)⇒ 它们是**可再生的证据**,不是"曾经观测到的成绩"。
+
+**但边界要靠人守**:若哪天把那份报告并进 `docs/`(或被本守卫当作"设计文档"的路径),
+守卫会红 —— 而那应该是**有意识的决定**,不是顺手带过来的。
+
+### 4 · 把标准对账补到全七节
+
+附九十四 只覆盖 §1–§4(13 条)。补齐 §5–§7 后:
+
+| | 条数 |
+|---|---|
+| CLAUDE.md §1–§7 的规范句 | **18** |
+| 有**具名守卫** | 8 |
+| 由**矩阵**覆盖 | 5 |
+| 显式登记为待决策口径 | 1 |
+| **有实现/有说法、但没有任何具名守卫** | **4** |
+
+新增的四条(§5–§7):
+
+| 规则 | 现状 |
+|---|---|
+| **Iterative-Tuning Accounting** | 守卫:`tests/test_dsr_trial_basis.py`(+ 附八十九 的枚举数登记表) |
+| **Attribution Mandate** | 守卫:`tests/test_attribution.py` |
+| **Results Stay Local** | 守卫:`tests/test_artifact_hygiene_section7.py`(本轮新建) |
+| **No Numbers in Docs** | 守卫:同上 |
+| **Banned In-Sample Grids** | **unguarded** —— 部分覆盖:chase 的两个单窗选优脚本被强制**声明** in-sample;但**没有守卫**禁止"写一个网格搜索直接报 max Sharpe"这类脚本出现(§5 的禁令是"**拒绝写**",不是"写了要标注") |
+
+那条 `Banned In-Sample Grids` 的登记值得单独看一眼:**它是 §5 里唯一一条"禁令式"的规则**
+(其余是"要做 X"),而"不许存在某种脚本"很难用守卫表达 ——
+**这本身就是这条登记的理由**。
+
+### 5 · 抽取范围的边界仍如实声明
+
+抽取靠**加粗规则名 + 关键词**的正则,抓的是 CLAUDE.md 的**书写格式**。
+把它从 §1–§4 扩到 **§1–§7** 时,`_SECTION_END` 从 `"## 5. ..."` 改成 `None`(抽到文末)—— 
+**边界仍是一个常量**,§7 之后若再加一节,要同步改它(否则新节的规范句会被静默漏掉)。
+这句已写进代码注释。
