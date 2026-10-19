@@ -144,14 +144,26 @@ if (typeof ctx.renderChart !== "function") {
 }
 
 const payload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));
-const withData = [];
-ctx.renderChart(payload.with_data);
-while (captured.length) withData.push(captured.shift());
-const empty = [];
-ctx.renderChart(payload.empty);
-while (captured.length) empty.push(captured.shift());
+
+// **每次调用各自 try/catch。** 若让异常逃出去，node 会以非零码退出，
+// 于是测试报的是 fixture 层的"node 执行失败"——那读起来像**harness 坏了**，
+// 而真相是**被测代码抛了**。把抛出原因原样带回，让断言红得清楚。
+function render(name) {
+  const opts = [];
+  try {
+    ctx.renderChart(payload[name]);
+  } catch (e) {
+    return { threw: e.constructor.name + ": " + e.message, options: opts };
+  }
+  while (captured.length) opts.push(captured.shift());
+  return { threw: null, options: opts };
+}
+
 process.stdout.write(JSON.stringify({
-  with_data: withData, empty, chart_html: els.get("chart") ? els.get("chart").innerHTML : "",
+  with_data: render("with_data"),
+  empty: render("empty"),
+  no_levels: render("no_levels"),
+  chart_html: els.get("chart") ? els.get("chart").innerHTML : "",
 }));
 """
 
@@ -173,6 +185,14 @@ PAYLOAD: dict[str, Any] = {
 }
 EMPTY_PAYLOAD: dict[str, Any] = {"bars": [], "entry": None, "exit": None,
                                  "sl_price": None, "tp_price": None, "direction": "short"}
+#: 有日线、但**没有可画的 SL/TP 价位** —— 后端在"引擎按 ATR 出场"或"预设没给这两个参数"时
+#: 就是这么返回的。图表仍要画出来，只是**一条横线都不许有**。
+NO_LEVELS_PAYLOAD: dict[str, Any] = {
+    "bars": [BAR_A, BAR_B],
+    "entry": {"date": "2026-03-02", "price": 10.0},
+    "exit": {"date": "2026-03-03", "price": 9.2, "reason": "take_profit"},
+    "sl_price": None, "tp_price": None, "direction": "long",
+}
 
 needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="需要 node 执行前端契约")
 
@@ -184,7 +204,8 @@ def _run_render_chart(tmp: str) -> dict[str, Any]:
     driver = tmp_path / "driver.js"
     payload = tmp_path / "payload.json"
     driver.write_text(textwrap.dedent(_DRIVER), encoding="utf-8")
-    payload.write_text(json.dumps({"with_data": PAYLOAD, "empty": EMPTY_PAYLOAD}), encoding="utf-8")
+    payload.write_text(json.dumps({"with_data": PAYLOAD, "empty": EMPTY_PAYLOAD,
+                                   "no_levels": NO_LEVELS_PAYLOAD}), encoding="utf-8")
     got = subprocess.run(["node", str(driver), str(JS), str(payload)],
                          capture_output=True, text=True, timeout=120)
     assert got.returncode == 0, f"node 执行 app.js 失败（rc={got.returncode}）:\n{got.stderr}"
@@ -203,7 +224,8 @@ def test_candles_are_raw_prices_in_open_close_low_high_order(rendered):
     这条**只有真跑一遍才有判别力**：把顺序写成 OHLC，静态看仍然是"取了四个 raw_ 字段"，
     画出来也仍然像一张正常的 K 线图——只是阴阳与上下影线是反的。
     """
-    options = rendered["with_data"]
+    assert rendered["with_data"]["threw"] is None, f"renderChart 抛了：{rendered['with_data']['threw']}"
+    options = rendered["with_data"]["options"]
     assert len(options) == 1, "renderChart 应当只 setOption 一次"
     candle = options[0]["series"][0]
     assert candle["type"] == "candlestick"
@@ -221,7 +243,8 @@ def test_indicators_and_sl_tp_come_verbatim_from_the_payload(rendered):
     MA/MACD 在复权域上算、SL/TP 由 `entry_price × (1 ± pct)` 推——两者都在后端。
     前端若自己重算，这里会立刻不等；`null` 也必须原样传给 ECharts（断线，不是断成 0）。
     """
-    option = rendered["with_data"][0]
+    assert rendered["with_data"]["threw"] is None, f"renderChart 抛了：{rendered['with_data']['threw']}"
+    option = rendered["with_data"]["options"][0]
     by_name = {s["name"]: s for s in option["series"]}
 
     for name in ("ma5", "ma20", "ma60"):
@@ -247,5 +270,28 @@ def test_a_payload_without_bars_does_not_throw(rendered):
     计划里的实现直接取 `d.entry.date`，在 `entry: None` 上抛 TypeError——
     页面其余部分一切正常，只有图表区静默停在上一笔，看起来像"点了没反应"。
     """
-    assert rendered["empty"] == [], "空 payload 不应 setOption（会把上一笔的图留着）"
+    assert rendered["empty"]["threw"] is None, f"空 payload 让 renderChart 抛了：{rendered['empty']['threw']}"
+    assert rendered["empty"]["options"] == [], "空 payload 不应 setOption（会把上一笔的图留着）"
     assert "日线" in rendered["chart_html"], "空 payload 应在图表区给出可读的说明，而不是留白"
+
+
+@needs_node
+def test_no_sl_tp_lines_when_the_backend_says_there_are_none(rendered):
+    """后端说没有价位时，图上**一条横线都不许有**。
+
+    什么时候会没有：引擎按**信号日 ATR 自适应**出场（`chase_up` 的 22/22 个预设都是），
+    或预设压根没给 `sl_pct`/`tp_pct`。原实现无条件按 `entry × (1 ± sl_pct)` 画，
+    于是 chase_up 的图上会出现**一条引擎从未使用过的止盈线**（差 12 个百分点）——
+    **那比不画更坏**：它让用户以为策略是按那条线退出的。
+
+    判据落在**渲染出来的 option** 上：`K` series 必须没有 `markLine`（或它的 data 为空），
+    图本身仍然画出来。
+    """
+    assert rendered["no_levels"]["threw"] is None, \
+        f"没有 SL/TP 价位时 renderChart 抛了（多半是在 null 上取小数点）：{rendered['no_levels']['threw']}"
+    assert len(rendered["no_levels"]["options"]) == 1, "没有 SL/TP 也一样要出图"
+    candle = rendered["no_levels"]["options"][0]["series"][0]
+    assert candle["type"] == "candlestick", "蜡烛仍要画"
+    assert candle["data"], "日线在，K 线就该有数据"
+    ml = candle.get("markLine")
+    assert not ml or not ml.get("data"), f"后端说没有价位，图上却有横线：{ml}"

@@ -8,6 +8,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import math
+
 import pandas as pd
 
 #: 交易方向。**SL/TP 的画法依赖它**：空头止损在上方、止盈在下方；多头相反。
@@ -52,6 +54,48 @@ def sl_tp_prices(entry_price: float, sl_pct: float, tp_pct: float, direction: st
     if direction == "short":
         return entry_price * (1.0 + sl_pct), entry_price * (1.0 - tp_pct)
     return entry_price * (1.0 - sl_pct), entry_price * (1.0 + tp_pct)
+
+
+def exit_levels(params: dict[str, Any], entry_price: float, direction: str,
+                atr_pct: float | None = None) -> tuple[float, float] | None:
+    """该笔的 `(sl_price, tp_price)`；**只有当引擎确实按这两个百分比出场时才给**，否则 `None`。
+
+    ⚠️ **不能一律按 `entry × (1 ± sl_pct)` 画**（原实现就是这样，是错的）：
+
+    `chase_up` / `uptrend_pullback` 的引擎在**给了 `atr_*_mult` 时改用信号日 ATR 自适应**——
+
+        chase_up/backtrader_engine.py:43-47
+        if atr_tp is not None and atr_sl is not None and atr_pct is not None:
+            return entry_price * (1 + a * atr_tp_mult), entry_price * (1 - a * atr_sl_mult)
+        return entry_price * (1 + fixed_tp_pct), entry_price * (1 - fixed_sl_pct)
+
+    而 **chase_up 的 22/22 个预设都带 `atr_*_mult`** → 那个分支永远走 ATR，
+    `sl_pct`/`tp_pct` 是引擎**根本不看**的 fallback。实测差别不小：
+    `atr_tp_mult=6.0`、典型 `atr_pct=3%` → 真实止盈 **+18%**，而按 `tp_pct=0.30` 画出来是 **+30%** ——
+    **图上那条线在说一件引擎没做过的事。**
+
+    这里只**镜像引擎自己的分支条件**（`atr_*` 是否给全），**不重实现 ATR 价位算术**——
+    那套公式留在引擎里（§6）。条件不成立时**返回 `None`**，由调用方如实呈现"这一笔没有可画的 SL/TP 线"，
+    而不是编一条。
+
+    同时把"`sl_pct`/`tp_pct` 缺失"也堵掉：原实现用 `params.get("sl_pct", 0.0)`，
+    缺失被折成**真的 0**，于是止损线与止盈线**同时落在入场价上**——
+    图上看起来"设置了止损"，而它其实是 `0`（三个 ensemble 预设正属此列）。
+    """
+    atr_sl, atr_tp = params.get("atr_sl_mult"), params.get("atr_tp_mult")
+    # **逐字镜像引擎的分支条件**（含最后那项 `atr_pct`），不是"见到 atr_* 就不画"：
+    # `atr_pct` 是**逐笔的运行时值**，所以预设带全 `atr_*_mult` 时，
+    # 若**这一笔**的 atr_pct 缺失或 NaN，引擎同样会回落到固定的 sl_pct/tp_pct
+    # —— 那时平台就**应该**画那两条线。少镜像一项就会过度抑制。
+    uses_atr = (atr_sl is not None and atr_tp is not None
+                and atr_pct is not None and not math.isnan(float(atr_pct)))
+    if uses_atr:
+        return None
+
+    sl_pct, tp_pct = params.get("sl_pct"), params.get("tp_pct")
+    if sl_pct is None or tp_pct is None:
+        return None          # 缺失 ≠ 0：不画，而不是画在入场价上
+    return sl_tp_prices(entry_price, float(sl_pct), float(tp_pct), direction)
 
 
 def _load_dual_bars(db_path: Path, code: str, start: str, end: str) -> pd.DataFrame:
@@ -115,12 +159,10 @@ def chart_payload(engine: str, params: dict[str, Any], trade: dict[str, Any], db
         })
 
     entry_price = float(trade["entry_price"])
-    sl_price, tp_price = sl_tp_prices(
-        entry_price,
-        float(params.get("sl_pct", 0.0)),
-        float(params.get("tp_pct", 0.0)),
-        direction,
-    )
+    # `None` 表示**这一笔没有可画的 SL/TP 线**：引擎按 ATR 出场，或预设压根没给这两个参数。
+    # 前端必须把 `None` 渲染成"不画线 + 一句说明"，而不是画一条编出来的价位（见 `exit_levels`）。
+    levels = exit_levels(params, entry_price, direction, trade.get("atr_pct"))
+    sl_price, tp_price = levels if levels is not None else (None, None)
     return {
         "bars": out_bars,
         "entry": {"date": entry_date, "price": entry_price},

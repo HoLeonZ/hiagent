@@ -439,21 +439,32 @@ function renderChart(d) {
     data: d.bars.map((b) => b[key]), lineStyle: { width: 1, color } });
   const macdOn = d.bars.some((b) => b.macd_dif !== null && b.macd_dif !== undefined);
 
-  const markLines = {
-    silent: true,
-    symbol: "none",
-    data: [
-      { yAxis: d.sl_price, lineStyle: { color: "#ff5252", type: "dashed" },
-        label: { formatter: `SL ${d.sl_price.toFixed(2)}`, position: "insideEndTop", color: "#ff5252" } },
-      { yAxis: d.tp_price, lineStyle: { color: "#4caf50", type: "dashed" },
-        label: { formatter: `TP ${d.tp_price.toFixed(2)}`, position: "insideEndBottom", color: "#4caf50" } },
-    ],
-  };
-
+  // SL/TP 两条横线。**后端说没有，就一条都不画。**
+  //
+  // `sl_price` / `tp_price` 为 `null` 表示"这一笔没有可画的止损/止盈线"：
+  //   ① 引擎按**信号日 ATR 自适应**出场（`chase_up` 的 22/22 个预设都是），
+  //      此时 `sl_pct`/`tp_pct` 是引擎**根本不看**的 fallback；
+  //   ② 或预设压根没给这两个参数（三个 ensemble 预设）。
+  //
+  // 原实现无条件按 `entry × (1 ± sl_pct)` 画 —— 于是 chase_up 的图上会出现
+  // **一条引擎从未使用过的止盈线**（实测 `tp_pct=0.30` 而真实 ATR 口径约 +18%，
+  // 差 12 个百分点）。**那比不画更坏**：它让用户以为策略是按那条线退出的。
+  //
+  // 标签用 3 位小数与交易表一致：`sl_pct=0.0005` 时止损与入场价在两位小数下**同形**。
+  const hasLevels = typeof d.sl_price === "number" && typeof d.tp_price === "number";
   const series = [
     { name: "K", type: "candlestick", data: ohlc, itemStyle: {
         color: "#ef5350", color0: "#26a69a", borderColor: "#ef5350", borderColor0: "#26a69a" },
-      markLine: markLines },
+      ...(hasLevels ? { markLine: {
+        silent: true,
+        symbol: "none",
+        data: [
+          { yAxis: d.sl_price, lineStyle: { color: "#ff5252", type: "dashed" },
+            label: { formatter: `SL ${d.sl_price.toFixed(3)}`, position: "insideEndTop", color: "#ff5252" } },
+          { yAxis: d.tp_price, lineStyle: { color: "#4caf50", type: "dashed" },
+            label: { formatter: `TP ${d.tp_price.toFixed(3)}`, position: "insideEndBottom", color: "#4caf50" } },
+        ],
+      } } : {}) },
     line("ma5", "ma5", "#9e9e9e"),
     line("ma20", "ma20", "#42a5f5"),
     line("ma60", "ma60", "#ffa726"),

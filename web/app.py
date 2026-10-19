@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from web import jobs as jobs_mod
 from web.catalog import ENGINES, all_presets
-from web.chart import ENGINE_DIRECTION, chart_payload, sl_tp_prices
+from web.chart import ENGINE_DIRECTION, chart_payload, exit_levels
 from web.metrics_view import (
     CANONICAL_KEYS,
     METRIC_KINDS,
@@ -98,26 +98,21 @@ def _effective_params(meta: dict[str, Any]) -> dict[str, Any]:
     return params
 
 
-def _exit_pcts(meta: dict[str, Any]) -> tuple[float, float]:
-    """该次运行的 `(sl_pct, tp_pct)`（相对百分比，§4）。"""
-    params = _effective_params(meta)
-    return float(params.get("sl_pct") or 0.0), float(params.get("tp_pct") or 0.0)
-
-
-def _with_exit_levels(i: int, trade: dict, engine: str, sl_pct: float, tp_pct: float) -> dict:
+def _with_exit_levels(i: int, trade: dict, engine: str, params: dict[str, Any]) -> dict:
     """给一行成交补上 `sl_price` / `tp_price`（**价位**，由入场价与相对百分比推出）。
 
     为什么这三行值得单拿出来：用户要的是"看到 sl/tp"，
     而光有图上那两条 `markLine` 不够 —— 扫交易表时看不到它们。
 
-    **复用 `web/chart.py` 的 `sl_tp_prices` 与 `ENGINE_DIRECTION`，不在这里重写
+    **复用 `web/chart.py` 的 `exit_levels` 与 `ENGINE_DIRECTION`，不在这里重写
     `entry × (1 ± pct)`**：图上的线与表里的数必须是同一份算术，否则它们会各自漂移，
     而"图上一条线、表里一个数、两者不一致"是最难被发现的那类错。
     """
     entry = trade.get("entry_price")
     if entry is None:
         return {"i": i, **trade, "sl_price": None, "tp_price": None}
-    sl, tp = sl_tp_prices(float(entry), sl_pct, tp_pct, ENGINE_DIRECTION[engine])
+    levels = exit_levels(params, float(entry), ENGINE_DIRECTION[engine], trade.get("atr_pct"))
+    sl, tp = levels if levels is not None else (None, None)
     return {"i": i, **trade, "sl_price": sl, "tp_price": tp}
 
 
@@ -592,8 +587,8 @@ def create_app() -> FastAPI:
             raise HTTPException(404, detail=f"unknown run: {run_id}")
         meta, result = got
         rows = _sorted_trades(result.trades)
-        sl_pct, tp_pct = _exit_pcts(meta)
-        engineered = [_with_exit_levels(i, t, meta["engine"], sl_pct, tp_pct)
+        params = _effective_params(meta)
+        engineered = [_with_exit_levels(i, t, meta["engine"], params)
                       for i, t in enumerate(rows)]
         return {
             "total": len(rows),

@@ -241,3 +241,62 @@ def test_the_shared_renderer_is_not_modified():
         f"  实际 {got}\n"
         "若这次改动是有意的：请在 PR 里说明理由，并同步更新 TRADE_REPORT_SHA256。"
     )
+
+
+def test_exit_levels_are_omitted_when_the_engine_does_not_use_them():
+    """**引擎不按这两个百分比出场时，就不许画那条线。**
+
+    实测（2026-10-19）：`chase_up/backtrader_engine.py:43-47` 在给了 `atr_*_mult` 时改用
+    信号日 ATR 自适应，而 **chase_up 的 22/22 个预设都带 `atr_*_mult`** ——
+    于是 `sl_pct` / `tp_pct` 是引擎**根本不看**的 fallback。
+    原实现一律按 `entry × (1 ± sl_pct)` 画，差别不小：
+    `atr_tp_mult=6.0`、典型 `atr_pct=3%` → 真实止盈约 **+18%**，而画出来是 **+30%**。
+
+    **画一条引擎没用过的线，比不画更坏** —— 它让用户以为策略是按那条线退出的。
+    """
+    from web.chart import exit_levels
+
+    ATR_FULL = {"sl_pct": 0.05, "tp_pct": 0.30, "atr_sl_mult": 1.5, "atr_tp_mult": 6.0}
+    # 带全 atr_* 且这一笔的 atr_pct 有效 → 引擎走 ATR 分支 → **不画**
+    assert exit_levels(ATR_FULL, 10.0, "long", 0.03) is None
+    # ⚠️ `atr_pct` 是**逐笔**的运行时值。它缺失或 NaN 时，引擎**同样**回落到 fixed
+    # —— 那时平台就**应该**照画。少镜像这一项 = 过度抑制。
+    for bad in (None, float("nan")):
+        sl, tp = exit_levels(ATR_FULL, 10.0, "long", bad)
+        assert (sl, tp) == (9.5, 13.0), f"atr_pct={bad!r} 时引擎回落 fixed，平台必须照画"
+    # 只给一个 atr_* 时，引擎的条件（两个都非 None）不成立 → 回落 fixed → 照画
+    sl, tp = exit_levels({"sl_pct": 0.05, "tp_pct": 0.30, "atr_sl_mult": 1.5}, 10.0, "long")
+    assert (sl, tp) == (9.5, 13.0), "只给了一半 atr_* → 引擎走 fixed 分支 → 平台应当照画"
+    # 没给 atr_*_mult：引擎走 fixed 分支 → 画
+    sl, tp = exit_levels({"sl_pct": 0.05, "tp_pct": 0.30}, 10.0, "long")
+    assert (sl, tp) == (9.5, 13.0)
+    # 缺失 ≠ 0：原实现用 `params.get("sl_pct", 0.0)`，缺失被折成真 0，
+    # 于是止损线与止盈线**同时落在入场价上**，看起来"设了止损"其实是 0。
+    assert exit_levels({"tp_pct": 0.30}, 10.0, "long") is None
+    assert exit_levels({"sl_pct": 0.05}, 10.0, "long") is None
+    # 空头方向相反
+    sl, tp = exit_levels({"sl_pct": 0.0005, "tp_pct": 0.06}, 8.01, "short")
+    assert sl > 8.01 > tp
+
+
+@pytest.mark.skipif(_db() is None, reason=SKIP_REASON)
+def test_a_chase_up_trade_gets_no_sl_tp_lines_from_the_platform():
+    """端到端：**chase_up 的任何一笔都不该拿到 SL/TP 价位**（它按 ATR 出场）。"""
+    from web.chart import chart_payload, exit_levels
+    from web.params import split_params
+
+    params = dict(split_params("chase_up", "chase_v10_pos2_equal_atr_tp6_sl15_mh18_score16")["tunable"])
+    assert params.get("atr_sl_mult") is not None and params.get("atr_tp_mult") is not None, \
+        "这个预设本该带 atr_*_mult —— 若不再带，这条测试的前提就变了"
+    trade = {"thscode": "000001.SZ", "entry_date": "2026-03-02", "exit_date": "2026-03-10",
+             "entry_price": 12.0, "exit_price": 12.5, "exit_reason": "TP"}
+    # 给这一笔一个**有效的** atr_pct —— 这正是真实 chase_up 成交的形态
+    trade["atr_pct"] = 0.03
+    d = chart_payload("chase_up", params, trade, _db())
+    assert d["sl_price"] is None and d["tp_price"] is None, \
+        "chase_up 这一笔按 ATR 出场，平台不许替它编一条百分比止损/止盈线"
+    # 反例：这一笔的 atr_pct 缺失 → 引擎回落 fixed → 平台**应当**画
+    trade["atr_pct"] = None
+    d2 = chart_payload("chase_up", params, trade, _db())
+    assert d2["sl_price"] is not None and d2["tp_price"] is not None, \
+        "atr_pct 缺失时引擎走 fixed 分支，平台应当照画（否则是过度抑制）"
