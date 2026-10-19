@@ -8,7 +8,10 @@ Usage:
 
     df = walkforward_run(...)         # columns: total_return, sharpe, ...
     n_comparisons = 50                # from preset grid size
-    text = format_walkforward_stats(df, n_comparisons=n_comparisons)
+    text = format_walkforward_stats(
+        df, n_comparisons=n_comparisons,
+        trading_days_per_window=40,   # §13.102: 必填, 由调用方实测
+    )
     print(text)
 
 Output includes:
@@ -35,6 +38,7 @@ def format_walkforward_stats(
     *,
     n_comparisons: int = 1,
     trading_days_per_year: int = 252,
+    trading_days_per_window: int,
 ) -> str:
     """Format walkforward result DataFrame with DSR + Bonferroni.
 
@@ -48,6 +52,14 @@ def format_walkforward_stats(
     backtested before selecting the winner — this is the "k" in DSR's
     selection-bias correction. Set n_comparisons=1 when reporting a
     single-config walkforward (DSR degenerates to PSR).
+
+    ⚠️⚠️ **`trading_days_per_window` 是**必填**的 (§13.102, 2026-10-19)。**
+    本函数用它估 DSR 的 `n_returns`。**它无法从入参 `df` 推出** —— df 只有每窗的
+    指标, 没有窗口长度 ⇒ 只能由**知道 windows 的那个调用方**给。
+    此前这里写死 `n_windows * 63`, 注释还写着「rough estimate: ~63 trading days/**month**」;
+    **实测一个 2 个月窗口只有 44 个交易日** (63 ≈ 3 个月, 且任何月份都没有 63 个交易日)
+    ⇒ `n_returns` **被高估 43%** ⇒ SE 偏小 ⇒ **DSR 偏高 (方向: 乐观)**。
+    改成必填之后, **"忘了给窗口长度"这件事在语法上就不可能**。
     """
     if df.empty:
         return "(empty walkforward)"
@@ -66,15 +78,17 @@ def format_walkforward_stats(
     worst_dd = float(df["max_dd"].min()) if "max_dd" in df.columns else float("nan")
 
     # DSR + Bonferroni on the median observed Sharpe
+    # §13.102: T = 窗口数 × **调用方给的每窗交易日数** (此前写死 63 = 高估 43%)。
+    n_returns = max(n_windows * trading_days_per_window, 100)
     dsr = deflated_sharpe_ratio(
         observed_sharpe=median_sharpe,
         n_trials=n_comparisons,
-        n_returns=max(n_windows * 63, 100),    # rough estimate: ~63 trading days/month
+        n_returns=n_returns,
         trading_days_per_year=trading_days_per_year,
     )
     sharpe_p = sharpe_significance_pvalue(
         observed_sharpe=median_sharpe,
-        n_returns=max(n_windows * 63, 100),
+        n_returns=n_returns,
         trading_days_per_year=trading_days_per_year,
     )
     bonferroni_p = min(sharpe_p * n_comparisons, 1.0)

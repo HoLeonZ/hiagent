@@ -37,10 +37,13 @@ import logging
 from copy import deepcopy
 from pathlib import Path
 
+import duckdb
+
 from hiagent_config import DB_PATH
 
 from core.walkforward import monthly_windows
 from dna_stats.walkforward_report import format_walkforward_stats
+from uptrend_pullback.backtest import TRADING_DAYS as UP_TRADING_DAYS
 from uptrend_pullback.presets import get_preset
 from uptrend_pullback.walkforward import run_windows
 
@@ -63,6 +66,36 @@ def _apply_overrides(cfg: dict, overrides: dict[str, object]) -> dict:
         else:
             out[path] = val
     return out
+
+
+def _trading_days_per_window(windows: list[tuple[str, str]], db_path: Path) -> int:
+    """§13.102: 每个窗口**实测**的交易日数 (各窗均值, 四舍五入)。
+
+    报告器 `format_walkforward_stats` 需要它来估 DSR 的 `n_returns`, 而这个量
+    **无法从窗口日期推出** (日历天 ≠ 交易日)。此前报告器里写死 `63`, 注释写
+    「~63 trading days/month」—— 而**任何月份都没有 63 个交易日**, 一个 2 月窗口
+    实测只有 **44** 个 ⇒ `n_returns` 被高估 43% ⇒ DSR 偏高 (乐观方向)。
+    ⇒ 改为由**知道 windows 的调用方**从库里数出来, 报告器不再猜。
+    """
+    counts: list[int] = []
+    con = duckdb.connect(str(db_path), read_only=True)
+    try:
+        for start, end in windows:
+            n = con.execute(
+                "SELECT COUNT(DISTINCT date) FROM raw_kline_daily "
+                "WHERE date >= ? AND date < ?",
+                [start, end],
+            ).fetchone()[0]
+            if n:
+                counts.append(int(n))
+    finally:
+        con.close()
+    if not counts:
+        raise ValueError(
+            "§13.102: 所有窗口都数不到交易日 ⇒ 无法估 n_returns。"
+            "**不静默退回一个常数** (§0): 请检查窗口日期与 DB 覆盖。"
+        )
+    return int(round(sum(counts) / len(counts)))
 
 
 def _summarize(df) -> dict:
@@ -119,7 +152,15 @@ def main() -> None:
 
     print(f"[{args.label or base_name}] {args.start_month}..{args.end_month} "
           f"({len(windows)} windows, engine={args.engine})")
-    print(format_walkforward_stats(df, n_comparisons=args.n_trials))
+    tdpw = _trading_days_per_window(list(windows), db)
+    logger.warning("§13.102: 每窗实测交易日数 = %d (用于估 n_returns)", tdpw)
+    # §13.102(①): 本族的 Sharpe 是用 `TRADING_DAYS = 243` 年化的 (§13.13 表里那条可量化的
+    # 差), 而报告器默认 252 ⇒ 拿 243 年化的 Sharpe 去除 √252 会把 z 压低 1.8% (方向: 保守)。
+    # ⇒ 把**本族自己的**常数传进去, 让"年化"与"去 年化"用同一个数。
+    print(format_walkforward_stats(
+        df, n_comparisons=args.n_trials, trading_days_per_window=tdpw,
+        trading_days_per_year=UP_TRADING_DAYS,
+    ))
     print(df.to_string(index=False))
 
     record = {

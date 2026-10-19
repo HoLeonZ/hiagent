@@ -9,7 +9,7 @@ from dna_stats.walkforward_report import format_walkforward_stats
 
 def test_format_empty_returns_marker():
     """V7: 空 DataFrame 返回 marker。"""
-    out = format_walkforward_stats(pd.DataFrame(), n_comparisons=10)
+    out = format_walkforward_stats(pd.DataFrame(), n_comparisons=10, trading_days_per_window=44)
     assert "(empty" in out
 
 
@@ -21,7 +21,7 @@ def test_format_basic_columns():
         "max_dd": [-0.10, -0.15, -0.20, -0.12, -0.08],
         "trades": [10, 12, 8, 11, 13],
     })
-    out = format_walkforward_stats(df, n_comparisons=50)
+    out = format_walkforward_stats(df, n_comparisons=50, trading_days_per_window=44)
     assert "窗口 5" in out
     assert "DSR" in out
     assert "Bonferroni" in out
@@ -34,8 +34,8 @@ def test_format_more_trials_lower_dsr():
         "total_return": [0.10] * 12,
         "sharpe": [2.0] * 12,
     })
-    out_1 = format_walkforward_stats(df, n_comparisons=1)
-    out_1000 = format_walkforward_stats(df, n_comparisons=1000)
+    out_1 = format_walkforward_stats(df, n_comparisons=1, trading_days_per_window=44)
+    out_1000 = format_walkforward_stats(df, n_comparisons=1000, trading_days_per_window=44)
     # Extract DSR from output strings
     import re
     def extract_dsr(s):
@@ -47,5 +47,5 @@ def test_format_more_trials_lower_dsr():
 def test_format_missing_columns_no_crash():
     """V7: 缺列时优雅降级。"""
     df = pd.DataFrame({"total_return": [0.10, 0.20]})    # 缺 sharpe/max_dd
-    out = format_walkforward_stats(df, n_comparisons=10)
+    out = format_walkforward_stats(df, n_comparisons=10, trading_days_per_window=44)
     assert "窗口 2" in out
