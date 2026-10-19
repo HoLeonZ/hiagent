@@ -91,11 +91,50 @@ COMPLIANCE_MARKER_PATTERNS = (
 )
 
 
-def _identify_tp_sl_policy(preset_dict: dict[str, object]) -> str:
-    """Identify TP/SL policy from preset key set."""
+_ATR_KEYS = ("atr_sl_mult", "atr_tp_mult")
+
+
+def _atr_multiplier_is_read(family_dir: Path) -> bool:
+    """该族的引擎里**真的读了** ATR 乘数吗 (§13.179)?
+
+    ## 为什么必须有这一层
+    本文件原来的判据是 `has_atr = "atr_sl_mult" in preset_keys` —— **键存在即认证**。
+    实测代价 (§13.175): `cycle_price_action` 同时声明 `sl_pct` 与 `atr_sl_mult`,
+    于是被判为 **HYBRID = "ATR-adaptive with fixed fallback"**; 而
+    `self.p.atr_sl_mult` 在全族**一处也没有** —— 它的止损是**纯固定百分比**。
+    ⇒ 一条**从不存在的机制**被本守卫**认证**着。
+    (同一族的 `presets.py` 注释当时也这么写, 另有一句把止损宽度**谎报**成 7.5% —— 均已在 §13.175 更正。)
+
+    ## 判据
+    只看**配置读点** (`obj.get("atr_sl_mult")` / `obj["atr_sl_mult"]`), **不含**
+    `params=dict(KEY=…)` 那种"到得了 params"的形态 —— 因为那正是 §13.145④ 抓不到的一层
+    (键到了 params, 逻辑里从不使用)。**这不是**取代 §13.144 的读点棘轮, 而是补它够不到的那一格。
+    """
+    for src_path in sorted(family_dir.rglob("*.py")):
+        if src_path.name == "presets.py" or "test" in src_path.parts:
+            continue
+        try:
+            src = src_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for k in _ATR_KEYS:
+            if (f'get("{k}"' in src or f"get('{k}'" in src
+                    or f'["{k}"]' in src or f"['{k}']" in src):
+                return True
+    return False
+
+
+def _identify_tp_sl_policy(preset_dict: dict[str, object],
+                           atr_multiplier_is_read: bool = True) -> str:
+    """Identify TP/SL policy from preset key set **∩ 引擎是否真读 ATR 乘数**。
+
+    ⚠️ §13.179: 第二参数是**后加的**。默认 `True` 只为不破坏既有调用点;
+    `_scan_presets_for_compliance` 会**显式传**该族实测的读点结果 ⇒
+    **键存在但没人读**的族不再被认证成 ATR-adaptive。
+    """
     keys_lower = {k.lower() for k in preset_dict.keys()}
 
-    has_atr = bool(
+    has_atr = atr_multiplier_is_read and bool(
         "atr_tp_mult" in keys_lower or "atr_sl_mult" in keys_lower
     )
     has_fixed = "tp_pct" in keys_lower or "sl_pct" in keys_lower
@@ -190,6 +229,7 @@ def _scan_presets_for_compliance(
         return 0, []
 
     inspected = 0
+    _atr_read = _atr_multiplier_is_read(file_path.parent)
 
     try:
         source = file_path.read_text(encoding="utf-8")
@@ -214,7 +254,7 @@ def _scan_presets_for_compliance(
         ):
             continue
 
-        policy = _identify_tp_sl_policy(preset_dict)
+        policy = _identify_tp_sl_policy(preset_dict, _atr_read)
         if policy == "MISSING":
             continue  # No TP/SL keys at all — different concern
 
@@ -328,3 +368,54 @@ def test_cycle_price_action_tp_sl_compliance_header() -> None:
         raise AssertionError(
             _engine_red_message("cycle_price_action", violations)
         )
+
+
+# ---------------------------------------------------------------------------
+# §13.179: 分类**必须**由"引擎真的读了 ATR 乘数"推出, 而不是"键存在"
+# ---------------------------------------------------------------------------
+_EXPECTED_POLICY = {
+    # 实测 (2026-10-20): 只有 chase 的引擎真读 ATR 乘数
+    #   (`backtest.py`: `atr_sl_mult=p.get("atr_sl_mult")`),
+    # 而 cycle 的 `atr_sl_mult` **从不被读** (§13.175) ⇒ 它是 FIXED, 不是 HYBRID。
+    "chase_up": {"HYBRID"},
+    "uptrend_pullback": {"FIXED"},
+    "short_reversal": {"FIXED"},
+    "cycle_price_action": {"FIXED"},
+}
+
+
+def test_policy_label_is_derived_from_a_read_site() -> None:
+    """**四族**出现过的策略标签必须落在期望集里 ⇒ 标签变了就报红。
+
+    棘轮方向: 若有人**接线** `cycle` 的 `atr_sl_mult` (它今天从不被读),
+    标签会 `FIXED → HYBRID` ⇒ **本测试报红** ⇒ 强制回来更新期望并说明。
+    (本文件不 import pytest ⇒ 用普通循环, 与其既有风格一致。)
+    """
+    for fam in sorted(PRESET_FILES):
+        file_path = PRESET_FILES[fam]
+        src = file_path.read_text(encoding="utf-8")
+        atr_read = _atr_multiplier_is_read(file_path.parent)
+        seen = set()
+        for _node, preset_dict, _nm in _iter_preset_candidates(ast.parse(src)):
+            keys = set(preset_dict.keys())
+            if not ({"universe", "max_hold", "max_positions"} & keys):
+                continue
+            seen.add(_identify_tp_sl_policy(preset_dict, atr_read))
+        seen -= {"MISSING"}
+        assert seen, f"{fam}: 一个 preset 都没分类到 ⇒ 本测试空转"
+        got = seen - _EXPECTED_POLICY[fam]
+        assert not got, (
+            f"`{fam}` 的策略标签变了: 实测 {sorted(seen)}, 期望 {sorted(_EXPECTED_POLICY[fam])} "
+            f"(新出现的: {sorted(got)}; atr 读点 = {atr_read})\n"
+            f"⇒ 若确实接线了 ATR 乘数, 请更新 `_EXPECTED_POLICY` **并**说明; 若没接线, 是分类器坏了。"
+        )
+
+
+def test_classifier_requires_a_read_site_not_just_the_key() -> None:
+    """**判据本身**的牙: 同样的 preset 键, 读点=False ⇒ **不许**判成 ATR/HYBRID。
+
+    (没有这一条, 上面那条棘轮也可能因为分类器**永远返回 FIXED** 而空转。)
+    """
+    keys = {"sl_pct": 0.05, "tp_pct": 0.06, "atr_sl_mult": 1.5, "max_hold": 5}
+    assert _identify_tp_sl_policy(keys, atr_multiplier_is_read=True) == "HYBRID"
+    assert _identify_tp_sl_policy(keys, atr_multiplier_is_read=False) == "FIXED"
