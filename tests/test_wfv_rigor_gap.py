@@ -83,25 +83,44 @@ def test_short_reversal_grid_runner_has_walkforward() -> None:
 
 
 def test_sweep_dsr_test_coverage_catches_grid_runner() -> None:
-    """§5 Test coverage: existing sweep DSR test must extend glob to catch
-    grid_runner.py and any other IS-grid scripts.
+    """§5 Test coverage: the sweep-DSR guard must actually collect `**/grid*.py`.
 
-    Currently `tests/test_sweep_scripts_dsr.py` globs `**/sweep*.py` +
-    `**/wf_sweep*.py` — misses `**/grid*.py`. A script that runs an
-    IS grid under a different name would pass the existing test.
+    ⚠️⚠️ **2026-10-19 (§13.101): 本测试此前恒绿, 而它想抓的洞一直开着。**
+    旧判据 = 对**整文件文本**做一次正则搜索, 找 grid 通配符 ——
+    而 `_collect_sweep_scripts` 的 docstring 里**恰好写着**
+    「额外 glob `**/grid*.py` 由 ... 单独 verify」
+    ⇒ **那句描述这个洞的注释, 把这条"断言这里有洞"的测试满足了。**
+
+    ⚠️ **我第一次"加固"也失败了, 而且失败方式一样**: 改成"取 AST 字符串常量、排除 docstring"
+    —— 结果被 `_XFAIL` 的**理由字符串**满足 (它同时含 `*`、`.py`、`grid`)。
+    **两次都是"判据的单位是文本, 而某段文字算数"。**
+
+    ⇒ 最终判据改为**看结果, 不看文本**: 直接调用那个收集器, 看它**实际收到了什么**。
+    (本册的纪律: **核对必须停在「直接调扫描器, 看它是否看见」**。)
     """
+    import importlib.util
+    import sys as _sys
+
     test_path = Path("tests/test_sweep_scripts_dsr.py")
     if not test_path.exists():
         return  # Skip if test file removed
-    src = test_path.read_text(encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("_sweep_dsr_guard_probe", test_path)
+    mod = importlib.util.module_from_spec(spec)
+    _sys.modules["_sweep_dsr_guard_probe"] = mod
+    spec.loader.exec_module(mod)
 
-    has_grid_glob = bool(re.search(r"\*\*?/grid\*?\.py", src))
-    assert has_grid_glob, (
-        "GAP CAPTURED: tests/test_sweep_scripts_dsr.py — glob misses "
-        "**/grid*.py. short_reversal/grid_runner.py (real §5 IS grid) "
-        "evades detection. GREEN fix: extend glob to **/grid*.py."
+    collected = [p.as_posix() for p in getattr(mod, "_ALL", [])]
+    assert collected, (
+        "§13.101: 收集器一个脚本都没收到 ⇒ 判据的扫描单位不存在 (那样本断言恒真)。"
     )
-
+    grids = [c for c in collected if "grid" in Path(c).name]
+    assert grids, (
+        f"GAP CAPTURED: tests/test_sweep_scripts_dsr.py 的收集器**实际收到**的脚本里没有 grid:"
+        f"\n  {collected}\n"
+        f"⇒ `uptrend_pullback/grid.py`(真实的 itertools.product 网格, 且**无任何 §5 指标**)"
+        f"与 `short_reversal/grid_runner.py` 都会**逃过检测**。\n"
+        f"GREEN fix: 把 `**/grid*.py` 加进 glob。"
+    )
 
 def test_short_reversal_walkforward_uses_core() -> None:
     """§5 RED: short_reversal/walkforward.py must use core/walkforward.
