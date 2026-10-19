@@ -31,13 +31,44 @@ SHORT_SRC = (ROOT / "short_reversal" / "replay_strategy_v3.py").read_text(encodi
 CORE_SRC = (ROOT / "core" / "dual_price.py").read_text(encoding="utf-8")
 
 
+# 多头引擎名单 (entry 与 exit 两处符号都要查)
+_LONG = ("chase_up/portfolio.py", "uptrend_pullback/portfolio.py")
+
+
 def _long_signs() -> dict[str, str]:
-    """多头引擎 entry 滑点后的乘号, 逐文件取。"""
+    """多头引擎 **entry** 滑点后的乘号, 逐文件取。
+
+    ⚠️ **2026-10-19 (§13.96) 本函数改过一次 —— 而且是被"合理的重构"逼的。**
+    旧式 (内联):   ``entry_px = float(o) * (1 + atr_slip)``
+    新式 (§13.95): ``entry_px = float(o) * (1 + effective_slippage(...))``
+    §13.95 把公式收进 `core` 之后, 旧正则抓不到 ⇒ 返回 `'?'` ⇒ 本文件**变红**。
+    **而符号本身是对的**; 变红的原因是**尺子认不出新的正确形态**。
+    (与 §13.120 同形: "测试红了有两种可能 —— 代码错了, 或者尺子认不出新的正确形态";
+     处理方式是**让尺子学会新形态, 并证明它仍能抓住错值**, 不是放宽断言。)
+    ⇒ 本函数现在**两种形态都认**。
+    """
     out = {}
-    for rel in ("chase_up/portfolio.py", "uptrend_pullback/portfolio.py"):
+    for rel in _LONG:
         src = (ROOT / rel).read_text(encoding="utf-8")
-        # 只取 "atr_slip" 分支里的 entry_px 赋值
-        m = re.search(r"atr_slip = [^\n]*\n\s*if atr_slip > slippage:\s*\n\s*entry_px = float\(o\) \* \(1 (.) atr_slip\)", src)
+        m = re.search(
+            r"entry_px = float\(o\) \* \(\s*1\s*([+-])\s*(?:atr_slip|effective_slippage)",
+            src,
+        )
+        out[rel] = m.group(1) if m else "?"
+    return out
+
+
+def _long_exit_signs() -> dict[str, str]:
+    """多头引擎 **出场** 滑点后的乘号 (§13.95/§13.96 新增的那条腿)。
+
+    出场是**卖出** ⇒ 悲观方向是成交价更**低** ⇒ 必须是 `-`。
+    ⚠️ 它必须与 entry 的 `+` **相反** —— 这正是本文件的命题「两侧符号必须相反」;
+    在 §13.95 之前出场腿**根本没有滑点**, 所以那时这条命题只有一侧可查。
+    """
+    out = {}
+    for rel in _LONG:
+        src = (ROOT / rel).read_text(encoding="utf-8")
+        m = re.search(r"return float\(raw_px\) \* \(1\.0 ([+-]) slip\)", src)
         out[rel] = m.group(1) if m else "?"
     return out
 
@@ -90,4 +121,30 @@ def test_branch_is_unreachable_under_shipped_presets() -> None:
     ]
     assert not offenders, (
         f"这些 preset 开启了执行滑点, 于是 short entry 的符号修正**不再零漂移**: {offenders}"
+    )
+
+
+def test_long_engines_exit_slippage_takes_the_negative_sign() -> None:
+    """多头**出场**是卖出 ⇒ 冲击让成交价更低 ⇒ 必须是 `(1.0 - slip)`。
+
+    ⚠️ 这条在 §13.95 之前**无法存在** —— 那时出场腿根本没有滑点 (§13.95 的核心发现)。
+    ⇒ 它是"两条腿符号必须相反"这条命题在**真的有了两条腿**之后的补全。
+    """
+    signs = _long_exit_signs()
+    assert signs == {
+        "chase_up/portfolio.py": "-",
+        "uptrend_pullback/portfolio.py": "-",
+    }, (
+        f"多头引擎的**出场**滑点符号不对: {signs} —— 出场是卖出, 应为 '-' (更低 = 悲观)。\n"
+        f"若为 '+' ⇒ 把执行成本记成了执行收益 (§0 违规)。"
+    )
+
+
+def test_the_scanner_actually_matches_something() -> None:
+    """反空转: 两个扫描器都必须真的抓到值 —— 否则上面两条断言是在比 `'?' == '+'`。"""
+    assert "?" not in _long_signs().values(), (
+        f"entry 扫描器抓不到任何形态: {_long_signs()} ⇒ 它已经失效, 上面的断言变成空转"
+    )
+    assert "?" not in _long_exit_signs().values(), (
+        f"exit 扫描器抓不到任何形态: {_long_exit_signs()} ⇒ 同上"
     )
