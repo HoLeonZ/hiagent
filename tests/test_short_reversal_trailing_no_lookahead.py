@@ -54,10 +54,24 @@ def test_no_same_bar_low_updates_the_stop() -> None:
 
 
 def test_tracking_low_is_updated_only_after_the_exit_decision() -> None:
-    """跟踪最低价的更新必须排在 `_close(...)` 之后 (即出场判定之后)。"""
-    close_at = SRC.index('self._close(d, price, reason)\n            return')
-    update_at = SRC.index('"lowest_price": min(prev_lowest, low)')
-    assert update_at > close_at, (
+    """跟踪最低价的更新必须排在 `_close(...)` 之后 (即出场判定之后)。
+
+    ⚠️ 2026-10-19 (§13.122): 本断言此前钉的是**整条调用文本**
+        `'self._close(d, price, reason)\\n            return'`
+    —— 而 §13.97 给平仓腿补了执行冲击, 调用变成了
+        `self._close(d, self._exit_fill_px(price, code, pos["size"], d), reason)`
+    ⇒ 那个字面量从此不再存在 ⇒ **`.index()` 抛 ValueError** ⇒
+    **这条断言永远不可能通过**, 而它看起来仍在守着因果顺序。
+
+    教训: 钉**调用文本**等于把「参数表」也钉住了, 于是一次**正当的**参数变更
+    就能把守卫变成死件。改成钉**形状 + 次序** —— 参数怎么变都还能守,
+    而把更新块挪到出场判定之前仍然会红 (§13.122 已注入验证)。
+    """
+    m_close = re.search(r"if reason is not None:\s*\n\s*self\._close\(", SRC)
+    m_update = re.search(r'"lowest_price":\s*min\(prev_lowest,\s*low\)', SRC)
+    assert m_close, "找不到出场判定的 `if reason is not None: self._close(...)` 形态"
+    assert m_update, "找不到跟踪最低价的更新 (`lowest_price: min(prev_lowest, low)`)"
+    assert m_update.start() > m_close.start(), (
         "跟踪最低价必须在出场判定之后更新, 否则下一根 bar 会用到本 bar 的信息"
     )
 
