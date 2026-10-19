@@ -94,9 +94,13 @@ def _row(fam: str, preset: str, w0: str, w1: str, con) -> dict:
         gap_frac = float(isgap.mean())
         gap_cost = float((((sl_des.loc[sl.index] - sl["exit_price"]) * sl["size"]).abs()
                           [isgap]).sum())
+    # ⚠️ cycle 的适配器**没有 `fees` 列** (它的 TradeRecord 只有 pnl) ——
+    # 本工具第一版在这里直接 `t["fees"]` ⇒ **KeyError 崩掉整行** (实测)。
+    # 缺列 ⇒ 打 NaN, 而不是崩 (§0: 拿不到就明说, 不要静默或崩溃)。
+    fees = float(t["fees"].sum()) if "fees" in t.columns else float("nan")
     return {"n": len(t), "entry_ex": entry_ex, "entry_t": entry_t,
             "gap_frac": gap_frac, "gap_cost": gap_cost,
-            "fees": float(t["fees"].sum()), "net": float(t["net_pnl"].sum())}
+            "fees": fees, "net": float(t["net_pnl"].sum())}
 
 
 def main() -> None:
