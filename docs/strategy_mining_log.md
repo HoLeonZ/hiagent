@@ -86,6 +86,9 @@
 >   改名 + 3 处描述更正, **零漂移**。另记两条负结果: PIT 那路干净 (60 passed + 1 xfail);
 >   我的"导入未引用"扫描器**太吵不可用**。⚠️ 并发现 `test_cycle_survivorship_bias.py`
 >   有**两条既存红、无人登记** (`git stash` 复现确认))。
+>   与 **§13.108** (⛔ §11 那条"代码层已修"的存活偏差保护, 在**缺省路径**上**从未修过** ——
+>   修法写在测试的 docstring 里却从未应用; **缺省回退 `end` → `start`**, **对生产零漂移**
+>   (A/B 交易清单 sha256 逐位不变), 两条**无人登记的红**变绿; 并新增**具名**守卫)。
 >   ⚠️ 并记下**我的第一次测量是查询假象** —— `raw_kline_daily.prev_close` 100% 为 NULL ⇒ 条件恒假,
 >   "0/89" 什么也没证明; 用 `LAG` 重做后得基准 0.1446% ⇒ 确系潜伏)。
 >   与 **§13.99** (⛔ **§5 的 Bonferroni 校正是空的** —— `sharpe_significance_pvalue` 拿年化
@@ -637,7 +640,7 @@ uptrend 5 / cycle 2; 其中**连续注释块** short_reversal 25 个 108 行。
 | §3 **event-sourced 公司行动**: 实测暴露 (short_reversal 3 笔含 1 送股 / chase_up 1 / cycle **164 含 7**) | **会** | ✅ 3 条 RED 锁定 + 1 条行为不变量 | §13.26 |
 | `cycle` 的**流动性筛选用窗口之后的数据** (277/2990 只) | **会** + 口径选择 | ✅ xfail(strict, 自失效) | §13.27 |
 | `min_cash_ratio=None` ⇒ **直接构造路径崩** (3 个 ERROR) | **会** | ⛔ 无 | §13.21 |
-| `load_universe_data` 的**默认值是 §3 陷阱** (漏传者静默拿存活偏差) | **会**(测试侧; 生产调用点是对的) | ⛔ 无 | §13.33(c) |
+| ~~`load_universe_data` 的**默认值是 §3 陷阱**~~ → ✅ **已修** (§13.108): 缺省回退 `end` → **`start`**; **对生产零漂移** (A/B 交易清单 sha256 `8a8752b41791424bc7f0`… 逐位不变), **两条无人登记的红变绿** (N4.1/N4.4) | 已修 | ✅ 3 条**具名**守卫 (含「缺省 == 显式 `start`」的等式) + 注入 | §13.108 |
 | `hold_days` **口径之争** (span vs count; 判定**测试侧**才可疑) | **会**(指标, 不改成交) | ✅ 1 条红 | §13.35 |
 | `cycle` 是**唯一没有 pinned baseline** 的引擎 | **会**(记账) | ✅ 1 条 RED | §13.30(g) |
 | §6.1 那 8 份基线: **引擎段未归因**; 且**须先固定数据版本** | **会**(记账) | ✅ 8 条红 | §6.1 / §13.36–38 |
@@ -675,7 +678,7 @@ uptrend 5 / cycle 2; 其中**连续注释块** short_reversal 25 个 108 行。
 | **§5 守卫的 glob 洞 + 恒绿的 RED 前向防御** (`uptrend_pullback/grid.py` 是真实网格却零 §5 指标; 那条"单独 verify"的测试被描述该洞的注释满足) | 否(守卫层) | ✅ glob 已扩 + 具名豁免 **strict 自失效** + 判据改为"看收集器产物" | §13.101 |
 | `format_walkforward_stats` 把**窗口长度**硬编码 (`n_windows × 63` = 2 个月) —— 今天只有 2 月窗口的调用方, 故潜伏 | **会**(若出现别种窗口长度的调用方) | ⛔ 无 | §13.101(e) |
 | ⛔ **§5 报告器把窗口长度猜错 43%** (`n_windows × 63`, 注释写"63 days/month" —— 任何月份都没有 63 个交易日; 实测 2 月窗口 40–44 天) ⇒ **每份 DSR 偏高 ≈40%** | **会**(每个报出的 DSR 都变; 实测 0.107→0.065) —— **已修**, **无判定翻转** | ✅ 4 条 (含**行为档** + inspect 看真签名 + 调用方须实测且数不到即抛错) | §13.102 |
-| ⛔ **`test_cycle_survivorship_bias.py` 有两条既存红、无人登记** (退市票 `600000.SH` 未留在池里) —— 而它是 §11 记着"代码层已修"的那条保护 | 未知(需先诊断) | ⛔ 无 | §13.107(g) |
+| ~~`test_cycle_survivorship_bias.py` 有两条既存红、无人登记~~ → ✅ **已诊断并修** (§13.108): 根因是 `load_universe_data` 的**缺省回退** (不是测试错) | 已修 | ✅ 见上一行 | §13.108 |
 | ✅ `apply_liquidity_filter` 的**名不副实**已修: `lookback`(**不是窗口**, 是"最少历史天数"门槛) → `min_history_days`; 描述 "60d rolling mean"(实现是**全历史均值**) 已更正 3 处 | 否(纯改名+描述, **零漂移**) | ✅ 3 条 (含**行为档**: 59 排除 / 60 入选) + 2 次注入 | §13.107 |
 | ⛔ **§4 后半句缺失: 跌停封板不可卖** —— `chase_up`(**完全没有**) 与 `cycle`(无) 仍缺; `uptrend_pullback` **本轮补上** (只补**无歧义**的"封板"= `o==h==lo`; "开盘跌停但盘中成交过"是**建模选择**, 已登记未改) | **会**(改跌停封板日的出场; 实测**零漂移** `055eef4451d6ec0ecd98`) | ✅ 4 条**跨族对称性**判据 + 注入; `chase_up` 具名豁免(自失效) | §13.106 |
 | `uptrend_pullback/portfolio.py` **imports `is_limit_up` 却从未调用** (真守卫是内联式 + 本地 `LIMIT_UP_THRESHOLD=0.098` vs core 0.095); 且 `replay_strategy.py:91` 注释**假称**"共用 core 单一来源" | 否(只登记) | ⛔ 无 | §13.106(e) |
@@ -8805,4 +8808,66 @@ v19 的累积暴露是 **19**、v22 是 **162**。**没有一个是该 preset �
 **未在本轮展开** (会话已很长); **登记, 不静默留在那里。**
 
 #### (h) §5 记账
+不改任何 preset 参数 ⇒ `n_comparisons` 不变 (187)。
+
+### 13.108 ⛔ **§11 那条"代码层已修"的存活偏差保护, 在**缺省路径**上从未修过** —— 而它正在产出两条无人登记的红
+
+#### (a) 起点: 上一轮登记的那对"没人看的红"
+§13.107(g) 发现 `tests/test_cycle_survivorship_bias.py` 的 **N4.1 / N4.4 两条红着**,
+而**没有任何地方登记过** (已用 `git stash` 确认既存)。本轮诊断它。
+
+#### (b) 诊断: 修法**写在测试的 docstring 里, 却从未被应用**
+那个文件的 docstring 自己写着:
+> Production bug at `data_feed.py:35`: `listed = {… if r[1] >= ref_end}`
+> … **Fix: include any stock whose `MAX(date) >= start`**.
+
+而现行代码**仍然是 `>= ref_end`** —— 只是 `ref_end` 的定义变成了
+`min(asof_date if asof_date is not None else end, db_last)`。
+⇒ 两条测试都**不传 `asof_date`** ⇒ `ref_pit = end` ⇒ `ref_end = end = 2025-09-21`
+⇒ 退市票 `MAX(date)=2025-04-01 < ref_end` ⇒ **被丢掉**。
+
+⇒ **修法只在"传了 `asof_date`"的那条路径上等价成立。** 而**缺省路径**上, 它的语义是
+「到窗口**末尾**仍在市」—— 与 §3 的字面要求相反:
+> §3: **Delisted assets must remain in the simulation until their physical delisting date.**
+
+#### (c) 这正是已登记的那条陷阱 —— 但它**不是潜伏的**
+§6.6/§6.7 早已登记: 「`load_universe_data` 的**默认值是 §3 陷阱** (漏传者静默拿存活偏差)
+| 会(测试侧; 生产调用点是对的) | ⛔ 无 | §13.33(c)」。
+本轮的**新事实**是: 它**不止是潜伏** —— 它**正在产出两条红**, 而那两条**没人登记**。
+
+**机械核实全部调用点 (AST)**:
+| 调用点 | 传 `asof_date`? |
+|---|---|
+| `cycle_price_action/backtest.py:101` (**唯一生产点**) | ✅ `asof_date=start` |
+| `tests/test_cycle_survivorship_bias.py` ×4 | ⛔ 未传 (**其中 2 条红**) |
+| `tests/test_cycle_data_feed.py` ×3 | ⛔ 未传 |
+| `tests/test_cycle_universe_liquidity_pit.py` ×3 | ✅ |
+
+#### (d) 处置: **缺省回退 `end` → `start`** (契约违反, 且**对生产零漂移**)
+`ref_pit = asof_date if asof_date is not None else **start**`
+⇒ 缺省语义变成「窗口内**至少有一个交易日**」= §3 的字面要求。
+
+* **唯一的生产调用点本来就传 `asof_date=start`** ⇒ `ref_pit` 本来就等于 `start`
+  ⇒ **对生产零漂移**。**已 A/B 逐位验证**: `n_trades=1793`,
+  `total_pnl = -14367158.031782512` (**逐位相同**), 交易清单 sha256
+  `8a8752b41791424bc7b0` **不变** (改前 / 改后各跑一次全市场回测)。
+* 缺省路径从**美化**变成**合规**。
+
+这与 §13.84 (`price_source_for_execution` 的默认值在错的一侧) 是**同一形状**:
+**默认值本身不对, 生产靠带外注入绕开** ⇒ 改默认是"严格不差"的。
+
+#### (e) 结果: 两条无人登记的红**变绿**
+`tests/test_cycle_survivorship_bias.py` 由 **2 failed / 12 passed** → **14 passed**;
+连同 `test_cycle_data_feed.py` / `test_cycle_universe_liquidity_pit.py` 一起 **9 passed + 1 xfailed**
+(那条 xfail 仍是已登记的 §13.27, 未受影响)。
+
+#### (f) 新增具名守卫 (`tests/test_cycle_universe_default_is_not_a_survivorship_trap.py`, 3 条)
+把那两条的性质**具名重述**, 让"缺省回退"这件事失败时能直接指向本节:
+1. **不传** `asof_date` 时窗口内退市的票必须留下 (§3);
+2. 传 `asof_date=start` 时同样 (两条都测 ⇒ 证明**缺省与显式 `start` 是同一语义**);
+3. **★ 把"缺省 == 显式 `start`"钉成一个等式** —— 这条防的是"缺省又能悄悄漂走"。
+
+**注入**: 缺省改回 `end` ⇒ **4 条红** (含原 N4.1/N4.4); 还原 ⇒ **7 passed**。
+
+#### (g) §5 记账
 不改任何 preset 参数 ⇒ `n_comparisons` 不变 (187)。

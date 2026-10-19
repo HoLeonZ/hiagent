@@ -184,13 +184,22 @@ def load_universe_data(
     con = duckdb.connect(db_path, read_only=True)
     try:
         # §3 PIT: universe 在 asof_date 时仍在市 (i.e. MAX(date) >= asof_date)。
-        # 若 caller 未传 asof_date, 回退到 `end` (旧行为)。
+        # ⚠️⚠️ 2026-10-19 (§13.108): **缺省回退从 `end` 改为 `start`。**
+        # 旧默认 `end` = **§3 存活偏差陷阱** (§13.33(c) 登记的同一件事):
+        # `MAX(date) >= end` 会把"窗口内交易过、但在 end 之前退市"的票**整段丢掉**
+        # —— 而 §3 明文要求 "Delisted assets must remain in the simulation until
+        # their physical delisting date"。
+        # 实测: 本改动前, 4 个不传 `asof_date` 的调用点里有 2 个**红着**
+        # (`tests/test_cycle_survivorship_bias.py` 的 N4.1 / N4.4), 且**无人登记**。
+        # ⇒ 缺省改为 `start` ⇒ "窗口内至少有一个交易日" = §3 的字面要求。
+        # **对生产零漂移**: 唯一的生产调用点 (`backtest.py:101`) 本来就传
+        # `asof_date=start` ⇒ `ref_pit` 本来就等于 `start` (已用交易清单哈希逐位验证)。
         # Use DB's actual last day as the in-DB reference — the data file
         # may lag the requested `asof_date` by a few days. Comparing against
         # the user-requested `asof_date` would silently drop the entire
         # universe when the DB is stale.
         db_last = con.execute("SELECT MAX(date) FROM v_daily").fetchone()[0]
-        ref_pit = asof_date if asof_date is not None else end
+        ref_pit = asof_date if asof_date is not None else start
         ref_end = min(ref_pit, db_last) if db_last else ref_pit
         listed_rows = con.execute(
             "SELECT thscode, MAX(date) AS last_date FROM v_daily GROUP BY thscode"
