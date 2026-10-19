@@ -100,14 +100,17 @@ def run_backtest(
     # (not `end`) — 避免 post-hoc constituents 入选。
     universe = load_universe_data(db_path, start, end, asof_date=start)
     all_trades: list[TradeRecord] = []
-    # Filter preset to keys CyclePriceActionStrategy.params accepts
-    # (weight_kline / weight_cycle / weight_calendar / periods / max_volume_participation
-    # live in PRESET_V1 but are not in the strategy params tuple; passing them
-    # would TypeError). V6'' (2026-09-22): sl_pct added for SL-first intraday tiebreak.
-    # Round 15 (2026-09-28, CLAUDE.md §4): intraday_tiebreak added to the
-    # accepted whitelist so cycle preset declarations flow preset → strategy
-    # params → Portfolio.__init__ (Tick 39 plumbing)。
-    _accepted = {"threshold", "min_dim", "max_hold", "atr_period", "atr_sl_mult", "tp_pct", "sl_pct", "initial_capital", "intraday_tiebreak", "weight_kline", "weight_cycle", "weight_calendar", "periods"}
+    # ⚠️ 2026-10-19 (§13.98): 这里**原来是一份手工白名单** —— 与
+    # `CyclePriceActionStrategy.params` 重复维护, 于是**任何新加的 param 都会
+    # 被静默丢掉**, 而注释还写着 "preset-overridable"。实测它已经吃掉了一个:
+    # `limit_up_threshold` 在 params 里、不在白名单里 ⇒ 声明它**无效**。
+    # (本文件自己的注释就记着 Round 15 修过一次同类事故 —— 修的是**实例**,
+    #  没修**机制**。)
+    # ⇒ 改为**从 params 派生**: 不存在"忘了同步"这回事。
+    # `_INJECTED` 是 Control Plane 显式传的, 不得出现在 **strategy_kwargs 里
+    # (否则 `addstrategy` 收到重复关键字 ⇒ TypeError)。
+    _INJECTED = {"data_provider", "precomputed_signals"}
+    _accepted = set(CyclePriceActionStrategy.params._getkeys()) - _INJECTED
     strategy_kwargs = {k: v for k, v in preset.items() if k in _accepted}
 
     # Tick 49 (2026-09-28, CLAUDE.md §6): Control Plane owns DuckDB I/O.

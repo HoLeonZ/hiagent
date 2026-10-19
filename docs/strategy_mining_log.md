@@ -58,6 +58,9 @@
 >   我拿一个**代理量**(表是否为空)当成了它想断言的**语义性质**)、以及 **§13.97**
 >   (接 `short_reversal` —— 它的出场符号与另两族**相反**(空头平仓是买入); 并记下
 >   **行为档第一版是"永远跳过"的** (§13.19 那一类), 已改成能判定的形态)。
+>   与 **§13.98** (⛔ `cycle_price_action` 的滑点**接上去也没用** —— 含滑点的那套成本模型
+>   算完就丢; 已改 fail-fast + **自失效守卫**; 并修掉 `_accepted` **手工白名单**这一机制,
+>   它此前静默吃掉了 `limit_up_threshold`)。
 > * ⚠️ **§3.1 与 §3.2 是留档, 不是行动清单** —— 见两节各自的更正横幅。
 >   **文档的阅读顺序与结论的时间顺序相反, 所以旧节可能比新节更"乐观"。**
 ---
@@ -275,8 +278,13 @@ for label, ov in [("现配置", {}),
 >   唯一真取不到的是 **`cycle_price_action`** (调用方不传 `atr_pct`)。
 > * `chase_up` / `uptrend_pullback` / `short_reversal` **已接线** (§13.95 / §13.96 / §13.97, 均零漂移);
 >   ⚠️ `short_reversal` 的出场符号**与另两族相反** (空头平仓是买入 ⇒ `×(1+slip)`)。
-> * **`cycle_price_action` 仍写明未接** —— 它有三处断链 (preset→`Portfolio` 参数存了不读 ·
->   preset→`ReplayBroker` 构造不传 scale · 调用方不传 `atr_pct`), **连入场腿都取不到 ATR**。
+> * ⛔⛔ **`cycle_price_action` 与另三族**结构上不同** (§13.98)**: 不是"接线断了", 而是
+>   **接上去也没用** —— 本族有**两套并行的成本模型**: `Portfolio._buy_cost/_sell_proceeds`
+>   (真正进现金, **不含滑点**) 与 `ReplayBroker._fee` (含 ATR 滑点, 但它的返回值
+>   `TradeFill.fee` **全包零消费者**, `record_fill` 是 `pass`)。
+>   **实测**: `atr_slip_scale` = 0/1/**50** 三次, `total_pnl` **逐位相同**。
+>   ⇒ 已 **fail-fast**: `> 0` 时构造即拒绝 (**零漂移**)。我第一版写的"接通它"是**假的接通, 已撤回**。
+>   ⇒ **修法不同**: 另三族接上就生效; 这一族要先让成本模型**单一化**。
 > **已修 `chase_up`** (新 helper `effective_slippage` + 全 bar 的 `atr_by_bar` +
 > 出场腿与末日强平同样计冲击), **零漂移** (交易清单 sha256 逐位不变)。
 > **另两族未接** —— 它们那张表恒空, 接了也是死的; 先建 `atr_by_bar` 再接 (已知的、写明的族内不对称)。
@@ -626,7 +634,9 @@ uptrend 5 / cycle 2; 其中**连续注释块** short_reversal 25 个 108 行。
 | `uptrend_pullback/iter_reverse.py` 是**唯一无 §5 三件套的优化器** (`n_trials`/DSR/Bonferroni 命中 0 处；`score_windows` 在**全部**窗口上取 `median_ret + 0.1·sharpe − avg_dd`，**无 OOS 切分**) —— 而它是**当前最优的直系祖先** (v20 = `--iter 100` 的产物) | **会**(记账: 一旦补上，`v19…v22` 的 `n_comparisons` 才第一次有来源) | ⛔ **无** | §13.81 |
 | **`n_comparisons` 是只写字段** —— 全库查实: 写入点 20+ 处 (`presets.py`)，而 **`core/` 里 0 处读取**；唯一的"读"是 `uptrend_pullback/wfv_eval.py:122` 传的 `args.n_trials`，**不是 preset 字段** | **会**(接进 DSR ⇒ **每个报出的 DSR/p-value 都变**) | ⛔ **无** | §13.82 |
 | **`short_reversal` 的 `sl_pct = 0.0005`** —— 0.05%，**小于 A 股一个报价单位** (¥10 的票 = 0.50 个 tick)，且**恰好等于 `stamp_duty_rate` 的字面量**，比三族兄弟紧 40–100 倍 ⇒ 疑似万5被误写进风险参数 | **会**(该族已关闭，历史数字已作废) | ⛔ **无** | §13.85 |
-| **§4 执行滑点**: ①四族**出场腿全部零冲击** (真正的缺陷); ②`cycle` 连入场腿也取不到 ATR | **会**(改 `atr_slip_scale>0` 时的每一笔成交; 今天全族恒为 0 ⇒ **零漂移**) | ✅ `chase_up`/`uptrend`/`short_reversal` 已接线并有守卫 (含**行为档** + 逐调用点 + 注入验证); ⛔ `cycle` 无 | §13.95 / §13.96 / §13.97 |
+| **§4 执行滑点**: ①三族**出场腿曾经全部零冲击** (已修); ②`cycle` **结构上不可用** (见下一行) | **会**(改 `atr_slip_scale>0` 时的每一笔成交; 今天全族恒为 0 ⇒ **零漂移**) | ✅ `chase_up`/`uptrend`/`short_reversal` 已接线并有守卫 (含**行为档** + 逐调用点 + 注入验证); `cycle` 有 fail-fast + 自失效守卫 | §13.95 / §13.96 / §13.97 / §13.98 |
+| ⛔ **`cycle` 的滑点不是"接线断了"而是"接上去也没用"**: `Portfolio`(活跃, 不含滑点) 与 `ReplayBroker._fee`(含滑点, 但 `TradeFill.fee` **零消费者**) 两套并行 | **会**(若真接通) | ✅ 3 条, 含**自失效**守卫 (该字段一旦有消费者即红 ⇒ 要求删 fail-fast 并接线) | §13.98 |
+| `backtest.py` 的 `_accepted` /**手工白名单** ⇒ 静默吃掉 `limit_up_threshold` (注释却写 "preset-overridable") | 否(今天无 preset 声明) | ✅ 已改为**从 `params` 派生** (机制级修复) | §13.98(e) |
 | ⚠️ **上述 ① 的原始表述被更正过**: 我原先写"`uptrend`/`short` 的 ATR 源恒空 ⇒ 连买入腿也不能" —— **错的** (入场腿有第二条路径) | — | — | §13.96(b) |
 | **§4 滑点的系数取值** (静态 flat 已被 §4 禁止; ATR 项的 `scale` 未定) | **会**(且它同时改变**仓位大小** ⇒ 不是纯成本旋钮) | ⛔ 无 | §6.2 / §13.95(f) |
 | §2 点名的两个资金参数 (`max_positions` / `position_fraction`) 在 **`chase_up` / `cycle` 的引擎签名里结构上不存在** —— preset 的声明被**静默丢弃** | **会**(半仓会真的变成半仓) | ✅ xfail(strict) ×2 + 1 条常驻红 | §13.63 / §13.65–§13.67 |
@@ -8092,3 +8102,68 @@ preset→`Portfolio`(参数**存了不读**) · preset→`ReplayBroker`(构造�
 不改任何 preset 参数 ⇒ `n_comparisons` 不变 (187)。
 ⚠️ 本族的**行为档单测成本约 180s** (一次全窗口回测)。与既有的
 `test_metrics_self_consistency_4engine` (176s) 同量级 —— 已记在此, 供套件成本核算。
+
+### 13.98 ⛔ **`cycle_price_action` 的执行滑点在架构上不可能生效** —— 不是"接线断了", 而是**接上去也没用**
+
+#### (a) 起点
+§13.97(f) 写下: cycle 有"三处断链 ⇒ 连入场腿都取不到 ATR", 本轮去接。
+
+#### (b) 接的过程中, **mutation test 把结论推翻了**
+我把管道全接上 (params + 白名单 + `ReplayBroker(atr_slip_scale=...)` +
+两处 submit 喂 `atr_pct`/`participation`), 然后跑:
+**`atr_slip_scale` = 0 / 1 / 50 三次, `total_pnl` 逐位相同** (`-14367158.031782512`)。
+⇒ **不是管道问题。**
+
+#### (c) 根因: **两套并行的成本模型, 而含滑点的那一套被丢弃**
+| 模型 | 在哪 | 进不进现金 | 含滑点吗 |
+|---|---|---|---|
+| `Portfolio._buy_cost` / `_sell_proceeds` | `portfolio.py` | ✅ **是** | ⛔ 否 (存了 `self.atr_slip_scale`, **从不读**) |
+| `ReplayBroker._fee` | `replay_broker.py` | ⛔ **否** | ✅ 是 |
+
+`submit_buy`/`submit_sell` 返回 `TradeFill(..., fee)`, 而 **`TradeFill.fee` 在整个
+`cycle_price_action/` 包里零消费者** —— 调用方只用 `fill.date` / `fill.price`;
+`record_fill()` 是 `pass  # for future instrumentation`; `metrics.py` 里也没有 `fee` 字段。
+⇒ **把滑点写进 ②, 等于把它算进一个被丢弃的数。**
+
+#### (d) 处置: **拒绝, 不静默** (§0; 与 §13 的 `COALESCE(...,1)` 同一精神)
+`__init__` 开头 fail-fast: `atr_slip_scale > 0` ⇒ `raise`, 理由**点名那两套模型**。
+* **零漂移 (已实测)**: 默认 0.0, 且 55/55 preset 未声明它 ⇒ `total_pnl` 逐位不变。
+* **不给一个"看起来合规的零"**: §0 明令 "Do not silently bypass" —— 拿不到正确模型时**拒绝**。
+
+⚠️ **我第一版写的是"接通它"**: 在策略内建了尾窗 TR(14) (定义与另三族 `signals.py` 逐字对齐)、
+并在两个 submit 处喂 `atr_pct`/`participation`。**mutation test 证明那是假的接通 ⇒ 已整段撤回。**
+留着它只会让代码**假装 §4 已落实** —— 这比"没接"更坏。
+
+#### (e) 顺带修掉一处**同名手维护白名单**的机制
+`backtest.py` 的 `_accepted` 是一份**手工白名单**, 与 `CyclePriceActionStrategy.params` 重复维护。
+实测差集: **`limit_up_threshold` 在 `params` 里、却不在白名单里** ⇒ 它的注释写着
+"preset-overridable", **而那句话是假的** (preset 声明会被静默丢掉)。
+(本文件自己的注释就记着 Round 15 修过一次同类事故 ⇒ **那次修的是实例, 没修机制**。)
+⇒ 改为**从 `params` 派生** (减去 Control Plane 显式注入的两个键)。**零漂移** (今天无 preset 声明它)。
+⇒ 这一改把"忘了同步白名单"这类缺口**从机制上消掉**。
+
+#### (f) 仍存的一处**死参数** (登记, 不删)
+`cycle_price_action/portfolio.py` 的 `Portfolio.__init__(atr_slip_scale=...)` 把值存进
+`self.atr_slip_scale` 而**从不读** —— 它正是 (c) 的另一面。
+**按既有规矩: 指出它, 不删它** —— 一旦把滑点接进 `Portfolio` 的**活跃**成本模型, 它就会变成真的。
+
+#### (g) 守卫 (`tests/test_cycle_slippage_is_structurally_unavailable.py`, 3 条)
+1. **自失效**: 断言 `TradeFill.fee` **零消费者**。一旦有人接通它 ⇒ **红**, 并要求
+   删掉 fail-fast + 真正接线 (且仍须零漂移证明 + 行为档)。
+   > **这条守卫钉住的是"当前的权宜处置何时该被撤掉"** —— 本册此前没有这种形态。
+2. **fail-fast 在**, 且理由**点名那两套模型** (不是一句泛泛的"未实现")。
+3. **行为档**: 真的跑一次, 断言在**第一只票构造时**就抛那条错 (实测 2.8s ——
+   若这条变慢, 说明 fail-fast 被挪到了更晚的位置)。
+
+**注入验证**: ① 假装有人消费 `fill.fee` ⇒ 守卫 1 **红**; ② 删掉 fail-fast ⇒ 守卫 2+3 **红**;
+还原 ⇒ **3 passed**。
+
+#### (h) 与另三族的**结构性区别** (可引用)
+* **另三族**: **接线断了** (出场腿零冲击 / ATR 源错位) ⇒ **接上就生效**;
+* **cycle**: **接上也不生效** (含滑点的那个模型的结果被丢弃) ⇒ 要先改**架构**
+  (让成本模型**单一化**), 不是改接线。
+⇒ **"四族同一形状"这句话在第三层上不成立** —— 前两层的修法对 cycle **无效**。
+这与 §13.11/§13.12 的"N 个成因, N 种补救"是同一课, 但这次是我在**动手之后**才发现的。
+
+#### (i) §5 记账
+不改任何 preset 参数 ⇒ `n_comparisons` 不变 (187)。

@@ -77,10 +77,45 @@ class CyclePriceActionStrategy(bt.Strategy):
         # at limit-up close would generate phantom PnL (no shares actually
         # available at limit-up open). Default 0.095 = 9.5% tolerance for
         # 10% A-share main-board limit-up; preset-overridable.
+        # ⚠️ 2026-10-19 (§13.98): "preset-overridable" 这句**此前是假的** ——
+        # `backtest.py` 的 `_accepted` 手工白名单没有列它 ⇒ preset 声明会被
+        # **静默丢掉**。已把白名单改为**从本 params 派生**, 该声明现在成立。
         limit_up_threshold=0.095,
+        # §4/§13.98 (2026-10-19): 执行滑点的系数。此前本族**连参数都到不了**
+        # 任何执行路径 (三处断链): ① 不在本 params ⇒ 不在白名单; ②
+        # `ReplayBroker(...)` 构造时不传 ⇒ 恒用默认 0.0; ③ 两个 submit 调用
+        # 不传 `atr_pct`/`participation` ⇒ `_fee` 的 ATR 分支恒不触发。
+        # ⚠️ 默认 0.0 保证**零漂移** (55/55 preset 未声明它)。
+        # ⚠️ `cycle_price_action/portfolio.py` 里**还有一个同名参数**
+        # (`Portfolio.__init__` 存了 `self.atr_slip_scale`) 而**从不读它** ——
+        # 真正的滑点在 `ReplayBroker._fee`。那个参数是死的, 见 §13.98(f)。
+        atr_slip_scale=0.0,
     )
 
     def __init__(self):
+        # ----- §4/§0 fail-fast (§13.98, 2026-10-19) -----
+        # 本族的执行滑点**在架构上不可能生效**, 故在此**立即拒绝**, 不静默无效。
+        # 实测证据 (mutation test): `atr_slip_scale` 取 0 / 1 / **50** 三次回测,
+        # `total_pnl` **逐位相同** —— 无论系数多大都不改变任何数字。
+        # 根因: 本族有**两套并行的成本模型** ——
+        #   ① `Portfolio._buy_cost` / `_sell_proceeds` —— 真正进现金的,
+        #      **不含滑点** (它存了 `self.atr_slip_scale`, 但从不读);
+        #   ② `ReplayBroker._fee` —— **含** ATR 滑点, 但它的返回值
+        #      `TradeFill.fee` 在**整个 `cycle_price_action/` 包里零消费者**
+        #      (调用方只用 `fill.date` / `fill.price`; `record_fill` 是 `pass`;
+        #      `metrics.py` 也没有 `fee` 字段)。
+        # ⇒ 把滑点接进 ② 等于把它算进一个**被丢弃**的数。§0 明令
+        #   "Do not silently bypass" ⇒ 拿不到正确模型时**拒绝**, 而不是返回一个
+        #   看起来合规的零 (与 §13 的 `COALESCE(...,1)` 同一处置精神)。
+        if self.p.atr_slip_scale > 0:
+            raise ValueError(
+                "§4/§0: cycle_price_action 的 `atr_slip_scale` **不可能生效**。\n"
+                "本族有两套并行成本模型: Portfolio 那套(真正进现金, **不含滑点**) "
+                "与 ReplayBroker._fee(含 ATR 滑点, 但 `TradeFill.fee` **零消费者**)。\n"
+                "把滑点写进被丢弃的那个, 系数多大都不会改变任何数字 "
+                "(实测 0 / 1 / 50 三次的 total_pnl 逐位相同)。\n"
+                "在把滑点接进 Portfolio 的**活跃**成本模型之前, 本旋钮只能拒绝。"
+            )
         self._portfolio = Portfolio(
             cash=self.broker.getcash(),
             initial_capital=self.p.initial_capital,
@@ -99,7 +134,9 @@ class CyclePriceActionStrategy(bt.Strategy):
                 "injected by Control Plane (backtest.run_backtest). "
                 "CLAUDE.md §6: Strategy has no direct DB access."
             )
-        self._broker_ext = ReplayBroker(self.p.data_provider)
+        self._broker_ext = ReplayBroker(
+            self.p.data_provider, atr_slip_scale=self.p.atr_slip_scale
+        )
         # 信号三元组由 Control Plane 预计算后注入 (§6: Control Plane 拥有 PIT
         # 数据派发)。逐 bar 重算的旧路径是 O(n²) —— 每根 bar 都对"至今为止的
         # 全部 bar"重跑一次形态识别, 2990 只票的一年窗口实测 86 分钟, 其中
@@ -113,6 +150,10 @@ class CyclePriceActionStrategy(bt.Strategy):
             )
         # State for live bar evaluation.
         self._entry_day = None
+        # §4/§13.98 (2026-10-19): 这里**曾**在策略内建过一条尾窗 TR(14) 供滑点用 ——
+        # **已撤回**, 因为实测它的下游是一个**被丢弃的成本模型** (见本节上面的
+        # fail-fast): 喂进去的 `atr_pct` 只到达 `ReplayBroker._fee`, 而那个返回值
+        # 没有任何消费者。**留着它等于让代码假装 §4 已接通。**
 
     def next(self):
         bar = {
