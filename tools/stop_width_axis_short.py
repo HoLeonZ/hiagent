@@ -46,6 +46,8 @@ def main() -> None:
     ap.add_argument("--preset", default="v35_agg_pctchg_04_09")
     ap.add_argument("--sl-pcts", type=float, nargs="+",
                     default=[0.0005, 0.005, 0.01, 0.02])
+    ap.add_argument("--tp-pcts", type=float, nargs="+", default=None,
+                    help="给了就改跑**目标位**轴 (只动 tp_pct, sl_pct 固定)")
     ap.add_argument("--n-codes", type=int, default=N_CODES)
     args = ap.parse_args()
 
@@ -63,15 +65,20 @@ def main() -> None:
            f"{'跳空占比':>9}{'跳空成本':>10}{'收益':>11}{'每笔均':>9}{'maxDD':>9}")
     print(hdr); print("-" * len(hdr))
     rows = []
-    for slp in args.sl_pcts:
-        name = f"__tmp_sl_{slp}"
-        P.PRESETS[name] = {**base, "sl_pct": float(slp)}
+    axis = "tp_pct" if args.tp_pcts else "sl_pct"
+    levels = args.tp_pcts if args.tp_pcts else args.sl_pcts
+    print(f"**轴 = `{axis}`**  (另一项固定: "
+          f"{'sl_pct=' + str(base.get('sl_pct')) if axis == 'tp_pct' else 'tp_pct=' + str(base.get('tp_pct'))})\n")
+    for slp in levels:
+        name = f"__tmp_{axis}_{slp}"
+        P.PRESETS[name] = {**base, axis: float(slp)}
         for wl, w0, w1 in WINDOWS:
             r = run_backtest_v3(name, w0, w1, DB_PATH)
             tr = r["trades"]; t = pd.DataFrame(tr) if tr else pd.DataFrame(
                 columns=["entry_price", "exit_price", "size", "exit_reason"])
             # 跳空判据 (空头: 止损在上方 ⇒ 成交价高于止损价即跳空)
-            sl_px = t["entry_price"].astype(float) * (1.0 + float(slp)) if len(t) else pd.Series(dtype=float)
+            _sl_eff = float(base.get("sl_pct")) if axis == "tp_pct" else float(slp)
+            sl_px = t["entry_price"].astype(float) * (1.0 + _sl_eff) if len(t) else pd.Series(dtype=float)
             is_sl = (t["exit_reason"] == "SL") if len(t) else pd.Series(dtype=bool)
             gap = is_sl & (t["exit_price"].astype(float) > sl_px * (1.0 + 1e-9)) if len(t) else pd.Series(dtype=bool)
             n_sl = int(is_sl.sum()); n_gap = int(gap.sum())
@@ -84,16 +91,21 @@ def main() -> None:
             print(f"{slp:>9.4f}{wl:<6}{len(t):>6}{n_sl:>5}{n_tp:>5}{n_tm:>6}{n_gap:>5}"
                   f"{(n_gap/n_sl if n_sl else float('nan')):>9.1%}{cost:>10.2%}"
                   f"{ret:>11.2%}{per:>9.2%}{float(r['max_dd']):>9.2%}")
-            rows.append(dict(sl=float(slp), win=wl, n=len(t), n_sl=n_sl, n_gap=n_gap,
+            rows.append(dict(level=float(slp), win=wl, n=len(t), n_sl=n_sl, n_tp=n_tp, n_gap=n_gap,
                              share=(n_gap/n_sl if n_sl else float("nan")),
                              cost=cost, ret=ret, per=per, dd=float(r["max_dd"])))
         P.PRESETS.pop(name, None)
         print()
 
-    print("=== Y1 机理自验: SL 笔数是否随止损变宽而下降 ===")
+    # ⚠️ 机理自验**必须跟着轴走**: 动的是止损 ⇒ 看 SL 笔数; 动的是目标 ⇒ 看 TP 笔数。
+    # (第一版只看 SL 笔数 ⇒ 跑 `--tp-pcts` 时它会报"SL 非单调" —— 而那**本来就是应该的**
+    #  (sl_pct 没动), 于是它会给出一个**看起来像故障**的警告。判据要与被变动的量对齐。)
+    key, label, expect = (("n_tp", "TP 笔数", "随 tp 收窄而上升") if axis == "tp_pct"
+                          else ("n_sl", "SL 笔数", "随止损变窄而上升"))
+    print(f"=== Y1 机理自验: {label} 是否 {expect} ===")
     bad = []
     for wl, _, _ in WINDOWS:
-        c = [x["n_sl"] for x in rows if x["win"] == wl]
+        c = [x[key] for x in rows if x["win"] == wl]
         if any(c[i] < c[i + 1] for i in range(len(c) - 1)):
             bad.append((wl, c))
     print("  ✅ 两窗都单调" if not bad else f"  ⚠️ 非单调: {bad}")
@@ -104,8 +116,8 @@ def main() -> None:
     print("\n=== Y3: 逐窗符号 (§5: 不报「哪档最好」) ===")
     for wl, _, _ in WINDOWS:
         print(f"  {wl:<6} " + "  ".join(f"{x['ret']:>+9.2%}" for x in rows if x["win"] == wl))
-    print("""
-⚠️ 名册被截到 400 只 ⇒ 只读**方向**, 不读量级 (§13.168 的同一条边界)。
+    print(f"""
+⚠️ 名册被截到 {args.n_codes} 只 ⇒ 只读**方向**, 不读量级 (§13.168 的同一条边界)。
 ⚠️ 每次运行的档数计入 `n_trials` (§5)。""")
 
 
