@@ -234,11 +234,25 @@ def sharpe_significance_pvalue(
     H0: true Sharpe = 0. H1: true Sharpe > 0. Tests observed / SE where
     SE = 1/sqrt(T-1) for daily returns. Returns one-sided p-value.
 
-    Combine with bonferroni_correct for family-wise adjustment when
-    comparing many strategies.
+    ⚠️⚠️ **2026-10-19 (§13.99) 单位口径修正 —— 本函数此前与本模块的兄弟函数不一致。**
+    约定与 `deflated_sharpe_ratio` **对齐**: `observed_sharpe` 是**年化**值
+    (mean/std × √252), 故先换算回**逐期**再比逐期标准误 `1/√(T−1)`。
+    旧实现**直接拿年化值除逐期标准误** ⇒ `z` 被放大 √252 ≈ **15.9 倍**
+    ⇒ p 恒 ≈ 0 ⇒ `format_walkforward_stats` 里
+    `bonferroni_p = min(sharpe_p × n_comparisons, 1.0)` **恒 ≈ 0**
+    ⇒ **§5 的族级校正实际上是空的 (它永远不会拒绝任何东西)。**
+
+    **判据 (为什么这是 bug 而不是"另一种口径")**: `deflated_sharpe_ratio` 在
+    `n_trials=1` 时退化成一个纯 PSR 单侧 p 值, **必须**等于本函数的结果。
+    实测 (年化 Sharpe 0.6208, T=1386): 前者 **0.0729**, 后者 **0.0000**
+    (差约 118 个数量级)。**两个相邻函数、同一个入参、同一个模块 —— 必须相等而差了 118 个数量级。**
+    这正与 `deflated_sharpe_ratio` 注释里记的**同一次**单位事故同类
+    ("年化 Sharpe=0.84 / k=19 / T=1071 被判成 DSR=0.000, 而正确值约 0.44") ——
+    那一次修了它自己, **漏了本函数** (族内不对称, 在 `dna_stats/` 内部)。
     """
     if n_returns < 2:
         return float("nan")
+    sr = observed_sharpe / math.sqrt(trading_days_per_year)   # 年化 → 逐期 (§13.99)
     se = 1.0 / math.sqrt(n_returns - 1)
-    z = observed_sharpe / se
+    z = sr / se
     return 1.0 - _norm_cdf(z)
