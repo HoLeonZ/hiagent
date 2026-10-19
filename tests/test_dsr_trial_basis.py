@@ -127,3 +127,94 @@ def test_walkforward_observation_count_comes_from_the_run(path: Path) -> None:
         f"§5 VIOLATION: {path.name} 没有**读取**来自运行的观测数"
         "(应消费引擎发布的 metrics['n_trading_days'])"
     )
+
+
+# ---------------------------------------------------------------------------
+# §5 (附八十九): 声明上界 vs 自家 shipped 的 sweep 枚举数
+# ---------------------------------------------------------------------------
+#: 每个引擎**已 shipped 的最大一次 sweep** 枚举多少个配置。
+#:
+#: **这一列是"量出来的",不是推出来的** —— 各自注明来源,并逐处核对过脚本的**调用形态**
+#: (同样的字典形状,笛卡尔积与逐轴扫描差一个数量级)。核错过两次:
+#:   ① 把 uptrend 的具名子网格相乘 → 2.35e9(荒谬值当场露馅);
+#:   ② 把单个扁平网格当成逐轴 → v5 算成 15(真值 180)。
+#: 最终数字与**实跑打印的 combo 数逐位吻合**(106/246/281/436/180/25;grid_runner 27)。
+SWEEP_ENUMERATION: dict[str, tuple[int, str]] = {
+    "chase_up": (18, "sweep.py:--tp-mults 3 × --sl-mults 2 × --max-holds 3"
+                     "(嵌套 for ⇒ 笛卡尔积;实跑 2×2×1=4 印证)"),
+    "uptrend_pullback": (436, "sweep_v33_long_v4.py:3 个具名子网格各自乘积再求和"
+                              "(106/246/281/436 与实跑打印逐位吻合)"),
+    "short_reversal": (14, "grid_runner.py:**逐轴**扫描 ⇒ 4+3+3+3=13 与 4+3+4+3=14"
+                           "(实跑合计 27 个配置)"),
+    "cycle_price_action": (3, "sweep_thresholds.py:--thresholds 3 个候选"),
+}
+
+#: **登记在案的缺口**:该引擎所有 preset 的 `n_comparisons` 上界 **小于** 它自己 shipped 的
+#: sweep 枚举数 ⇒ 那些 sweep 若曾参与选参,声明值就是**少计**的。
+#:
+#: 为什么要登记而不是直接改:据实填写需要**迭代记录**(哪些 sweep 真的跑过、跑了几次),
+#: 那是使用者手上的事实;凭空填一个"够大"的数就是**精确的伪装**(附十三 已立此规矩)。
+SWEEP_ENUMERATES_MORE_THAN_DECLARED: dict[str, str] = {
+    "chase_up": "全部 22 个 preset 都声明 n_comparisons=10,而 sweep.py 枚举 **18** 个配置",
+    "uptrend_pullback": "3 个 preset 声明 19/100/121,而 sweep_v33_long_v4.py 枚举 **436** 个",
+    "cycle_price_action": "PRESET_V1 声明 1,而 sweep_thresholds.py 枚举 **3** 个"
+                          "(已由 KNOWN_UNRECORDED_TRIAL_COUNTS 另记一条)",
+    # short_reversal **不在**此列:它 75 个 preset 声明的上界是 45,而 grid_runner 最多枚举 14
+    # ⇒ 上界 ≥ 枚举数,这一条对它**不成立**。如实留空,不为了凑整齐而把 4 个引擎都写上。
+}
+
+
+def _declared_trial_bounds() -> dict[str, int]:
+    """每个引擎**所有 preset** 声明的 `n_comparisons` 上界。"""
+    return {eng: max((c.get("n_comparisons") or 0) for c in reg.values())
+            for eng, reg in _preset_registries()}
+
+
+def _engines_where_sweeps_enumere_more(enumeration, declared) -> set[str]:
+    """`枚举数 > 声明上界` 的引擎集合(纯函数,便于种值测试)。"""
+    return {eng for eng, n in enumeration.items()
+            if n > declared.get(eng, 0)}
+
+
+def test_presets_declaring_too_few_trials_are_registered() -> None:
+    """§5 Iterative-Tuning Accounting:声明上界小于自家 sweep 枚举数的引擎必须登记。
+
+    这条抓的是**举证责任倒置**:引擎自带了能枚举几百个配置的 sweep,而它的 preset 声明
+    只试过十来个 —— "那些 sweep 没参与选参"是个**需要证据**的断言,不是默认成立。
+    """
+    actual = _engines_where_sweeps_enumere_more(
+        {k: v[0] for k, v in SWEEP_ENUMERATION.items()}, _declared_trial_bounds()
+    )
+    unregistered = sorted(actual - set(SWEEP_ENUMERATES_MORE_THAN_DECLARED))
+    assert not unregistered, (
+        "§5 VIOLATION: 以下引擎的 preset 声明上界 < 自家 shipped 的 sweep 枚举数,却未登记:\n  "
+        + "\n  ".join(f"{e}: 枚举 {SWEEP_ENUMERATION[e][0]} vs 声明 {_declared_trial_bounds()[e]}"
+                      for e in unregistered)
+        + "\n请提供迭代记录据实填写 n_comparisons,或登记到 "
+          "SWEEP_ENUMERATES_MORE_THAN_DECLARED 并写明为何无从得知。"
+    )
+
+
+def test_the_trial_bound_registry_is_not_stale() -> None:
+    """登记表必须跟着现实走:声明数被改大(或 sweep 被删)之后,条目要删掉。
+
+    (与 `KNOWN_UNRECORDED_TRIAL_COUNTS` / `KNOWN_DEAD_REFERENCES` 同型:只应当变短。)
+    """
+    actual = _engines_where_sweeps_enumere_more(
+        {k: v[0] for k, v in SWEEP_ENUMERATION.items()}, _declared_trial_bounds()
+    )
+    stale = sorted(set(SWEEP_ENUMERATES_MORE_THAN_DECLARED) - actual)
+    assert not stale, (
+        f"以下登记项**已不再成立**(声明上界已 ≥ 枚举数)—— 请从登记表删除:{stale}"
+    )
+
+
+def test_the_trial_bound_detector_has_teeth() -> None:
+    """**牙齿**:种一个"枚举 999 > 声明 10"的引擎必须被认出;上界足够时不得误报。"""
+    declared = {"e1": 10, "e2": 500}
+    enum = {"e1": 999, "e2": 400}                    # 已解包成 int(见调用点的 v[0])
+    assert _engines_where_sweeps_enumere_more(enum, declared) == {"e1"}
+    # 边界:相等不算(声明正好覆盖枚举)
+    assert _engines_where_sweeps_enumere_more({"e2": 500}, {"e2": 500}) == set()
+    # 未登记的引擎不在 declared 里 ⇒ 视作上界 0 ⇒ 也算缺口(不能因缺键而漏)
+    assert _engines_where_sweeps_enumere_more({"e3": 1}, declared) == {"e3"}
