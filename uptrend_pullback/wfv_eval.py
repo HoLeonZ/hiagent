@@ -10,22 +10,27 @@
 为什么要这么设计 (CLAUDE.md §5):
   - 不做「网格搜索取最高 Sharpe」: 本工具一次只评估**一个** candidate, 由人工/agent
     逐个决定下一个试什么 (因子下钻), 避免挑选偏差被网格掩盖。
-  - n_trials 必须由调用方显式传入, 且等于**到此为止累计试过的配置数**(含手动
-    试错和评估窗口的改动)。DSR 用它做选择偏差折算。
+  - n_trials = **到此为止累计试过的配置数**(含手动试错和评估窗口的改动)。
+    ⚠️ §13.104 (2026-10-19): 它**默认取 preset 自己的 `n_comparisons`** ——
+    §5 的 Iterative-Tuning Accounting 早就把这条账记在那里了 (v19=19, v20=100,
+    v21=121, **v22=162**), 但在此之前**没有任何消费者** (这正是 §13.82 记的那处)。
+    本文件此前把 `--n-trials` 做成**必填**, 而下面的示例教人传 `1` / `12`
+    —— **两个都不是该 preset 的累积暴露** ⇒ **文档教的用法违反 §5**。
+    ⇒ 现在: 不传就用 preset 的值; 显式传则覆盖, **但覆盖成什么会被打印出来**。
   - holdout 窗口不参与任何迭代, 只在最终下结论时跑一次。
 
 用法:
-  # 单一 preset
-  python3 -m uptrend_pullback.wfv_eval --preset v33_long_reverse_v19 --n-trials 1
+  # 单一 preset —— 不传 --n-trials, 自动用 preset 的 n_comparisons (§13.104)
+  python3 -m uptrend_pullback.wfv_eval --preset v33_long_reverse_v22
 
-  # 由 base preset 派生 candidate (因子下钻用: 只写增量)
+  # 由 base preset 派生 candidate (因子下钻: 累积暴露 = base 的 + 本轮)
   python3 -m uptrend_pullback.wfv_eval --base v33_long_reverse_v19 \\
       --overrides '{"tp_pct": 0.28, "signal.min_mom120": 0.20}' \\
-      --label cand_mom020 --n-trials 12
+      --label cand_mom020 --n-trials 19     # 若本轮新增 k 次评估, 传 19+k
 
   # 指定窗口范围 (迭代期 用 train 段; 最终结论 用 holdout 段)
-  python3 -m uptrend_pullback.wfv_eval --preset v33_long_reverse_v19 \\
-      --start-month 2024-09 --end-month 2026-03 --n-trials 1
+  python3 -m uptrend_pullback.wfv_eval --preset v33_long_reverse_v22 \\
+      --start-month 2024-09 --end-month 2026-03
 
 输出: 一行 JSON 到 stdout (末行), 前面是人类可读摘要。
 """
@@ -66,6 +71,25 @@ def _apply_overrides(cfg: dict, overrides: dict[str, object]) -> dict:
         else:
             out[path] = val
     return out
+
+
+def _resolve_n_trials(cli_value: int | None, cfg: dict) -> tuple[int, str]:
+    """§13.104: 决定 DSR 的选择偏差折算用哪个 `n_trials`, 并**报出来源**。
+
+    §5 的 Iterative-Tuning Accounting 要求这个数 = **到此为止累计试过的配置数**。
+    本 preset 把它记在自己的 `n_comparisons` 里 (v19=19, v20=100, v21=121, **v22=162**)。
+
+    ⚠️ 此前 `--n-trials` 是**必填**, 而 docstring 的示例教人传 `--n-trials 1` / `12`
+    —— **两个都不是该 preset 的累积暴露** ⇒ **文档教的用法违反 §5**。
+    这也正是 §13.82 记的那处: "`n_comparisons` 是只写字段, 没有任何消费者"。
+
+    ⇒ 改为: **默认取 preset 自己的 `n_comparisons`**; CLI 仍可覆盖 (派生 candidate 时用),
+    但**覆盖成什么必须被打印出来**, 不得静默。
+    """
+    if cli_value is not None:
+        return int(cli_value), "CLI --n-trials (显式覆盖)"
+    n = int(cfg.get("n_comparisons", 1))
+    return n, "preset 的 n_comparisons (§5 累积暴露)"
 
 
 def _trading_days_per_window(windows: list[tuple[str, str]], db_path: Path) -> int:
@@ -125,8 +149,8 @@ def main() -> None:
     src.add_argument("--base", help="作为起点的 preset 名 (配合 --overrides)")
     ap.add_argument("--overrides", default="{}", help="JSON: 点路径 -> 值")
     ap.add_argument("--label", default="", help="写入 JSON 的标签")
-    ap.add_argument("--n-trials", type=int, required=True,
-                    help="§5 累计试过的配置数 (含本次); DSR 的选择偏差折算用")
+    ap.add_argument("--n-trials", type=int, default=None,
+                    help="§5 累计试过的配置数 (含本次)。**默认取 preset 的 n_comparisons** (§13.104); 仅派生 candidate 时需显式覆盖")
     ap.add_argument("--start-month", default=DEFAULT_START_MONTH)
     ap.add_argument("--end-month", default=DEFAULT_END_MONTH)
     ap.add_argument("--engine", default="simulate", choices=("simulate", "backtrader"))
@@ -152,13 +176,15 @@ def main() -> None:
 
     print(f"[{args.label or base_name}] {args.start_month}..{args.end_month} "
           f"({len(windows)} windows, engine={args.engine})")
+    n_trials, n_src = _resolve_n_trials(args.n_trials, cfg)
+    logger.warning("§13.104: n_trials = %d (来源: %s)", n_trials, n_src)
     tdpw = _trading_days_per_window(list(windows), db)
     logger.warning("§13.102: 每窗实测交易日数 = %d (用于估 n_returns)", tdpw)
     # §13.102(①): 本族的 Sharpe 是用 `TRADING_DAYS = 243` 年化的 (§13.13 表里那条可量化的
     # 差), 而报告器默认 252 ⇒ 拿 243 年化的 Sharpe 去除 √252 会把 z 压低 1.8% (方向: 保守)。
     # ⇒ 把**本族自己的**常数传进去, 让"年化"与"去 年化"用同一个数。
     print(format_walkforward_stats(
-        df, n_comparisons=args.n_trials, trading_days_per_window=tdpw,
+        df, n_comparisons=n_trials, trading_days_per_window=tdpw,
         trading_days_per_year=UP_TRADING_DAYS,
     ))
     print(df.to_string(index=False))
@@ -170,7 +196,8 @@ def main() -> None:
         "start_month": args.start_month,
         "end_month": args.end_month,
         "engine": args.engine,
-        "n_trials": args.n_trials,
+        "n_trials": n_trials,
+        "n_trials_source": n_src,
         "stats": stats,
         # 关键参数快照, 便于事后复现 candidate
         "params": {k: cfg[k] for k in
