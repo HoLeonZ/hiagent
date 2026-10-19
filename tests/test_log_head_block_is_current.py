@@ -66,3 +66,41 @@ def test_head_block_cites_the_newest_sections() -> None:
             f"    2026-10-19: 文首仍写'4 个全部定义不同', 而 §13.91 已说'那太粗')。\n"
             f"**请打开文首, 逐句问: 这一条新结论推翻了开头哪一句?** 然后把它引用进去。"
         )
+
+
+def test_section_headings_are_visible_to_the_scanner() -> None:
+    """§13.163(附): 节标题必须用**扫描器看得见**的写法 —— 否则下面那条门禁会静默失明。
+
+    ## 为什么有这条 (§13.163 的实录)
+    本文件的判据是一条要求标题以「三个井号 + 节号」开头的正则。我在 §13.156–§13.163 **八节**上写成 `## §13.NNN`
+    (两井号 + 一个 §) ⇒ **那八节对整个门禁不可见** —— 门禁一直只要求文首引用到**更早的**那一节,
+    于是我那一整段的「文首已同步」绿灯**全是空的**。
+    > 判据的**作用域**比它声称的性质窄 —— 同一形状第四次 (§13.147 系列) ——
+    > 而这一次是**我自己的手写格式**造成的, 不是判据写错。
+
+    ⇒ 这条棘轮禁止 `## §N.N` 式的节标题 (本册的章级标题是 `## 1. …`, 用不到 §)。
+    """
+    bad = [m.group(0) for m in re.finditer(r"^##\s+§\d+\.\d+", LOG.read_text(encoding="utf-8"), re.M)]
+    assert not bad, (
+        f"§13.163: 这些节标题的形式**扫描器看不见** (应为 `### N.NNN`): {bad}\n"
+        f"⇒ 用这种写法, 文首门禁对它们是**失明**的, 那个绿是虚的。"
+    )
+
+
+def test_scanner_sees_the_newest_section_number() -> None:
+    """反空转: 扫描器必须能看见**最新**那一节 —— 否则整条门禁在扫一片旧区。
+
+    ⚠️ 这条不硬编码节号 (那会立刻过期); 它要求: 扫描到的最高节号 **≥ 文末最后一节的节号**,
+    而"文末最后一节"由**宽松**正则 (允许 `## §N.N` 等写法) 认出 —— 两者一比较,
+    写法分歧就会**当场暴露**。
+    """
+    text = LOG.read_text(encoding="utf-8")
+    strict = _max_section("13")
+    loose = re.findall(r"^#{2,3}\s+§?13\.(\d+)", text, re.M)
+    assert loose, "宽松正则一节也没找到 —— 正则坏了"
+    newest_loose = max(int(x) for x in loose)
+    newest_strict = int(strict.split(".")[1]) if strict else -1
+    assert newest_strict == newest_loose, (
+        f"§13.163: 严格扫到的最高节是 {newest_strict}, 而宽松扫到 {newest_loose} "
+        f"⇒ 有节用了扫描器看不见的标题写法 (门禁对它们失明)。"
+    )
