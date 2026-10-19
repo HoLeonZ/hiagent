@@ -103,3 +103,68 @@ def test_ledger_identity_is_exact_short_reversal(monkeypatch) -> None:
 _SR_PRESET = "v35_agg_pctchg_04_09"     # 声明 max_positions=1
 _SR_CODES = 40                          # 实测 4.3 秒, 2 笔成交 ⇒ 差 +1,058 (够判定)
 W0_SR, W1_SR = "2024-10-08", "2026-09-18"
+
+
+# ---------------------------------------------------------------------------
+# §13.180: `short_reversal` 的**解析式**恒等式 —— 不闭合**不是**谜
+# ---------------------------------------------------------------------------
+_SR_MARGIN_RATE_DEFAULT = 0.08
+
+
+def _entry_fees(trades: pd.DataFrame) -> float:
+    """按**同一条公式**独立重算 entry_fee (§13.171(b)): 佣金(含下限) + 印花税。"""
+    from core.dual_price import COMMISSION_RATE, MIN_COMMISSION, STAMP_DUTY_RATE
+    ne = trades["entry_price"].astype(float) * trades["size"].astype(float)
+    return float((ne.mul(COMMISSION_RATE).clip(lower=MIN_COMMISSION) + ne * STAMP_DUTY_RATE).sum())
+
+
+@pytest.mark.skipif(not Path(DB_PATH).exists(), reason="本地 DB 不在 ⇒ §6: 跳过而不是报错")
+def test_short_reversal_gap_equals_entry_fee_minus_margin_fee(monkeypatch) -> None:
+    """**解析式**: `差 == Σ entry_fee − Σ margin_fees_paid` (逐元, 不是"~94%")。
+
+    §13.171 把差拆成两个具名成因 (① `entry_fee` 被锁而不被扣; ② 每日融券利息扣了财富却不进台账),
+    但只对到 ~94% —— 那个 6% 我一度当成"引擎里还有第三件事"。
+    §13.180 用**只观测**的 spy 量到**实际**的 `margin_fees_paid` ⇒ 残差 **0**;
+    而 6% 的来源是**我当时拿 `hold_days` 去估** Σmargin (实测每笔平均收 **1.07** 次, 而 hold_days 均值 1.00)。
+
+    ⇒ 本测试把那条关系**钉成等式**: 它**应当是绿的** (与上面那条 `xfail` 的"不闭合"**不矛盾** ——
+      不闭合说的是"权益 ≠ 台账"; 这一条说的是"两者的差**恰好等于**两项之和")。
+    """
+    import backtrader as bt
+    import short_reversal.engine as eng
+    import short_reversal.replay_strategy_v3 as R
+    from short_reversal.presets import PRESETS
+
+    assert int(PRESETS[_SR_PRESET]["max_positions"]) == 1, "前提: max_positions=1"
+
+    seen: dict = {}
+    orig_close = R.Phase3V3Strategy._close
+
+    def spy(self, d, price, reason):
+        pos = self._holds.get(d._name)
+        if pos is not None:
+            seen[(str(bt.num2date(d.datetime[0]).date()), d._name)] = float(
+                pos.get("margin_fees_paid", 0.0))
+        return orig_close(self, d, price, reason)
+
+    monkeypatch.setattr(R.Phase3V3Strategy, "_close", spy)
+    full = eng.load_universe_asof("mainboard_only", W0_SR, DB_PATH)
+    monkeypatch.setattr(eng, "load_universe_asof",
+                        (lambda sub: (lambda *a, **k: sub))(sorted(full)[:_SR_CODES]))
+    r = eng.run_backtest_v3(_SR_PRESET, W0_SR, W1_SR, DB_PATH)
+    monkeypatch.setattr(R.Phase3V3Strategy, "_close", orig_close)
+
+    trades = pd.DataFrame(r["trades"])
+    gap = float(r["final_capital"]) - eng.INITIAL_CAPITAL - float(trades["net_pnl"].sum())
+    fees = _entry_fees(trades)
+    margin = sum(seen.values())
+
+    # 反空转: spy 一只也没抓到 / 融券费为 0 ⇒ 这条等式退化成"差 == Σentry_fee", 什么也没验。
+    assert seen, "spy 没抓到任何平仓 ⇒ 判据空转 (引擎的 _close 接口变了吗?)"
+    assert margin > 0, f"Σ margin_fees_paid = {margin} ⇒ 退化成另一条式子, 本测试空转"
+
+    assert abs(gap - (fees - margin)) <= 1e-6, (
+        f"§13.180: 解析式不成立 —— 差 = {gap:,.4f}, 而 Σentry_fee − Σmargin = {fees - margin:,.4f} "
+        f"(差 {gap - (fees - margin):,.4f})\n"
+        f"⇒ 两套记账之间的关系**变了**: 要么 §13.171 的两个成因不再完备, 要么 spy 读的不是同一个量。"
+    )
