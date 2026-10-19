@@ -229,10 +229,26 @@ def test_one_broken_job_does_not_kill_the_worker(home, fast_child, monkeypatch):
 
 @pytest.mark.skipif(_db() is None, reason=SKIP_REASON)
 def test_a_real_preview_run_completes_in_a_subprocess(home):
-    """不经测试缝、真跑一次 preview，确认子进程路径端到端可用。"""
+    """不经测试缝、真跑一次 preview，确认子进程路径端到端可用。
+
+    ⚠️ **`end` 必须取库内最后一个交易日** —— 也就是 UI 的默认语义。
+    原版写死 `end="2026-09-12"`（比今天早约一个月），于是引擎的 `+60d` 后置窗口
+    里**恰好有数据**，面板凑到 200 根 bar —— **正好等于 min_bars，零余量**，
+    于是这条测试通过，而 **UI 默认路径（`end`=今天）实际只有 178 根、必然失败**。
+    测试与真实用法的输入差一个月，就把一个"preview 完全不可用"的缺陷放过去了。
+    """
+    import duckdb
+
+    from hiagent_config import get_db_path
+
     os.environ.pop("HIAGENT_JOBS_FAKE_SLEEP", None)
+    con = duckdb.connect(str(get_db_path()), read_only=True)
+    try:
+        last = con.execute("SELECT max(date) FROM v_daily_hfq").fetchone()[0]
+    finally:
+        con.close()
     rid = jobs_mod.submit("short_reversal", "v50_slope", None,
-                          "2025-01-01", "2026-09-12", "preview")
+                          "2025-01-01", last.isoformat(), "preview")
     got = jobs_mod.wait(rid, timeout=900)
     assert got.status == "done", got.error
     assert got.mode == "preview"

@@ -31,9 +31,19 @@ def _db() -> Path | None:
 
 
 def test_preview_window_is_the_last_n_days():
+    """preview = 从 `end` 往回数 `PREVIEW_DAYS` 个自然日（不早于用户给的 `start`）。
+
+    **判据从常量推，不写死日期。** 原版写死 `assert start == "2026-04-01"  # 90 天`，
+    于是"`PREVIEW_DAYS` 该取多少"这件事在测试里是隐形的：改常量时它只报
+    "日期不对"，读的人看不出这条测的到底是哪条性质，很容易顺手把期望值改新了事——
+    而那恰恰放过了下面这条真正的约束（面板必须凑够 min_bars）。
+    """
+    import datetime as dt
+
     start, end = effective_window("preview", "2020-01-01", "2026-06-30")
     assert end == "2026-06-30"
-    assert start == "2026-04-01"  # 90 天
+    want = (dt.date(2026, 6, 30) - dt.timedelta(days=PREVIEW_DAYS)).isoformat()
+    assert start == want, f"preview 应从 end 往回数 {PREVIEW_DAYS} 个自然日"
 
 
 def test_preview_window_never_goes_earlier_than_the_requested_start():
@@ -245,3 +255,52 @@ def test_run_returns_the_uniform_shape_for_cycle_price_action():
     """
     got = run("cycle_price_action", "PRESET_V1", "2025-10-08", "2025-10-20")
     _assert_uniform_shape(got, engine="cycle_price_action", preset="PRESET_V1")
+
+
+@pytest.mark.skipif(_db() is None, reason=SKIP_REASON)
+def test_the_preview_window_yields_enough_bars_on_the_DEFAULT_ui_path():
+    """**preview 必须在 UI 默认路径上真的跑得起来。**
+
+    这是本会话实测漏掉的一条：平台原来有一条"真实 preview 端到端"测试，
+    它用 `end="2026-09-12"`，**恰好**凑到 200 根 bar（== min_bars，零余量）而通过；
+    而 UI 默认 `end` 是**今天** —— 那时引擎的 `+60d` 后置窗口里没有数据，
+    面板只剩 270 天 ≈ **178 根**，`short_reversal`（101 个预设里的 75 个）
+    必然抛 `WindowTooShortError`。
+
+    **所以这条测试的判据是 realized bar 数，不是"能不能跑"**：
+    它复现 UI 的默认输入、按引擎自己的面板算术算出**实际**能拿到多少根 bar，
+    并要求比 `min_bars` 多留 10%。"恰好等于"不叫通过。
+    """
+    import datetime as dt
+
+    import duckdb
+
+    from web.runners import STRICTEST_MIN_BARS
+
+    db = _db()
+    con = duckdb.connect(str(db), read_only=True)
+    try:
+        last = con.execute("SELECT max(date) FROM v_daily_hfq").fetchone()[0]
+        assert last is not None, "库内没有日线数据"
+
+        # UI 默认：end = 今天（这里用库内最后一个交易日等价地代表它）
+        start, end = effective_window("preview", "2000-01-01", last.isoformat())
+        # 引擎的面板 = [start - 180d, end + 60d]，但**可用的只有到 last 为止的 bar**
+        panel_start = dt.date.fromisoformat(start) - dt.timedelta(days=180)
+        panel_end = min(dt.date.fromisoformat(end) + dt.timedelta(days=60), last)
+        n = con.execute(
+            "SELECT count(DISTINCT date) FROM v_daily_hfq WHERE date BETWEEN ? AND ?",
+            [panel_start.isoformat(), panel_end.isoformat()],
+        ).fetchone()[0]
+    finally:
+        con.close()
+
+    need = int(STRICTEST_MIN_BARS * 1.1)
+    assert n >= need, (
+        f"preview 在 UI 默认路径（end={last}）上面板只有 {n} 个交易日，"
+        f"低于所需 {need}（= 1.1 × min_bars={STRICTEST_MIN_BARS}）。\n"
+        f"面板实际覆盖 {panel_start}..{panel_end}，窗口 {start}..{end}"
+        f"（PREVIEW_DAYS={PREVIEW_DAYS}）。\n"
+        "这会让 short_reversal（75/101 个预设）在 preview 下必然抛 "
+        "WindowTooShortError —— 调大 PREVIEW_DAYS，别把余量卡到边界上。"
+    )

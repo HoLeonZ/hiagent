@@ -49,11 +49,11 @@
       <button type="button" data-days="1095">近3年</button>
     </div>
     <span class="hint">窗口不能太短：面板是「窗口 + 240 天」，跨度不足 `min_bars` 时引擎会拒绝
-      （这是保护，不是 bug——否则"0 笔"会与"行情静"混淆）。约 90 天是安全下限。</span>
+      （这是保护，不是 bug——否则"0 笔"会与"行情静"混淆）。窗口不能短于约 200 天：面板是「窗口 + 240 天」，而引擎要求每只票至少 200 根 bar。</span>
     <label>模式
       <select id="mode">
         <option value="full">full（全 universe，真值）</option>
-        <option value="preview">preview（仅最近 90 天，非可比）</option>
+        <option value="preview">preview（仅最近 200 天，非可比）</option>
       </select>
     </label>
     <button id="run">开始回测</button>
