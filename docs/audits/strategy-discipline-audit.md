@@ -3,12 +3,12 @@
 > ## ⚠️ 状态头(2026-10-19)—— 读 §0 之前先看这里
 >
 > 本报告 §0–§8 的判定是**对 `main @ 94ca15d`(2026-10-14 快照)** 的:**不合规(NO-GO)**。
-> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **87 条附录**,
+> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **88 条附录**,
 > **§0 列的 11 个 BLOCKER 族全部已处置**(修 / 登记 / 待口径决策,逐条见附七十九 §1)。
 >
 > **不要把本报告开头的 NO-GO 当成对今天代码的判定。**
 >
-> * 现在的**未结清单**只有一处权威来源:**附七十九**(收官台账),最新增补见**附八十七**。
+> * 现在的**未结清单**只有一处权威来源:**附七十九**(收官台账),最新增补见**附八十八**。
 > * 每条修复都给出文件、证据与验证方式(多数含**双向验证**与量化影响)。
 > * 有两条**结果变更**特别醒目,已发布的数字须重算(清单见附七十九 §3 + 附八十一 §5):
 >   附五十二(做空跳空止损成交价)、**附八十一/八十二(DSR 的两个分母各取错一个量:
@@ -7369,3 +7369,112 @@ FAILED tests/test_sweep_scripts_dsr.py::TestSweepScriptsDsrContract::
   那份"少计"说的是"失败/无信号的迭代被剔出计数",与"迭代之间彼此相同"是两件事);
 * 它的危害在**产物语义**:一张平表被读成"这个参数不敏感";
 * 它和 §0 的"静默的零"同源:**不许把一个没有发生的效果,印成一张看起来发生了的表。**
+
+---
+
+## 附八十八 —— 又是在"本该抓这类缺陷"的守卫里:豁免名单手写,**5 项里错了 3 项**,于是两个真的缺口被它挡住
+
+(起因:我把 附八十七 的判据("这条轴有没有生效")往上推一层,问"**任何 preset 字段**有没有引擎从不读的"。
+**没有找到新的** —— 这一类是干净的。但在核对"那条已有的守卫为什么没抓到"时,发现它的
+**豁免名单本身是错的**。)
+
+### 1 · 已有的守卫做什么
+
+`tests/test_preset_to_engine_api_conformance.py` 逐引擎核对:preset 的每个**叶子键**,
+引擎源码里有没有引用它 —— 没引用就是"声明被静默丢弃"。它对每个引擎有一份 `ENGINE_SOURCES`,
+另有两份豁免:
+
+```python
+NESTED_KEYS = {"signal", "universe", "periods", "weights", "regime"}      # 嵌套配置块
+DECLARATION_ONLY_KEYS = {"MAX_POSITION_PCT", "price_source_for_signal", "n_comparisons"}
+```
+
+`NESTED_KEYS` 的注释说得很明白:这些是"在调用点被 `**p["regime"]` / `**p["signal"]` 展开"的
+**嵌套字典**,要求它们成为字面量是误报"。
+
+### 2 · 实测:这份名单的 5 项里,3 项不是嵌套字典
+
+| 键 | 在预设里的**实际类型** | 注释说它是 | |
+|---|---|---|---|
+| `signal` | `dict`(25 处) | 嵌套字典 | ✓ |
+| `regime` | `dict`(1 处) | 嵌套字典 | ✓ |
+| **`universe`** | **`str`(101 处)** | 嵌套字典 | ✗ |
+| **`periods`** | **`tuple`(1 处)** | 嵌套字典 | ✗ |
+| **`weights`** | **任何 preset 里都不存在** | 嵌套字典 | ✗ 死项 |
+
+⇒ **`universe` / `periods` / `weights` 这三个键在任何引擎里都从未被审计过**。
+豁免的理由("它是嵌套字典")对它们**不成立** —— 它们是标量。
+
+### 3 · 把它们放出来之后,守卫立刻点到两个**真的**缺口
+
+把 `NESTED_KEYS` 改成推导("在 ≥1 个 preset 里取值为 dict 的顶层键" ⇒ `{signal, regime}`)之后:
+
+```
+GAP CAPTURED: cycle_price_action has preset keys declared but NEVER referenced in engine source:
+    - preset='PRESET_V1' key='periods'
+    - preset='PRESET_V1' key='universe'
+```
+
+逐条核实:
+
+* `PRESET_V1["periods"] = (3,5,8,13,21)` 与 `cycle.py::DEFAULT_PERIODS` **逐位相同**,
+  而引擎只读后者 ⇒ **改 preset 不会有任何效果**;
+* `PRESET_V1["universe"] = "mainboard_only"` 与 `load_universe_data` 里**写死的**
+  `is_main_board` 过滤一致,但引擎从不读这个键 ⇒ **改成别的值不会有任何效果、也不报错**。
+
+(另三个引擎的 `universe` **没有**被点出来 —— 它们确实读了:chase 在 `walkforward.py`、
+uptrend 在 `grid.py`。所以这个 RED 是**特异性**的,不是把整类都报一遍。)
+
+### 4 · 处置:**登记为债**,而且与"按设计无运行时语义"分开放
+
+两处都不该由我单方面接线:
+
+* `periods` 接进 `signals.phase_score` 会**改变信号计算** ⇒ 研究改动;
+* `universe` 接上要给 `load_universe_data` **加参数并处理不支持的取值** ⇒ 加功能。
+
+所以新建一桶,与 `DECLARATION_ONLY_KEYS` **刻意分开**:
+
+```python
+UNCONSUMED_DECLARED_KEYS = {          # 债,不是豁免
+    ("cycle_price_action", "periods"):  "… 接上要把 periods 穿进 signals.phase_score …",
+    ("cycle_price_action", "universe"): "… 接上要给 load_universe_data 加 universe 参数 …",
+}
+```
+
+分开的理由:那一桶是"**按设计**没有运行时语义"(§2 政策常量),这一桶是"**有语义、接线没做**"
+—— 合并会让人读不出哪些是缺口。每一项都写清"现在是什么样 + 接上要做什么"。
+
+配套三条守卫:
+
+* 未登记的缺口仍然 **RED**(种一个 `_planted_unregistered_key_xyz` 进去 ⇒ 当场红,已两向验证);
+* **登记表不得陈旧**:接线做完却不同步删条目 ⇒ 红(与 `KNOWN_DEAD_REFERENCES` 同型,
+  登记表只应当变短);
+* **豁免名单不得再手写**:`NESTED_KEYS` 改为推导,并加元断言(还原成手写版 ⇒ 红,已两向验证)
+  + 牙齿(把 `universe/periods/weights` 塞回去必须被认出;`signal/regime` 不得误报)。
+
+### 5 · 顺带:我把 附八十七 的判据往上推一层,结果是**阴性**
+
+"任何 preset 字段有没有引擎从不读的" —— 用正确的消费方集合(引擎 + `core` + `dna_data` +
+`dna_stats` + `tools`)扫四个引擎,剩下的只有 `MAX_POSITION_PCT`(刻意声明,见
+`DECLARATION_ONLY_KEYS` 的注释)。**这一类是干净的** —— 因为 2026-10-15 那轮审计已经修过
+cycle 的六个"声明却无消费者"的键。
+
+**但我没有据此新建一条普查**:这条守卫已经在做这件事,再写一条就是重复。
+**如实说明它的判据是"键名以字面量/参数名形式出现过"** —— 这与
+`test_preset_declarations_are_load_bearing.py` 开头**明确警告过的**弱判据同型
+("往默认参数里加一个同值默认值就能让文本审计变绿")。强判据(改了声明行为必须跟着变)
+在同一目录的另一条守卫里,本条不声称覆盖它。
+
+### 6 · 形态统计
+
+"**手写名单 ≠ 实际集合**" 在本会话已是**第四次**,四次都在"守卫的覆盖面"这一层:
+
+| 次 | 谁 | 方向 |
+|---|---|---|
+| 附八十五 | 附十三 的守卫 `wf_v*_focused.py` | 漏 `walkforward.py` |
+| 附八十六 | `SCRIPT_GLOBS`(四条守卫共用) | 漏 4 个 DSR 调用点 |
+| 附八十七 | `**/sweep*.py` | 多收 `core/sweep_axes.py` |
+| **附八十八** | **`NESTED_KEYS`** | **多收 3 个非嵌套键,挡住 2 个真缺口** |
+
+**共同处方**(四次都有效):把名单**推导**出来,或至少加一条**元断言**让名单必须等于实际集合,
+并让它**只应当变短**。
