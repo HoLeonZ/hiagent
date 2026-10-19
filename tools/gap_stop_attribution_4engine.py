@@ -102,7 +102,8 @@ def _trades_cycle(preset: str, w0: str, w1: str):
 
     p = dict(PRESET_V1)
     r = run_backtest(str(DB_PATH), dt.date.fromisoformat(w0), dt.date.fromisoformat(w1), preset=p)
-    rows = [{"entry_price": t.entry_price, "exit_price": t.exit_price,
+    rows = [{"entry_date": t.entry_date, "thscode": t.thscode,
+             "entry_price": t.entry_price, "exit_price": t.exit_price,
              "size": t.shares, "net_pnl": t.pnl,
              "exit_reason": ""} for t in r.trades]
     return p, pd.DataFrame(rows), +1

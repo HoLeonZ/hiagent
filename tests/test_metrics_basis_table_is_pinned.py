@@ -209,6 +209,12 @@ _FAMS = ("chase_up", "uptrend_pullback", "short_reversal", "cycle_price_action")
 
 # 具名豁免: 提到 ≥2 个族名, 但**不做跨族并列** (按 preset 各自出报告, 不合并不排序)。
 _EXEMPT = {
+    "tools/entry_gap_attribution.py":
+        "§13.90/§13.137 —— 它**一次只处理一个族** (`--family` 选一个), 输出里**没有跨族并列**、"
+        "不合并行、不排序 ⇒ 无需口径披露。四个族名只出现在 `--family` 的**取值清单**里。"
+        "(⚠️ 与本轮另一个新工具 `gap_stop_attribution_4engine.py` **不同**: 那个**真的**"
+        "把四族放进同一张表 ⇒ 那个补了披露、**不走豁免**。"
+        "两者的区别正是本条守卫要区分的那件事。)",
     "tools/scan_dead_text_pins.py":
         "§13.90/§13.122 —— 它只做**文本钉桩的静态分析** (在测试文件的源码里找"
         "`assert \"…\" in SRC` / `SRC.index(\"…\")` 这类断言, 再去被钉的**那个文件**里"
