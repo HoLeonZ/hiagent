@@ -13,8 +13,15 @@ Compliance declaration (CLAUDE.md audit 2026-09-22):
 """
 from __future__ import annotations
 
-# §4 TP/SL: hybrid —— tp_pct/sl_pct 为固定基准, atr_sl_mult 提供 ATR 自适应
-# (exit 路径见 cycle_price_action/portfolio.py 的 SL/TP + intraday tiebreak)。
+# §4 TP/SL: **固定百分比** —— 出场完全由 `tp_pct` / `sl_pct` 决定
+# (exit 路径见 cycle_price_action/portfolio.py:377-378: tp_p = entry×(1+tp_pct),
+#  sl_p = entry×(1−sl_pct); intraday tiebreak 走 sl_first)。
+# ⚠️ **2026-10-20 (§13.175) 更正**: 本行此前写的是
+#   「hybrid —— tp_pct/sl_pct 为固定基准, **atr_sl_mult 提供 ATR 自适应**」
+#   —— **那是错的**: `atr_sl_mult` 在本族**从来没有被读过**
+#   (`grep -rn "self.p.atr_sl_mult" cycle_price_action/*.py` ⇒ **一处也没有**)。
+#   ⇒ 本族的止损**不 ATR 自适应**。该键已按 §13.145① 登记为惰性键;
+#   **接不接它属结果变更** ⇒ 只登记, 不擅改。
 # §13.75: 这一行此前缺失, 而守卫查不到它 —— 因为该族的 preset 是**调用形态**,
 # 而旧扫描器只遍历字面量 dict ⇒ 那条守卫结构上不可能失败。
 PRESET_V1 = dict(

@@ -42,8 +42,11 @@ class CyclePriceActionStrategy(bt.Strategy):
         atr_sl_mult=1.5,
         tp_pct=0.06,
         # V6'' (2026-09-22, CLAUDE.md §4): SL fraction applied to entry
-        # price to compute daily-bar stop. Pessimistic default = atr_sl_mult ×
-        # 0.05 = 7.5% stop, conservative for cycle strategy.
+        # price to compute daily-bar stop —— **就是 5%**。
+        # ⚠️ **2026-10-20 (§13.175) 更正**: 此处此前写「Pessimistic default =
+        #   atr_sl_mult × 0.05 = 7.5% stop」—— **代码不这么算**
+        #   (`portfolio.py:378` 用的是 `sl_p = entry × (1 − sl_pct)`, 即 **5%**),
+        #   而 `atr_sl_mult` 在本族**从未被读** ⇒ 那句把止损宽度**谎报了 2.5pp**。
         sl_pct=0.05,
         # Round 10 (2026-09-28, CLAUDE.md §2): NAV gate anchor — plumbed
         # through to Portfolio constructor (initial_capital). Default 1M mirrors
@@ -173,8 +176,9 @@ class CyclePriceActionStrategy(bt.Strategy):
         if self._portfolio.position is not None and self._entry_day is not None:
             if bar["date"] > self._entry_day:    # P3: no same-day exit
                 # We must compute SL/TP levels from entry_price × (1 ± pct).
-                # atr_sl_mult × tp_pct approximates the ATR-implied stop width
-                # used elsewhere in the codebase.
+                # ⚠️ 2026-10-20 (§13.175): 此处的原注释拿 `atr_sl_mult × tp_pct`
+                # 当作"别处的 ATR 隐含止损宽" —— 而**本族根本不读 `atr_sl_mult`**,
+                # 下面两行读的是 `self.p.sl_pct` / `self.p.tp_pct` (纯固定百分比)。
                 sl_pct_eff = self.p.sl_pct
                 tp_pct_eff = self.p.tp_pct
                 # V3a+ (2026-09-22, CLAUDE.md §3): Layout C 单价格域
