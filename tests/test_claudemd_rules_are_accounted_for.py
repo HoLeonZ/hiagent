@@ -120,10 +120,11 @@ RULE_COVERAGE: dict[str, tuple[str, str, str]] = {
         "同一条规则在矩阵里是**两行**(买向涨停 + 卖向跌停)—— 因为 §4 把它们写成一句但它有两个方向",
     ),
     "Banned In-Sample Grids": (
-        "unguarded", "",
-        "**部分覆盖**:chase 的两个单窗选优脚本由 `tests/test_chase_up_sweep_discloses_in_sample.py` "
-        "强制**声明** in-sample;但**没有守卫**禁止「写一个网格搜索直接报 max Sharpe」这类脚本出现"
-        "(§5 的禁令是「拒绝写」,不是「写了要标注」)",
+        "guard", "tests/test_single_window_selection_is_disclosed.py",
+        "**机械代理**:凡调用 DSR 且**不含窗口遍历**的脚本(实测 9 个)必须声明 in-sample 并"
+        "**指名**滚动窗口版本(附九十六 补上 附十七 只做了 2/9 的那一半)。"
+        "⚠️ 仍未覆盖的那半:§5 的禁令本是「**拒绝写**一个直接报 max Sharpe 的网格搜索」—— "
+        "「不许存在某种脚本」很难用守卫表达,故只守住「若存在则必须声明」",
     ),
     "Iterative-Tuning Accounting": (
         "guard", "tests/test_dsr_trial_basis.py",

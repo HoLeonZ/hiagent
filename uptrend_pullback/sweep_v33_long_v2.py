@@ -241,6 +241,15 @@ def main():
                 f"expected_max={dsr['expected_max_sharpe']:.3f} | "
                 f"p_value={dsr['dsr_p_value']:.4f}"
             )
+            # §5 (附九十六): 单一窗口选优**必须自己说清楚** ——
+            # 与 附十七 给 chase 两个脚本加的那条同形;那回只覆盖了看到的两处,
+            # 本族六个脚本一直没声明(实测:全库 11 个网格脚本里 8 个无声明)。
+            print(
+                f"  ⚠️ in-sample selection:本榜是在单一窗口 {START} → {END} 上\n"
+                f"     从 {_n_ok} 个配置里选出的。DSR 不能替代样本外验证 ——\n"
+                f"     要把某个 config 当结论,请用滚动窗口的 uptrend_pullback/wfv_eval.py,\n"
+                f"     或在本榜**未参与选择**的窗口上复跑(§5 WFV)。"
+            )
             if _n_tried != _n_ok:
                 print(
                     f"  ⚠️ 其中 {_n_tried - _n_ok} 个配置**没产出信号**"
