@@ -27,8 +27,20 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# 主板 ±10%; 留一点容差 (撮合/复权边界), 但远小于观测到的 +253%
-LIMIT_BOUND = 0.105
+# ⚠️⚠️ §13.117 (2026-10-19): **这个界上下修过一次 —— 第一版 (±10.5%) 太紧, 会误红。**
+#
+# 正确的物理界要**按"建仓当天"推导**, 而不是按"持仓日":
+#   持仓**延续**的一天: 标的单日最多 ±10% ⇒ 权益单日最多 **±10%**;
+#   当天**开盘建仓、收盘标记**的一天: 权益吃到的是整段 `close/open` 位移, 而
+#     `open` 可以低到 `prev_close × 0.90`、`close` 高到 `prev_close × 1.10`
+#     ⇒ `close/open − 1 = 1.10/0.90 − 1 = ` **+22.22%** (反向同理 −18.18%)。
+# ⇒ 物理界取 **±22.3%**。
+#
+# **实测例证 (chase 2018-12-19)**: `raw_open 11.75 → raw_close 13.42` =
+# `close/open − 1 = +14.21%`, 而 `open/prev_close = −3.69%`、`close/prev_close = **+9.99%** (涨停)
+# ⇒ **完全合法**。第一版的 ±10.5% 会把它判成"物理不可能" —— **那是我写错了界, 不是策略错了。**
+# ⚠️ 而原始缺陷的跳变是 **+103% / +253%** ⇒ **远在 ±22.3% 之外 ⇒ 修好的界仍然抓得住它。**
+LIMIT_BOUND = 0.223
 
 
 def _db_available() -> bool:
@@ -39,27 +51,40 @@ def _db_available() -> bool:
     return Path(str(DB_PATH)).exists()
 
 
+# §13.117: 两个**多头族**都纳进来 —— 它们都有过同一缺陷 (§13.114/§13.115), 且都已修。
+# `short_reversal` / `cycle` 不在列: 前者一次实测要 ~4 分钟全市场回测 (§13.116(d)),
+# 后者**按构造无盯市**。**不是漏掉, 是这两族的判据形态不同。**
+_ENGINES = {
+    "uptrend_pullback": ("v33_long_reverse_v22", "uptrend_pullback"),
+    "chase_up": ("chase_v3_atr_tp4_sl1_mom15", "chase_up"),
+}
+
+
 @pytest.mark.skipif(not _db_available(), reason="本地 DB 缺失")
+@pytest.mark.parametrize("fam", sorted(_ENGINES))
 @pytest.mark.parametrize("window", [("2017-09-01", "2018-09-01"), ("2018-09-01", "2019-09-01")])
-def test_uptrend_equity_has_no_impossible_daily_jumps(window) -> None:
+def test_equity_has_no_impossible_daily_jumps(fam: str, window) -> None:
     """**行为式**: 真的跑一次, 量权益曲线的单日变动。"""
-    from uptrend_pullback.backtest import run_backtest
-    from uptrend_pullback.data import load_panel
-    from uptrend_pullback.presets import get_preset
-    from uptrend_pullback.signals import compute_indicators
-    from uptrend_pullback.universe import load_universe
+    import importlib
+
+    preset_name, pkg = _ENGINES[fam]
+    run_backtest = importlib.import_module(f"{pkg}.backtest").run_backtest
+    load_panel = importlib.import_module(f"{pkg}.data").load_panel
+    get_preset = importlib.import_module(f"{pkg}.presets").get_preset
+    compute_indicators = importlib.import_module(f"{pkg}.signals").compute_indicators
+    load_universe = importlib.import_module(f"{pkg}.universe").load_universe
     from hiagent_config import DB_PATH
 
     w0, w1 = window
     uni = set(load_universe("mainboard_only", DB_PATH))
     panel = compute_indicators(load_panel(DB_PATH, w0, w1, universe=uni))
-    r = run_backtest(get_preset("v33_long_reverse_v22"), w0, w1, DB_PATH, panel_ind=panel)
+    r = run_backtest(get_preset(preset_name), w0, w1, DB_PATH, panel_ind=panel)
     e = r["equity"]["equity"].to_numpy(dtype=float)
     rets = np.diff(e) / e[:-1]
     worst = float(np.abs(rets).max())
     n_bad = int((np.abs(rets) > LIMIT_BOUND).sum())
     assert n_bad == 0, (
-        f"§0/§3: 权益曲线在 {w0}..{w1} 上有 **{n_bad} 天**的单日变动超过 {LIMIT_BOUND:.1%} "
+        f"§0/§3: {fam} 的权益曲线在 {w0}..{w1} 上有 **{n_bad} 天**的单日变动超过 {LIMIT_BOUND:.1%} "
         f"(最大 {worst:.2%})。\n"
         f"⇒ 多头 + 无杠杆 + A 股 ±10% 涨跌停 ⇒ **组合单日权益变动有物理上限**。\n"
         f"最可能的来源: **市值与入场价用了不同价源** (前复权 vs raw) —— §3 要求市值用 raw。\n"
