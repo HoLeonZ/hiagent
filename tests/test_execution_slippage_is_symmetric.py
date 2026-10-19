@@ -31,15 +31,23 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-ENGINE = REPO_ROOT / "chase_up" / "portfolio.py"
+
+# 已接线的族 (§13.95 接 chase_up; §13.96 接 uptrend_pullback)。
+# ⚠️ `uptrend_pullback` / `short_reversal` 里**只有出场腿**曾是缺陷 ——
+#    它们的**入场腿本来就能取到 ATR** (chase/uptrend 靠 `ent` 兜底、short 靠自己的
+#    `indi["atr"]` bar 指标)。这一点在 §13.96 被实测更正过, 见 §13.95(c) 的更正条。
+ENGINES = {
+    "chase_up": REPO_ROOT / "chase_up" / "portfolio.py",
+    "uptrend_pullback": REPO_ROOT / "uptrend_pullback" / "portfolio.py",
+}
 
 
-def _src() -> str:
-    return ENGINE.read_text(encoding="utf-8")
+def _src(fam: str) -> str:
+    return ENGINES[fam].read_text(encoding="utf-8")
 
 
-def _tree() -> ast.Module:
-    return ast.parse(_src())
+def _tree(fam: str) -> ast.Module:
+    return ast.parse(_src(fam))
 
 
 def _calls(tree: ast.Module, name: str) -> list[ast.Call]:
@@ -103,12 +111,13 @@ def test_helper_is_monotone_in_scale_and_takes_the_max() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_every_close_position_call_passes_the_slippage_adjusted_price() -> None:
+@pytest.mark.parametrize("fam", sorted(ENGINES))
+def test_every_close_position_call_passes_the_slippage_adjusted_price(fam: str) -> None:
     """**逐调用点**判定 —— 不是"文件里出现过 `effective_slippage`"。
 
     (本册 15 轮失效的共同形态就是后一种: 判据的单位弱于它声称的性质。)
     """
-    calls = _calls(_tree(), "_close_position")
+    calls = _calls(_tree(fam), "_close_position")
     assert len(calls) >= 1, "§13.95: 找不到 _close_position 调用点 —— 扫描单位失效"
     bad = []
     for c in calls:
@@ -122,13 +131,14 @@ def test_every_close_position_call_passes_the_slippage_adjusted_price() -> None:
     )
 
 
-def test_exit_helper_reads_atr_from_the_per_bar_table() -> None:
+@pytest.mark.parametrize("fam", sorted(ENGINES))
+def test_exit_helper_reads_atr_from_the_per_bar_table(fam: str) -> None:
     """出场腿的 ATR **必须**来自 `atr_by_bar`, 不能来自 `atr_lookup`。
 
     ⚠️ 这是本节的**根因**: `atr_lookup` 是**为 ATR-TP 建的信号日表**, 而出场发生在
     非信号日 ⇒ 用它查出场腿**永远查不到** ⇒ 滑点静默为 0。
     """
-    fn = next((n for n in ast.walk(_tree())
+    fn = next((n for n in ast.walk(_tree(fam))
                if isinstance(n, ast.FunctionDef) and n.name == "_exit_fill_px"), None)
     assert fn is not None, "§13.95: 找不到 _exit_fill_px 的定义"
     # ⚠️ §13.78 的教训: `ast.unparse` **包含 docstring** ⇒ 纯文本判据会被注释满足。
@@ -148,14 +158,15 @@ def test_exit_helper_reads_atr_from_the_per_bar_table() -> None:
     )
 
 
-def test_atr_by_bar_is_built_from_the_panel_and_used_by_both_legs() -> None:
-    src = _src()
+@pytest.mark.parametrize("fam", sorted(ENGINES))
+def test_atr_by_bar_is_built_from_the_panel_and_used_by_both_legs(fam: str) -> None:
+    src = _src(fam)
     assert "atr_by_bar" in src, "§13.95: 没有全 bar 的 ATR 表"
     assert "panel[[" in src or "panel.atr_pct" in src, (
         "§13.95: atr_by_bar 必须从 panel 的 atr_pct 列构建"
     )
     # 入场腿也必须用它 (否则两条腿的 ATR 来源不同 ⇒ 又是不对称)
-    fn = next((n for n in ast.walk(_tree())
+    fn = next((n for n in ast.walk(_tree(fam))
                if isinstance(n, ast.FunctionDef) and n.name == "simulate_portfolio"), None)
     assert fn is not None
     entry_calls = [c for c in _calls(fn, "effective_slippage")]
@@ -164,9 +175,10 @@ def test_atr_by_bar_is_built_from_the_panel_and_used_by_both_legs() -> None:
     assert entry_txt.count("atr_by_bar") >= 1, "§13.95: 入场腿没有用 atr_by_bar"
 
 
-def test_entry_leg_still_uses_the_canonical_helper_not_an_inline_formula() -> None:
+@pytest.mark.parametrize("fam", sorted(ENGINES))
+def test_entry_leg_still_uses_the_canonical_helper_not_an_inline_formula(fam: str) -> None:
     """§2: 不得再内联重写 `atr_pct * participation * scale`。"""
-    fn = next((n for n in ast.walk(_tree())
+    fn = next((n for n in ast.walk(_tree(fam))
                if isinstance(n, ast.FunctionDef) and n.name == "simulate_portfolio"), None)
     assert fn is not None, "§13.95: 找不到 simulate_portfolio (引擎函数改名了? 判据要跟着改)"
     txt = ast.unparse(fn)
@@ -195,8 +207,16 @@ def _db_available() -> bool:
     return Path(str(DB_PATH)).exists()
 
 
+# 每族的 (模块前缀, 用哪个 preset, universe)
+_BEHAV = {
+    "chase_up": ("chase_up", "chase_v5_pos2_equal_atr_tp6_sl15_mh10", "mainboard_only"),
+    "uptrend_pullback": ("uptrend_pullback", "v33_long_reverse_v22", "mainboard_only"),
+}
+
+
 @pytest.mark.skipif(not _db_available(), reason="本地 DB 缺失")
-def test_with_a_nonzero_coefficient_every_exit_fills_worse_than_its_trigger() -> None:
+@pytest.mark.parametrize("fam", sorted(_BEHAV))
+def test_with_a_nonzero_coefficient_every_exit_fills_worse_than_its_trigger(fam: str) -> None:
     """★ 只有这一条能证明机制**真的咬**。
 
     ⚠️ **第一版这个断言是错的, 而且它当场抓到了我自己的假修复** (§13.95):
@@ -205,49 +225,61 @@ def test_with_a_nonzero_coefficient_every_exit_fills_worse_than_its_trigger() ->
     「更低 1 / 相同 4 / 更高 8」, 差一点被我读成"机制反了"。
     ⇒ 正确做法是**隔离出场腿**: 只看 `time` 退出 (触发价 = 当日 close, 与入场价无关),
     比较 `出场价 / 当日 close`。
+
+    ⚠️ **它同时是 §13.95(c) 那处过强结论的更正工具**: 对 `uptrend_pullback`,
+    接线**之前**本断言必红 (出场腿静默为零), 接线**之后** `ratio < 1` 全部成立
+    —— 这一个前后对照就是"机制是否真的接上了"的判据。
     """
+    import importlib
+
     import pandas as pd
 
-    from chase_up.backtest import run_backtest
-    from chase_up.data import load_panel
-    from chase_up.presets import get_preset
-    from chase_up.signals import compute_indicators
-    from chase_up.universe import load_universe
+    mod, preset_name, universe = _BEHAV[fam]
+    bt = importlib.import_module(f"{mod}.backtest")
+    data = importlib.import_module(f"{mod}.data")
+    presets = importlib.import_module(f"{mod}.presets")
+    signals = importlib.import_module(f"{mod}.signals")
+    universe_mod = importlib.import_module(f"{mod}.universe")
     from hiagent_config import DB_PATH
 
     w0, w1 = "2025-09-19", "2026-03-19"
-    panel = compute_indicators(load_panel(DB_PATH, w0, w1,
-                              universe=set(load_universe("mainboard_only", DB_PATH))))
+    panel = signals.compute_indicators(
+        data.load_panel(DB_PATH, w0, w1,
+                        universe=set(universe_mod.load_universe(universe, DB_PATH)))
+    )
     ref = "raw_close" if "raw_close" in panel.columns else "close"
-    px = {(str(t), str(pd.Timestamp(d).date())): float(v)
-          for t, d, v in zip(panel["thscode"], panel["date"], panel[ref])}
-    del px  # 只需日历; 逐笔用 panel 直接取
 
-    def time_exits(scale: float) -> pd.Series:
-        p = dict(get_preset("chase_v5_pos2_equal_atr_tp6_sl15_mh10"))
+    def px_lookup(code: str, day: str) -> float:
+        sub = panel[panel["thscode"].astype(str) == code]
+        sub = sub[sub["date"].map(lambda d: str(pd.Timestamp(d).date())) == day]
+        return float(sub.iloc[0][ref]) if not sub.empty else float("nan")
+
+    def time_exits(scale: float) -> pd.DataFrame:
+        p = dict(presets.get_preset(preset_name))
         p["atr_slip_scale"] = scale
-        tr = run_backtest(p, w0, w1, DB_PATH, panel_ind=panel)["trades"]
+        tr = bt.run_backtest(p, w0, w1, DB_PATH, panel_ind=panel)["trades"]
         tr = tr[tr["exit_reason"] == "time"].copy()
-        key = list(zip(tr["thscode"].astype(str),
-                       tr["exit_date"].map(lambda d: str(pd.Timestamp(d).date()))))
-        tr["close"] = [px_lookup(panel, ref, k) for k in key]
+        if tr.empty:
+            return tr
+        tr["close"] = [
+            px_lookup(str(c), str(pd.Timestamp(d).date()))
+            for c, d in zip(tr["thscode"], tr["exit_date"])
+        ]
         tr["ratio"] = tr["exit_price"] / tr["close"]
         return tr
 
-    def px_lookup(panel_df, col, key):
-        code, day = key
-        sub = panel_df[(panel_df["thscode"].astype(str) == code)]
-        sub = sub[sub["date"].map(lambda d: str(pd.Timestamp(d).date())) == day]
-        return float(sub.iloc[0][col]) if not sub.empty else float("nan")
-
     t0 = time_exits(0.0)
     t1 = time_exits(1.0)
-    assert len(t0) >= 1 and len(t1) >= 1, "样本不足, 本断言无法判定 (不是通过)"
+    assert len(t0) >= 1 and len(t1) >= 1, (
+        f"{fam}: time 退出样本不足 (t0={len(t0)}, t1={len(t1)}) ⇒ 本断言无法判定, "
+        f"这是**未判定**而不是通过。请换一个更长/更活跃的窗口。"
+    )
     assert (t0["ratio"] == 1.0).all(), (
-        "系数为 0 时出场价必须**恰等于**触发价 (零漂移的前提)"
+        f"{fam}: 系数为 0 时出场价必须**恰等于**触发价 (零漂移的前提), "
+        f"实测 {t0['ratio'].tolist()}"
     )
     assert (t1["ratio"] < 1.0).all(), (
-        "§4/§0: 系数 > 0 时, **每一笔**出场都必须比触发价更差 (卖出 ⇒ 更低)。\n"
+        f"§4/§0 [{fam}]: 系数 > 0 时 **每一笔**出场都必须比触发价更差 (卖出 ⇒ 更低)。\n"
         f"实测比值: {t1['ratio'].tolist()}\n"
-        "若恒等于 1.0 ⇒ 出场腿的冲击**没生效** (最可能的原因: ATR 查表查不到, 静默为 0)。"
+        f"若恒等于 1.0 ⇒ 出场腿的冲击**没生效** (最可能的原因: ATR 查表查不到 ⇒ 静默为 0)。"
     )
