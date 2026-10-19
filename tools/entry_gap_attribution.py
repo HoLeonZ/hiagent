@@ -157,10 +157,13 @@ def _four_engine(args, con) -> None:
         if direction < 0:             # 空头: 跳空越高 = 卖得越贵 = 有利
             cheaper, dearer = dearer, cheaper
         r = float(np.corrcoef(ex, ret)[0, 1])
-        verdict = ("**便宜是真收益**" if cheaper.mean() > dearer.mean()
-                   else "**便宜是逆向选择的标记**")
-        print(f"  按超额跳空切两半 → 更有利的一半 净收益 {cheaper.mean():+.2%} (n={len(cheaper)})"
-              f"  vs 另一面 {dearer.mean():+.2%} (n={len(dearer)})")
+        # ⚠️ 判语必须**按方向**说: 多头是"买得便宜", 空头是"卖得贵" ——
+        # 本工具第一版对空头也打"便宜是真收益" ⇒ **用多头的词说空头的事** (已修)。
+        gain = "买得便宜" if direction > 0 else "卖得贵"
+        verdict = (f"**{gain}是真收益**" if cheaper.mean() > dearer.mean()
+                   else f"**{gain}是逆向选择的标记**")
+        print(f"  按超额跳空切两半 → **更有利的一半 ({gain})** 净收益 {cheaper.mean():+.2%} "
+              f"(n={len(cheaper)})  vs 另一面 {dearer.mean():+.2%} (n={len(dearer)})")
         print(f"  corr(超额跳空, 净收益) = {r:+.2f}  ⇒ {verdict}")
 
 
