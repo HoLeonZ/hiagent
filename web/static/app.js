@@ -228,7 +228,7 @@ async function showResult(job) {
     const w = document.createElement("div");
     w.className = "warn";
     // textContent 不解析 markdown，别在文案里写 ** 星号
-    w.textContent = "preview 模式（仅最近 90 天）：这些数字不可与 full 模式比较，不得作为业绩依据。";
+    w.textContent = "preview 模式（仅最近 200 天）：这些数字不可与 full 模式比较，不得作为业绩依据。";
     $("metrics").before(w);
   }
   // 指标表：标签与类型都来自 `/api/catalog` 的 `metric_meta`（**单一来源**）——
@@ -374,7 +374,81 @@ function setTrade(i) {
 }
 
 function renderChart(d) {
-  // Task 8 实现：K 线 + MA + MACD + 入场/出场标记 + SL/TP 两条横线
+  const el = $("chart");
+  // payload 里 `bars: []` / `entry: null` 是一个**设计好的状态**（窗口内查不到该票的日线）。
+  // 没有这一句就会在 `d.entry.date` 上抛 TypeError，图表区**永远停在上一笔**——
+  // 看起来像"点了没反应"，而页面其余部分一切正常。
+  if (!d.bars || !d.bars.length) {
+    el.innerHTML = '<p class="hint">这笔交易没有可用的日线数据（可能停牌或不在本地库里）。</p>';
+    return;
+  }
+  const chart = echarts.init(el);
+  const dates = d.bars.map((b) => b.date);
+  // ⚠️ ECharts 的 candlestick 数据序是 **[open, close, low, high]**，不是 OHLC。
+  // 写反了图会是反的（阴阳颠倒、上下影线互换），**而它看起来仍然像一张正常的 K 线图**。
+  // 价域用 **raw_***：那是实际成交价，也是后端判定 SL/TP 所用的价（§3 双价）。
+  const ohlc = d.bars.map((b) => [b.raw_open, b.raw_close, b.raw_low, b.raw_high]);
+  // 指标一律**取 payload 里算好的**（在**复权**域上算的，与策略所见一致，§4.6.1）。
+  // 前端绝不再算一遍——那样会在原始价上算，正是 §4.6.1 那个缺陷的前端版本。
+  const line = (name, key, color) => ({ name, type: "line", symbol: "none",
+    data: d.bars.map((b) => b[key]), lineStyle: { width: 1, color } });
+  const macdOn = d.bars.some((b) => b.macd_dif !== null && b.macd_dif !== undefined);
+
+  const markLines = {
+    silent: true,
+    symbol: "none",
+    data: [
+      { yAxis: d.sl_price, lineStyle: { color: "#ff5252", type: "dashed" },
+        label: { formatter: `SL ${d.sl_price.toFixed(2)}`, position: "insideEndTop", color: "#ff5252" } },
+      { yAxis: d.tp_price, lineStyle: { color: "#4caf50", type: "dashed" },
+        label: { formatter: `TP ${d.tp_price.toFixed(2)}`, position: "insideEndBottom", color: "#4caf50" } },
+    ],
+  };
+
+  const series = [
+    { name: "K", type: "candlestick", data: ohlc, itemStyle: {
+        color: "#ef5350", color0: "#26a69a", borderColor: "#ef5350", borderColor0: "#26a69a" },
+      markLine: markLines },
+    line("ma5", "ma5", "#9e9e9e"),
+    line("ma20", "ma20", "#42a5f5"),
+    line("ma60", "ma60", "#ffa726"),
+    { name: "入场", type: "scatter", symbolSize: 12,
+      data: [[d.entry.date, d.entry.price]],
+      itemStyle: { color: "#ffee58" } },
+    { name: "出场", type: "scatter", symbolSize: 12,
+      data: [[d.exit.date, d.exit.price]],
+      itemStyle: { color: "#ab47bc" } },
+  ];
+  if (macdOn) {
+    series.push({ name: "macd_bar", type: "bar", xAxisIndex: 1, yAxisIndex: 1,
+      data: d.bars.map((b) => b.macd_bar) });
+    series.push({ name: "macd_dif", type: "line", xAxisIndex: 1, yAxisIndex: 1, symbol: "none",
+      data: d.bars.map((b) => b.macd_dif) });
+    series.push({ name: "macd_dea", type: "line", xAxisIndex: 1, yAxisIndex: 1, symbol: "none",
+      data: d.bars.map((b) => b.macd_dea) });
+  }
+
+  chart.setOption({
+    backgroundColor: "transparent",
+    animation: false,
+    tooltip: { trigger: "axis", axisPointer: { type: "cross" } },
+    legend: { textStyle: { color: "#bbb" }, top: 0 },
+    axisPointer: { link: [{ xAxisIndex: "all" }] },
+    grid: macdOn
+      ? [{ left: 60, right: 20, top: 34, height: "58%" }, { left: 60, right: 20, top: "72%", height: "20%" }]
+      : [{ left: 60, right: 20, top: 34, bottom: 40 }],
+    xAxis: macdOn
+      ? [{ type: "category", data: dates, boundaryGap: true, axisLine: { lineStyle: { color: "#666" } } },
+         { type: "category", gridIndex: 1, data: dates, axisLabel: { show: false } }]
+      : [{ type: "category", data: dates, boundaryGap: true }],
+    yAxis: macdOn
+      ? [{ scale: true, splitLine: { lineStyle: { color: "#2a2a2a" } } },
+         { scale: true, gridIndex: 1, splitLine: { lineStyle: { color: "#2a2a2a" } } }]
+      : [{ scale: true, splitLine: { lineStyle: { color: "#2a2a2a" } } }],
+    dataZoom: [{ type: "inside" }, { type: "slider", height: 18, bottom: 4 }],
+    series,
+  });
+  window.addEventListener("resize", () => chart.resize());
 }
 
 async function loadConfigs() {
