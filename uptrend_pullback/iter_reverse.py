@@ -28,6 +28,11 @@ import logging
 import random
 import sys
 import time
+
+from dna_stats.deflated import (
+    deflated_sharpe_ratio,
+    sharpe_significance_pvalue,
+)
 from pathlib import Path
 
 import duckdb
@@ -120,8 +125,19 @@ def score_windows(
     windows: list[tuple[str, str]],
     db_path: Path,
     engine: str,
+    n_trials: int = 1,
 ) -> dict:
-    """跑一组窗口，返回聚合指标 + 每窗明细。"""
+    """跑一组窗口，返回聚合指标 + 每窗明细 (+ §5 惩罚指标)。
+
+    ⚠️ §13.100 (2026-10-19): 本脚本此前是**全仓唯一没有 §5 三件套的优化器**
+    (`n_trials`/DSR/Bonferroni 命中 0 处) —— 而它正是**当前最优的直系祖先**
+    (v20 = `--iter 100` 的产物)。§13.81 登记了它, 本轮补上**报告**。
+
+    ⚠️ **只报告, 不参与排序** —— §5 把它们定义为"惩罚指标"(用于报告与折减),
+    不是"排序目标"。`score` 一字未动 ⇒ 选择结果逐位不变 (已用 `--iter 2 --seed 42`
+    前后比对验证)。
+    """
+    _n_trials_echo = n_trials
     try:
         df = run_windows(cfg, windows, db_path, engine=engine)
     except (duckdb.Error, ValueError, KeyError) as e:
@@ -147,8 +163,25 @@ def score_windows(
     # 综合分（与 grid.py run_grid 排序一致: median_ret 优先, worst_ret 次之）
     score = median_ret + 0.1 * sharpe_med - avg_dd
 
+    # ----- §5/§13.100: 本候选自己的 DSR 与 Bonferroni p (报告用) -----
+    # 口径与 `dna_stats.walkforward_report.format_walkforward_stats` **一致**:
+    # observed_sharpe = 窗口 Sharpe 的**中位数**; n_returns = max(窗口数×63, 100);
+    # 年化/逐期的换算由 `dna_stats.deflated` 内部负责 (2026-10-19 已统一, 见 §13.99)。
+    n_ret = max(n_total * 63, 100)
+    _dsr = deflated_sharpe_ratio(
+        observed_sharpe=sharpe_med, n_trials=max(int(n_trials), 1), n_returns=n_ret
+    )
+    _p0 = sharpe_significance_pvalue(observed_sharpe=sharpe_med, n_returns=n_ret)
+    _bonf = min(_p0 * max(int(n_trials), 1), 1.0)
+
     return {
         "score": score,
+        "n_trials": max(int(n_trials), 1),
+        "n_returns": n_ret,
+        "dsr": _dsr["deflated_sharpe"],
+        "dsr_p_value": _dsr["dsr_p_value"],
+        "sharpe_p": _p0,
+        "bonferroni_p": _bonf,
         "median_ret": median_ret,
         "mean_ret": mean_ret,
         "worst_ret": worst_ret,
@@ -185,6 +218,13 @@ def main() -> None:
     rng = random.Random(args.seed)
     base = get_preset("v33_long_reverse_v19")
 
+    # §5/§13.100: 累积暴露 = **锚点自己已承载的试验数** + 本轮 args.iter。
+    # §5 明文 "Iterative-Tuning Accounting: ... Every iteration ... increments n_trials";
+    # 从 0 起算会把跨轮迭代的历史抹掉 (这正是 §13.82 记的那处)。
+    _base_k = int(base.get("n_comparisons", 1))
+    k_accum = _base_k + args.iter
+    print(f"[§5] 累积暴露 k = {_base_k} (v19 已承载) + {args.iter} (本轮) = {k_accum}")
+
     windows = monthly_windows(
         args.start_month, args.end_month,
         window_months=args.window_months, step_months=args.step_months,
@@ -199,7 +239,8 @@ def main() -> None:
     for i in range(args.iter):
         cfg = sample_preset(base, rng)
         t0 = time.time()
-        res = score_windows(cfg, windows, Path(args.db_path), args.engine)
+        res = score_windows(cfg, windows, Path(args.db_path), args.engine,
+                            n_trials=k_accum)
         dt = time.time() - t0
         if "error" in res:
             if not args.quiet:
@@ -219,6 +260,12 @@ def main() -> None:
             "n_pos": res["n_pos"],
             "n_total": res["n_total"],
             "avg_trades": res["avg_trades"],
+            "n_trials": res["n_trials"],
+            "n_returns": res["n_returns"],
+            "dsr": res["dsr"],
+            "dsr_p_value": res["dsr_p_value"],
+            "sharpe_p": res["sharpe_p"],
+            "bonferroni_p": res["bonferroni_p"],
             "elapsed_s": dt,
         }
         rows.append(row)
@@ -244,14 +291,18 @@ def main() -> None:
     # 综合分排序
     rows.sort(key=lambda r: (-r["score"], -r["median_ret"], -r["worst_ret"]))
     print("\n=== TOP-{} (按 score=median+0.1*sharpe-avg_dd) ===".format(args.top))
+    print(f"    §5 惩罚指标 (报告用, **不参与排序**; k={k_accum} 累积暴露): "
+          f"DSR / Bonferroni p")
     print(f"{'rank':>4} {'score':>8} {'med%':>8} {'mean%':>8} {'worst%':>8} "
-          f"{'sharpe':>7} {'avg_dd%':>8} {'worst_dd%':>10} {'n+':>4} {'avg_tr':>7}")
+          f"{'sharpe':>7} {'avg_dd%':>8} {'worst_dd%':>10} {'n+':>4} {'avg_tr':>7} "
+          f"{'DSR':>6} {'Bonf p':>7}")
     for rank, r in enumerate(rows[:args.top], 1):
         print(
             f"{rank:>4} {r['score']:>+8.4f} {r['median_ret']*100:>+8.2f} "
             f"{r['mean_ret']*100:>+8.2f} {r['worst_ret']*100:>+8.2f} "
             f"{r['sharpe_med']:>+7.2f} {r['avg_dd']*100:>+8.2f} "
-            f"{r['worst_dd']*100:>+10.2f} {r['n_pos']:>4} {r['avg_trades']:>7.2f}",
+            f"{r['worst_dd']*100:>+10.2f} {r['n_pos']:>4} {r['avg_trades']:>7.2f} "
+            f"{r.get('dsr', float('nan')):>6.3f} {r.get('bonferroni_p', float('nan')):>7.4f}",
         )
 
     # 输出 top-K 参数对比
