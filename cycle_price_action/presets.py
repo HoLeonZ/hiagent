@@ -85,7 +85,8 @@ PRESET_V1 = dict(
     # KNOWN_UNRECORDED_TRIAL_COUNTS`,直到迭代记录补齐。
     n_comparisons=1,
     # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
-    # Engine `portfolio.py:65` hardcodes MAX_POSITION_PCT=1.0; 显式声明如下。
+    # Engine 里确有类常量 `MAX_POSITION_PCT = 1.0`(§2 政策常量);显式声明如下。
+# ⚠️ 附九十: 旧注释引的是 portfolio.py 第 65 行, 该处是 `class Portfolio:` —— 常量实际在 :83。
     position_sizing="all_in",
     max_positions=1,
     position_fraction=1.0,

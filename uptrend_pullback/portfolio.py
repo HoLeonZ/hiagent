@@ -159,7 +159,9 @@ MAX_VOL_PARTICIPATION = 0.10
 # 防穿仓 (R1, 2026-09-21): NAV-floor cash gate 阈值。
 # Round 14 (2026-09-28, CLAUDE.md §2): 从 module-level 常量改为 simulate_portfolio
 # 参数 (默认 0.05), preset 可通过 `nav_gate_ratio` key 覆盖。
-# 与 short_reversal/replay_strategy_v3.py:64 (min_cash_ratio=0.05) 口径一致。
+# ⚠️ 附九十: 一致的是**闸门语义**, 不是默认值或成员名 —— 旧注释
+# "与 short_reversal/replay_strategy_v3.py 第 64 行 (min_cash_ratio=0.05) 口径一致"
+# 的行号与值都已不存在(`min_cash_ratio` 在该文件里已无此名)。
 
 # 同一天内 NAV gate 触发只打一次 warning
 _nav_gate_logged_dates: set = set()

@@ -99,7 +99,8 @@ class Portfolio:
     # 当 NAV (cash + 持仓 mark-to-market 浮盈) 跌到 initial_capital ×
     # NAV_GATE_RATIO 以下时, 拒绝新开仓 — 已持仓仍按 SL/TP/time exit 正常执行。
     # 与 chase_up/portfolio.py:56 + uptrend_pullback/portfolio.py:49 +
-    # short_reversal/replay_strategy_v3.py:156 (min_cash_ratio=0.05) 口径一致。
+    # ⚠️ 附九十: 一致的是**闸门语义**, 不是默认值或成员名 —— 旧注释引的
+# short_reversal/replay_strategy_v3.py 第 156 行与 `min_cash_ratio=0.05` 都已不存在。
     NAV_GATE_RATIO = 0.05
 
     def __init__(

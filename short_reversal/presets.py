@@ -95,9 +95,12 @@ PRESETS: dict[str, dict] = {
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
         "n_comparisons": 11,
-        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
-        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
-        # 显式声明如下, 表明预设遵循 §2。
+        # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
+        # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
+        # position_fraction=1.0」—— 该行号指的是 `params` 里一张 enum 导入表;
+        # 且该参数**已不再**是引擎硬编码: 由 engine.run_backtest_v3 经
+        # core.preset_contract 解析后注入, 并在 __init__ 核对声明与实现是否一致。
+        # 故此处**不再引用行号**(行号会漂 —— 见附九十)。
         "position_sizing": "all_in",
         "max_positions": 1,
         "position_fraction": 1.0,
@@ -154,9 +157,12 @@ PRESETS: dict[str, dict] = {
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
         "n_comparisons": 11,
-        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
-        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
-        # 显式声明如下, 表明预设遵循 §2。
+        # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
+        # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
+        # position_fraction=1.0」—— 该行号指的是 `params` 里一张 enum 导入表;
+        # 且该参数**已不再**是引擎硬编码: 由 engine.run_backtest_v3 经
+        # core.preset_contract 解析后注入, 并在 __init__ 核对声明与实现是否一致。
+        # 故此处**不再引用行号**(行号会漂 —— 见附九十)。
         "position_sizing": "all_in",
         "max_positions": 1,
         "position_fraction": 1.0,
@@ -207,9 +213,12 @@ PRESETS: dict[str, dict] = {
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
         "n_comparisons": 11,
-        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
-        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
-        # 显式声明如下, 表明预设遵循 §2。
+        # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
+        # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
+        # position_fraction=1.0」—— 该行号指的是 `params` 里一张 enum 导入表;
+        # 且该参数**已不再**是引擎硬编码: 由 engine.run_backtest_v3 经
+        # core.preset_contract 解析后注入, 并在 __init__ 核对声明与实现是否一致。
+        # 故此处**不再引用行号**(行号会漂 —— 见附九十)。
         "position_sizing": "all_in",
         "max_positions": 1,
         "position_fraction": 1.0,
@@ -261,9 +270,12 @@ PRESETS: dict[str, dict] = {
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
         "n_comparisons": 11,
-        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
-        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
-        # 显式声明如下, 表明预设遵循 §2。
+        # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
+        # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
+        # position_fraction=1.0」—— 该行号指的是 `params` 里一张 enum 导入表;
+        # 且该参数**已不再**是引擎硬编码: 由 engine.run_backtest_v3 经
+        # core.preset_contract 解析后注入, 并在 __init__ 核对声明与实现是否一致。
+        # 故此处**不再引用行号**(行号会漂 —— 见附九十)。
         "position_sizing": "all_in",
         "max_positions": 1,
         "position_fraction": 1.0,
@@ -317,9 +329,12 @@ PRESETS: dict[str, dict] = {
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
         "n_comparisons": 11,
-        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
-        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
-        # 显式声明如下, 表明预设遵循 §2。
+        # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
+        # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
+        # position_fraction=1.0」—— 该行号指的是 `params` 里一张 enum 导入表;
+        # 且该参数**已不再**是引擎硬编码: 由 engine.run_backtest_v3 经
+        # core.preset_contract 解析后注入, 并在 __init__ 核对声明与实现是否一致。
+        # 故此处**不再引用行号**(行号会漂 —— 见附九十)。
         "position_sizing": "all_in",
         "max_positions": 1,
         "position_fraction": 1.0,
@@ -359,9 +374,12 @@ PRESETS: dict[str, dict] = {
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
         "n_comparisons": 11,
-        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
-        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
-        # 显式声明如下, 表明预设遵循 §2。
+        # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
+        # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
+        # position_fraction=1.0」—— 该行号指的是 `params` 里一张 enum 导入表;
+        # 且该参数**已不再**是引擎硬编码: 由 engine.run_backtest_v3 经
+        # core.preset_contract 解析后注入, 并在 __init__ 核对声明与实现是否一致。
+        # 故此处**不再引用行号**(行号会漂 —— 见附九十)。
         "position_sizing": "all_in",
         "max_positions": 1,
         "position_fraction": 1.0,
@@ -416,9 +434,12 @@ PRESETS: dict[str, dict] = {
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
         "n_comparisons": 11,
-        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
-        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
-        # 显式声明如下, 表明预设遵循 §2。
+        # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
+        # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
+        # position_fraction=1.0」—— 该行号指的是 `params` 里一张 enum 导入表;
+        # 且该参数**已不再**是引擎硬编码: 由 engine.run_backtest_v3 经
+        # core.preset_contract 解析后注入, 并在 __init__ 核对声明与实现是否一致。
+        # 故此处**不再引用行号**(行号会漂 —— 见附九十)。
         "position_sizing": "all_in",
         "max_positions": 1,
         "position_fraction": 1.0,
@@ -468,9 +489,12 @@ PRESETS: dict[str, dict] = {
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
         "n_comparisons": 11,
-        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
-        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
-        # 显式声明如下, 表明预设遵循 §2。
+        # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
+        # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
+        # position_fraction=1.0」—— 该行号指的是 `params` 里一张 enum 导入表;
+        # 且该参数**已不再**是引擎硬编码: 由 engine.run_backtest_v3 经
+        # core.preset_contract 解析后注入, 并在 __init__ 核对声明与实现是否一致。
+        # 故此处**不再引用行号**(行号会漂 —— 见附九十)。
         "position_sizing": "all_in",
         "max_positions": 1,
         "position_fraction": 1.0,
@@ -539,9 +563,12 @@ PRESETS: dict[str, dict] = {
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
         "n_comparisons": 11,
-        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
-        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
-        # 显式声明如下, 表明预设遵循 §2。
+        # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
+        # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
+        # position_fraction=1.0」—— 该行号指的是 `params` 里一张 enum 导入表;
+        # 且该参数**已不再**是引擎硬编码: 由 engine.run_backtest_v3 经
+        # core.preset_contract 解析后注入, 并在 __init__ 核对声明与实现是否一致。
+        # 故此处**不再引用行号**(行号会漂 —— 见附九十)。
         "position_sizing": "all_in",
         "max_positions": 1,
         "position_fraction": 1.0,
@@ -600,9 +627,12 @@ PRESETS: dict[str, dict] = {
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
         "n_comparisons": 11,
-        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
-        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
-        # 显式声明如下, 表明预设遵循 §2。
+        # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
+        # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
+        # position_fraction=1.0」—— 该行号指的是 `params` 里一张 enum 导入表;
+        # 且该参数**已不再**是引擎硬编码: 由 engine.run_backtest_v3 经
+        # core.preset_contract 解析后注入, 并在 __init__ 核对声明与实现是否一致。
+        # 故此处**不再引用行号**(行号会漂 —— 见附九十)。
         "position_sizing": "all_in",
         "max_positions": 1,
         "position_fraction": 1.0,
@@ -1302,9 +1332,12 @@ PRESETS: dict[str, dict] = {
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
         "n_comparisons": 11,
-        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
-        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
-        # 显式声明如下, 表明预设遵循 §2。
+        # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
+        # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
+        # position_fraction=1.0」—— 该行号指的是 `params` 里一张 enum 导入表;
+        # 且该参数**已不再**是引擎硬编码: 由 engine.run_backtest_v3 经
+        # core.preset_contract 解析后注入, 并在 __init__ 核对声明与实现是否一致。
+        # 故此处**不再引用行号**(行号会漂 —— 见附九十)。
         "position_sizing": "all_in",
         "max_positions": 1,
         "position_fraction": 1.0,

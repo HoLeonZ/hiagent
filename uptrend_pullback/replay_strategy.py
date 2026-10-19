@@ -88,7 +88,8 @@ class UpullbackTradeReplay(bt.Strategy):
         # bar 0 下单 → bar 1 开盘成交; bar 1 的 open[0] 到此时才可见, 因果上无法
         # 在 bar 0 预判 (§1), 故在此复核。涨停开盘 = 物理上买不进 → 置 skipped,
         # 由 orchestrator 丢弃该 trade (backtrader_engine.py:165)。口径与 Phase 1
-        # portfolio.py:474-476 一致, 共用 core.dual_price.is_limit_up 单一来源。
+        # portfolio.py 里的对应处一致, 共用 core.dual_price.is_limit_up 单一来源。
+# ⚠️ 附九十: 旧注释引的 portfolio.py 第 474-476 行与 `is_limit_up` 无关(实际在 :560/:564)。
         if not self.entry_done and is_limit_up(
             float(self.data.close[-1]),
             float(self.data.open[0]),
