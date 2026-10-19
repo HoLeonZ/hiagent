@@ -233,6 +233,14 @@ _EXEMPT = {
         " (`from uptrend_pullback.backtest import METRICS_BASIS` 并打进输出)。"
         "`short_reversal` 只在 docstring 引 §9/§13.24 的**沿革**时被提到 —— "
         "正是本条守卫要区分的那件事 (⚠️ 这是它抓到的**第四个**同类, 四次都是「提到族名 ≠ 并列族口径」)。",
+    "tools/max_positions_axis_chase.py":
+        "§13.90/§13.160 —— 它**只跑并只报 `chase_up` 一族** (preset 与引擎都是这一族), "
+        "**没有跨族并列**、不合并行、不排序 ⇒ 无需跨族口径披露; 而该族的口径**已静态披露**"
+        " (`from chase_up.backtest import METRICS_BASIS` 并打进输出)。"
+        "`uptrend_pullback` / `short_reversal` 只在 docstring 引 §9 那张表的**沿革**时被提到 —— "
+        "正是本条守卫要区分的那件事 (⚠️ 这是它抓到的**第五个**同类; 五个**全部**是「提到族名 ≠ 并列族口径」, "
+        "⇒ 或许该把判据从「提到」收窄为「提到**且**输出里有数」—— 但那会削弱它抓到 §13.90 原文那种并列的能力, "
+        "故仍保留现状并逐条写明理由。)",
     "tools/preset_census.py":
         "§13.90/§13.110 —— 该工具**确实把四族计数并排**, 故它在 §13.110 已改为"
         "**静态 `from … import METRICS_BASIS`** 并在输出里披露; 此处豁免**仅为**"
