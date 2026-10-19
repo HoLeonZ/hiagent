@@ -343,21 +343,118 @@ def test_dsr_max_and_n_trials_describe_the_same_collection() -> None:
     )
 
 
-def test_wf_family_no_longer_selects_the_best_window() -> None:
-    """14 个 WF 脚本不得再用 `max(sharpes)`(跨窗口最大)作 DSR 输入。
+#: WF 族:分子取**跨窗口均值**(附十三 定的口径),`n_trials` 取配置数。
+#: **显式列出**而不是按文件名前缀 glob —— `walkforward.py` 是 `wa` 开头,前缀 glob
+#: 匹配不到它,而它恰恰就是 附十三 漏掉的那一个(附八十五)。
+_WF_FAMILY = [
+    "short_reversal/walkforward.py",
+    *[f"short_reversal/wf_v{v}_focused.py" for v in
+      (34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 56)],
+]
 
-    注意:按**去注释后**的代码判断 —— 修复说明里引用旧语句是正常的(spec 中说
-    「此前是 observed = max(sharpes)」),不应被当成回归。
+#: 逐配置网格:分子分母都取自**同一批逐配置**的 Sharpe ⇒ 本来就是同源,`max` 正确。
+_PER_CONFIG_GRID = ["short_reversal/grid_runner.py"]
+
+
+def test_wf_family_no_longer_selects_the_best_window() -> None:
+    """**WALK-FORWARD 族**不得再用 `max(sharpes)`(跨窗口最大)作 DSR 输入。
+
+    本条取代了原先按文件名前缀划名单的版本 —— 那是它漏掉 `walkforward.py` 的**原因**:
+    原 glob 是 `short_reversal/wf_v*_focused.py`,而 `walkforward.py` 是 `wa` 开头,
+    **匹配不到**。于是 附十三(`5a413d8`)的修复漏了它,而这条守卫**也永远看不见它**
+    —— 修复与守卫用同一份不完整的名单(附八十五)。
+
+    现改为**显式名单 + 元断言**:凡 `short_reversal/` 下调用 `deflated_sharpe_ratio`
+    的脚本,必须落在 `_WF_FAMILY`(分子取跨窗口均值)或 `_PER_CONFIG_GRID`
+    (分子分母都是**逐配置**,本来就同源)之一;新脚本漏在两边之外即失败
+    —— 名单不可能再次悄悄变短。
+
+    按**去注释后**的代码判断 —— 修复说明里引用旧语句是正常的,不应被当成回归。
     """
-    offenders = []
-    for f in sorted(glob.glob(str(REPO_ROOT / "short_reversal" / "wf_v*_focused.py"))):
+    for rel in _WF_FAMILY:
         code = "\n".join(
-            l for l in Path(f).read_text(encoding="utf-8").splitlines()
+            l for l in (REPO_ROOT / rel).read_text(encoding="utf-8").splitlines()
             if not l.strip().startswith("#")
         )
-        if "observed = max(sharpes)" in code:
-            offenders.append(str(Path(f).relative_to(REPO_ROOT)))
-    assert not offenders, (
-        "§5 VIOLATION: 以下 WF 脚本又用「最好的那个窗口」当 DSR 输入 —— "
-        f"窗口那层选择不会被任何折减覆盖:{offenders}"
+        assert "observed = max(sharpes)" not in code, (
+            f"§5 VIOLATION: {rel} 又用「最好的那个窗口」当 DSR 输入 —— "
+            "窗口那层选择不会被任何折减覆盖。"
+        )
+
+
+def test_the_wf_family_list_is_the_whole_family() -> None:
+    """**元断言**:名单必须等于实际集合(附十三 立的规矩)。
+
+    没有这条,上面那条守卫的强度就取决于名单有没有漏人 —— 而它已经漏过一次。
+    """
+    callers = {
+        str(p.relative_to(REPO_ROOT))
+        for p in sorted((REPO_ROOT / "short_reversal").glob("*.py"))
+        if "deflated_sharpe_ratio" in p.read_text(encoding="utf-8")
+    }
+    known = set(_WF_FAMILY) | set(_PER_CONFIG_GRID)
+    assert callers == known, (
+        "§5: `short_reversal/` 下调用 DSR 的脚本与登记名单不一致 —— "
+        f"名单外新增:{sorted(callers - known)};名单里已不存在:{sorted(known - callers)}。"
+        "新增脚本必须显式归入 WF 族(分子取跨窗口均值)或逐配置网格(分子分母同源)。"
+    )
+
+
+def test_walkforward_feeds_the_cross_window_mean_to_dsr(monkeypatch, tmp_path) -> None:
+    """**数值验证**(不只判源码文本):DSR 收到的是**跨窗口均值**,不是最大那个窗口。
+
+    起因:`walkforward.py` 此前传 `max(sharpes)` —— 而它的 `sharpes` 是同一个 preset 跨
+    **窗口**的 Sharpe,`n_trials` 却是**配置**数 ⇒ 窗口那层没被折减。附十三 定的口径是
+    "分子取跨窗口均值",本条把口径钉在**行为**上:桩成 4 个窗口的 Sharpe 为
+    `[0.4, 1.9, 0.7, 0.6]`,断言 DSR 收到 **0.9**(均值)而不是 **1.9**(最大窗口)。
+    """
+    import importlib
+    import sys
+
+    import pytest
+
+    mod = importlib.import_module("short_reversal.walkforward")
+    per_window = [0.4, 1.9, 0.7, 0.6]          # 均值 0.9,最大 1.9
+    seen = {"n": 0}
+
+    def fake_run_backtest(preset, start, end, db_path, **kw):
+        s = per_window[seen["n"]]
+        seen["n"] += 1
+        return {
+            "preset": preset, "start": start, "end": end,
+            "trades_count": 5, "win_rate": 0.5, "total_yield": 0.01, "cagr": 0.1,
+            "sharpe": s, "max_dd": 0.05, "avg_pnl": 0.01, "avg_hold_days": 3.0,
+            "tp_count": 2, "sl_count": 2, "time_count": 1,
+            "final_capital": 1_000_000.0, "n_trading_days": 42,
+        }
+
+    monkeypatch.setattr(mod, "run_backtest_v3", fake_run_backtest)
+
+    captured: dict[str, float] = {}
+    real_dsr = mod.deflated_sharpe_ratio
+
+    def spy(observed_sharpe, n_trials, **kw):
+        captured["observed"] = observed_sharpe
+        captured["n_trials"] = n_trials
+        return real_dsr(observed_sharpe, n_trials, **kw)
+
+    monkeypatch.setattr(mod, "deflated_sharpe_ratio", spy)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["walkforward", "--preset", "v50_slope",
+         "--start", "2026-01-01", "--end", "2026-09-01",
+         "--window-months", "2", "--step-months", "2",
+         "--db-path", str(tmp_path)],
+    )
+    mod.main()
+
+    assert seen["n"] >= 2, f"夹具失效:只跑了 {seen['n']} 个窗口"
+    assert "observed" in captured, "夹具失效:DSR 根本没被调用"
+    assert captured["observed"] != pytest.approx(1.9), (
+        "§5 VIOLATION: DSR 收到的是**最好的那个窗口**(1.9)—— 那是 附十三 之前的口径,"
+        "窗口那一层选择不会被任何折减覆盖。"
+    )
+    expected_mean = sum(per_window[:seen["n"]]) / seen["n"]
+    assert captured["observed"] == pytest.approx(expected_mean), (
+        f"DSR 应收到跨窗口均值 {expected_mean},实际 {captured['observed']}"
     )

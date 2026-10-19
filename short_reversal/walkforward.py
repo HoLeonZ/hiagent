@@ -185,7 +185,15 @@ def main() -> None:
         sharpes = sub["sharpe"].dropna().astype(float).tolist()
         if not sharpes:
             continue
-        observed = max(sharpes)
+        # §5 (附八十五): DSR 的输入必须与 `n_trials` 描述**同一次选择**。
+        # 此前是 `observed = max(sharpes)`,而这里的 `sharpes` 是**同一个 preset 跨多个窗口**
+        # 的 Sharpe ⇒ 分子 = "最好的那一个**窗口**",分母 = "试过多少**配置**"。
+        # 两次不同的选择 ⇒ **窗口那一层完全没被折减** ⇒ DSR 报出的显著性偏高。
+        # 口径在 附十三(`5a413d8`)就已经定死("分子取跨窗口均值,n_trials 仍为配置数"),
+        # 那次改了 14 个 `wf_v*_focused.py` + `chase_up/wf_sweep_all.py`,**独独漏了本文件**
+        # —— 于是它成了这一族里唯一的落网者(族内不对称,见附八十五)。
+        observed = sum(sharpes) / len(sharpes)
+        best_window_sharpe = max(sharpes)
         # §5 (附六十): T 必须来自本次运行(不许常数兜底 —— 附三十二 立的规矩)。
         t_days = sub["n_trading_days"].dropna().astype(int).tolist()
         if not t_days:
@@ -204,7 +212,8 @@ def main() -> None:
             n_returns=_observed_t,
         )
         print(
-            f"\n§5 DSR for {preset} | observed_sharpe={observed:.3f} | "
+            f"\n§5 DSR for {preset} | mean_oos_sharpe={observed:.3f} | "
+            f"best_window={best_window_sharpe:.3f}(选中值,不作显著性输入) | "
             f"n_trials={int(_cfg['n_comparisons'])} | "
             f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
             f"expected_max={dsr['expected_max_sharpe']:.3f} | "
