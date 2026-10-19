@@ -472,15 +472,23 @@ def simulate_portfolio(
             #    是一个**建模选择** (拒单可能因随后的反弹而变好), **方向不单一** ⇒
             #    已登记、未改 (§13.106(d))。
             # ⚠️ 一律用 **raw** 价判 (§3: 涨跌停是**未复权**世界的制度约束)。
-            _r_o, _r_h, _r_lo = pi["raw_open"][j], pi["raw_high"][j], pi["raw_low"][j]
-            _r_pc = pi["raw_prev_close"][j]
-            if (
-                not np.isnan(_r_o) and not np.isnan(_r_h) and not np.isnan(_r_lo)
-                and not np.isnan(_r_pc) and _r_pc > 0
-                and _r_o == _r_h == _r_lo
-                and is_limit_down(float(_r_pc), float(_r_o))
-            ):
-                continue  # 封死跌停 ⇒ 本 bar 不成交, 持仓顺延到下一根
+            # ⚠️⚠️ 2026-10-19 (§13.121): 这段守卫**第一版无条件读 `pi["raw_open"]`**
+            # ⇒ 面板**没有 raw 列**时 (合成测试面板 / legacy panel) 直接 `KeyError`
+            # —— 而本文件其它 raw 访问**全都**先判成员存在 (见 `raw_close" in pi`)。
+            # **它是我引入的一个回归**, 由全量回归的分拣抓到;
+            # 受害者是 `tests/test_uptrend_pullback_equity_curve_integrity.py` 的两条
+            # (**本该**是 §13.114 那个缺陷的守卫, 却因为这一行**根本没跑起来**)。
+            _raw_ok = all(k in pi for k in ("raw_open", "raw_high", "raw_low", "raw_prev_close"))
+            if _raw_ok:
+                _r_o, _r_h, _r_lo = pi["raw_open"][j], pi["raw_high"][j], pi["raw_low"][j]
+                _r_pc = pi["raw_prev_close"][j]
+                if (
+                    not np.isnan(_r_o) and not np.isnan(_r_h) and not np.isnan(_r_lo)
+                    and not np.isnan(_r_pc) and _r_pc > 0
+                    and _r_o == _r_h == _r_lo
+                    and is_limit_down(float(_r_pc), float(_r_o))
+                ):
+                    continue  # 封死跌停 ⇒ 本 bar 不成交, 持仓顺延到下一根
 
             if o <= sl_p:
                 px, reason = o, "SL"
