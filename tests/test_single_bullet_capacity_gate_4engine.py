@@ -64,7 +64,11 @@ GATE_PATTERNS = (
 REGISTERED_DEBT = {
     "short_reversal": "§13.24 —— 10 个 preset 声明 N∈{2,3,4}, 而 replay_strategy_v3.py "
                       "把 max_positions 只当 sizing 除数用, 无并发计数闸门; "
-                      "实测 v58_mp_2 并发峰值 15。修它属**结果变更**, 按授权只登记。",
+                      "实测 v58_mp_2 并发峰值 15。修它属**结果变更**, 按授权只登记。"
+                      "\n⚠️ **2026-10-20 (§13.161) 补充实测**: 违反**不限于 N>1** —— "
+                      "在 **N=1**(默认档) 下并发峰值就是 **4**; N=2 → **18**; N=4 → **28** "
+                      "(三窗: W2/IND/IS1)。⇒ §2 的容量界在本族**任何档位**都不成立, "
+                      "而那些 preset 恰恰**从来没被这条守卫问过** (旧判据只问声明了 N>1 的族)。",
 }
 
 
@@ -114,12 +118,19 @@ def test_families_are_discovered() -> None:
 @pytest.mark.parametrize("fam", _families())
 def test_multi_slot_family_has_a_capacity_gate(fam: str) -> None:
     """声明了 N>1 的族必须真的有并发计数闸门 (§2 Single-Bullet)。"""
-    vals = _declared_max_positions(fam)
-    needs_gate = any(v > 1 for v in vals)
     hits = _gate_hits(fam)
 
-    if not needs_gate:
-        return  # 该族没有任何多槽 preset ⇒ §2 的容量条款对它无内容
+    # ⚠️⚠️ 2026-10-20 (§13.161): 这里**原先**是
+    #     needs_gate = any(v > 1 for v in vals);  if not needs_gate: return
+    # —— 而**§2 的容量界对每一个 preset 都成立** ("Capacity is bounded by the preset's
+    # max_positions"), N=1 时那个界就是 **1**。旧判据把"全族都是 N=1"的族**整个豁免**掉,
+    # 于是 `uptrend_pullback` (4/4 都是 N=1) 与 `chase_up` (22/22 都是 N=1) 的 ✅
+    # 是**写在表里的**, 不是**被检查的**。
+    # **已用注入证明这条洞是真的**: 把 `uptrend_pullback/portfolio.py` 的
+    # `if len(positions) >= max_positions:` 改成 `if False:` ⇒ 旧判据**照样 5 passed**
+    # (它根本没看那一族); 改成无条件要求后**立刻报红**。
+    # 而 runtime 实测 (§13.161): `short_reversal` 在 **N=1**(默认档) 下并发峰值就是 **4**
+    # ⇒ §2 的违反**不限于 N>1 的 preset**, 旧判据的问法本身漏掉了它最常见的那一半。
 
     if fam in REGISTERED_DEBT:
         assert not hits, (
@@ -131,8 +142,8 @@ def test_multi_slot_family_has_a_capacity_gate(fam: str) -> None:
         pytest.xfail(f"{fam}: 登记在案的 §2 违反 —— {REGISTERED_DEBT[fam]}")
 
     assert hits, (
-        f"{fam} 的 preset 声明了 max_positions>1 ({sorted(vals)}), 但整个族里"
-        f"**找不到任何并发计数闸门**。\n"
+        f"{fam} 的**整个族**找不到任何并发计数闸门 "
+        f"(该族 preset 声明的 `max_positions` 取值: {sorted(_declared_max_positions(fam))})。\n"
         f"§2 Single-Bullet Execution: \"Capacity is bounded by the preset's max_positions; "
         f"signals beyond capacity at time T MUST BE IMMEDIATELY DISCARDED\"。\n"
         f"⇒ 必须补一个 `len(positions) >= max_positions` 式的判断 (参照 "
