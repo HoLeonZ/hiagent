@@ -43,12 +43,20 @@ $ grep -rn "T+1\|t1" chase_up/ uptrend_pullback/ short_reversal/ cycle_price_act
 在某族里**按设计**不存在,应显式加一档带理由的豁免,而不是把那一格删掉(删掉与"没实现"
 在矩阵里长得一模一样 —— 这是本会话反复栽的那个坑)。
 
-## 本轮只收三格已成形的契约
+## 五条契约现在都在矩阵里 —— 以及我上一版把两条挡在门外的理由是**错的**
 
-`T+1`、`容量闸门`、`涨停买入不成交` —— 三条我都**逐引擎定位过**。
-另有两条(`max_volume_participation`、`nav_gate_ratio`)确认在四族里都存在,但**尚未**做出
-精确到行的定位(其中 cycle 那两条目前只找到**注释**级的落点,没有代码级落点),
-故**不塞进矩阵** —— 用注释当"实现"会让矩阵变成"文本审计",而那正是仓库自己警告过的弱判据。
+第一版只收三条,理由是"另两条只找得到 **import 行或注释**级落点"。**那个理由是错的**:
+再搜一轮就找到了两条**代码级**落点 ——
+
+* 成交量上限:四族都调 `core.dual_price.volume_cap_fill(...)`(**真的单源**);
+* NAV 闸门:chase/uptrend 逐字相同的 `nav_now < initial_capital * nav_gate_ratio`,
+  short_reversal 叫 `cash_gate_threshold`,cycle 用**类常量** `NAV_GATE_RATIO`。
+
+教训:"**找不到代码级落点**"这句话,必须先**真的找过**才能说 —— 我第一版是"没找到就
+当成找不到",差一点把一条**做对了的**契约(成交量上限四族单源)排除在矩阵外。
+
+**仍然坚持的**:不拿注释或 import 行当"实现"(那会把矩阵变成文本审计 ——
+仓库自己在 `test_preset_declarations_are_load_bearing.py` 开头警告过这种弱判据)。
 """
 from __future__ import annotations
 
@@ -93,6 +101,29 @@ CONTRACTS: dict[str, dict[str, tuple[str, str, str]]] = {
         "short_reversal": ("short_reversal/replay_strategy_v3.py", r"is_limit_up\(",
                            "**回补**前判(做空:买 = 回补)"),
         "cycle_price_action": ("cycle_price_action/portfolio.py", r"is_limit_up\(","建仓前判"),
+    },
+    "成交量参与上限 (§4: MIN(target, Bar_Volume × rate))": {
+        "chase_up": ("chase_up/portfolio.py", r"max_fill = volume_cap_fill\(",
+                     "共用 `core.dual_price.volume_cap_fill` **单源**"),
+        "uptrend_pullback": ("uptrend_pullback/portfolio.py", r"max_fill = volume_cap_fill\(",
+                             "同上(单源)"),
+        "short_reversal": ("short_reversal/replay_strategy_v3.py", r"max_fill = volume_cap_fill\(",
+                           "同上(单源)"),
+        "cycle_price_action": ("cycle_price_action/portfolio.py", r"max_fill = volume_cap_fill\(",
+                               "同上(单源)—— §4 的「单源」在这一条上**是做到了的**"),
+    },
+    "NAV 闸门 (§2: NAV 跌破 initial_capital × ratio 则拒绝新开仓)": {
+        "chase_up": ("chase_up/portfolio.py", r"if nav_now < initial_capital \* nav_gate_ratio:",
+                     "`nav_gate_ratio` 作参数"),
+        "uptrend_pullback": ("uptrend_pullback/portfolio.py",
+                             r"if nav_now < initial_capital \* nav_gate_ratio:",
+                             "同 chase(逐字相同)"),
+        "short_reversal": ("short_reversal/replay_strategy_v3.py",
+                           r"cash_gate_threshold = self\.p\.initial_capital \* self\.p\.nav_gate_ratio",
+                           "**改了名字**:`cash_gate_threshold`;且 `nav_gate_ratio` 缺声明即 fail-fast"),
+        "cycle_price_action": ("cycle_price_action/portfolio.py",
+                               r"if self\.cash < self\.initial_capital \* self\.NAV_GATE_RATIO:",
+                               "**类常量** `NAV_GATE_RATIO`(不是参数)"),
     },
 }
 
