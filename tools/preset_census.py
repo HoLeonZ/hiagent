@@ -30,6 +30,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from hiagent_config import DB_PATH  # noqa: E402
 
+# §13.90: 跨族并列**必须显式披露口径** —— 用**静态导入**(不是 importlib),
+# 这样守卫 `test_every_cross_family_tool_discloses_basis_or_is_exempt` 认得出。
+from chase_up.backtest import METRICS_BASIS as _BASIS_CHASE  # noqa: E402
+from uptrend_pullback.backtest import METRICS_BASIS as _BASIS_UPTREND  # noqa: E402
+from short_reversal.engine import METRICS_BASIS as _BASIS_SHORT  # noqa: E402
+from cycle_price_action.allocator import METRICS_BASIS as _BASIS_CYCLE  # noqa: E402
+
 W2 = ("2024-10-08", "2026-09-18")
 IND = ("2022-10-03", "2024-09-30")
 
@@ -149,6 +156,25 @@ def _cycle() -> list[tuple[str, float, float]]:
     return out
 
 
+_BASIS = {
+    "chase_up": lambda: dict(_BASIS_CHASE),
+    "uptrend_pullback": lambda: dict(_BASIS_UPTREND),
+    "short_reversal": lambda: dict(_BASIS_SHORT),
+    "cycle_price_action": lambda: dict(_BASIS_CYCLE),
+}
+
+
+def _basis_of(fam: str) -> dict:
+    """§13.90: **跨族并列必须披露口径** —— 本表把四族的计数放在一起,
+    而未披露的并列正是 §13.13 那条禁令防的事。
+
+    ⚠️ **本工具第一版是用 `importlib` 动态导入的 —— 被守卫抓住了。**
+    守卫认的是**静态 `from … import METRICS_BASIS`**; 而它**本该抓住我**:
+    披露若可以"动态地做", 读代码的人也看不出它做了。**已改成静态导入。**
+    """
+    return _BASIS[fam]()
+
+
 def main() -> int:
     import argparse
     ap = argparse.ArgumentParser(description="四族 preset 的当前态普查 (只报聚合, §5 禁排名)")
@@ -178,6 +204,10 @@ def main() -> int:
     per = defaultdict(lambda: defaultdict(dict))
     for r in all_rows:
         per[r["family"]][r["preset"]][r["window"]] = r["ret"]
+    print("\n=== 口径披露 (§13.13/§13.90: **四族同名指标定义不同, 不得跨族比较**) ===")
+    for fam in fams:
+        print(f"  {fam:<22} {_basis_of(fam)}")
+    print("  ⚠️ 本表**只报计数**, 不做跨族排序 —— §5 禁止 in-sample 择优。")
     print("\n=== 每族聚合 (✅ = 该窗口 total_return > 0) ===")
     print(f"{'族':<22} {'n':>4} {'两窗口都为正':>12} {'仅W2正':>8} {'仅IND正':>8} {'都不正':>8} {'缺数据':>7}")
     for fam, d in per.items():

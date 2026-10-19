@@ -667,7 +667,21 @@ def simulate_portfolio(
         unrealized = 0.0
         for code, pos in positions.items():
             j = _row_at(pidx[code], day)
-            px = pidx[code]["close"][j] if j is not None else pos["entry_price"]
+            # ⚠️⚠️ §3/§13.114 (2026-10-19): **市值必须用 raw 价** —— 与 entry_price 同价源。
+            # §3 明文: "ALWAYS use **Raw Prices** (`raw_close`) for evaluating limit order
+            # triggers, stop-losses, and **portfolio physical cash mark-to-market**"。
+            # 旧写法用 `pidx[code]["close"]`(前复权 adj) 去减 `pos["entry_price"]`(**raw**)
+            # ⇒ **两个价源相减**。持仓跨除权日时 adj 价按复权因子**阶梯跳变**而 raw 价不动
+            # ⇒ 权益曲线出现**物理上不可能**的单日跳变 (实测 uptrend 最高 **+252.78%**,
+            # 14/244 天超 ±10%; chase 最高 +103%, **48/244** 天)。
+            # ⇒ 回退顺序与执行价一致: raw 优先, 缺失 (NaN) 时回退 adj。
+            px = pos["entry_price"]
+            if j is not None:
+                _rc = pidx[code].get("raw_close")
+                if _rc is not None and not np.isnan(_rc[j]):
+                    px = float(_rc[j])
+                else:
+                    px = pidx[code]["close"][j]
             holdings_val += pos["size"] * px
             # total_cash 是「已实现盈亏账本」, 建仓时并不扣减现金 (只有平仓时把
             # net_pnl 计入)。因此持仓期内 NAV 只能加**未实现盈亏**; 若加持仓市值
