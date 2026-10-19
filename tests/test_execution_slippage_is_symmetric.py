@@ -283,3 +283,108 @@ def test_with_a_nonzero_coefficient_every_exit_fills_worse_than_its_trigger(fam:
         f"实测比值: {t1['ratio'].tolist()}\n"
         f"若恒等于 1.0 ⇒ 出场腿的冲击**没生效** (最可能的原因: ATR 查表查不到 ⇒ 静默为 0)。"
     )
+
+# ---------------------------------------------------------------------------
+# 3b) short_reversal (§13.97) —— 结构与另两族**不同** (类方法, 空头方向相反)
+# ---------------------------------------------------------------------------
+
+_SHORT = REPO_ROOT / "short_reversal" / "replay_strategy_v3.py"
+
+
+def _short_tree() -> ast.Module:
+    return ast.parse(_SHORT.read_text(encoding="utf-8"))
+
+
+def test_short_reversal_every_close_call_passes_the_slippage_adjusted_price() -> None:
+    """**逐调用点**: 每个 `self._close(...)` 的价格实参必须是 `self._exit_fill_px(...)`。
+
+    (与上面两族同一条命题 —— 但这里的判据单位是**调用点**, 不是"文件提到过"。)
+    """
+    calls = [n for n in ast.walk(_short_tree())
+             if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+             and n.func.attr == "_close"]
+    assert len(calls) >= 1, "§13.97: 找不到 self._close 调用点 —— 扫描单位失效"
+    bad = []
+    for c in calls:
+        assert len(c.args) >= 2, f"第 {c.lineno} 行的 _close 实参不足"
+        second = ast.unparse(c.args[1])
+        if "_exit_fill_px" not in second:
+            bad.append((c.lineno, second))
+    assert not bad, (
+        "§13.97: 这些平仓调用点**没有**经过出场冲击 ⇒ 平仓腿零冲击 = 单一方向乐观 (§0)。\n"
+        f"{bad}"
+    )
+
+
+def test_short_reversal_exit_takes_the_positive_sign() -> None:
+    """⚠️ **反号**: 本族是**空头**, 平仓是**买入** ⇒ 冲击让平仓价更**高** = 悲观。
+
+    这与另两族（多头, 出场是卖出 ⇒ `×(1−slip)`）**相反**, 也与本族**入场腿**
+    （卖出 ⇒ `×(1−slip)`）**相反**。把它"顺手统一"成减号会把悲观改成乐观。
+    """
+    src = _SHORT.read_text(encoding="utf-8")
+    assert "return float(raw_px) * (1.0 + slip)" in src, (
+        "§13.97: short_reversal 的**出场**腿符号不对。空头平仓是**买入**, "
+        "悲观方向是平仓价更**高** ⇒ 必须是 `(1.0 + slip)`。"
+    )
+    assert "return float(raw_px) * (1.0 - slip)" not in src, (
+        "§13.97: 出场腿用了减号 —— 那是**多头**的方向 (卖出更便宜), "
+        "对空头平仓是**乐观** ⇒ §0 违规。"
+    )
+
+
+@pytest.mark.skipif(not _db_available(), reason="本地 DB 缺失")
+def test_short_reversal_with_a_nonzero_coefficient_every_exit_fills_worse() -> None:
+    """★ 行为档 (short_reversal): `atr_slip_scale>0` 时**每一笔**平仓都比触发价更差。
+
+    ⚠️ **隔离手法沿用 §13.95 的教训**: 只看 `time` 退出 (触发价 = 当日 close,
+    **与入场价无关**); 不看 `exit_price` 的绝对值, 而看它与**触发价**的关系。
+    ⚠️ 本族是空头 ⇒ "更差" = 平仓价**更高**。
+    ⚠️ **本族不提供 panel**, 触发价直接从 DB 取 `raw_kline_daily.close`。
+
+    ⚠️⚠️ **本测试的第一版是"永远跳过"的 (§13.19 那一类)**:
+    它跨两次运行按 (entry_date, thscode) 配对, 但 `atr_slip_scale>0` 会改变成交集合
+    ⇒ 每次都不匹配 ⇒ 每次都 skip。**一个永远 skip 的守卫比没有守卫更糟**
+    (它长得像覆盖)。⇒ 改成**单次运行 + 直接查触发价**, 不依赖跨运行配对。
+    """
+    import duckdb
+
+    import short_reversal.presets as SRP
+    from short_reversal.engine import run_backtest_v3
+    from hiagent_config import DB_PATH
+
+    name = "v50_slope"
+    if name not in SRP.PRESETS:
+        pytest.fail(f"找不到 preset {name} —— 本断言**无法判定**, 这是失败不是跳过")
+    w0, w1 = "2025-10-01", "2025-12-31"
+    SRP.PRESETS[name]["atr_slip_scale"] = 1.0
+    try:
+        r = run_backtest_v3(name, w0, w1, DB_PATH)
+    finally:
+        SRP.PRESETS[name]["atr_slip_scale"] = 0.0
+    tr = r.get("trades") or []
+    tr = [t for t in tr if t.get("exit_reason") == "time"]
+    assert len(tr) >= 1, (
+        f"窗口 {w0}..{w1} 内没有 time 退出 ⇒ **未判定** (不是通过)。"
+        f"请换窗口 —— 但没有样本时**不得**把本判据当成绿的。"
+    )
+    con = duckdb.connect(str(DB_PATH), read_only=True)
+    try:
+        bad = []
+        for t in tr:
+            row = con.execute(
+                "SELECT close FROM raw_kline_daily WHERE thscode = ? AND date = ?",
+                [t["thscode"], t["exit_date"]],
+            ).fetchone()
+            if row is None or row[0] is None:
+                continue
+            trig = float(row[0])
+            if not (float(t["exit_price"]) > trig):
+                bad.append((t["thscode"], str(t["exit_date"]), t["exit_price"], trig))
+    finally:
+        con.close()
+    assert not bad, (
+        f"§4/§0 [short_reversal]: 系数 > 0 时**每一笔**平仓都必须比触发价更**差** "
+        f"(空头平仓是买入 ⇒ 更高)。\n实测未通过的: {bad}\n"
+        f"若全部相等 ⇒ 出场腿的冲击**没生效**(ATR 取不到 ⇒ 静默为 0)。"
+    )

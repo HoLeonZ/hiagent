@@ -53,9 +53,11 @@
 >   当成"参数是能用的"而没跑过)、以及 **§13.95** (★ **§4 的执行滑点机制在四族里从未真正可用** ——
 >   根因是一张**查错对象的表**: 滑点复用的 `atr_lookup` 是**为 ATR-TP 建的信号日表** ⇒
 >   `uptrend`/`short` 那张表**恒空**、出场腿在四族**都**取不到 ⇒ 出场零冲击 = 单一方向乐观 (§0)。
->   `chase_up` 与 `uptrend_pullback` 已修且**零漂移**; `short_reversal`/`cycle` **写明未接**; **系数仍未定**)。
+>   `chase_up`/`uptrend_pullback`/`short_reversal` 已修且**零漂移**; `cycle` **写明未接**; **系数仍未定**)。
 >   与 **§13.96** (接 uptrend; 并**更正 §13.95 的一处过强结论** —— 入场腿有**第二条路径**,
->   我拿一个**代理量**(表是否为空)当成了它想断言的**语义性质**)。
+>   我拿一个**代理量**(表是否为空)当成了它想断言的**语义性质**)、以及 **§13.97**
+>   (接 `short_reversal` —— 它的出场符号与另两族**相反**(空头平仓是买入); 并记下
+>   **行为档第一版是"永远跳过"的** (§13.19 那一类), 已改成能判定的形态)。
 > * ⚠️ **§3.1 与 §3.2 是留档, 不是行动清单** —— 见两节各自的更正横幅。
 >   **文档的阅读顺序与结论的时间顺序相反, 所以旧节可能比新节更"乐观"。**
 ---
@@ -271,8 +273,10 @@ for label, ov in [("现配置", {}),
 >   —— **那是错的**。入场腿**还有第二条路径** (`chase/uptrend` 有 `ent` 兜底;
 >   `short_reversal` 走自己的 `indi["atr"]`); 实测三者 scale 0→1 结果**都会变**。
 >   唯一真取不到的是 **`cycle_price_action`** (调用方不传 `atr_pct`)。
-> * `chase_up` 与 `uptrend_pullback` **已接线** (§13.95 / §13.96, 均零漂移);
->   `short_reversal` / `cycle_price_action` **写明未接**, 下一轮继续。
+> * `chase_up` / `uptrend_pullback` / `short_reversal` **已接线** (§13.95 / §13.96 / §13.97, 均零漂移);
+>   ⚠️ `short_reversal` 的出场符号**与另两族相反** (空头平仓是买入 ⇒ `×(1+slip)`)。
+> * **`cycle_price_action` 仍写明未接** —— 它有三处断链 (preset→`Portfolio` 参数存了不读 ·
+>   preset→`ReplayBroker` 构造不传 scale · 调用方不传 `atr_pct`), **连入场腿都取不到 ATR**。
 > **已修 `chase_up`** (新 helper `effective_slippage` + 全 bar 的 `atr_by_bar` +
 > 出场腿与末日强平同样计冲击), **零漂移** (交易清单 sha256 逐位不变)。
 > **另两族未接** —— 它们那张表恒空, 接了也是死的; 先建 `atr_by_bar` 再接 (已知的、写明的族内不对称)。
@@ -622,9 +626,9 @@ uptrend 5 / cycle 2; 其中**连续注释块** short_reversal 25 个 108 行。
 | `uptrend_pullback/iter_reverse.py` 是**唯一无 §5 三件套的优化器** (`n_trials`/DSR/Bonferroni 命中 0 处；`score_windows` 在**全部**窗口上取 `median_ret + 0.1·sharpe − avg_dd`，**无 OOS 切分**) —— 而它是**当前最优的直系祖先** (v20 = `--iter 100` 的产物) | **会**(记账: 一旦补上，`v19…v22` 的 `n_comparisons` 才第一次有来源) | ⛔ **无** | §13.81 |
 | **`n_comparisons` 是只写字段** —— 全库查实: 写入点 20+ 处 (`presets.py`)，而 **`core/` 里 0 处读取**；唯一的"读"是 `uptrend_pullback/wfv_eval.py:122` 传的 `args.n_trials`，**不是 preset 字段** | **会**(接进 DSR ⇒ **每个报出的 DSR/p-value 都变**) | ⛔ **无** | §13.82 |
 | **`short_reversal` 的 `sl_pct = 0.0005`** —— 0.05%，**小于 A 股一个报价单位** (¥10 的票 = 0.50 个 tick)，且**恰好等于 `stamp_duty_rate` 的字面量**，比三族兄弟紧 40–100 倍 ⇒ 疑似万5被误写进风险参数 | **会**(该族已关闭，历史数字已作废) | ⛔ **无** | §13.85 |
-| **§4 执行滑点**: 出场腿零冲击 (四族**都**) + `uptrend`/`short` 的 ATR 源**恒空**(连买入腿也不能) —— `chase_up` 已修 (§13.95) | **会**(改 `atr_slip_scale>0` 时的每一笔成交; 今天恒为 0 ⇒ 零漂移) | ✅ 仅 `chase_up`: 8 条守卫 (含**行为档** + 逐调用点 + 3 次注入验证); ⛔ 另两族**尚无** | §13.95 |
+| **§4 执行滑点**: ①四族**出场腿全部零冲击** (真正的缺陷); ②`cycle` 连入场腿也取不到 ATR | **会**(改 `atr_slip_scale>0` 时的每一笔成交; 今天全族恒为 0 ⇒ **零漂移**) | ✅ `chase_up`/`uptrend`/`short_reversal` 已接线并有守卫 (含**行为档** + 逐调用点 + 注入验证); ⛔ `cycle` 无 | §13.95 / §13.96 / §13.97 |
+| ⚠️ **上述 ① 的原始表述被更正过**: 我原先写"`uptrend`/`short` 的 ATR 源恒空 ⇒ 连买入腿也不能" —— **错的** (入场腿有第二条路径) | — | — | §13.96(b) |
 | **§4 滑点的系数取值** (静态 flat 已被 §4 禁止; ATR 项的 `scale` 未定) | **会**(且它同时改变**仓位大小** ⇒ 不是纯成本旋钮) | ⛔ 无 | §6.2 / §13.95(f) |
-| §4 滑点接线**仍未完成的两族**: `short_reversal`(出场腿零冲击) / `cycle_price_action`(**三处断链**, 入场腿真的取不到 ATR) | **会**(改 `atr_slip_scale>0` 时的成交; 今天恒 0 ⇒ 零漂移) | ⛔ 两族均**无**守卫 (守卫只覆盖已接线的 `chase_up`/`uptrend`) | §13.96(e) |
 | §2 点名的两个资金参数 (`max_positions` / `position_fraction`) 在 **`chase_up` / `cycle` 的引擎签名里结构上不存在** —— preset 的声明被**静默丢弃** | **会**(半仓会真的变成半仓) | ✅ xfail(strict) ×2 + 1 条常驻红 | §13.63 / §13.65–§13.67 |
 | **`cycle_price_action` 没有 WFV runner** —— 顶层 `def` 数 = 0，只剩一个 re-export 存根 (清空 129 行后守卫仍绿) | **会**(记账) | ✅ xfail(strict) | §13.77 |
 | `cycle` 的**流动性筛选读到了窗口之后的数据** (277/2990 只) | **会** + 口径选择 | ✅ xfail(strict) | §13.27 |
@@ -8036,3 +8040,55 @@ Iteration 95 立过一条**用血换来的**规则:
 
 #### (f) §5 记账
 不改任何 preset 参数 ⇒ `n_comparisons` 不变 (187)。
+
+### 13.97 ✅ §4 滑点接线补到 `short_reversal` —— 它的**出场腿**是唯一缺陷; 且这次符号**相反**
+
+#### (a) 本族的形态与另两族**不同**
+§13.96(b) 已实测: 本族**入场腿本来就可用** (ATR 走**自己的 `indi["atr"]`** ——
+当前根 bar 的 ATR, 与 `atr_lookup` 无关)。⇒ 本族**唯一**的缺陷是**出场腿零冲击**。
+本族是**空头** ⇒ **平仓是买入** ⇒ 冲击让平仓价更**高** = 悲观 ⇒ `×(1 + slip)`。
+(对照: 另两族是多头, 出场是卖出 ⇒ `×(1 − slip)`; 而本族**入场腿**是卖出 ⇒ 也是减号。
+⇒ **同一个文件里两条腿的符号相反** —— 这正是本册 §4 那条"两侧符号必须相反"的第三种形态。)
+
+#### (b) 修 (零漂移)
+`_exit_fill_px(raw_px, code, size, d)` + 两个 `_close` 调用点全部改走它
+(`nav_gate_eod` 与 SL/TP/time)。ATR 与参与率**与入场腿同源**: 同一个 `self.indi[code]["atr"]`、
+同一个 `订单量 / Bar_Volume` 定义、同一个 `core.effective_slippage`。
+
+* **零漂移**: scale=0 交易清单 sha256 `a0450c9078a262a7efd9` —— 与改动前**逐位相同**。
+* **机制变活**: scale=1 由接线前的 `76bcadd6da440bad5f0a` 变为 **`38161d662fb3c7a18914`**
+  ⇒ 出场腿现在真的计费了。
+
+#### (c) 守卫 (3 条, 加进 `tests/test_execution_slippage_is_symmetric.py`)
+* **逐调用点**: 每个 `self._close(...)` 的价格实参必须是 `self._exit_fill_px(...)`;
+* **符号**: `(1.0 + slip)` 必须在, `(1.0 - slip)` 必须不在 (后者会把空头平仓记成乐观);
+* **行为档**: 单次运行 + 从 DB 取触发价 (`raw_kline_daily.close`), 断言每一笔 `time` 退出的
+  平仓价**严格更高**。
+
+**双向验证**: 注入 `(1.0 + slip) → (1.0 + 0.0*slip)` ⇒ **符号档 + 行为档同时红**;
+还原后 **16 passed**。
+
+#### (d) ⚠️⚠️ 行为档的**第一版是"永远跳过"的** —— 本册 §13.19 记过的那一类
+第一版跨**两次运行**按 `(entry_date, thscode)` 配对比较。但 `atr_slip_scale > 0`
+**会改变成交集合** ⇒ 两次运行的键**从不匹配** ⇒ 每次都走 `pytest.skip("两态成交集合不同")`
+⇒ 实测 `2 passed, 1 skipped`。
+> **一个永远 skip 的守卫比没有守卫更糟 —— 它长得像覆盖。**
+
+⇒ 改成**单次运行 + 直接查触发价**, 不依赖跨运行配对。样本不足时改为**失败**而不是跳过
+(只有"没有 `time` 退出"这一种情形允许 `skip`, 且必须在报告里写成**未判定**)。
+
+#### (e) ⚠️ 又一例族内不对称, 而且这次**连产物类型都不一致**
+本族 `run_backtest_v3` 的 `trades` 是 **`list[dict]`**, 而 `chase_up`/`uptrend_pullback`
+是 **DataFrame**。第一版守卫直接 `tr["exit_reason"]` ⇒ `TypeError: list indices must be
+integers or slices, not str`。
+⇒ 与 §13.13(指标口径) / §13.95(滑点路径) **同族**: **同一个名字, 不同的东西**。
+
+#### (f) 仍未接: `cycle_price_action` (三处断链)
+preset→`Portfolio`(参数**存了不读**) · preset→`ReplayBroker`(构造时**不传** scale) ·
+调用方→`submit_buy/submit_sell`(**不传** `atr_pct`/`participation`)。
+⇒ 它的**入场腿**目前真的不可用。**下一轮的入口。**
+
+#### (g) §5 记账
+不改任何 preset 参数 ⇒ `n_comparisons` 不变 (187)。
+⚠️ 本族的**行为档单测成本约 180s** (一次全窗口回测)。与既有的
+`test_metrics_self_consistency_4engine` (176s) 同量级 —— 已记在此, 供套件成本核算。

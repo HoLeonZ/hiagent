@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 from core.dual_price import (
     LAYOUT_SHORT_REVERSAL,
     atr_slippage as dual_atr_slippage,
+    effective_slippage,
     extract_execution_bar,
     is_limit_down,
     volume_cap_fill,
@@ -901,7 +902,10 @@ class Phase3V3Strategy(bt.Strategy):
         # cash gate 拦 entry, NAV-gate 拦 active close。
         nav = self._nav()
         if nav < self.p.initial_capital * self.p.min_cash_ratio:
-            self._close(d, float(d.close[0]), "nav_gate_eod")
+            # §13.97: 强制平仓**也是**一笔平仓 execution ⇒ 同样计冲击。
+            self._close(
+                d, self._exit_fill_px(float(d.close[0]), code, pos["size"], d), "nav_gate_eod"
+            )
             return
         low, high, close = float(d.low[0]), float(d.high[0]), float(d.close[0])
         open_p = float(d.open[0])
@@ -958,7 +962,7 @@ class Phase3V3Strategy(bt.Strategy):
         elif held >= self.p.max_hold:
             reason, price = "time", close
         if reason is not None:
-            self._close(d, price, reason)
+            self._close(d, self._exit_fill_px(price, code, pos["size"], d), reason)
             return
         # §1: 未出场才把本 bar 的 low 并入跟踪最低价 (下一根 bar 才可用于构造止损位)
         if self.p.trailing_stop_pct > 0.0:
@@ -966,6 +970,39 @@ class Phase3V3Strategy(bt.Strategy):
                 **self._holds[code],
                 "lowest_price": min(prev_lowest, low),
             }
+
+    def _exit_fill_px(self, raw_px: float, code: str, size: int, d) -> float:
+        """§4/§0 出场腿的**冲击后成交价** (§13.97, 与 §13.95/§13.96 同口径)。
+
+        §4 把执行滑点定义为「signal trigger 与 fill 之间的 price impact」——
+        这是**每一笔 execution** 的性质, 平仓腿**同样**成立。此前本族
+        **只在入场腿计费**, 出场腿零冲击 ⇒ **单一方向的乐观** (§0)。
+
+        ⚠️ **符号: 本族是空头, 平仓是买入 ⇒ `×(1 + slip)`, 平仓价更**高** = 悲观。**
+        (对照: `chase_up`/`uptrend_pullback` 是多头, 出场是卖出 ⇒ `×(1 − slip)`)。
+        ⚠️ 与入场腿**同源取 ATR**: 同一个 `self.indi[code]["atr"]`(**当前根 bar** 的 ATR,
+        正是 §4 要的 "the asset's **current** ATR"), 同一参与率定义 `订单量 / Bar_Volume`。
+        ⚠️ **零漂移**: 55/55 个 preset 的 `atr_slip_scale` 都是 0
+        ⇒ `eff = 0` ⇒ `px × 1.0` 逐位不变 (2026-10-19 已用交易清单哈希逐位验证)。
+        ⚠️ 它**只对出场腿生效, 不得用来算入场价** (方向相反)。
+        """
+        indi = self.indi.get(code, {})
+        atr_indi = indi.get("atr")
+        if atr_indi is None:
+            return float(raw_px)
+        atr_v = float(atr_indi[0])
+        close_v = float(d.close[0])
+        if np.isnan(atr_v) or close_v <= 0:
+            return float(raw_px)
+        bar_vol = float(d.volume[0]) if d.volume[0] is not None else 0.0
+        part = min(1.0, size / bar_vol) if bar_vol > 0 else 0.0
+        slip = effective_slippage(0.0, atr_v / close_v, part, self.p.atr_slip_scale)
+        if slip >= 1.0:
+            raise ValueError(
+                f"§4/§0: 出场腿冲击系数 {slip} ≥ 1.0 ({code}) —— §0 要求违反物理市场"
+                f"规律时**立即抛错**, 不得静默算出一个非正成交价。"
+            )
+        return float(raw_px) * (1.0 + slip)
 
     def _close(self, d, price: float, reason: str) -> None:
         code = d._name
