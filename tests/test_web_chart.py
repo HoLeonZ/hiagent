@@ -218,6 +218,12 @@ def test_the_entry_bar_actually_has_indicators_not_None():
 #: 真要改这个共用文件，就重生成该常量并在 PR 里说明漂移（§6 对 golden 基线的要求）。
 TRADE_REPORT_SHA256 = "5d85f72f2783b543d63f4d7841ea41df0d36c78e5089f012ec4aad73bffe6823"
 
+#: ⚠️ **锚到本文件的位置。** 用 `Path("core/trade_report.py")` 这种相对路径时，
+#: 它相对的是 **pytest 的启动目录**：从仓库根跑绿、换目录跑红，
+#: 而红了的消息会是"文件被删或被改名"——把"找错了地方"说成"文件没了"。
+#: 假警报会诱使人把这条守卫改弱或删掉。
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
 
 def test_the_shared_renderer_is_not_modified():
     """本计划**不碰** `core/trade_report.py`（四引擎共用，见设计文档 §5）。
@@ -225,9 +231,8 @@ def test_the_shared_renderer_is_not_modified():
     它是范本不是依赖。这条锁**内容哈希**，所以改动提交与否都拦得住。
     """
     import hashlib
-    from pathlib import Path
 
-    p = Path("core/trade_report.py")
+    p = REPO_ROOT / "core" / "trade_report.py"
     assert p.is_file(), "文件被删或被改名，同样算改动"
     got = hashlib.sha256(p.read_bytes()).hexdigest()
     assert got == TRADE_REPORT_SHA256, (
