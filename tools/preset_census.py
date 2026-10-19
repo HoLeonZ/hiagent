@@ -46,11 +46,13 @@ def _chase() -> list[tuple[str, float, float]]:
     for w in (W2, IND):
         panel = compute_indicators(load_panel(DB_PATH, *w, universe=uni))
         for name, p in PRESETS.items():
+            _t = time.time()
             try:
                 r = run_backtest(dict(p), w[0], w[1], DB_PATH, panel_ind=panel)
                 out.append((name, w, _ret_of(r["metrics"], f"chase_up/{name}")))
-            except Exception as e:  # noqa: BLE001
+            except Exception:  # noqa: BLE001
                 out.append((name, w, float("nan")))
+            _tick("chase_up", name, _t)
         del panel
     return out
 
@@ -67,11 +69,13 @@ def _uptrend() -> list[tuple[str, float, float]]:
     for w in (W2, IND):
         panel = compute_indicators(load_panel(DB_PATH, *w, universe=uni))
         for name, p in PRESETS.items():
+            _t = time.time()
             try:
                 r = run_backtest(dict(p), w[0], w[1], DB_PATH, panel_ind=panel)
                 out.append((name, w, _ret_of(r["metrics"], f"uptrend/{name}")))
             except Exception:  # noqa: BLE001
                 out.append((name, w, float("nan")))
+            _tick("uptrend_pullback", name, _t)
         del panel
     return out
 
@@ -80,6 +84,18 @@ def _uptrend() -> list[tuple[str, float, float]]:
 # 我第一版直接 `m.get("total_return", nan)` ⇒ **55 条全是 NaN**, 而我会把它读成
 # "short_reversal 全缺数据" —— 一个**由取键错误造出来的假发现**。
 # ⇒ 现在:**先取存在的那个键; 两个都没有就抛错**, 不静默记 NaN (§0)。
+# §13.111: **逐条打印进度与耗时** —— 上一轮的设计缺陷是"聚合表只在全族跑完后才打印",
+# 于是长跑被中断时**什么也看不到** (我因此误读 `ps` 并差一点断定它挂了)。
+# 现在每条都打印, 并在最后给出**最慢的若干条** —— 那是**成本画像**, 不是策略排名。
+TIMINGS: list[tuple[str, str, float]] = []
+
+
+def _tick(fam: str, name: str, t0: float) -> None:
+    dt = time.time() - t0
+    TIMINGS.append((fam, name, dt))
+    print(f"  [{fam}] {name:<44} {dt:>7.1f}s", flush=True)
+
+
 _RET_KEYS = ("total_return", "total_yield")
 
 
@@ -100,6 +116,7 @@ def _short() -> list[tuple[str, float, float]]:
     out = []
     for name in PRESETS:
         for w in (W2, IND):
+            _t = time.time()
             try:
                 r = run_backtest_v3(name, w[0], w[1], DB_PATH)
                 m = r.get("metrics") or r
@@ -108,6 +125,7 @@ def _short() -> list[tuple[str, float, float]]:
                 raise
             except Exception:  # noqa: BLE001
                 out.append((name, w, float("nan")))
+            _tick("short_reversal", f"{name}@{w[0]}", _t)
     return out
 
 
@@ -119,6 +137,7 @@ def _cycle() -> list[tuple[str, float, float]]:
 
     out = []
     for w in (W2, IND):
+        _t = time.time()
         try:
             r = run_backtest(str(DB_PATH), dt.date.fromisoformat(w[0]),
                              dt.date.fromisoformat(w[1]), preset=dict(PRESET_V1))
@@ -126,6 +145,7 @@ def _cycle() -> list[tuple[str, float, float]]:
             out.append(("PRESET_V1", w, float(m.get("total_pnl", float("nan")))))
         except Exception:  # noqa: BLE001
             out.append(("PRESET_V1", w, float("nan")))
+        _tick("cycle_price_action", f"PRESET_V1@{w[0]}", _t)
     return out
 
 
@@ -164,6 +184,9 @@ def main() -> int:
         print(f"{fam:<22} {n:>4} {both:>12} {w2:>8} {ind:>8} {none:>8} {nan:>7}")
     out = Path("/tmp/preset_census.json")
     out.write_text(json.dumps(all_rows, ensure_ascii=False, indent=1), encoding="utf-8")
+    print("\n=== 最慢的 10 条 (**成本画像**, 不是策略排名) ===")
+    for fam, name, dt in sorted(TIMINGS, key=lambda x: -x[2])[:10]:
+        print(f"  {dt:>8.1f}s  {fam}/{name}")
     print(f"\n明细落盘: {out}  (⚠️ **不排名、不选优** —— §5)")
     return 0
 

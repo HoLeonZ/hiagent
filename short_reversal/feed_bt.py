@@ -87,12 +87,27 @@ def build_per_stock_feeds(
     feeds: list[tuple[str, AShareData]] = []
     # V3a: 检测 panel 是否含 adj_* 列, 缺则补 NaN 占位
     needs_adj = "adj_close" not in panel.columns
+    # ----- §13.111 (2026-10-19): **O(n_codes × n_rows) → 一次 groupby** -----
+    # 旧写法是 `panel[panel["thscode"] == code]` —— **对每只票全表扫一遍**。
+    # 实测 (~5,000 只票, 1 个月窗口): **43.5s**, 其中 99.2% 在这条布尔掩码里;
+    # 而 `panel["thscode"]` 是 pandas **`string` dtype** ⇒ `==` 走
+    # `_cmp_method` → `_isna_string_dtype` 这条最差的路径 (单这一项 21.0s)。
+    # ⚠️ 逐 preset 无关: `v35_agg_pctchg_04_09` 与对照 `v50_slope` **同速**
+    #    (42.1 / 47.9 / 179.5 s for 1/2/3 个月) ⇒ **55 个 preset 全都付这个代价**
+    #    (55 × 2 窗口 × ~180s ≈ 5.5 小时, 这就是普查跑不完的原因)。
+    # **零漂移**: `get_group` 给出与掩码**逐行相同**的子表 (随后照旧 sort_values +
+    # reset_index); 遍历 `codes` 保证 `feeds` 的**顺序不变**。
+    # 缺失的 code 在掩码下得到空表 (随后 `len < min_bars` 跳过), 这里等价处理。
+    _by_code = panel.groupby("thscode", sort=False)
     for code in codes:
-        sub = (
-            panel[panel["thscode"] == code]
-            .sort_values("date")
-            .reset_index(drop=True)
-        )
+        try:
+            sub = (
+                _by_code.get_group(code)
+                .sort_values("date")
+                .reset_index(drop=True)
+            )
+        except KeyError:      # 该票不在面板里 —— 旧写法会给空表, 语义相同
+            continue
         if len(sub) < min_bars:
             continue
         if needs_adj:
