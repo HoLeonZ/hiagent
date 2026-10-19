@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from web import jobs as jobs_mod
 from web.catalog import ENGINES, all_presets
-from web.chart import chart_payload
+from web.chart import ENGINE_DIRECTION, chart_payload, sl_tp_prices
 from web.metrics_view import (
     CANONICAL_KEYS,
     METRIC_KINDS,
@@ -82,6 +82,43 @@ def _load_result(run_id: str) -> RunResult:
     if result is None:
         raise HTTPException(404, detail=f"unknown or unfinished run: {run_id}")
     return result
+
+
+def _effective_params(meta: dict[str, Any]) -> dict[str, Any]:
+    """该次运行**实际生效**的参数：预设的可调值 + 用户覆盖。
+
+    `meta` 来自 `jobs_mod.resolve`（内存优先、磁盘兜底），字段为
+    `engine / preset / overrides / start / end / mode`。
+
+    单一来源：`/trades`（推导 SL/TP）与 `/trades/{i}/chart`（交给 `chart_payload`）
+    都从这里取，否则两处会各自拼一遍 `split_params + update(overrides)` 而漂移。
+    """
+    params = dict(split_params(meta["engine"], meta["preset"])["tunable"])
+    params.update(meta.get("overrides") or {})
+    return params
+
+
+def _exit_pcts(meta: dict[str, Any]) -> tuple[float, float]:
+    """该次运行的 `(sl_pct, tp_pct)`（相对百分比，§4）。"""
+    params = _effective_params(meta)
+    return float(params.get("sl_pct") or 0.0), float(params.get("tp_pct") or 0.0)
+
+
+def _with_exit_levels(i: int, trade: dict, engine: str, sl_pct: float, tp_pct: float) -> dict:
+    """给一行成交补上 `sl_price` / `tp_price`（**价位**，由入场价与相对百分比推出）。
+
+    为什么这三行值得单拿出来：用户要的是"看到 sl/tp"，
+    而光有图上那两条 `markLine` 不够 —— 扫交易表时看不到它们。
+
+    **复用 `web/chart.py` 的 `sl_tp_prices` 与 `ENGINE_DIRECTION`，不在这里重写
+    `entry × (1 ± pct)`**：图上的线与表里的数必须是同一份算术，否则它们会各自漂移，
+    而"图上一条线、表里一个数、两者不一致"是最难被发现的那类错。
+    """
+    entry = trade.get("entry_price")
+    if entry is None:
+        return {"i": i, **trade, "sl_price": None, "tp_price": None}
+    sl, tp = sl_tp_prices(float(entry), sl_pct, tp_pct, ENGINE_DIRECTION[engine])
+    return {"i": i, **trade, "sl_price": sl, "tp_price": tp}
 
 
 def _json_safe(v: Any) -> Any:
@@ -546,36 +583,42 @@ def create_app() -> FastAPI:
 
     @app.get("/api/runs/{run_id}/trades")
     def list_trades(run_id: str) -> dict[str, Any]:
-        job = jobs_mod.get(run_id)
-        if job is None:
+        # `jobs_mod.resolve`：**内存优先、磁盘兜底**。原先这里只查 `_JOBS`，
+        # 于是服务一重启，历史里的运行点进来就是 404 —— 而 `/api/runs/{id}`
+        # 与 `/equity`、`/export/*` 都能从磁盘读回，界面因此自相矛盾
+        #（头部说 done，交易表与 K 线却是空的）。
+        got = jobs_mod.resolve(run_id)
+        if got is None:
             raise HTTPException(404, detail=f"unknown run: {run_id}")
-        if job.status != "done" or job.result is None:
-            raise HTTPException(409, detail=f"run is {job.status}")
-        rows = _sorted_trades(job.result.trades)
+        meta, result = got
+        rows = _sorted_trades(result.trades)
+        sl_pct, tp_pct = _exit_pcts(meta)
+        engineered = [_with_exit_levels(i, t, meta["engine"], sl_pct, tp_pct)
+                      for i, t in enumerate(rows)]
         return {
             "total": len(rows),
             # 非有限数由出口的 `SafeJSONResponse` 统一处理（原先这里手写 `_is_nan`，
             # 只认 `nan` 不认 `inf`，且只覆盖这一个端点——已删除，见 `_json_safe` 的说明）。
-            "rows": [{"i": i, **t} for i, t in enumerate(rows)],
-            "columns": list(rows[0]) if rows else [],
+            "rows": engineered,
+            # 列名从**实际返回的行**里取（而不是从 14 列 schema 里取），
+            # 这样新增的 sl_price / tp_price 会自动出现在前端表头里，不会表里有值而没列。
+            "columns": list(engineered[0]) if engineered else [],
         }
 
     @app.get("/api/runs/{run_id}/trades/{i}/chart")
     def trade_chart(run_id: str, i: int) -> dict[str, Any]:
-        job = jobs_mod.get(run_id)
-        if job is None:
+        got = jobs_mod.resolve(run_id)
+        if got is None:
             raise HTTPException(404, detail=f"unknown run: {run_id}")
-        if job.status != "done" or job.result is None:
-            raise HTTPException(409, detail=f"run is {job.status}")
-        rows = _sorted_trades(job.result.trades)
+        meta, result = got
+        rows = _sorted_trades(result.trades)
         if not (0 <= i < len(rows)):
             raise HTTPException(404, detail=f"trade index {i} out of range (0..{len(rows) - 1})")
         from hiagent_config import get_db_path
 
-        sp = split_params(job.engine, job.preset)
-        params = dict(sp["tunable"])
-        params.update(job.overrides)
-        return chart_payload(job.engine, params, rows[i], get_db_path())
+        # 与 `/trades` 的 SL/TP 推导走**同一个** `_effective_params`——
+        # 两处各拼一遍 `split_params + update(overrides)` 是漂移的经典起点。
+        return chart_payload(meta["engine"], _effective_params(meta), rows[i], get_db_path())
 
     if STATIC_DIR.is_dir():
         app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")

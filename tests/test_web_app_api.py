@@ -334,3 +334,103 @@ def test_the_configs_endpoints_round_trip(client):
 
     assert client.post("/api/configs", json={"name": "a/b", "engine": "short_reversal",
                                              "preset": "v50_slope", "overrides": {}}).status_code == 400
+
+
+def test_result_endpoints_survive_a_restart_by_reading_from_disk(client, monkeypatch):
+    """**服务重启后，交易表与 K 线仍要能打开。**
+
+    实测缺陷（2026-10-19：起服务、跑完一次真 preview、重启、再打开那次运行）：
+    `GET /api/runs/{id}`、`/equity`、`/positions`、两处 `/export` 都能从磁盘读回，
+    **而 `/trades` 与 `/trades/{i}/chart` 只查内存 `_JOBS` → 404**。
+    于是历史面板里点开一次旧运行：头部说 `done`，交易表与 K 线却是空的——
+    而设计里"历史"面板明写"结果来自磁盘，**不重跑回测**"。
+
+    这条测试就是那天缺的那条：跑完一次（结果落盘）→ **清空内存**（模拟重启）→ 两个端点仍须可用。
+    判据不能只看状态码——`/trades` 还要真的给出那几行，`/chart` 还要真的解析出这笔交易。
+    """
+    import json
+    from pathlib import Path as _P
+
+    from web import jobs as jobs_mod
+    from web.runners import RunResult
+
+    def fake_run(*a, **kw):
+        trades = [{"entry_date": "2025-03-05", "exit_date": "2025-03-07",
+                   "thscode": "000001.SZ", "exit_reason": "SL", "entry_price": 10.0,
+                   "exit_price": 10.5, "size": 100, "hold_days": 2,
+                   "gross_pnl": -50.0, "fees": 1.0, "net_pnl": -51.0,
+                   "net_return": -0.051, "atr_pct": 0.02, "sub_signal_type": "a"}]
+        return RunResult("short_reversal", "v50_slope", "2025-01-01", "2025-06-01",
+                         {"trades_count": 1}, trades)
+
+    _install_fake_run(monkeypatch, fake_run)
+    rid = client.post("/api/runs", json={
+        "engine": "short_reversal", "preset": "v50_slope", "overrides": {},
+        "start": "2025-01-01", "end": "2025-06-01", "mode": "full",
+    }).json()["run_id"]
+    job = jobs_mod.wait(rid, timeout=60)
+
+    # ⚠️ 假 runner 顶掉的是 `_run_one`（worker 唯一的动作入口），
+    # 于是**生产里由 `_run_one` 调用的 `_persist_result` 也没被走到**。
+    # 这里补上这一步——用的是**生产自己的写入器**，写出的形态与真跑一模一样，
+    # 而不是手搓一份 JSON（手搓的话，`resolve` 能读、生产却写不出同样形态，
+    # 这条测试就变成了在验证一个不存在的世界）。
+    jobs_mod._persist_result(job, {"start": job.start, "end": job.end,
+                                   "metrics": job.result.metrics,
+                                   "trades": job.result.trades})
+
+    from web.state import state_home
+    assert (state_home() / "runs" / rid / "result.json").exists(), "结果没有落盘"
+    assert (state_home() / "runs" / rid / "job.json").exists(), "元数据没有落盘"
+
+    # 模拟重启：内存全清，只剩磁盘
+    jobs_mod._JOBS.clear()
+
+    assert client.get(f"/api/runs/{rid}").status_code == 200
+
+    tr = client.get(f"/api/runs/{rid}/trades")
+    assert tr.status_code == 200, f"重启后 /trades 是 {tr.status_code}——它只查了内存"
+    body = tr.json()
+    assert body["total"] == 1 and body["rows"][0]["thscode"] == "000001.SZ"
+    # 补齐的 sl/tp 也要在（用户要的就是这个）
+    assert body["rows"][0]["sl_price"] is not None
+    assert body["rows"][0]["tp_price"] is not None
+    assert "sl_price" in body["columns"], "有值却没有列，前端表头不会出现它"
+
+    ch = client.get(f"/api/runs/{rid}/trades/0/chart")
+    assert ch.status_code == 200, f"重启后 /chart 是 {ch.status_code}——它只查了内存"
+    assert ch.json()["entry"]["price"] == 10.0
+
+
+def test_the_trades_list_and_the_chart_agree_on_sl_tp(client, monkeypatch):
+    """交易表里的 sl/tp 与图上的 `markLine` **必须逐位相同**。
+
+    两处都从 `web/chart.py` 的 `sl_tp_prices` 推（§6 单一来源），
+    但若哪天有人在 `app.py` 里再手写一遍 `entry * (1 ± pct)`，它们就会各自漂移——
+    而"表里一个数、图上一条线、两者不一致"是最难被发现的那类错。
+    """
+    from web import jobs as jobs_mod
+    from web.runners import RunResult
+
+    def fake_run(*a, **kw):
+        return RunResult("short_reversal", "v50_slope", "2025-01-01", "2025-06-01",
+                         {"trades_count": 1},
+                         [{"entry_date": "2025-03-05", "exit_date": "2025-03-07",
+                           "thscode": "000001.SZ", "exit_reason": "SL", "entry_price": 10.0,
+                           "exit_price": 10.5, "size": 100, "hold_days": 2,
+                           "gross_pnl": -50.0, "fees": 1.0, "net_pnl": -51.0,
+                           "net_return": -0.051, "atr_pct": 0.02, "sub_signal_type": "a"}])
+
+    _install_fake_run(monkeypatch, fake_run)
+    rid = client.post("/api/runs", json={
+        "engine": "short_reversal", "preset": "v50_slope", "overrides": {},
+        "start": "2025-01-01", "end": "2025-06-01", "mode": "full",
+    }).json()["run_id"]
+    jobs_mod.wait(rid, timeout=60)
+
+    row = client.get(f"/api/runs/{rid}/trades").json()["rows"][0]
+    chart = client.get(f"/api/runs/{rid}/trades/0/chart").json()
+    assert row["sl_price"] == chart["sl_price"], "表里的止损价与图上的止损线不是同一个数"
+    assert row["tp_price"] == chart["tp_price"], "表里的止盈价与图上的止盈线不是同一个数"
+    # 空头：止损在入场价**上方**、止盈在**下方**
+    assert row["sl_price"] > row["entry_price"] > row["tp_price"]

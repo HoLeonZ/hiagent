@@ -235,6 +235,50 @@ def load_persisted(run_id: str) -> RunResult | None:
                      d["metrics"], d["trades"])
 
 
+def meta_persisted(run_id: str) -> dict[str, Any] | None:
+    """磁盘上的运行元数据（`runs/<id>/job.json`）：`engine/preset/overrides/start/end/mode`。
+
+    服务重启后 `_JOBS` 是空的，但 `job.json` 还在——**`overrides` 只在这里**，
+    `result.json` 里没有（`load_persisted` 返回的 `RunResult` 也不带它）。
+    """
+    p = state_home() / "runs" / run_id / "job.json"
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def resolve(run_id: str) -> tuple[dict[str, Any], "RunResult"] | None:
+    """把一次运行解析成 `(元数据, 结果)` —— **内存优先、磁盘兜底**。
+
+    **结果类端点必须都走这里。** 实测（2026-10-19，起服务跑完一次 preview 后重启）：
+    `GET /api/runs/{id}` 与 `/equity`、`/positions`、两处 `/export` 都能从磁盘读回，
+    **而 `/trades` 与 `/trades/{i}/chart` 只查内存 `_JOBS` → 404**。
+    于是历史面板里点开一次旧运行：头部说"done"，交易表与 K 线却是空的。
+
+    那是"同一项能力在多条路径上各写一遍、其中几条漏了"的老形状
+    （同 `assert_state_writable`、同 API 出口的网）。**收敛到一个入口**，
+    下一个结果端点就不会又漏。
+
+    返回 `None` 表示这个 run 既不在内存、磁盘上也没有。
+    """
+    job = _JOBS.get(run_id)
+    if job is not None and job.result is not None:
+        return ({
+            "engine": job.engine, "preset": job.preset,
+            "overrides": job.overrides or {},
+            "start": job.start, "end": job.end, "mode": job.mode,
+        }, job.result)
+
+    meta = meta_persisted(run_id)
+    result = load_persisted(run_id)
+    if meta is None or result is None:
+        return None
+    return meta, result
+
+
 def list_runs(limit: int = 50) -> list[dict[str, Any]]:
     """最近运行的摘要列表（来自 append-only 账本），带 `has_result` 与内存中的 `status`。"""
     out = []
