@@ -228,10 +228,15 @@ def atr_slippage(
     - participation: 实际下单量 / Bar_Volume ∈ [0, 1]
     - scale: 策略级参数, 默认 1.0; V33 baseline parity 时 = 0 → 无 slippage。
 
-    用于 chase_up (long): entry_price = raw_open × (1 + slip)
-    （买入腿: 冲击让成交价更**高** = 悲观 ✓）
-    用于 short_reversal (short): entry_price = raw_open × (1 − slip)
-    （**卖出**腿: 冲击让成交价更**低** = 悲观 ✓）
+    ⚠️⚠️ **2026-10-19 (§13.120): 此处原文写「用于 chase_up (long) / 用于 short_reversal (short)」
+    —— 两句都**不成立**, 出于一个精确扫描 (`tools/scan_unused_core_imports.py`)。**
+    * `chase_up/portfolio.py` / `uptrend_pullback/portfolio.py` **根本不 import 本函数**
+      —— 它们把同一公式**内联重写**了 (见 §13.95);
+    * `short_reversal/replay_strategy_v3.py` **import 了它 (别名 `dual_atr_slippage`) 却从不调用**
+      (§13.95)。⇒ **本函数在写下这句话时, 全仓零个真实消费者。**
+    ⇒ 真正两条腿都用的是 `effective_slippage` (§13.95 新增, 它负责"与静态值取较大者")。
+    **本函数今天仍无消费者** —— 保留是因为它是 ATR 项的**唯一公式来源**,
+    但**不要按这段话去找它的调用者。**
 
     ⚠️ 2026-10-17 修正: 此处原文写 `short: × (1 + slip)` 并注为"悲观",
     是**自相矛盾**的 —— 上调卖出价是收到**更多**。short 的 entry 是卖出,
