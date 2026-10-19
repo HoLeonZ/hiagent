@@ -112,6 +112,18 @@ CONTRACTS: dict[str, dict[str, tuple[str, str, str]]] = {
         "cycle_price_action": ("cycle_price_action/portfolio.py", r"max_fill = volume_cap_fill\(",
                                "同上(单源)—— §4 的「单源」在这一条上**是做到了的**"),
     },
+    "同 bar 双触发取 SL 优先 (§4 Intraday Blindness)": {
+        "chase_up": ("chase_up/portfolio.py", r'if intraday_tiebreak != "sl_first":',
+                     "**fail-fast 拒绝其它取值**(底线式)"),
+        "uptrend_pullback": ("uptrend_pullback/portfolio.py", r'if intraday_tiebreak != "sl_first":',
+                             "同 chase"),
+        "short_reversal": ("short_reversal/replay_strategy_v3.py",
+                           r'if self\.p\.intraday_tiebreak != "sl_first":',
+                           "同上"),
+        "cycle_price_action": ("cycle_price_action/portfolio.py",
+                               r"def try_exit_with_intraday_check\(",
+                               "**把顺序编码在函数体内**(不是拒绝式;定位强度弱于另三族 —— 见本行动机)"),
+    },
     "跌停卖出/回补不成交 (§4: 封板卖不掉)": {
         "chase_up": ("chase_up/portfolio.py", r"if is_limit_down\(",
                      "出场路径;注释写明与买方涨停门镜像"),
