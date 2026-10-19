@@ -167,3 +167,84 @@ def test_the_views_really_apply_the_factor() -> None:
         f"只有 {row} 行复权价与原始价不同 —— 视图可能根本没做乘法,"
         "那上面几条「无缺口」就变成了空转"
     )
+
+
+#: 复权序列与原始序列的**同日收益**最多能差多少。
+#: 除权日两者本就不同(原始价含分红跳空、复权价不含),但那只有几个百分点;
+#: 超过这个量级的差异只可能是**因子缺失/跳变**造成的伪影。
+MAX_ADJ_VS_RAW_RETURN_GAP = 0.10
+
+
+def _diverging_return_rows(threshold: float) -> int:
+    con = _con()
+    try:
+        return con.execute(
+            """
+            WITH d AS (
+              SELECT h.close / LAG(h.close) OVER w - 1 AS r_adj,
+                     r.close / LAG(r.close) OVER w - 1 AS r_raw
+              FROM v_daily_hfq h
+              JOIN raw_kline_daily r USING (thscode, date)
+              WINDOW w AS (PARTITION BY h.thscode ORDER BY h.date)
+            )
+            SELECT count(*) FROM d
+            WHERE r_adj IS NOT NULL AND r_raw IS NOT NULL AND abs(r_adj - r_raw) > ?
+            """,
+            [threshold],
+        ).fetchone()[0]
+    finally:
+        con.close()
+
+
+#: **登记在案的伪影行数**(实测 2026-10-20,阈值 10%)。
+#:
+#: 它不是"容忍"——是**已知债务**:成因与修法见本文件 docstring 的"正确修法"一节
+#: (上游视图改前向填充,或刷新 `calc_adjust_factor_daily`),两者都在**仓库之外**。
+#: 登记的作用有二:①套件不被一个"修不了"的红点长期拖着;②**数字一旦变动就会被注意到**
+#: (涨了说明伪影变多;掉到 0 说明已修 ⇒ 本条目必须删掉)。
+KNOWN_ADJUSTED_RETURN_ARTIFACT_ROWS = 7_979
+
+
+@pytest.mark.slow
+def test_adjusted_returns_never_diverge_implausibly_from_raw() -> None:
+    """§3/§0:**复权序列带给策略的日收益,不许与原始序列的日收益差到物理上不可能**。
+
+    这条比"形状"那几条更贴语义:一个缺失因子会把复权价乘 1(即原始价),在序列里表现为
+    **一根凭空造出来的巨幅收益** —— 实测复权域里有 **1,150 行单日 < −50%**,
+    而 A 股涨跌幅上限是 ±10%(主板)/±20%(创业板科创板)。它会直接进入 `pct_chg` 类信号
+    与下一根 bar 的盯市。
+
+    **实测它今天是红的**(7,979 行),故走"登记债务"而不是"假装绿":数量不得超过登记值。
+    """
+    require_market_db()
+    n = _diverging_return_rows(MAX_ADJ_VS_RAW_RETURN_GAP)
+    assert n <= KNOWN_ADJUSTED_RETURN_ARTIFACT_ROWS, (
+        f"§3 VIOLATION: 复权/原始同日收益差异超过 {MAX_ADJ_VS_RAW_RETURN_GAP:.0%} 的行数 "
+        f"**涨到了 {n:,}**(登记值 {KNOWN_ADJUSTED_RETURN_ARTIFACT_ROWS:,})—— "
+        "伪影在变多,请立刻查因子表覆盖与视图定义。"
+    )
+
+
+@pytest.mark.slow
+def test_the_registered_artifact_debt_is_not_stale() -> None:
+    """登记表**只应当变短**:伪影掉到 0(因子表已刷新/视图已改)⇒ 本条目必须删掉。"""
+    require_market_db()
+    n = _diverging_return_rows(MAX_ADJ_VS_RAW_RETURN_GAP)
+    assert n > 0, (
+        "复权/原始同日收益差异**已经为 0** —— 那条已登记的债务解决了,"
+        "请从 KNOWN_ADJUSTED_RETURN_ARTIFACT_ROWS 删掉它(登记表只应当变短)。"
+    )
+
+
+@pytest.mark.slow
+def test_that_divergence_check_actually_discriminates() -> None:
+    """**非空转**:同一条判据在更严的阈值下必须**找出大量行** —— 否则它恒真。
+
+    (用一个远小于真实分红率的阈值 1%:那里应当有成千上万行,证明判据确实在看数据;
+     再用排除除权日的严格定义受限于 SQL,故这里只要求"更严 ⇒ 更多"。)
+    """
+    require_market_db()
+    loose = _diverging_return_rows(0.01)
+    assert loose > 1_000, (
+        f"阈值 1% 时只有 {loose} 行 —— 判据可能没在真的比对收益(除权日应当有大量行)"
+    )
