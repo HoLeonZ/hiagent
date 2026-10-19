@@ -111,13 +111,6 @@ W0_SR, W1_SR = "2024-10-08", "2026-09-18"
 _SR_MARGIN_RATE_DEFAULT = 0.08
 
 
-def _entry_fees(trades: pd.DataFrame) -> float:
-    """按**同一条公式**独立重算 entry_fee (§13.171(b)): 佣金(含下限) + 印花税。"""
-    from core.dual_price import COMMISSION_RATE, MIN_COMMISSION, STAMP_DUTY_RATE
-    ne = trades["entry_price"].astype(float) * trades["size"].astype(float)
-    return float((ne.mul(COMMISSION_RATE).clip(lower=MIN_COMMISSION) + ne * STAMP_DUTY_RATE).sum())
-
-
 @pytest.mark.skipif(not Path(DB_PATH).exists(), reason="本地 DB 不在 ⇒ §6: 跳过而不是报错")
 def test_short_reversal_gap_equals_entry_fee_minus_margin_fee(monkeypatch) -> None:
     """**解析式**: `差 == Σ entry_fee − Σ margin_fees_paid` (逐元, 不是"~94%")。
@@ -141,10 +134,12 @@ def test_short_reversal_gap_equals_entry_fee_minus_margin_fee(monkeypatch) -> No
     orig_close = R.Phase3V3Strategy._close
 
     def spy(self, d, price, reason):
+        # ⚠️ §13.182(d) 的教训: **两个量都从引擎读回来**, 不要用"我以为我注入成了什么"。
+        #   `entry_fee` 与 `margin_fees_paid` 都躺在将平仓的 pos 里 ⇒ 一次捕获两个成因。
         pos = self._holds.get(d._name)
         if pos is not None:
-            seen[(str(bt.num2date(d.datetime[0]).date()), d._name)] = float(
-                pos.get("margin_fees_paid", 0.0))
+            seen[(str(bt.num2date(d.datetime[0]).date()), d._name)] = (
+                float(pos.get("entry_fee", 0.0)), float(pos.get("margin_fees_paid", 0.0)))
         return orig_close(self, d, price, reason)
 
     monkeypatch.setattr(R.Phase3V3Strategy, "_close", spy)
@@ -156,15 +151,22 @@ def test_short_reversal_gap_equals_entry_fee_minus_margin_fee(monkeypatch) -> No
 
     trades = pd.DataFrame(r["trades"])
     gap = float(r["final_capital"]) - eng.INITIAL_CAPITAL - float(trades["net_pnl"].sum())
-    fees = _entry_fees(trades)
-    margin = sum(seen.values())
+    # ★ 两个成因**各自**从引擎读回 (§13.182 的教训: 不用"我以为"), 因此**不需要任何注入" ———
+    #  也就绕开了"任何注入都会改入场集合"(§13.182(c): 2 笔 → 7 笔) 那个混淆。
+    fees_engine = sum(v[0] for v in seen.values())      # 成因①的载体: entry_fee (锁而不扣)
+    margin = sum(v[1] for v in seen.values())           # 成因②的载体: 每日融券利息 (扣而不记)
 
-    # 反空转: spy 一只也没抓到 / 融券费为 0 ⇒ 这条等式退化成"差 == Σentry_fee", 什么也没验。
+    # 反空转: 两个成因都必须**非零** —— 否则等式退化成只含一项的弱式子, 本测试空转。
     assert seen, "spy 没抓到任何平仓 ⇒ 判据空转 (引擎的 _close 接口变了吗?)"
-    assert margin > 0, f"Σ margin_fees_paid = {margin} ⇒ 退化成另一条式子, 本测试空转"
+    assert fees_engine > 0, f"Σ entry_fee(引擎读回) = {fees_engine} ⇒ **成因①不在这一跑里**, 本测试空转"
+    assert margin > 0, f"Σ margin_fees_paid(引擎读回) = {margin} ⇒ **成因②不在这一跑里**, 本测试空转"
 
-    assert abs(gap - (fees - margin)) <= 1e-6, (
-        f"§13.180: 解析式不成立 —— 差 = {gap:,.4f}, 而 Σentry_fee − Σmargin = {fees - margin:,.4f} "
-        f"(差 {gap - (fees - margin):,.4f})\n"
-        f"⇒ 两套记账之间的关系**变了**: 要么 §13.171 的两个成因不再完备, 要么 spy 读的不是同一个量。"
+    resid = gap - (fees_engine - margin)
+    assert abs(resid) <= 1e-6, (
+        f"§13.180/§13.182: 解析式不成立 —— 差 = {gap:,.4f}, "
+        f"而 Σentry_fee(引擎读回) − Σmargin(引擎读回) = {fees_engine - margin:,.4f} "
+        f"(残差 {resid:,.4f})\n"
+        f"⇒ 两套记账之间的关系**变了**: 要么 §13.171 的两个成因不再完备 (出现了第三项), "
+        f"要么引擎里这两个量有一个换了载体。\n"
+        f"⚠️ 本判据的两个量**都从引擎读回**, 所以残差**不能再被解释成「我的模型不准」** (§13.182(d))。"
     )
