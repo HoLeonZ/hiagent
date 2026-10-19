@@ -117,6 +117,8 @@ def _one_window(preset: dict, w0: str, w1: str) -> dict:
     top1 = mg.sort_values(["date", "score"], ascending=[True, False]).groupby("date").head(1)
 
     return {
+        # 同窗口、同宇宙的**等权主板基准** (逐日等权收益累乘) —— §5 的基准相对超额用
+        "benchmark": float(ew.iloc[-1] - 1.0),
         "n_signals": m["signals"], "n_trades": m["trades"],
         "fill_rate": (m["trades"] / m["signals"]) if m["signals"] else 0.0,
         "exposure": m["exposure"], "avg_hold_days": m["avg_hold_days"],
@@ -165,7 +167,13 @@ def main() -> None:
     ap.add_argument("--preset", default=DEFAULT_PRESET)
     ap.add_argument("--ab", action="store_true",
                     help="额外跑 post-hoc vs PIT 股票池的 A/B (§13.123)")
+    ap.add_argument("--extra-start", default="",
+                    help="追加一个窗口的起点 (§13.127: 本族从未用过的时段)")
+    ap.add_argument("--extra-end", default="", help="追加窗口的终点")
     args = ap.parse_args()
+    if args.extra_start and args.extra_end:
+        global WINDOWS
+        WINDOWS = WINDOWS + (("EXTRA", args.extra_start, args.extra_end),)
 
     p = get_preset(args.preset)
     if args.ab:
@@ -179,13 +187,15 @@ def main() -> None:
     print(f"前向口径 h = {H}\n")
 
     print("=== 信号吃下率 (容量是不是紧的?) ===")
-    print(f"{'窗口':<5} {'信号数':>8} {'成交数':>8} {'吃下率':>8} {'暴露':>8} {'均持仓':>7} {'总收益':>10}")
+    print(f"{'窗口':<5} {'信号数':>8} {'成交数':>8} {'吃下率':>8} {'暴露':>8} "
+          f"{'均持仓':>7} {'总收益':>10} {'等权基准':>10} {'超额':>10}")
     rows = {}
     for label, w0, w1 in WINDOWS:
         r = _one_window(p, w0, w1)
         rows[label] = r
         print(f"{label:<5} {r['n_signals']:>8} {r['n_trades']:>8} {r['fill_rate']:>7.1%} "
-              f"{r['exposure']:>7.2%} {r['avg_hold_days']:>7.1f} {r['total_return']:>+10.2%}")
+              f"{r['exposure']:>7.2%} {r['avg_hold_days']:>7.1f} {r['total_return']:>+10.2%} "
+              f"{r['benchmark']:>+10.2%} {r['total_return'] - r['benchmark']:>+10.2%}")
 
     print("\n=== A: 实际成交的逐笔超额 (vs 同起止日等权对照) ===")
     print(f"{'窗口':<5} {'n':>5} {'原始收益':>10} {'超额':>10} {'t':>7}")
@@ -205,7 +215,7 @@ def main() -> None:
         print(f"{label:<5} | {np.nanmean(r['exc_top1']):>+9.2%} {t1:>+6.2f} {n1:>5} | "
               f"{np.nanmean(r['exc_all']):>+9.2%} {t2:>+6.2f} {n2:>5}")
 
-    print("\n=== 合并四窗 ===")
+    print(f"\n=== 合并 {len(rows)} 窗 ===")
     for name, key in (("择优 top-1", "exc_top1"), ("候选集全量", "exc_all"),
                       ("实际成交", "exc_a")):
         allx = np.concatenate([rows[label][key] for label in rows])
