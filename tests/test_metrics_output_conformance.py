@@ -45,10 +45,26 @@ CANONICAL_METRICS = {
 
 
 def _load_json(path: Path) -> dict | None:
+    """读一个 JSON 产物,**只返回顶层是 dict 的**。
+
+    §0/§6 (附八十四):本模块的判据全是"顶层聚合字段",故顶层不是 dict 的产物
+    (list / str)不属于本模块的判据对象,与"读不出来"同样返回 `None`。
+
+    此前它原样返回 `json.loads(...)`,于是调用点的 `data.get(...)` 会以
+    `AttributeError: 'list' object has no attribute 'get'` 崩掉 —— 而**这条用例的成败
+    因此取决于"本机 `results/` 里恰好有哪些产物"**:新克隆(无 `results/`)恒过,
+    跑过一次 sweep 的机器恒崩。那**不可复现**,正是 §0 要禁的。
+    §6 写的是"缺产物要 skip 不要 error";这里是它的**镜像**:
+    **产物在、但形状不同,也不许 error。**
+
+    顶层是 list 的产物由 `test_list_shaped_artifacts_are_not_per_trade_dumps` 覆盖
+    —— 前向防御没有丢。
+    """
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, FileNotFoundError):
         return None
+    return data if isinstance(data, dict) else None
 
 
 def test_every_engine_produces_equity_curve_csv() -> None:
@@ -186,4 +202,39 @@ def test_no_engine_emits_per_trade_dicts_only() -> None:
         "GAP CAPTURED: engines emitting per-trade dicts without "
         "aggregated metrics:\n"
         + "\n".join(f"  - {e}/{p.name}" for e, p in violations)
+    )
+
+def test_list_shaped_artifacts_are_not_per_trade_dumps() -> None:
+    """§3/§6 (附八十四):顶层是 **list** 的产物,不得是"逐笔 dict 的裸列表"。
+
+    `_load_json` 现在只返回 dict(见其 docstring:否则用例会依赖"本机恰好有哪些产物",
+    不可复现)。前向防御因此需要**单开一条**来覆盖 list 形状 —— 否则改成"跳过非 dict"
+    就等于把这一类漏掉了。
+
+    判据:list 的每个 dict 项必须至少带一个**聚合**字段;只有逐笔字段的项即违规。
+    """
+    aggregated_keys = {"cagr", "sharpe", "final_equity", "max_dd", "trades", "total_return"}
+    per_trade_keys = {"net_pnl", "net_return", "exit_reason", "hold_days"}
+
+    violations: list[str] = []
+    for engine in ("chase_up", "uptrend_pullback", "short_reversal", "cycle_price_action"):
+        results_dir = Path(engine) / "results"
+        if not results_dir.exists():
+            continue
+        for path in results_dir.glob("*.json"):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, FileNotFoundError):
+                continue
+            if not isinstance(data, list):
+                continue
+            items = [x for x in data if isinstance(x, dict)]
+            for i, item in enumerate(items):
+                keys = set(item)
+                if keys & per_trade_keys and not (keys & aggregated_keys):
+                    violations.append(f"{engine}/{path.name}[{i}]")
+
+    assert not violations, (
+        "GAP CAPTURED: 以下位置是**逐笔 dict 的裸列表**(无任何聚合字段):\n  "
+        + "\n  ".join(violations)
     )

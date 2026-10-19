@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT))
 from short_reversal.engine import run_backtest_v3  # noqa: E402
 from hiagent_config import DB_PATH as DEFAULT_DB  # noqa: E402
 from dna_stats.deflated import deflated_sharpe_ratio  # noqa: E402
+from core.cli_verdict import cli_verdict  # §0 结论落退出码 (附八十四)
 
 START = "2025-09-12"
 END = "2026-09-12"
@@ -93,14 +94,28 @@ def grid(axis: str, base: dict, values: list, base_name: str) -> list[dict]:
     return rows
 
 
+# §0/§2/§6 (附八十四): 两个 base 都**缺 `position_sizing`**,而这是引擎 preset 契约的
+# **必填**字段(「没有声明」与「声明为合法值」必须可区分)⇒ 实测 **27/27 个配置全部被拒**,
+# 脚本落一张空网格、退出 0(静默的零)。
+# 取值 `"all_in"` 不是自由选择:CLAUDE.md §2 强制 strict all-in sizing
+# (`position_fraction = 1.0`),且 short_reversal 的**每一个** preset 都声明 `"all_in"`。
+#
+# ⚠️ **仍未跑通,且这次是刻意停手的**:补上它之后下一个缺字段是
+# `price_source_for_execution`(再下一个还不知道)—— 打地鼠。而补全它需要选一个
+# **§3 口径**(执行域取 raw 还是 adj),且这两个 base 的作者意图所指的 preset
+# (`tp2_sl05_dneg` / `tp6_sl005_mh5_realistic`)在 `presets.py` 里**已不存在**
+# ⇒ "这个网格应该建在哪个 preset 上"是**口径决策,不是缺陷**,已登记(见附八十四 §4)。
+# 本节只做**契约那半**:脚本不再假装成功 —— 0/27 会以退出码 1 与 `[PARTIAL]` 结论收尾。
 BASE_CONSERVATIVE = {
     "universe": "mainboard_only",
+    "position_sizing": "all_in",
     "tp_pct": 0.02,
     "sl_pct": 0.005,
     "max_hold": 3,
 }
 BASE_AGGRESSIVE = {
     "universe": "mainboard_only",
+    "position_sizing": "all_in",
     "tp_pct": 0.06,
     "sl_pct": 0.0005,
     "max_hold": 5,
@@ -139,8 +154,14 @@ def main():
 
     csv_path = out_dir / "grid_v3_p3p5fix.csv"
     with open(csv_path, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=["axis", "value", "name", "n", "win%",
-                                          "CAGR%", "Sharpe", "DD%", "TP/SL/T", "error"])
+        # §0 (附八十四): `fieldnames` 里**漏了 `n_trading_days`**,而成功行带着它
+        # (上面 `grid()` 落的行、以及附六十 起为取 T 而发布的字段)。
+        # `csv.DictWriter` 默认 `extrasaction="raise"` ⇒ **只要有任何一个配置成功,
+        # 写第一行就抛 ValueError**。它能"跑完"纯粹因为 27/27 都失败(失败行只有 3 个键)
+        # —— 一个缺陷被另一个缺陷掩盖了。行 schema 与写出器必须一致。
+        w = csv.DictWriter(f, fieldnames=["axis", "value", "name", "n", "n_trading_days",
+                                          "win%", "CAGR%", "Sharpe", "DD%", "TP/SL/T",
+                                          "error"])
         w.writeheader()
         for r in all_rows:
             w.writerow(r)
@@ -185,6 +206,19 @@ def main():
                 f"—— 它们同样计入 n_trials(§5:每次迭代都算)"
             )
 
+    # §0 (附八十四): 结论必须落在**退出码**上。
+    # 实测:本脚本的 base 配置缺 `position_sizing` ⇒ **27/27 个配置全部被引擎的
+    # preset 契约 fail-fast 拒绝** ⇒ 落一张空网格、一个 DSR 都不打、**退出码 0**。
+    # 这是"静默的零",正是 `core.cli_verdict` 当初为另外四个工具建的场景。
+    _failures = sum(1 for r in all_rows if r.get("error") is not None)
+    _attempted = len(all_rows)
+    _code, _msg = cli_verdict(
+        failures=_failures, attempted=_attempted,
+        succeeded=_attempted - _failures, what="grid_runner 的配置",
+    )
+    print(f"\n{_msg}")
+    return _code
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
