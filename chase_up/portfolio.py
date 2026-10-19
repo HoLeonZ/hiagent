@@ -42,6 +42,7 @@ from core.dual_price import (  # §2: canonical cost constants (single source in
     COMMISSION_RATE,
     MIN_COMMISSION,
     STAMP_DUTY_RATE,
+    effective_slippage,  # §4/§13.95: 入场与**出场**共用的有效冲击系数
     volume_cap_fill,
 )
 
@@ -332,6 +333,26 @@ def simulate_portfolio(
             for d, code, a in zip(ent["date"], ent["thscode"], ent["atr_pct"]):
                 atr_lookup[(np.datetime64(pd.Timestamp(d)), code)] = float(a)
 
+    # ----- §4/§13.95: 全 bar 的 ATR 表 (专供**执行滑点**, 与 ATR-TP 解耦) -----
+    # ⚠️ 为什么不能复用上面的 `atr_lookup`: 它是**为 ATR-TP 建的信号日表** ——
+    #   ① 只在 `use_atr` (atr_tp_mult/atr_sl_mult 都有值) 时才构建;
+    #   ② 只含**信号日**的 (date, code)。
+    # 而 §4 要求滑点按「该资产**当前**的 ATR × 该笔单的参与率」计 —— 对**出场腿**,
+    # "当前" 就是触发 SL/TP 的那根 bar, 它**几乎总不是信号日** ⇒ 用 `atr_lookup`
+    # 查出场腿**永远查不到**, 于是滑点静默为 0 (§0 silent bypass)。
+    # 实测 (§13.95): 在 `atr_slip_scale>0` 下, 出场腿的 `退出价/触发价` 恒为 1.000000。
+    # `panel.atr_pct` 是**因果**的 (`signals.py:97` 的 `rolling(14)`, 尾窗,
+    # 无 center/shift) ⇒ 在 t 根 bar 用 `atr_pct[t]` 不构成 §1 前视。
+    atr_by_bar: dict[tuple, float] = {}
+    if "atr_pct" in panel.columns:
+        _t = panel[["date", "thscode", "atr_pct"]].dropna()
+        atr_by_bar = {
+            (np.datetime64(d), c): float(a)
+            for d, c, a in zip(
+                _t["date"].to_numpy(), _t["thscode"].to_numpy(), _t["atr_pct"].to_numpy()
+            )
+        }
+
     cash = float(initial_capital)
     positions: dict[str, dict] = {}
     trades: list[dict] = []
@@ -353,6 +374,45 @@ def simulate_portfolio(
 
     def _buy_fees(notional: float) -> float:
         return pf.buy_cost(notional)
+
+    def _exit_fill_px(
+        raw_px: float, code: str, size: int, day, t: int, j, pi: dict
+    ) -> float:
+        """§4/§0 出场腿的**冲击后成交价** (§13.95, 2026-10-19)。
+
+        §4 把执行滑点定义为「signal trigger 与 fill 之间的 price impact」——
+        这是**每一笔 execution** 的性质, 卖出腿**同样**成立。在 §13.95 之前,
+        四个引擎**只在买入腿计费**, 出场腿零冲击 ⇒ **单一方向的乐观** (§0)。
+
+        口径与买入腿**逐项一致**, 只有符号相反:
+        * 同一个 helper `effective_slippage` (取自 core, §2 single source);
+        * 同一个全 bar ATR 表 `atr_by_bar` —— ⚠️ **不是** `atr_lookup`:
+          后者是为 ATR-TP 建的**信号日**表, 而 SL/TP 触发的那根 bar 几乎总不是信号日
+          ⇒ 用它**永远查不到**, 滑点会静默退化成 0 (§0 silent bypass, §13.95 的根因);
+        * ATR 取**触发那根 bar** 的值 (§4「该资产**当前**的 ATR」; `panel.atr_pct`
+          是尾窗 `rolling(14)`, 因果, 无 §1 前视);
+        * 参与率同样定义为 `订单量 / Bar_Volume` (clamp 到 [0, 1]);
+        * 本族多头, 出场是**卖出** ⇒ `×(1 − slip)`, 成交价更**低** = 悲观 ✓。
+
+        ⚠️ **零漂移**: 全部 preset 的 `slippage` 与 `atr_slip_scale` 都是 0
+        ⇒ `eff = 0` ⇒ `px × 1.0` 逐位不变 (2026-10-19 已用交易清单哈希逐位验证)。
+        ⚠️ **它只对出场腿生效, 不得用来算入场价** (方向相反)。
+        ⚠️ `j is None` (停牌/缺行) ⇒ 无 bar 可依 ⇒ 原样返回 (此时调用方用的是
+        `pos["entry_price"]` 这个非市场价, 加冲击没有意义)。
+        """
+        if j is None:
+            return float(raw_px)
+        bv = pi["volume"][j]
+        part = min(1.0, size / float(bv)) if (not np.isnan(bv) and bv > 0) else 0.0
+        slip = effective_slippage(
+            slippage, atr_by_bar.get((cal[t], code)), part, atr_slip_scale
+        )
+        if slip >= 1.0:
+            raise ValueError(
+                f"§4/§0: 出场腿冲击系数 {slip} ≥ 1.0 ({code} @ {day}) —— §0 要求"
+                f"违反物理市场规律时**立即抛错**, 不得静默算出一个非正成交价。"
+            )
+        return float(raw_px) * (1.0 - slip)
 
     def _close_position(code: str, pos: dict, exit_px: float, exit_day, reason: str) -> None:
         notional = pos["size"] * exit_px
@@ -444,7 +504,9 @@ def simulate_portfolio(
             else:
                 continue
 
-            _close_position(code, pos, float(px), day, reason)
+            _close_position(
+                code, pos, _exit_fill_px(px, code, pos["size"], day, t, j, pi), day, reason
+            )
             del positions[code]
 
         # ---------- 2) 新开仓:用前一交易日的信号,今日开盘买入 ----------
@@ -543,28 +605,26 @@ def simulate_portfolio(
                         )
                         if max_fill > 0 and size > max_fill:
                             size = max_fill
-                    # R5 (2026-09-21): ATR-aware slippage (CLAUDE.md §4)。
-                    # 静态 slippage 不区分低/高波动率; 改用 signal-day atr_pct ×
-                    # participation × scale 动态建模。
-                    # 公式: slip_eff = max(static_slippage, atr_pct × participation × scale)
-                    # participation = size_pre_cap / bar_vol (clamp 到 [0, 1])
-                    # atr_pct 来源: atr_lookup (use_atr=True) 或 entries.atr_pct 列
+                    # §13.95 (2026-10-19): 改为走**规范助手** (core.dual_price.
+                    # effective_slippage) —— §2 要求成本模型 defined exactly once。
+                    # 与上一版内联式**逐位等价** (560 组网格已证明, 见
+                    # tests/test_execution_slippage_is_symmetric_4engine.py)。
+                    # 出场腿现在走**同一个** helper (见本文件退出判定块)。
                     if atr_slip_scale > 0:
-                        atr_slip_lookup = atr_lookup.get((cal[t - 1], code))
-                        if (atr_slip_lookup is None or np.isnan(atr_slip_lookup)) and "atr_pct" in ent.columns:
-                            ent_match = ent[(ent["date"] == cal[t - 1]) & (ent["thscode"] == code)]
-                            if not ent_match.empty:
-                                atr_slip_lookup = float(ent_match.iloc[0]["atr_pct"])
-                        if atr_slip_lookup is not None and not np.isnan(atr_slip_lookup):
-                            if not np.isnan(bar_vol) and bar_vol > 0:
-                                participation = min(1.0, size_pre_cap / bar_vol)
-                            else:
-                                participation = 0.0
-                            atr_slip = atr_slip_lookup * participation * atr_slip_scale
-                            if atr_slip > slippage:
-                                entry_px = float(o) * (1 + atr_slip)
-                                if entry_px <= 0:
-                                    continue
+                        atr_slip_lookup = atr_by_bar.get((cal[t - 1], code))
+                        participation = (
+                            min(1.0, size_pre_cap / bar_vol)
+                            if (not np.isnan(bar_vol) and bar_vol > 0)
+                            else 0.0
+                        )
+                        entry_px = float(o) * (
+                            1
+                            + effective_slippage(
+                                slippage, atr_slip_lookup, participation, atr_slip_scale
+                            )
+                        )
+                        if entry_px <= 0:
+                            continue
                     if size < 100:
                         continue
                     notional = size * entry_px
@@ -612,7 +672,12 @@ def simulate_portfolio(
                 j = _row_at(pi, day)
                 px = float(pi["close"][j]) if j is not None else pos["entry_price"]
                 pos["bars"] = t - pos["entry_t"]
-                _close_position(code, pos, px, day, "eod")
+                # §13.95: 末日强平**也是**一笔卖出 execution ⇒ 同样计冲击。
+                # (本调用点是守卫 test_execution_slippage_is_symmetric.py 抓出来的 ——
+                #  我在第一版里只改了 SL/TP/time 那一个出口, 漏了这个。)
+                _close_position(
+                    code, pos, _exit_fill_px(px, code, pos["size"], day, t, j, pi), day, "eod"
+                )
                 del positions[code]
 
         # ---------- 4) 记录净值 ----------

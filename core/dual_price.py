@@ -242,6 +242,41 @@ def atr_slippage(
         return 0.0
     return atr_pct * participation * scale
 
+def effective_slippage(
+    static_slip: float = 0.0,
+    atr_pct: float | None = None,
+    participation: float = 0.0,
+    scale: float = 0.0,
+) -> float:
+    """一笔成交的**有效**冲击系数 —— **entry 与 exit 都必须走这里** (§4, §13.95)。
+
+    规则: ``eff = max(static_slip, atr_pct × participation × scale)``
+
+    ## 为什么需要它 (§13.95)
+    §4 把执行滑点定义为「signal trigger 与 fill 之间的 price impact」——
+    这是**每一笔 execution** 的性质, **买入腿与卖出腿同样成立**。
+    但在 §13.95 之前, 这条规则在四个引擎里**各写了一遍, 且全部只作用于买入腿**
+    ⇒ 卖出腿零冲击 = **单一方向的乐观** (§0 Pessimistic Default)。
+    把「取较大者」收成唯一一处, 是为了让「两条腿用同一个模型」**可被断言**。
+
+    ## 与 `atr_slippage` 的分工
+    `atr_slippage` 只算 ATR 那一项; 本函数负责「与静态值**取较大者**」。
+    静态 `slippage` 是历史遗留的 flat 项: §4 禁止把它当**唯一**模型,
+    但作为下限保留 (取 max 而不是相加 —— 相加会把历史 flat 值叠加进去)。
+
+    ## ⚠️ NaN / None 语义 (这一条是照抄内联式最容易写错的地方)
+    `atr_pct` 为 ``None`` / NaN / ≤0 ⇒ 退回 `static_slip`, **不参与 max**。
+    旧的内联写法靠 ``not np.isnan(...)`` 显式跳过; 若改写成裸 ``max()``,
+    NaN 虽然因 ``NaN > x`` 恒假而"碰巧"取到 x, 语义已经坏了 ——
+    且 `atr_pct <= 0` 对 NaN 也是 False, 会**静默传播**。故此处显式判 。
+    """
+    if atr_pct is None or participation <= 0 or scale <= 0:
+        return float(static_slip)
+    atr = float(atr_pct)
+    if atr != atr or atr <= 0:  # NaN 或非正 ⇒ 该腿退回静态值
+        return float(static_slip)
+    return max(float(static_slip), atr * float(participation) * float(scale))
+
 
 # ----------------------------------------------------------- internals
 
@@ -355,6 +390,7 @@ __all__ = [
     "extract_execution_bar",
     "is_limit_up",
     "atr_slippage",
+    "effective_slippage",
     "PRICE_SOURCE_RAW",
     "PRICE_SOURCE_ADJ",
     "validate_price_source",
