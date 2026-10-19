@@ -49,8 +49,14 @@ def _chase() -> list[tuple[str, float, float]]:
     from chase_up.universe import load_universe
 
     out = []
-    uni = set(load_universe("mainboard_only", DB_PATH))
+    # §3 PIT Mandate (§13.123): `run_backtest(..., panel_ind=panel)` **不会**再自己
+    # 取 universe —— 它只在 `panel_ind is None` 时才 `load_universe(..., asof_date=start)`。
+    # 所以凡是**自己预建 panel** 的调用方, 必须**自己**按窗口起点做 PIT。
+    # ⚠️ 本行此前是 `load_universe("mainboard_only", DB_PATH)` (无 asof_date)
+    # ⇒ 返回的是 **post-hoc 全集** (survivorship-biased), 于是本普查的 chase_up
+    # 一族的全部数字都建立在一个"今天还活着"的股票池上。已改为逐窗口 PIT。
     for w in (W2, IND):
+        uni = set(load_universe("mainboard_only", DB_PATH, asof_date=w[0]))
         panel = compute_indicators(load_panel(DB_PATH, *w, universe=uni))
         for name, p in PRESETS.items():
             _t = time.time()
@@ -72,8 +78,9 @@ def _uptrend() -> list[tuple[str, float, float]]:
     from uptrend_pullback.universe import load_universe
 
     out = []
-    uni = set(load_universe("mainboard_only", DB_PATH))
+    # §3 PIT (§13.123): 同 `_chase` —— 预建 panel 的调用方必须自己按窗口起点 PIT。
     for w in (W2, IND):
+        uni = set(load_universe("mainboard_only", DB_PATH, asof_date=w[0]))
         panel = compute_indicators(load_panel(DB_PATH, *w, universe=uni))
         for name, p in PRESETS.items():
             _t = time.time()
