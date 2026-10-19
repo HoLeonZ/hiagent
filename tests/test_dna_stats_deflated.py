@@ -181,3 +181,60 @@ def test_bonferroni_can_actually_reject() -> None:
         "§13.99: 累积 162 次比较下 Bonferroni 仍 < 0.05 ⇒ 校正没有把任何东西拒掉。"
         f"(实测 修后 = {min(p0*162,1.0):.4f})"
     )
+
+
+# ---------------------------------------------------------------------------
+# §13.103: `kurtosis` 的口径必须与代码一致 (raw, 不是 excess)
+# ---------------------------------------------------------------------------
+
+
+def test_kurtosis_default_pins_the_raw_convention() -> None:
+    """★ 用"**必须相等**"钉住口径 —— 这正是 §13.99/§13.102 反复奏效的手法。
+
+    `σ̂² = (1 − γ3·sr + (γ4−1)/4·sr²)/(T−1)` 里的 γ4 是 **raw** 峰度 (正态 = 3)。
+    ⇒ 显式传 `kurtosis=3.0` 必须与**不传**逐位相同; 传 `0.0` (excess 的正态值) 必须**不同**。
+    一旦有人把实现改成 excess 口径, 本条立刻红。
+    """
+    sr, k, t = 0.8, 20, 600
+    d_default = deflated_sharpe_ratio(observed_sharpe=sr, n_trials=k, n_returns=t)
+    d_raw3 = deflated_sharpe_ratio(observed_sharpe=sr, n_trials=k, n_returns=t, kurtosis=3.0)
+    d_exc0 = deflated_sharpe_ratio(observed_sharpe=sr, n_trials=k, n_returns=t, kurtosis=0.0)
+    assert d_default == d_raw3, (
+        "§13.103: 默认值不是 raw-正态(3) —— 口径变了, 所有历史 DSR 的含义跟着变。"
+    )
+    assert d_exc0 != d_default, (
+        "§13.103: 传 excess 的正态值(0) 与默认(3) 结果相同 ⇒ 两者已不可区分, "
+        "本判据失效 (要么实现改了, 要么该参数不再被使用)。"
+    )
+
+
+def test_following_the_old_wording_would_be_optimistic() -> None:
+    """旧措辞邀请调用方传 **excess**; 那会把 DSR 往**高**处推 (危险方向)。
+
+    本条把这个方向**钉住**: 传比 raw 小的数 ⇒ `(γ4−1)/4` 小 ⇒ 方差小 ⇒ `se` 小
+    ⇒ `z` 大 ⇒ **DSR 高**。
+    """
+    sr, k, t, raw = 1.5, 20, 600, 18.0
+    d_raw = deflated_sharpe_ratio(observed_sharpe=sr, n_trials=k, n_returns=t, kurtosis=raw)
+    d_exc = deflated_sharpe_ratio(observed_sharpe=sr, n_trials=k, n_returns=t, kurtosis=raw - 3.0)
+    assert d_exc["deflated_sharpe"] > d_raw["deflated_sharpe"], (
+        "§13.103: 传 excess(比 raw 小 3) 应当把 DSR **推高** (方差被低估)。"
+        f"实测 raw={d_raw['deflated_sharpe']:.6f} vs excess={d_exc['deflated_sharpe']:.6f}"
+    )
+
+
+def test_the_docstring_states_the_raw_convention() -> None:
+    """文档必须说清口径 —— 这是一条**文档级**判据 (代码级判据见上面两条)。
+
+    ⚠️ 本册的教训: **文本判据容易被"提到"满足**。所以这里只做**存在性**声明,
+    真正的承重判据是上面那两条**行为式**的。
+    """
+    doc = deflated_sharpe_ratio.__doc__ or ""
+    assert "raw" in doc.lower(), "§13.103: docstring 没说 `kurtosis` 是 raw 口径"
+    assert "excess + 3" in doc or "raw = excess + 3" in doc, (
+        "§13.103: docstring 应写清 raw 与 excess 的换算关系 (raw = excess + 3)"
+    )
+    assert "We accept excess here" not in doc, (
+        "§13.103: 那句自我矛盾的『We accept excess here』又回来了 —— "
+        "它与默认值 3.0 和 `(γ4−1)/4` 的 raw 口径直接冲突。"
+    )

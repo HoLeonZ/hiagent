@@ -120,9 +120,17 @@ def deflated_sharpe_ratio(
                           edge by E[max(Z_1, ..., Z_k)] ≈ (1 - γ)Φ⁻¹(1-1/k) +
                           γΦ⁻¹(1-1/(ke)) where γ ≈ 0.5772 (Euler-Mascheroni).
         skewness:         Return distribution skewness (default 0 = normal).
-        kurtosis:         Return distribution excess kurtosis (default 3 = normal).
-                          Note: scipy uses Fisher (excess); Bailey uses raw kurtosis
-                          which equals excess + 3. We accept excess here.
+        kurtosis:         **原始 (raw / 全) 峰度** —— 正态 = **3** (默认 3.0)。
+                          ⚠️ §13.103 (2026-10-19): 此处原文自称是 **excess** 口径,
+                          并声明本函数**接受 excess** ——
+                          **那两句话互相矛盾, 而且与代码相反**: excess(正态)=0, raw(正态)=3,
+                          而下面的 σ̂ 用的是 Bailey 的 `(γ4 − 1)/4`, 其中 γ4 是 **raw**。
+                          ⇒ 若照旧措辞传 excess, `(γ4−1)/4` 会小 3/4 ⇒ 方差被低估 ⇒
+                          **DSR 偏高 (乐观方向)** —— 那正是文档**主动邀请**调用方做的事。
+                          (实测影响**很小**: 在逐期 `sr ≈ 0.04` 时该差约 **+0.1%**,
+                           因为 `(γ4−1)/4 · sr²` 是二阶项。**但它仍是个反向的陷阱。**)
+                          换算: `raw = excess + 3`; `scipy.stats.kurtosis(fisher=False)`
+                          给 raw, `pandas.Series.kurt()` 给 excess。
         autocorr_lag1:    Lag-1 autocorrelation of returns (default 0).
                           Positive autocorrelation inflates Sharpe; correction
                           deflates it.
