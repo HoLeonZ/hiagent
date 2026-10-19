@@ -75,6 +75,37 @@ SCRIPT_GLOBS = {
     "cycle_price_action": ("cycle_price_action/sweep*.py",),
 }
 
+#: **前缀 glob 抓不到的 DSR 调用点**(附八十六)。
+#:
+#: 上面那组 glob 是按**文件名前缀**划的族,而这一族并不是按前缀划的:
+#:   · `short_reversal/wf_*.py` 匹配 `wf_v39_focused.py`,**匹配不到** `walkforward.py`
+#:     (`wa` 开头;附八十五 就是栽在这个前缀上);
+#:   · `iter_reverse.py` 既不是 `sweep*` 也不是 `wf_*`;
+#:   · `cycle_price_action/walkforward.py` / `main.py` 同理。
+#: 实测:调用 `deflated_sharpe_ratio` 的脚本共 **29** 个,而 SCRIPT_GLOBS 只覆盖 **25** 个
+#: —— **这 4 个脚本对下面三条 §5 守卫完全不可见**(收益率当 Sharpe、max/n_trials 不匹配、
+#: 引用已死的 preset,一条都查不到它们)。
+#:
+#: 故:族仍用 glob 表达(便于新增同类文件自动纳入),但**必须并上这份显式名单**;
+#: 并由 `test_research_scripts_cover_every_dsr_caller` 做集合对账 —— 名单不可能再悄悄变短。
+SCRIPT_EXPLICIT = (
+    "short_reversal/walkforward.py",
+    "uptrend_pullback/iter_reverse.py",
+    "cycle_price_action/walkforward.py",
+    "cycle_price_action/main.py",
+)
+
+
+def research_scripts() -> set[str]:
+    """**凡调用 DSR 的研究脚本**(相对路径)。三条 §5 守卫都以此为扫描面。"""
+    out = {f for f in SCRIPT_EXPLICIT}
+    for patterns in SCRIPT_GLOBS.values():
+        for pattern in patterns:
+            for raw in glob.glob(str(REPO_ROOT / pattern)):
+                out.add(str(Path(raw).relative_to(REPO_ROOT)))
+    return out
+
+
 #: 显式把 preset 名交给回测/取 preset 的调用,以及模块级常量赋值。
 _CALL = re.compile(r'(?:run_one|run_backtest_v3|run_backtest|get_preset)\(\s*"([^"]+)"')
 _ASSIGN = re.compile(r'^\s*(?:PRESET|preset|TARGET_PRESET)\s*=\s*"([^"]+)"', re.M)
@@ -96,16 +127,17 @@ def _preset_names(engine: str) -> set[str]:
 def _references() -> dict[str, set[str]]:
     """{脚本相对路径: 它引用但不存在的 preset 名集合}(只含确实失效的)。"""
     out: dict[str, set[str]] = {}
-    for engine, patterns in SCRIPT_GLOBS.items():
-        known = _preset_names(engine)
-        for pattern in patterns:
-            for raw in sorted(glob.glob(str(REPO_ROOT / pattern))):
-                path = Path(raw)
-                src = path.read_text(encoding="utf-8")
-                cited = set(_CALL.findall(src)) | set(_ASSIGN.findall(src))
-                dead = {c for c in cited if c not in known}
-                if dead:
-                    out[str(path.relative_to(REPO_ROOT))] = dead
+    for rel in sorted(research_scripts()):
+        path = REPO_ROOT / rel
+        engine = rel.split("/", 1)[0]
+        known = _preset_names(engine) if engine in SCRIPT_GLOBS else set()
+        if not known:
+            continue
+        src = path.read_text(encoding="utf-8")
+        cited = set(_CALL.findall(src)) | set(_ASSIGN.findall(src))
+        dead = {c for c in cited if c not in known}
+        if dead:
+            out[rel] = dead
     return out
 
 
@@ -138,10 +170,16 @@ def test_registered_debt_is_still_debt() -> None:
 
 
 def test_research_scripts_are_actually_scanned() -> None:
-    """自检:扫描面不能为空 —— 否则前两条会空转通过。"""
-    total = sum(len(glob.glob(str(REPO_ROOT / p)))
-                for pats in SCRIPT_GLOBS.values() for p in pats)
+    """自检:扫描面不能为空 —— 否则前几条会空转通过。
+
+    (非空转**不等于**覆盖完整:附八十六 实测过"25 个 > 20 所以通过"而实际漏了 4 个。
+     覆盖完整性由 `test_research_scripts_cover_every_dsr_caller` 负责。)
+    """
+    total = len(research_scripts())
     assert total >= 20, f"研究脚本扫描面异常小({total} 个文件)—— 守卫可能已空转"
+    # 显式名单里的每一项都必须真的进入扫描面(防止 helper 将来被改坏)
+    missing = [f for f in SCRIPT_EXPLICIT if f not in research_scripts()]
+    assert not missing, f"显式名单未进入扫描面:{missing}"
 
 
 def test_registered_scripts_still_exist() -> None:
@@ -276,10 +314,9 @@ def test_no_script_feeds_a_return_percentage_as_observed_sharpe() -> None:
     断言其中不出现 `return_pct` 之类的收益率来源。
     """
     offenders = []
-    for engine, patterns in SCRIPT_GLOBS.items():
-        for pattern in patterns:
-            for raw in sorted(glob.glob(str(REPO_ROOT / pattern))):
-                path = Path(raw)
+    for rel in sorted(research_scripts()):
+        path = REPO_ROOT / rel
+        if True:
                 lines = path.read_text(encoding="utf-8").splitlines()
                 for i, line in enumerate(lines):
                     if "deflated_sharpe_ratio(" not in line:
@@ -319,10 +356,9 @@ def test_dsr_max_and_n_trials_describe_the_same_collection() -> None:
     "展平网格上取 max,却按其中一维的个数折减"这一种组合。
     """
     offenders = []
-    for engine, patterns in SCRIPT_GLOBS.items():
-        for pattern in patterns:
-            for raw in sorted(glob.glob(str(REPO_ROOT / pattern))):
-                path = Path(raw)
+    for rel in sorted(research_scripts()):
+        path = REPO_ROOT / rel
+        if True:
                 src = path.read_text(encoding="utf-8")
                 code = "\n".join(
                     l for l in src.splitlines() if not l.strip().startswith("#")
@@ -458,3 +494,42 @@ def test_walkforward_feeds_the_cross_window_mean_to_dsr(monkeypatch, tmp_path) -
     assert captured["observed"] == pytest.approx(expected_mean), (
         f"DSR 应收到跨窗口均值 {expected_mean},实际 {captured['observed']}"
     )
+
+
+def test_research_scripts_cover_every_dsr_caller() -> None:
+    """**集合对账**(附八十六):扫描面必须盖住**凡调用 `deflated_sharpe_ratio` 的引擎脚本**。
+
+    上面三条 §5 守卫(收益率当 Sharpe / max 与 n_trials 不匹配 / 引用已死 preset)都以
+    `research_scripts()` 为扫描面。实测它此前漏了 **4 个**:`short_reversal/walkforward.py`、
+    `uptrend_pullback/iter_reverse.py`、`cycle_price_action/walkforward.py`、
+    `cycle_price_action/main.py` —— 它们对这四条守卫**完全不可见**。
+
+    这与 附八十五 同一个根:**按文件名前缀划的族,漏掉了不按前缀命名的成员**。
+    区别只是"漏在哪一层":那里漏在守卫里,这里漏在**四条守卫共用的扫描面**里 ——
+    一处漏,四处瞎。
+    """
+    callers: set[str] = set()
+    for engine in SCRIPT_GLOBS:
+        for p in sorted((REPO_ROOT / engine).glob("*.py")):
+            if "deflated_sharpe_ratio" in p.read_text(encoding="utf-8"):
+                callers.add(str(p.relative_to(REPO_ROOT)))
+
+    covered = research_scripts()
+    invisible = sorted(callers - covered)
+    assert not invisible, (
+        "§5: 以下脚本调用 DSR 却**不在扫描面内** —— 上面几条守卫都看不见它们:\n  "
+        + "\n  ".join(invisible)
+        + "\n把它们加进 `SCRIPT_EXPLICIT`(或让前缀 glob 覆盖到)。"
+    )
+
+
+def test_the_explicit_scan_list_is_real_and_load_bearing() -> None:
+    """显式名单的每一项都必须:①文件存在 ②确实调用 DSR(否则它是虚胖的白名单)。"""
+    bad = []
+    for rel in SCRIPT_EXPLICIT:
+        p = REPO_ROOT / rel
+        if not p.exists():
+            bad.append(f"{rel}: 文件不存在")
+        elif "deflated_sharpe_ratio" not in p.read_text(encoding="utf-8"):
+            bad.append(f"{rel}: 并没有调用 DSR")
+    assert not bad, "§5: 显式扫描名单有问题(幽灵项或虚胖项):\n  " + "\n  ".join(bad)
