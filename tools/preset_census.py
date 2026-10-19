@@ -150,8 +150,22 @@ def _cycle() -> list[tuple[str, float, float]]:
 
 
 def main() -> int:
-    fams = {"chase_up": _chase, "uptrend_pullback": _uptrend,
+    import argparse
+    ap = argparse.ArgumentParser(description="四族 preset 的当前态普查 (只报聚合, §5 禁排名)")
+    ap.add_argument("--families", default="",
+                    help="逗号分隔; 缺省跑全部。⚠️ short_reversal/cycle 见 §13.112 "
+                         "(O(n_codes×bars) 的 backtrader 逐 code feed 循环 ⇒ 2 年窗口 ~17 分钟/preset)")
+    a = ap.parse_args()
+    _ALL = {"chase_up": _chase, "uptrend_pullback": _uptrend,
             "short_reversal": _short, "cycle_price_action": _cycle}
+    if a.families:
+        want = [x.strip() for x in a.families.split(",") if x.strip()]
+        bad = [x for x in want if x not in _ALL]
+        if bad:
+            raise SystemExit(f"未知族: {bad}; 可用: {sorted(_ALL)}")
+        fams = {k: _ALL[k] for k in want}
+    else:
+        fams = _ALL
     all_rows = []
     for fam, fn in fams.items():
         t0 = time.time()
