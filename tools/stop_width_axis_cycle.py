@@ -60,14 +60,19 @@ def _days(w0: str, w1: str) -> list:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--sl-pcts", type=float, nargs="+", default=[0.02, 0.035, 0.05, 0.08])
+    ap.add_argument("--tp-pcts", type=float, nargs="+", default=None,
+                    help="给了就改跑**目标位**轴 (只动 tp_pct, sl_pct 固定)")
     ap.add_argument("--n-codes", type=int, default=N_CODES)
     args = ap.parse_args()
 
     print(f"口径披露 (§13.13): cycle_price_action -> {dict(_BASIS)}")
     base = dict(PRESET_V1)
-    print(f"preset=PRESET_V1  tp_pct={base['tp_pct']} (固定)  max_hold={base['max_hold']} (固定)  "
+    # ⚠️ 这一行此前**写死**说 `tp_pct` 是"固定"的 —— 而跑 `--tp-pcts` 时它正是**被变动的那个**。
+    # 同一个缺陷类 (§13.177(f)) 在同一工具里的**第三处**: 打印出来的声明与实际跑的不符。
+    _fixed = ("sl_pct=" + str(base["sl_pct"])) if args.tp_pcts else ("tp_pct=" + str(base["tp_pct"]))
+    print(f"preset=PRESET_V1  **固定:** {_fixed}  max_hold={base['max_hold']} (固定)  "
           f"max_positions={base['max_positions']}")
-    print(f"⚠️ 活键 = `sl_pct` (不是 `atr_sl_mult` —— §13.175); 名册截到 {args.n_codes} 只\n")
+    print(f"⚠️ 活键 = `sl_pct` (不是 `atr_sl_mult` —— §13.175); 名册截到 {args.n_codes} 只")
 
     # ★ 先用**真** loader 取真名册, 再替换 (不 wrap 原函数 ⇒ 不递归; §13.174 的教训)
     ORIG = B.load_universe_data
@@ -86,13 +91,20 @@ def main() -> None:
     B.load_universe_data = _patched
     print(f"  (名册截到 {args.n_codes} 只 / 每个窗口各自取其全名册)\n")
 
-    hdr = (f"{'sl_pct':>8}{'窗口':<6}{'笔数':>6}{'SL*':>5}{'TP*':>5}{'time*':>6}{'跳空':>5}"
+    # ⚠️ 列名也必须跟着轴走 (§13.177(f) 同类 — 本工具里第四处"打印与实际不符":
+    #    `--tp-pcts` 时"打印自己的轴"。表头原先把轴**写死**成 `sl_pct`。
+    _col = "tp_pct" if args.tp_pcts else "sl_pct"
+    hdr = (f"{_col:>8}{'窗口':<6}{'笔数':>6}{'SL*':>5}{'TP*':>5}{'time*':>6}{'跳空':>5}"
            f"{'跳空占比':>9}{'跳空成本':>10}{'组合收益':>11}{'maxDD':>9}")
     print(hdr); print("-" * len(hdr))
     rows = []
     try:
-        for slp in args.sl_pcts:
-            preset = {**base, "sl_pct": float(slp)}
+        axis = "tp_pct" if args.tp_pcts else "sl_pct"
+        levels = args.tp_pcts if args.tp_pcts else args.sl_pcts
+        print(f"**轴 = `{axis}`**  (另一项固定: "
+              f"{'sl_pct=' + str(base.get('sl_pct')) if axis == 'tp_pct' else 'tp_pct=' + str(base.get('tp_pct'))})\n")
+        for slp in levels:
+            preset = {**base, axis: float(slp)}
             for wl, w0, w1 in WINDOWS:
                 r = B.run_backtest(str(DB_PATH), dt.date.fromisoformat(w0),
                                    dt.date.fromisoformat(w1), preset=preset)
@@ -101,7 +113,8 @@ def main() -> None:
                     print(f"{slp:>8.4f}{wl:<6}{0:>6}"); continue
                 df = pd.DataFrame([vars(x) for x in t])
                 ep = df["entry_price"].astype(float); xp = df["exit_price"].astype(float)
-                sl_p = ep * (1.0 - float(slp)); tp_p = ep * (1.0 + float(base["tp_pct"]))
+                _sl_eff = float(base["sl_pct"]) if axis == "tp_pct" else float(slp)
+                sl_p = ep * (1.0 - _sl_eff); tp_p = ep * (1.0 + float(preset["tp_pct"]))
                 is_sl = xp <= sl_p * (1.0 + 1e-12)
                 is_tp = xp >= tp_p * (1.0 - 1e-12)
                 is_tm = ~is_sl & ~is_tp
@@ -114,17 +127,20 @@ def main() -> None:
                 print(f"{slp:>8.4f}{wl:<6}{len(df):>6}{n_sl:>5}{int(is_tp.sum()):>5}{int(is_tm.sum()):>6}"
                       f"{int(gap.sum()):>5}{(int(gap.sum())/n_sl if n_sl else float('nan')):>9.1%}"
                       f"{cost:>10.2%}{m['total_return']:>11.2%}{m['max_dd']:>9.2%}")
-                rows.append(dict(sl=float(slp), win=wl, n=len(df), n_sl=n_sl,
+                rows.append(dict(level=float(slp), win=wl, n=len(df), n_sl=n_sl, n_tp=int(is_tp.sum()),
                                  cost=cost, ret=float(m["total_return"]),
                                  dd=float(m["max_dd"] or 0.0)))
             print()
     finally:
         B.load_universe_data = ORIG
 
-    print("=== Z1 机理自验: SL 笔数是否随止损变窄而上升 ===")
+    # ⚠️ 自验必须**跟着轴走** (§13.177(f) 的教训: 写死看 SL 笔数 ⇒ 跑目标位轴时会打出
+    # 一个**看起来像故障**的警告, 而它本来就是应该的)。
+    _key, _lab = (("n_tp", "TP 笔数") if axis == "tp_pct" else ("n_sl", "SL 笔数"))
+    print(f"=== Z1 机理自验: {_lab} 是否随该轴变紧而上升 ===")
     bad = []
     for wl, _, _ in WINDOWS:
-        c = [x["n_sl"] for x in rows if x["win"] == wl]
+        c = [x[_key] for x in rows if x["win"] == wl]
         if any(c[i] < c[i + 1] for i in range(len(c) - 1)):
             bad.append((wl, c))
     print("  ✅ 两窗都单调" if not bad else f"  ⚠️ 非单调: {bad}  (⚠️ 本轴同时改入场集合, ±1 级别的抖动见 §13.167(g))")
