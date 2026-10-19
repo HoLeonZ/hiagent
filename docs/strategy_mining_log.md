@@ -540,6 +540,20 @@
 >   ⚠️ **登记缺口**: `short_reversal` / `cycle_price_action` 的指标**在 bar 循环里现算**
 >   (无独立 `compute_indicators` 可整表截断) ⇒ 强覆盖需要**另一套 harness**, **未做并写明为什么**。
 >   ⇒ 一句话: **一句话的适用范围, 往往比它听起来窄** —— "§1 已验证"此前只值 1 族 10 列。
+> * ✅ **§13.149: `cycle` 的四条 docstring §1 断言 —— 全部实测成立, 且判据两处都有牙。**
+>   `backtest._precompute_scores` 的 docstring 里写着四条很精确的 §1 断言
+>   (`k_patterns`/`k_line_score` 后向窗口 · `calendar_score` 纯日期 · `phase_score` 第 i 位与 n 无关,
+>   例外是 `len < max(periods)` 整体返回 0) —— **此前一条都没被验过**。
+>   §13.105 的原则在此正合用: **一条只写在 docstring 里的 §1 断言, 与一个不响的守卫是同一种东西。**
+>   ★ **实测**: 40 只票 × 3 截断点, 四个函数**各 0 不一致** ⇒ docstring 说的四件事都是真的。
+>   ★★ **判据有牙 (两次注入)**: ①`rolling(5)→center=True` ⇒ `k_line_score` **28 个不一致**;
+>   ②`if n < max_p → if False` ⇒ 报「**应整体返回 0, 实测非全零**」。
+>   第二条尤其要紧 —— 那个零分支是 `_precompute_scores` 里**显式复刻**的, 一旦不再是 0 就对不上了。
+>   ⚠️ 途中**我自己的两个错**: ①把 `asof_date` 传成 **str** (要求 `date`) ⇒ TypeError ——
+>   生产传的是 `date`, **是我的调用错**, 而且**它响亮地失败了** (§0 fail-fast 的应有表现);
+>   ②`detect_k_patterns` 返回**字符串**(形态名), 我按数值比 ⇒ ValueError。
+>   ⚠️ **剩余缺口**: `short_reversal` 的指标**在 bar 循环里现算**, 需要**另一套 harness** —— 这次没做完。
+>   ⇒ **§1 强覆盖现为 3 族** (uptrend 16 列 · chase 全部 37 列 · cycle 四个信号函数), 只剩 short_reversal。
 > * ⚠️ **§3.1 与 §3.2 是留档, 不是行动清单** —— 见两节各自的更正横幅。
 >   **文档的阅读顺序与结论的时间顺序相反, 所以旧节可能比新节更"乐观"。**
 ---
@@ -1260,6 +1274,11 @@ uptrend 5 / cycle 2; 其中**连续注释块** short_reversal 25 个 108 行。
 | ★ **`chase_up` 的指标层实测因果**: 三个截断点 × **全部 37 个数值列** ⇒ **0 不一致**; 且判据**有牙** (注入 `center=True` ⇒ **8 列报红**) | — | ✅ 新增 `tests/test_chase_indicators_are_causal.py` | §13.148(c)(d)(e) |
 | ✅ 新守卫**不写硬编码列清单** (遍历全部列) + **反空转断言** `n_cols ≥ 20` —— 把 §13.147 那个错的机械版防线固化下来 | — | ✅ | §13.148(e) |
 | ⚠️ **登记缺口**: `short_reversal` / `cycle_price_action` 的指标**在 bar 循环里现算** (无独立 `compute_indicators` 可整表截断) ⇒ 强覆盖需**另一套 harness**, **未做并写明为什么** | — | ⛔ | §13.148(f) |
+| ✅ **`cycle` 的四条 docstring §1 断言全部实测成立** (40 只票 × 3 截断点: `k_patterns` / `k_line_score` / `phase_score` / `calendar_score` 各 **0 不一致**) —— 此前它们**只是写着的** | — | ✅ 新增 `tests/test_cycle_signals_are_causal.py` | §13.149(b)(e) |
+| ★★ **判据两处都有牙**: ①`rolling(5)→center=True` ⇒ `k_line_score` **28 个不一致**; ②`if n < max_p → if False` ⇒ 报「**应整体返回 0, 实测非全零**」。第二条钉的是 `_precompute_scores` **显式复刻**的那个分支 | — | ✅ | §13.149(c) |
+| ⚠️ **我自己的两个错**: ①把 `asof_date` 传成 **str**, 而 `load_universe_data` 里 `min(ref_pit, db_last)` 要求 date ⇒ TypeError (**生产传的是 date; 是我的调用错, 且它响亮地失败了**) ②`detect_k_patterns` 返回**字符串**(形态名), 我按数值比 ⇒ ValueError | — | ✅ 已修 | §13.149(d) |
+| ⚠️ **剩余缺口**: `short_reversal` 的指标**在 bar 循环里现算**, 需要**另一套 harness** ⇒ **这次没做完, 写明为什么** | — | ⛔ | §13.149(f) |
+| ✅ **§1 强覆盖从 2 族扩到 3 族** (uptrend 16 列 · chase 全部 37 列 · cycle 四个信号函数); **只剩 short_reversal** | — | — | §13.149(g) |
 
 | ✅ **「导入/声明 vs 实际做」这一族已扫成清单** —— `tools/scan_unused_core_imports.py`, 判据**在两个已知实例上验证命中**; 全仓 **13 处** (2 处带假声明, 已更正; 其余 11 处**按规矩不删**) | 零(注释级) | ✅ **双向棘轮** (新增⇒红; 修掉未更新⇒也红) + 2 次注入 | §13.120 |
 | ⚠️ **我的"零漂移"判据第一版用错单位**: `ast.dump` 整体比对对 **docstring 改动本就不成立** (docstring 是 AST 节点) ⇒ 须**剥掉 docstring** 再比 | — | ✅ 已改用正确判据 | §13.120(e) |
@@ -12226,3 +12245,65 @@ W2 上 **chase 的票中有 76.3% 也出现在 uptrend 的票集里** (只是日
 #### (h) 复现
 `python3 -m pytest tests/test_chase_indicators_are_causal.py`
 (注入 `rolling(..., center=True)` 应当红, 且报出那 8 列)。
+
+---
+
+### 13.149 ✅ `cycle_price_action` 的**四条 docstring §1 断言** —— 全部**实测成立**, 且判据两处都有牙
+
+#### (a) 动机: 一处比"覆盖缺口"更具体的引子
+§13.148 登记的最后一块空白是"cycle / short 的 bar 级指标没有强覆盖"。
+而 cycle 这里有一个更具体的钩子: `backtest._precompute_scores` 的 docstring 里写着
+**四条很精确的 §1 断言**, 而它们**一条都没有被验过**:
+
+> * `detect_k_patterns` / `k_line_score`: 全为 rolling/shift 的**后向窗口**,
+>   在前缀 `df.iloc[:i+1]` 的第 i 行与在全表第 i 行**取值相同**;
+> * `calendar_score`: **纯日期函数** (锚点是自然日历月末/季报日, **不是切片端点**);
+> * `phase_score`: 只用到序列**长度**的 `np.arange(n)`, **第 i 位与 n 无关** ——
+>   唯一例外是 `len < max(periods)` 时**整体返回 0**。
+
+§13.105 的原则在这里正合用:
+> **一条只写在 docstring 里的 §1 断言, 与一个不响的守卫是同一种东西。**
+
+#### (b) ★ 四条**全部实测成立**
+40 只票 × 3 个截断点 (0.6/0.8/0.95), 逐值比对 (数值列 `isnan+isclose`, 字符串列相等):
+
+| 函数 | 不一致值 |
+|---|---|
+| `k_patterns` | **0** ✅ |
+| `k_line_score` | **0** ✅ |
+| `phase_score` | **0** ✅ |
+| `calendar_score` | **0** ✅ |
+
+⇒ **docstring 说的四件事都是真的** —— 现在它们是**验证过的**, 不再是"写着的"。
+
+#### (c) ★★ 判据**两处都有牙** (两次注入, 各自按对应断言变红)
+| 注入 | 结果 |
+|---|---|
+| `signals.py` 第一个 `rolling(5)` → `center=True` | **`k_line_score` 28 个不一致** ⇒ 报"四条断言至少一条不成立" |
+| `cycle.py` 的 `if n < max_p:` → `if False:` | 报"**`phase_score` 在 len=20 < max(periods)=21 时应整体返回 0, 实测非全零**" |
+
+⇒ 第二条尤其要紧: 那个零分支是 `_precompute_scores` 里**显式复刻**的一个分支
+(它自己写着"故此处显式复刻该分支") ⇒ **一旦它不再是 0, 复刻分支就对不上了** ——
+所以它必须被**钉住**, 而不能默认它永远为真。
+
+#### (d) ⚠️ 途中两个**我自己的错** (都靠 fail-fast / 报错暴露, 不是产品缺陷)
+1. 我把 `asof_date` 传成 **`str`**, 而 `load_universe_data` 里 `min(ref_pit, db_last)` 要求 `date`
+   ⇒ `TypeError`。**生产调用点传的是 `date`** (`backtest.py:101` 传 `start: date`) ⇒ **是我的调用错**。
+   (顺带: 它**响亮地失败**了 —— 而这正是 §0 fail-fast 应有的表现。)
+2. `detect_k_patterns` 返回的是**字符串**(形态名, 如 `engulfing_bull`), 我第一版按数值比 ⇒ `ValueError`。
+
+#### (e) 交付: `tests/test_cycle_signals_are_causal.py`
+两条断言: ①**截尾不变**(四个函数, 全部值) ②**零分支钉桩**(docstring 那条例外显式验证)。
+外加反空转断言 (`checked >= 10`), 以及 docstring 里写明"注入什么会红"。
+
+#### (f) ⚠️ 剩余缺口 (如实, 并写明为什么这次没做完)
+**`short_reversal` 的指标是在 bar 循环里现算的** (没有整表函数可截断)
+⇒ 它需要**另一套 harness**(在 bar 循环内构造"截断后前段逐位不变") ——
+与 cycle 这种"整表函数"不是同一个形状。**这次没做**, 仍只有弱覆盖 (禁用函数扫描)。
+
+#### (g) 净变化
+§1 的**强覆盖**从 **2 族**扩到 **3 族**:
+`uptrend` (16 列) · `chase` (全部 37 列) · **`cycle` (四个信号函数)**; 只剩 `short_reversal`。
+
+#### (h) 复现
+`python3 -m pytest tests/test_cycle_signals_are_causal.py` (约 100s, 要载 universe)。
