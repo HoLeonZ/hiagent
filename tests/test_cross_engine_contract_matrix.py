@@ -1,0 +1,163 @@
+r"""附九十一 —— 跨引擎**契约矩阵**:同一规则在四个引擎里各写一份,这里把它们钉在一起。
+
+## 为什么需要它
+
+审计文档自己写过:
+
+> **同一个模式已经出现三次**:一条规则在 3~4 个引擎里各写一份,于是修复永远只覆盖
+> "我这次看到的那一份"。这已不是巧合,而是一种系统性的维护风险。
+
+文档点了名,但**没有任何检查**为这个模式本身存在 —— 于是它还会再发生第四次、第五次。
+
+## 这一轮最刺眼的证据:`T+1`
+
+CLAUDE.md §4 明文要求「**T+1**: 买入的股票在 T+1 之前不得卖出」。而:
+
+```
+$ grep -rn "T+1\|t1" chase_up/ uptrend_pullback/ short_reversal/ cycle_price_action/
+(空)
+```
+
+**按规则的名字去搜,四个引擎里一处都搜不到** —— 任何审计者都会据此判"这条规则没实现"。
+但逐处读码后:它**四族全都实现了**,只是**三种拼法**:
+
+| 引擎 | 写法 |
+|---|---|
+| `chase_up` / `uptrend_pullback` | `if bars_in_pos < 1:` —— **跳过**退出判定 |
+| `short_reversal` | `if held < 1:` —— 同上,且注释写的是 "CLAUDE.md **P3**" |
+| `cycle_price_action` | `raise ValueError("P3 violation: same-day or earlier exit forbidden")` —— **fail-fast** |
+
+注释里管它叫 **P3**,不叫 T+1;三个跳过式、一个抛错式。**规则在,名字不在,而且没有一处把
+这四个拼法连起来。** 这正是"族内不对称"能反复发生的机制:下一个人搜 T+1,搜不到,于是
+"顺手在某个引擎里加一条"。
+
+## 判据
+
+一张矩阵:每行一条契约、每列一个引擎,格子是 **(文件, 定位正则)**。门禁要求:
+
+1. **每条契约必须覆盖全部四个引擎**(漏一个 ⇒ 红 —— 这就是"修复只覆盖看到的那一份"的机械版);
+2. 每个格子的正则必须在该文件里**命中**(把实现删掉 ⇒ 红);
+3. 契约/引擎集合本身要与实际一致(新增引擎而矩阵没跟上 ⇒ 红)。
+
+**没有"豁免"这一档** —— 本轮三条契约在四族里都找到了实现,故不需要。若将来某条契约
+在某族里**按设计**不存在,应显式加一档带理由的豁免,而不是把那一格删掉(删掉与"没实现"
+在矩阵里长得一模一样 —— 这是本会话反复栽的那个坑)。
+
+## 本轮只收三格已成形的契约
+
+`T+1`、`容量闸门`、`涨停买入不成交` —— 三条我都**逐引擎定位过**。
+另有两条(`max_volume_participation`、`nav_gate_ratio`)确认在四族里都存在,但**尚未**做出
+精确到行的定位(其中 cycle 那两条目前只找到**注释**级的落点,没有代码级落点),
+故**不塞进矩阵** —— 用注释当"实现"会让矩阵变成"文本审计",而那正是仓库自己警告过的弱判据。
+"""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+ENGINES = ("chase_up", "uptrend_pullback", "short_reversal", "cycle_price_action")
+
+#: 契约 → {引擎: (相对路径, 定位正则, 该族的**拼法**说明)}
+#:
+#: "拼法"一列是给人看的:矩阵的价值有一半在于**把四种写法并排摆出来**。
+CONTRACTS: dict[str, dict[str, tuple[str, str, str]]] = {
+    "T+1: 入场当日不得退出 (CLAUDE.md §4)": {
+        "chase_up": ("chase_up/replay_strategy.py", r"if bars_in_pos < 1:",
+                     "跳过退出判定"),
+        "uptrend_pullback": ("uptrend_pullback/replay_strategy.py", r"if bars_in_pos < 1:",
+                             "跳过退出判定"),
+        "short_reversal": ("short_reversal/replay_strategy_v3.py", r"if held < 1:",
+                           "跳过退出判定(注释里叫 P3)"),
+        "cycle_price_action": ("cycle_price_action/portfolio.py",
+                               r"same-day or earlier exit forbidden",
+                               "**fail-fast 抛错**(`P3 violation`)"),
+    },
+    "容量闸门: 持仓已达上限则丢弃本 bar 剩余信号 (§2)": {
+        "chase_up": ("chase_up/portfolio.py", r"if len\(positions\) >= max_positions:",
+                     "`break`"),
+        "uptrend_pullback": ("uptrend_pullback/portfolio.py", r"if len\(positions\) >= max_positions:",
+                             "`break`"),
+        "short_reversal": ("short_reversal/replay_strategy_v3.py",
+                           r"if len\(self\._holds\) >= self\.p\.max_positions:",
+                           "`break`(影子账叫 `_holds`)"),
+        "cycle_price_action": ("cycle_price_action/portfolio.py", r"if self\._pos is not None:",
+                               "本族容量恒 1 ⇒ 单槽判空即是闸门"),
+    },
+    "涨停买入不成交 (§4: 封板买不进)": {
+        "chase_up": ("chase_up/replay_strategy.py", r"is_limit_up\(", "建仓前判"),
+        "uptrend_pullback": ("uptrend_pullback/replay_strategy.py", r"is_limit_up\(", "建仓前判"),
+        "short_reversal": ("short_reversal/replay_strategy_v3.py", r"is_limit_up\(",
+                           "**回补**前判(做空:买 = 回补)"),
+        "cycle_price_action": ("cycle_price_action/portfolio.py", r"is_limit_up\(","建仓前判"),
+    },
+}
+
+
+def _locate(rel: str, pattern: str) -> tuple[bool, str]:
+    path = REPO_ROOT / rel
+    if not path.exists():
+        return False, f"{rel} 不存在"
+    m = re.search(pattern, path.read_text(encoding="utf-8"), re.M)
+    if not m:
+        return False, f"{rel} 里找不到 /{pattern}/"
+    line = path.read_text(encoding="utf-8")[:m.start()].count("\n") + 1
+    return True, f"{rel}:{line}"
+
+
+def test_every_contract_covers_every_engine() -> None:
+    """矩阵必须**满格** —— 少一个引擎就是"这条规则在这族里没人管"。
+
+    (这是审计文档那句"修复永远只覆盖我这次看到的那一份"的机械版。)
+    """
+    missing = []
+    for contract, cells in CONTRACTS.items():
+        for eng in ENGINES:
+            if eng not in cells:
+                missing.append(f"{contract} 缺少 {eng}")
+    assert not missing, (
+        "§0/§4: 以下契约在某引擎里没有落点 —— 要么补实现,要么加一档**带理由的豁免**"
+        "(直接删掉那一格与'没实现'在矩阵里长得一样):\n  " + "\n  ".join(missing)
+    )
+
+
+def test_every_matrix_cell_actually_locates_code() -> None:
+    """每个格子必须命中**真实代码** —— 实现被删掉就红。"""
+    bad = []
+    for contract, cells in CONTRACTS.items():
+        for eng, (rel, pat, _spelling) in cells.items():
+            ok, where = _locate(rel, pat)
+            if not ok:
+                bad.append(f"{contract} / {eng}: {where}")
+    assert not bad, (
+        "§0/§4: 以下契约的实现**找不到了**(被删/被改名/被移动):\n  " + "\n  ".join(bad)
+    )
+
+
+def test_the_matrix_has_teeth(tmp_path, monkeypatch) -> None:
+    """**牙齿**:①删掉一格 ⇒ 满格检查红;②正则改成命中不了的 ⇒ 定位检查红。"""
+    # ① 少一个引擎
+    incomplete = {k: {e: v for e, v in cells.items() if e != "short_reversal"}
+                  for k, cells in CONTRACTS.items()}
+    missing = [f"{c} 缺少 short_reversal" for c in incomplete]
+    assert missing, "夹具失效:少了引擎却没算出来"
+
+    # ② 正则命中不了
+    ok, _ = _locate("chase_up/replay_strategy.py", r"if bars_in_pos < 1:")
+    assert ok, "夹具失效:真实落点没命中"
+    ok2, why = _locate("chase_up/replay_strategy.py", r"__no_such_marker_xyzzy__")
+    assert not ok2 and "找不到" in why
+
+
+@pytest.mark.parametrize("contract", sorted(CONTRACTS))
+def test_contract_rows_are_printable_with_their_spellings(contract: str) -> None:
+    """每一行的**拼法**必须写清楚 —— 矩阵的一半价值在"把四种写法并排摆出来"。
+
+    (没有这条,矩阵会退化成"四个文件里各有一个正则";而 `T+1` 这一行恰恰说明:
+     读者按名字搜是搜不到的。)
+    """
+    for eng, (_rel, _pat, spelling) in CONTRACTS[contract].items():
+        assert spelling.strip(), f"{contract} / {eng} 没写拼法"
