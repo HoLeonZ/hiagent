@@ -681,11 +681,33 @@ def simulate_portfolio(
                 del positions[code]
 
         # ---------- 4) 记录净值 ----------
+        # ⚠️⚠️ §13.115 (2026-10-19): 本块此前有**两处**缺陷, 与 §13.113/§13.114 同源。
+        #
+        # ① **`equity = total_cash + holdings_val`** —— `total_cash` 是「已实现盈亏账本」
+        #    (建仓时**不**扣减现金, 只有平仓时把 `net_pnl` 计入)。再加**持仓市值** ⇒
+        #    建仓名义金额被**计入两次** ⇒ equity 在建仓那根 bar 凭空跳增约一个名义金额、
+        #    平仓时再跳回。**`uptrend_pullback` 早已改成只加 `unrealized`**, 而它的注释
+        #    **逐字描述的就是这个缺陷** (含 "±50%~+110%") ⇒ **chase 就是那段注释描述的病灶本身。**
+        # ② **`px` 用前复权价** (`pidx[code]["close"]`, 即 `v_daily_qfq`) 去减 **raw** 的
+        #    `pos["entry_price"]` ⇒ **两个价源相减**。§3 明文要求市值用 **raw**。
+        #    持仓跨除权日时 adj 价按复权因子**阶梯跳变**而 raw 不动。
+        #
+        # **实测 (修前)**: 最大单日权益变动 **+103.22%**, **48/244** 天超 ±10%, 31 天超 ±50%;
+        # 几何复利 **−50.24%** 而 算术均值×244 = **+833.66%** ⇒ `sharpe` 被正跳变抬高
+        # ⇒ **它不是一个 Sharpe** (§13.113)。
         holdings_val = 0.0
+        unrealized = 0.0
         for code, pos in positions.items():
             j = _row_at(pidx[code], day)
-            px = pidx[code]["close"][j] if j is not None else pos["entry_price"]
+            px = pos["entry_price"]
+            if j is not None:
+                _rc = pidx[code].get("raw_close")
+                if _rc is not None and not np.isnan(_rc[j]):
+                    px = float(_rc[j])
+                else:
+                    px = pidx[code]["close"][j]
             holdings_val += pos["size"] * px
+            unrealized += (px - pos["entry_price"]) * pos["size"]
         # Round 16 (CLAUDE.md §2): equity row records total_cash (free + locked
         # + settling) as the back-compat `cash` column. Downstream readers
         # interpret this as "broker-side total cash on hand".
@@ -693,7 +715,7 @@ def simulate_portfolio(
             "date": pd.Timestamp(day),
             "cash": pf.total_cash,
             "holdings": holdings_val,
-            "equity": pf.total_cash + holdings_val,
+            "equity": pf.total_cash + unrealized,
         })
 
     trades_df = (
