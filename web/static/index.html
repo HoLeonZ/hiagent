@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>hiagent 策略回测平台</title>
+<link rel="stylesheet" href="/style.css">
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+</head>
+<body>
+<nav id="nav">
+  <a href="#catalog">目录</a>
+  <a href="#history">历史</a>
+  <a href="#runner">运行</a>
+  <a href="#result">结果</a>
+</nav>
+<header>
+  <h1>策略回测平台</h1>
+  <span id="engine-summary">加载中…</span>
+</header>
+
+<main>
+  <section id="catalog">
+    <h2>策略与参数<span class="hint">（白底＝可调；灰底＝声明字段，只读）</span></h2>
+    <input id="filter" placeholder="筛选预设名…">
+    <div id="preset-list"></div>
+  </section>
+
+  <section id="configs">
+    <h2>我的配置<span class="hint">（命名的一组参数改动；对标聚宽的「我的策略」）</span></h2>
+    <button id="save-config">把当前选中预设的改动保存为配置</button>
+    <div id="config-list"></div>
+  </section>
+
+  <section id="history">
+    <h2>历史<span class="hint">（勾选 2 个以上可对比；结果来自磁盘，**不重跑回测**）</span></h2>
+    <button id="compare" disabled>对比所选</button>
+    <div id="history-list"></div>
+    <div id="compare-out" hidden></div>
+  </section>
+
+  <section id="runner">
+    <h2>运行</h2>
+    <label>起 <input type="date" id="start"></label>
+    <label>止 <input type="date" id="end"></label>
+    <div class="quick">
+      <button type="button" data-days="90">近3月</button>
+      <button type="button" data-days="180">近半年</button>
+      <button type="button" data-days="365">近1年</button>
+      <button type="button" data-days="1095">近3年</button>
+    </div>
+    <span class="hint">窗口不能太短：面板是「窗口 + 240 天」，跨度不足 `min_bars` 时引擎会拒绝
+      （这是保护，不是 bug——否则"0 笔"会与"行情静"混淆）。约 90 天是安全下限。</span>
+    <label>模式
+      <select id="mode">
+        <option value="full">full（全 universe，真值）</option>
+        <option value="preview">preview（仅最近 90 天，非可比）</option>
+      </select>
+    </label>
+    <button id="run">开始回测</button>
+    <button id="cancel" disabled>取消</button>
+    <div id="run-status"></div>
+    <details id="log-wrap" open>
+      <summary>运行日志<span class="hint">（回测 5–8 分钟，这里能看出它在动）</span></summary>
+      <pre id="log"></pre>
+    </details>
+  </section>
+
+  <section id="result" hidden>
+    <h2>结果</h2>
+    <div id="equity-summary"></div>
+    <div id="equity-caveat" class="hint"></div>
+    <div id="equity-chart" style="width:100%;height:360px"></div>
+    <div id="metrics"></div>
+    <details id="daily-returns-wrap">
+      <summary>每日收益<span class="hint">（共 <b id="dr-count"></b> 个交易日）</span></summary>
+      <table id="daily-returns"><thead></thead><tbody></tbody></table>
+    </details>
+    <details id="positions-wrap">
+      <summary>每日持仓<span class="hint">（从成交列表推导；「空仓」是空列表，不是缺数据）</span></summary>
+      <table id="positions"><thead></thead><tbody></tbody></table>
+    </details>
+    <table id="trades"><thead></thead><tbody></tbody></table>
+    <div id="chart-nav">
+      <button id="prev-trade" disabled>← 上一笔</button>
+      <span id="trade-pos" class="hint"></span>
+      <button id="next-trade" disabled>下一笔 →</button>
+      <span class="hint">（也可直接点表格里任意一行）</span>
+    </div>
+    <div id="chart" style="width:100%;height:520px"></div>
+  </section>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

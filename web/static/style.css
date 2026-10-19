@@ -1,0 +1,71 @@
+:root { --fg:#e6e6e6; --bg:#141414; --card:#1e1e1e; --accent:#4da3ff; --ro:#2a2a2a; }
+* { box-sizing: border-box; }
+body { margin:0; font:14px/1.5 -apple-system, "Helvetica Neue", "PingFang SC", sans-serif;
+       background:var(--bg); color:var(--fg); }
+#nav { position:sticky; top:0; z-index:10; display:flex; gap:14px; padding:8px 24px;
+       background:#0f0f0f; border-bottom:1px solid #2a2a2a; }
+#nav a { color:var(--accent); text-decoration:none; font-size:13px; }
+#nav a:hover { text-decoration:underline; }
+header { padding:16px 24px; border-bottom:1px solid #333; display:flex; gap:16px; align-items:baseline; }
+section { scroll-margin-top:52px; }   /* 锚点跳转后不被粘性导航挡住 */
+h1 { font-size:18px; margin:0; }
+h2 { font-size:15px; margin:0 0 8px; }
+main { display:grid; grid-template-columns: 420px 1fr; gap:20px; padding:20px 24px; }
+section { background:var(--card); border:1px solid #323232; border-radius:8px; padding:14px; }
+#catalog { max-height:78vh; overflow:auto; }
+#runner, #result { grid-column: 2; }
+#result { grid-row: 1 / span 2; }
+.hint { color:#888; font-weight:400; font-size:12px; }
+input, select, button { background:#101010; color:var(--fg); border:1px solid #3a3a3a;
+                        border-radius:5px; padding:5px 8px; font:inherit; }
+button { cursor:pointer; border-color:var(--accent); color:var(--accent); }
+button:disabled { opacity:.45; cursor:default; }
+.preset { border:1px solid #2e2e2e; border-radius:6px; padding:8px 10px; margin-bottom:8px; }
+.preset summary { cursor:pointer; }
+.params { display:grid; grid-template-columns: 1fr 1fr; gap:4px 10px; margin-top:8px; }
+.p { padding:3px 6px; border-radius:4px; background:#191919; font-size:12px; }
+.p.decl { background:var(--ro); color:#9a9a9a; }
+.p input { width:100%; margin-top:3px; }
+.warn { background:#3a2a12; border:1px solid #7a5a22; color:#ffcf7a; padding:6px 10px;
+        border-radius:5px; margin:8px 0; }
+table { width:100%; border-collapse:collapse; font-size:12px; margin:10px 0; }
+th, td { text-align:right; padding:4px 6px; border-bottom:1px solid #2c2c2c; }
+th:first-child, td:first-child { text-align:left; }
+tbody tr { cursor:pointer; }
+tbody tr:hover { background:#252525; }
+#metrics { display:flex; flex-wrap:wrap; gap:10px; }
+#metrics .m { background:#191919; border-radius:5px; padding:6px 10px; }
+#metrics .m b { color:var(--accent); font-weight:600; }
+/* 该引擎不产出这个指标 —— 保留格子并**明显地**标出来。
+   若把缺失的格子直接删掉，"这个引擎不产出年化"与"平台忘了算"就长得一样了（§0）。 */
+#metrics .m.absent b { color:#666; }
+#history, #configs { max-height:34vh; overflow:auto; }
+.cfg { display:flex; align-items:center; gap:6px; padding:3px 6px; border-radius:4px; font-size:12px; }
+.cfg:hover { background:#252525; }
+.cfg .nm { font-weight:600; }
+.cfg .ops { margin-left:auto; display:flex; gap:4px; }
+.cfg button { font-size:11px; padding:1px 6px; }
+.cfg .drift { color:#ffcf7a; }
+.engine-head { position:sticky; top:0; background:#242424; color:var(--accent);
+               font-size:12px; font-weight:600; padding:4px 8px; margin:8px 0 4px;
+               border-radius:4px; letter-spacing:.3px; }
+.run { display:flex; align-items:center; gap:6px; padding:3px 6px; border-radius:4px;
+       font-size:12px; cursor:pointer; }
+.run:hover { background:#252525; }
+.run a { margin-left:auto; color:var(--accent); text-decoration:none; font-size:11px; }
+.run button { font-size:11px; padding:2px 6px; }
+#compare-out { margin-top:8px; overflow:auto; }
+#compare-out table { font-size:12px; }
+.quick { display:flex; gap:6px; margin:6px 0; }
+#chart-nav { display:flex; align-items:center; gap:10px; margin:8px 0; }
+#log-wrap { margin-top:8px; }
+#log-wrap summary { cursor:pointer; font-size:13px; color:var(--accent); }
+#log { max-height:26vh; overflow:auto; background:#0e0e0e; border:1px solid #2a2a2a;
+       border-radius:4px; padding:6px 8px; font-size:11px; line-height:1.45;
+       white-space:pre-wrap; margin:6px 0 0; }
+#equity-summary { font-size:13px; margin:4px 0; }
+#daily-returns-wrap, #positions-wrap { margin:8px 0; }
+#daily-returns-wrap summary, #positions-wrap summary { cursor:pointer; font-size:13px; color:var(--accent); }
+#daily-returns, #positions { max-height:32vh; display:block; overflow:auto; }
+#daily-returns thead, #positions thead { position:sticky; top:0; background:#1e1e1e; }
+tbody tr.sel { background:#2b3a4a; }
