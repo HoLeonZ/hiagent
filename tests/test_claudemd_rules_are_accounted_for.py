@@ -106,9 +106,11 @@ RULE_COVERAGE: dict[str, tuple[str, str, str]] = {
         "换算成真实标定值会改变每一个成交价,属**研究决策**,已登记待口径",
     ),
     "Exit Thresholds (TP/SL) & Target Projection": (
-        "unguarded", "",
-        "**有实现、没有具名守卫**:四族都以**相对百分比**表达(各引擎 `tp_pct` / `sl_pct`,"
-        "且 `if tp_pct <= 0: raise` fail-fast);但**没有一条守卫**钉「不许退回绝对价差」",
+        "guard", "tests/test_tp_sl_are_relative_percentages.py",
+        "§4 现行条款(相对百分比 / NEVER 绝对价差)的守卫。"
+        "⚠️ 附九十七:此前的两个 `test_tp_sl_compliance_header*` 守的是 §4 里**已被 2260ba1"
+        "删除**的「compliance header」那句,并把它标成 verbatim ⇒ 已删除,由本守卫接管;"
+        "45 个 preset 上的旧注释保留为**可选文档**",
     ),
     "Intraday Blindness": (
         "matrix", "同 bar 双触发取 SL 优先 (§4 Intraday Blindness)",
