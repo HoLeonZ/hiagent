@@ -24,6 +24,9 @@ from uptrend_pullback.presets import MAX_HOLD_LIMIT
 from uptrend_pullback.signals import compute_indicators, select_entries_v33_long_mirror
 from dna_stats.deflated import deflated_sharpe_ratio
 from core.walkforward import window_trading_days  # §5 窗口交易日数单源 (附八十一)
+from core.sweep_axes import (  # §0 网格是否真的在扫 (附八十七)
+    DEFAULT_METRIC_KEYS, collapsed_grid_warning,
+)
 from uptrend_pullback.universe import load_universe
 
 logger = logging.getLogger(__name__)
@@ -130,10 +133,16 @@ def main():
             "tp_pct": [0.05, 0.08, 0.10, 0.15, 0.20, 0.30],
             "sl_pct": [0.02, 0.03, 0.05, 0.07, 0.10],
         },
+        # §0 (附八十七): 三个键**必须带 `signal.` 前缀**。
+        # 写成顶层(`min_above_ma60_ratio` 等)会被 `_set` 写进 cfg 顶层,而 `sweep()` 只把
+        # `cfg["signal"]` 传给 `select_entries_v33_long_mirror` ⇒ 这三个键**从来没被传进去**
+        # ⇒ 36 个 combo 产出**逐位相同**的结果,而报表照样印成一张敏感性表。
+        # 实测(已落盘的产物 `sweep_v33_long.json`):本网格 36 combo → **1** 个不同结果。
+        # 同目录 v2~v5 用的都是 `signal.xxx` 拼法。
         "loosen_signals": {
-            "min_above_ma60_ratio": [0.4, 0.5, 0.6, 0.7],
-            "pct_chg_low": [-0.10, -0.07, -0.05],
-            "pct_chg_high": [-0.02, -0.01, 0.0],
+            "signal.min_above_ma60_ratio": [0.4, 0.5, 0.6, 0.7],
+            "signal.pct_chg_low": [-0.10, -0.07, -0.05],
+            "signal.pct_chg_high": [-0.02, -0.01, 0.0],
         },
     }
 
@@ -169,6 +178,16 @@ def main():
         indent=2, default=str,
     ))
     print(f"\n已保存: {out}")
+
+    # §0 (附八十七): 网格有没有**真的在扫** —— 塌掉的轴不许被当成敏感性表。
+    # 实测本仓库出过两条:①键名漏了 `signal.` 前缀(顶层写法不会被传给信号函数);
+    # ②变的是被 base 里别的键**盖住**的参数(atr 模式下的 tp_pct/sl_pct)。
+    # 判据落在**观测**(所有 combo 结果是否逐位相同),不依赖对引擎的知识。
+    _collapsed = collapsed_grid_warning(
+        {_n: _d.to_dict("records") for _n, _d in results.items()}, DEFAULT_METRIC_KEYS
+    )
+    if _collapsed:
+        print(_collapsed)
 
     # CLAUDE.md §5 Penalty Metrics: 多 trial sweep 必须报告 DSR
     if results:

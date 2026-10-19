@@ -32,6 +32,9 @@ from uptrend_pullback.portfolio import simulate_portfolio
 from uptrend_pullback.signals import compute_indicators, select_entries_v33_long_mirror
 from dna_stats.deflated import deflated_sharpe_ratio
 from core.walkforward import window_trading_days  # §5 窗口交易日数单源 (附八十一)
+from core.sweep_axes import (  # §0 网格是否真的在扫 (附八十七)
+    DEFAULT_METRIC_KEYS, collapsed_grid_warning,
+)
 from uptrend_pullback.universe import load_universe
 
 START, END = "2025-09-16", "2026-09-16"
@@ -198,6 +201,14 @@ def main():
         df.to_dict(orient="records"), indent=2, default=str,
     ))
     print(f"\n已保存: {out}")
+
+    # §0 (附八十七): 网格有没有**真的在扫** —— 塌掉的轴不许被当成敏感性表。
+    # 实测本仓库出过两条:①键名漏了 `signal.` 前缀(顶层写法不会被传给信号函数);
+    # ②变的是被 base 里别的键**盖住**的参数(atr 模式下的 tp_pct/sl_pct)。
+    # 判据落在**观测**(所有 combo 结果是否逐位相同),不依赖对引擎的知识。
+    _collapsed = collapsed_grid_warning({"grid": df.to_dict("records")}, DEFAULT_METRIC_KEYS)
+    if _collapsed:
+        print(_collapsed)
 
     # CLAUDE.md §5 Penalty Metrics: 多 trial sweep 必须报告 DSR
     if not df.empty and "sharpe" in df.columns:
