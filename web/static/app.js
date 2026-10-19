@@ -333,6 +333,49 @@ async function loadEquity() {
   });
 }
 
+// 交易表各列的**单位**。表列名来自 14 列 schema（后端单一来源），但 schema 只说列名、
+// 不说单位——于是前端原先直接 `${row[c]}` 把原始浮点倒出来，界面上是
+// `-499.42349999992143`、`-0.001499000749437843` 这种东西。
+// **单位是数据的一部分**，按列声明一次，别让每列自己决定怎么显示。
+//
+// 单位是查出来的，不是猜的：
+//   · `atr_pct = atr14 / close`（chase_up/signals.py:91，取值范围 [0.03, 0.10]）→ **比例**
+//   · `net_return` 同样是比例（-0.0015 = -0.15%）
+//   · 价格是元
+const TRADE_KINDS = {
+  entry_price: "price", exit_price: "price",
+  // 止损/止盈是**推出来的价位**，用 3 位小数：
+  // 本预设 sl_pct=0.0005，8.01 的止损是 8.014 —— 两位小数会显示成 8.01，
+  // **与入场价一模一样**，读表的人会以为止损画在了入场价上。
+  sl_price: "price3", tp_price: "price3",
+  size: "int", hold_days: "int",
+  gross_pnl: "money", fees: "money", net_pnl: "money", net: "money",
+  net_return: "pct", atr_pct: "pct",
+};
+
+function fmtCell(v, kind) {
+  if (v === null || v === undefined || v === "") return "—";
+  // ⚠️ **没声明单位的列必须原样返回。**
+  // 写成"拿 Number(v) 判有限性、否则 —"会把**所有文本列**变成 `—`：
+  // `Number("2026-03-09")` 是 NaN，于是日期、代码、退出原因全成了破折号，
+  // 而字符串层面的契约测试**照样全绿**（它们只查 `TRADE_KINDS`/`fmtCell` 在不在）。
+  // 只有真在浏览器里看一眼才发现。
+  if (!kind) return String(v);
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(v);   // 声明了单位却给了非数——如实显示，不静默变 —
+  if (kind === "price") return n.toFixed(2);
+  if (kind === "price3") return n.toFixed(3);
+  if (kind === "int") return String(Math.round(n));
+  if (kind === "money") {
+    // `-0.0015` 在两位小数下是 `-0.00`，而 `-0.00` 读起来像 bug。
+    // 两位精度下诚实的显示就是 `0.00`——把负零规范掉，不是把数抹掉。
+    const m = n.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return m === "-0.00" ? "0.00" : m;
+  }
+  if (kind === "pct") return (n * 100).toFixed(2) + "%";
+  return String(v);
+}
+
 async function loadTrades() {
   const r = await fetch(`/api/runs/${HP.runId}/trades`);
   const data = await r.json();
@@ -341,7 +384,9 @@ async function loadTrades() {
   $("trades").querySelector("thead").innerHTML =
     `<tr>${cols.map((c) => `<th>${c}</th>`).join("")}</tr>`;
   $("trades").querySelector("tbody").innerHTML = data.rows.map((row) =>
-    `<tr data-i="${row.i}">${cols.map((c) => `<td>${row[c] ?? ""}</td>`).join("")}</tr>`
+    `<tr data-i="${row.i}">${
+      cols.map((c) => `<td>${fmtCell(row[c], TRADE_KINDS[c])}</td>`).join("")
+    }</tr>`
   ).join("");
   // 新一次运行：清掉上一笔的选中与位置
   HP.tradeIdx = -1;

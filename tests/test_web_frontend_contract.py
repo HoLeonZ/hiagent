@@ -160,3 +160,92 @@ def test_the_frontend_does_not_reformat_metrics_with_a_fixed_precision():
     js = (STATIC / "app.js").read_text(encoding="utf-8")
     assert "fmtMetric" in js, "指标必须走按 kind 分支的格式化函数"
     assert "toFixed(4)" not in js, "不得对指标用固定四位小数，应按 kind 渲染"
+
+
+def test_the_trade_table_formats_by_unit_instead_of_dumping_raw_floats():
+    """交易表**按单位格式化**，不能把原始浮点直接倒出来。
+
+    原实现是 `${row[c] ?? ""}`，界面上因此出现 `-499.42349999992143`、
+    `-0.001499000749437843` 这种东西（起服务跑一次就能看到）。
+    单位是数据的一部分——表列名来自后端的 14 列 schema，但 schema 只说列名、
+    不说单位，所以这一层必须显式声明（`TRADE_KINDS`），不能靠"看着像数字就原样放"。
+    """
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "TRADE_KINDS" in js, "交易表必须按列声明单位"
+    assert "fmtCell" in js, "交易表必须走按单位分支的格式化函数"
+    # 查的是**渲染表达式**，不是随便出现这个词——注释里提到旧写法不该被误伤。
+    import re
+
+    assert not re.search(r"<td>\$\{row\[c\]", js), "疑似又直接把原始值塞进单元格了"
+
+
+def test_the_trade_table_keeps_stop_and_target_visually_distinct():
+    """止损/止盈必须用**比入场价更高的精度**。
+
+    本预设 `sl_pct = 0.0005`：8.01 的止损是 **8.014**。若两位小数显示，
+    它会渲染成 `8.01` —— **与入场价一模一样**，读表的人会以为止损就画在入场价上。
+    这不是洁癖：那是这个预设的**正常形态**，不是极端情形。
+    """
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert 'sl_price: "price3"' in js, "止损要用 3 位小数"
+    assert 'tp_price: "price3"' in js, "止盈要用 3 位小数"
+
+
+def test_fmtCell_behaves_correctly_when_actually_executed():
+    """**真正执行 `fmtCell`**，而不是检查它的名字在不在文件里。
+
+    为什么需要这一条：契约测试原先全是**字符串存在性**检查。我按它们把
+    `TRADE_KINDS` / `fmtCell` 加进去之后，那些检查**全绿**，
+    而页面上每一列日期、代码、退出原因都显示成了 `—` —— 因为
+    `Number("2026-03-09")` 是 `NaN`，被"非数就 —"那条分支提前拦掉了。
+    **只有真的看一眼浏览器才发现。** 所以这里真的把 app.js 加载进一个
+    最小的 DOM 桩、调 `fmtCell`、断言输出。
+
+    （判定条件里也有教训：一条只查"函数名在不在"的契约测试，
+    在函数写错时是**不可能**红的。）
+    """
+    import json
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("没有 node，无法执行 JS")
+
+    harness = """
+const fs = require("fs");
+const el = { addEventListener(){}, style:{}, classList:{add(){},remove(){}},
+  querySelector: () => el, querySelectorAll: () => [], appendChild(){}, remove(){},
+  setAttribute(){}, click(){}, innerHTML:"", textContent:"", disabled:false,
+  hidden:false, value:"", children:[], dataset:{} };
+global.document = { getElementById: () => el, querySelector: () => el,
+  querySelectorAll: () => [], createElement: () => el, addEventListener(){} };
+global.window = { addEventListener(){} };
+// 让应用的初始化挂起：我们只关心 fmtCell，不想让它真去拉 catalog
+global.fetch = () => new Promise(() => {});
+eval(fs.readFileSync(process.argv[1], "utf8"));
+const cases = [
+  ["2026-03-09", undefined, "2026-03-09"],
+  ["600156.SH",  undefined, "600156.SH"],
+  ["SL",         undefined, "SL"],
+  [-1498.3953558749215, "money",  "-1,498.40"],
+  [-0.001499000749437843, "pct",   "-0.15%"],
+  [8.014005, "price3", "8.014"],
+  [8.014,    "price",  "8.01"],
+  [124700,   "int",    "124700"],
+  [null,     "pct",    "\\u2014"],
+  // 负零：-0.0015 在两位小数下是 "-0.00"，读起来像 bug；规范成 "0.00"
+  [-0.0015,  "money",  "0.00"],
+  [-1234.5,  "money",  "-1,234.50"],   // 真负数必须保留符号
+];
+console.log(JSON.stringify(cases.map(([v, k, want]) => [v, k, fmtCell(v, k), want])));
+"""
+    r = subprocess.run([node, "-e", harness, str(STATIC / "app.js")],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, f"加载 app.js 失败：{r.stderr[-400:]}"
+    results = json.loads(r.stdout.strip().splitlines()[-1])
+    bad = [
+        f"fmtCell({v!r}, {k!r}) = {got!r}，应为 {want!r}"
+        for v, k, got, want in results if got != want
+    ]
+    assert not bad, "交易表单元格格式化错了：\n  " + "\n  ".join(bad)
