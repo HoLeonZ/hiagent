@@ -47,7 +47,6 @@ DAYS_PER_YEAR = 365
 #   chase_up/backtest.py             TRADING_DAYS = 243
 #   uptrend_pullback/backtest.py     TRADING_DAYS = 243
 #   cycle_price_action/allocator.py  TRADING_DAYS_PER_YEAR = 252
-
 # 本引擎取 252 (通行惯例)。与 243 的差异约 3.7% 相对量, 只影响年化因子, 不改变排序
 # 方向。**登记为未统一项 (§5/§6), 不擅自改别人的常数** —— 统一它要动三个引擎的
 # 全部历史数字, 属结果变更。
