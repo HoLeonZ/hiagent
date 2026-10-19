@@ -3,12 +3,12 @@
 > ## ⚠️ 状态头(2026-10-19)—— 读 §0 之前先看这里
 >
 > 本报告 §0–§8 的判定是**对 `main @ 94ca15d`(2026-10-14 快照)** 的:**不合规(NO-GO)**。
-> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **85 条附录**,
+> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **86 条附录**,
 > **§0 列的 11 个 BLOCKER 族全部已处置**(修 / 登记 / 待口径决策,逐条见附七十九 §1)。
 >
 > **不要把本报告开头的 NO-GO 当成对今天代码的判定。**
 >
-> * 现在的**未结清单**只有一处权威来源:**附七十九**(收官台账),最新增补见**附八十五**。
+> * 现在的**未结清单**只有一处权威来源:**附七十九**(收官台账),最新增补见**附八十六**。
 > * 每条修复都给出文件、证据与验证方式(多数含**双向验证**与量化影响)。
 > * 有两条**结果变更**特别醒目,已发布的数字须重算(清单见附七十九 §3 + 附八十一 §5):
 >   附五十二(做空跳空止损成交价)、**附八十一/八十二(DSR 的两个分母各取错一个量:
@@ -7145,3 +7145,99 @@ for f in sorted(glob.glob(str(REPO_ROOT / "short_reversal" / "wf_v*_focused.py")
 > **修复和守卫必须由不同的东西推导出来。** 若两者都写成"照着同一份名单办事",
 > 名单里的缺口就是**双份**的:既没人修,也没人查。
 > 判据要落在**可枚举的全体**(这里 = "凡调用 DSR 的脚本")上,而不是落在**手抄的一份子集**上。
+
+---
+
+## 附八十六 —— 上一批的教训机械化之后:又有 **4 个脚本**对四条 §5 守卫完全不可见
+
+(附八十五 的结论是"修复与守卫共用同一份不完整名单"。那是一条**可机械化**的教训 ——
+把"手抄的名单 vs 实际集合"做一次全库对账,就有了这一条。)
+
+### 1 · 对账结果
+
+`tests/test_research_scripts_reference_live_presets.py` 里有一份 `SCRIPT_GLOBS`,按**文件名前缀**
+划出"研究脚本"这一族,供**四条**守卫共用:
+
+```python
+SCRIPT_GLOBS = {
+    "short_reversal": ("short_reversal/wf_*.py", "short_reversal/grid*.py", "short_reversal/sweep*.py"),
+    "chase_up": ("chase_up/sweep*.py", "chase_up/wf_*.py"),
+    "uptrend_pullback": ("uptrend_pullback/sweep*.py",),
+    "cycle_price_action": ("cycle_price_action/sweep*.py",),
+}
+```
+
+拿它与"实际调用 `deflated_sharpe_ratio` 的引擎脚本"对账:
+
+| | 个数 |
+|---|---|
+| `SCRIPT_GLOBS` 覆盖 | **25** |
+| 实际调用 DSR 的脚本 | **29** |
+| **对四条守卫完全不可见** | **4** |
+
+```
+short_reversal/walkforward.py        ← wf_*.py 匹配不到(wa 开头;附八十五 同一个前缀)
+uptrend_pullback/iter_reverse.py     ← 既不是 sweep* 也不是 wf_*
+cycle_price_action/walkforward.py    ← 同上
+cycle_price_action/main.py           ← 同上
+```
+
+**与 附八十五 是同一个根**:按前缀划的族,漏掉不按前缀命名的成员。区别只在**漏在哪一层** ——
+那里漏在守卫里,这里漏在**四条守卫共用的扫描面**里:**一处漏,四处瞎**。
+
+### 2 · 这四条守卫分别是什么(所以"不可见"意味着什么)
+
+| 守卫 | 本该查什么 | 这 4 个脚本曾免检 |
+|---|---|---|
+| `test_no_script_feeds_a_return_percentage_as_observed_sharpe` | 有没有把**收益率**当 Sharpe 传给 DSR | ✓ 免检 |
+| `test_dsr_max_and_n_trials_describe_the_same_collection` | max 取 N 项却按 T 项折减 | ✓ 免检 |
+| `test_no_new_dead_preset_references` | 引用了**已删除**的 preset(运行即 SystemExit) | ✓ 免检 |
+| `test_registered_debt_is_still_debt` | 登记表必须跟着现实走 | ✓ 免检 |
+
+第三条尤其要紧:`iter_reverse.py` 正是**会引用 preset 名**的那类脚本(它 `sample_preset`
+自 `v33_long_reverse_v19`),而"引用已死 preset"这条守卫从来没有看过它。
+
+### 3 · 自检为什么没拦住
+
+原来自检写的是:
+
+```python
+total = sum(len(glob.glob(...)) for pats in SCRIPT_GLOBS.values() for p in pats)
+assert total >= 20, "研究脚本扫描面异常小 —— 守卫可能已空转"
+```
+
+**"非空转"不等于"覆盖完整"**:25 ≥ 20,通过。而 25 ≠ 29。
+这与本会话反复出现的那条是同一句话 —— **判据的覆盖面本身没人验**;只是这次覆盖面的判据
+是"数量够大",一个**与完整性无关**的性质。
+
+### 4 · 改法
+
+* 新增 `SCRIPT_EXPLICIT`:前缀 glob 抓不到的 4 个 DSR 调用点,**显式列出**并注明为什么;
+* 新增 `research_scripts()`:族 = glob ∪ 显式名单;四条守卫全部改走它(不再各自 glob);
+* 新增**集合对账** `test_research_scripts_cover_every_dsr_caller`:
+  "凡调用 DSR 的引擎脚本 ⊆ 扫描面",不成立即失败 ⇒ 名单不可能再悄悄变短;
+* 新增 `test_the_explicit_scan_list_is_real_and_load_bearing`:显式名单每一项必须
+  ①文件存在 ②确实调用 DSR(防幽灵项 / 防虚胖白名单);
+* 自检里补一句:**非空转 ≠ 覆盖完整**,覆盖完整性由对账那条负责(免得下一个人再把
+  `total >= 20` 当成完整性证明)。
+
+### 5 · 两向验证(三条,全部当场做过)
+
+| 注入 | 结果 |
+|---|---|
+| 在**新纳入**的 `cycle_price_action/main.py` 的 DSR 调用行**之前**种一行 `_bait_return_pct = 0.0` | 该守卫**红**(加宽前它对这个文件不可见,种什么都不会红) |
+| 从 `SCRIPT_EXPLICIT` 删掉 `cycle_price_action/main.py` | 对账那条**红** |
+| 把某一项换成不存在的文件 | **6 failed**(对账 + 显式名单体检 + max/n_trials 一起红) |
+| 恢复 | 21 passed |
+
+⚠️ **种诱饵时我自己先错了一次**:第一版把 `_return_pct` 插在了 `deflated_sharpe_ratio(`
+那一行**之后**,而判据只看该行**之前** 20 行 ⇒ 守卫没红,我一度以为"加宽没生效"。
+**种诱饵必须落在判据的窗口内** —— 这与 附五十六 那次"两向验证做出了第三种行为"是同一类
+自欺:**验证动作本身没被验证**。第二次插在调用行之前,当场红。
+
+### 6 · 顺带:**阴性**结果
+
+把扫描面从 25 扩到 29 **没有在这 4 个脚本里查出新的违规** —— 三条内容性守卫对它们全绿。
+所以本条的收益是**预防性**的(它们此前免检,不是因为查过没问题,而是因为没人查)。
+这一点要说清楚:**别把"扩面后没红"读成"这 4 个脚本被验证过了"** —— 它们是被**开始**检查,
+而不是被**证明干净**。
