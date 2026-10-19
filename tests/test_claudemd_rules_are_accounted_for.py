@@ -1,4 +1,4 @@
-"""附九十四 —— 把**标准本身**对账:CLAUDE.md §1–§4 的每条 MUST/NEVER,谁在守它?
+"""附九十四 —— 把**标准本身**对账:CLAUDE.md §1–§7 的每条 MUST/NEVER,谁在守它?
 
 ## 为什么需要它
 
@@ -6,7 +6,7 @@
 (附八十五~八十八、九十、九十一)。跨引擎契约矩阵解决了"一条规则 × N 个实现"的**存在性**,
 但矩阵的**行**是人挑的 —— 没有任何东西保证"CLAUDE.md 里的规范句都被挑到了"。
 
-这条守卫把那份名单**从标准里抽出来**:§1–§4 里凡是带 MUST / NEVER / ALWAYS / Banned 的
+这条守卫把那份名单**从标准里抽出来**:§1–§7 里凡是带 MUST / NEVER / ALWAYS / Banned 的
 加粗规则名,**每一条都必须落进一张登记表**,登记它是
 
 * `("guard", <测试文件>)` —— 有具名机械守卫;或
@@ -21,7 +21,7 @@
 
 | | 条数 |
 |---|---|
-| §1–§4 的规范句 | **13** |
+| §1–§7 的规范句 | **13** |
 | 有具名守卫或矩阵覆盖 | **10** |
 | 有实现但**没有任何具名守卫** | **3** |
 | 显式登记为"不能机械检查 / 待决策" | 1(含在上面 13 内) |
@@ -46,15 +46,18 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 CLAUDEMD = REPO_ROOT / "CLAUDE.md"
 
 _SECTION_START = "## 1. Temporal Determinism"
-_SECTION_END = "## 5. Statistical Rigor"
+#: §7 是文件的最后一节 ⇒ 抽到文末。**边界靠这个常量**,改了它要同步改 docstring。
+_SECTION_END: str | None = None
 _NORMATIVE = re.compile(r"\b(ALWAYS|NEVER|MUST|Banned|banned)\b")
 _BOLD = re.compile(r"^\s*-\s*\*\*(.+?):?\*\*")
 
 
 def normative_rule_labels() -> list[str]:
-    """从 CLAUDE.md §1–§4 抽出"带 MUST/NEVER/ALWAYS/Banned 的加粗规则名"。"""
+    """从 CLAUDE.md §1–§7 抽出"带 MUST/NEVER/ALWAYS/Banned 的加粗规则名"。"""
     src = CLAUDEMD.read_text(encoding="utf-8")
-    body = src[src.index(_SECTION_START):src.index(_SECTION_END)]
+    lo = src.index(_SECTION_START)
+    hi = src.index(_SECTION_END) if _SECTION_END else len(src)
+    body = src[lo:hi]
     out: list[str] = []
     for line in body.splitlines():
         m = _BOLD.match(line)
@@ -116,6 +119,29 @@ RULE_COVERAGE: dict[str, tuple[str, str, str]] = {
         "matrix", "涨停买入不成交 (§4: 封板买不进)",
         "同一条规则在矩阵里是**两行**(买向涨停 + 卖向跌停)—— 因为 §4 把它们写成一句但它有两个方向",
     ),
+    "Banned In-Sample Grids": (
+        "unguarded", "",
+        "**部分覆盖**:chase 的两个单窗选优脚本由 `tests/test_chase_up_sweep_discloses_in_sample.py` "
+        "强制**声明** in-sample;但**没有守卫**禁止「写一个网格搜索直接报 max Sharpe」这类脚本出现"
+        "(§5 的禁令是「拒绝写」,不是「写了要标注」)",
+    ),
+    "Iterative-Tuning Accounting": (
+        "guard", "tests/test_dsr_trial_basis.py",
+        "每条 preset 必须声明正整数 `n_comparisons`,且必须**有消费者**;"
+        "附八十九 另加了「声明上界 vs 自家 sweep 枚举数」的登记表",
+    ),
+    "Attribution Mandate": (
+        "guard", "tests/test_attribution.py",
+        "基准相对超额与 `attribute()` 的口径;四引擎的 `_benchmark_block` 由它钉住",
+    ),
+    "Results Stay Local": (
+        "guard", "tests/test_artifact_hygiene_section7.py",
+        "①结果类产物不得被 git 跟踪 ②§7 点名的每一类必须真的被 .gitignore 覆盖",
+    ),
+    "No Numbers in Docs": (
+        "guard", "tests/test_artifact_hygiene_section7.py",
+        "README / `docs/*.md` 里不得把**指标名**与**数值**写在同一行",
+    ),
     "Short-Side Feasibility": (
         "unguarded", "",
         "**有声明、没有具名守卫**:`short_reversal/presets.py` 的 `BORROW_ASSUMPTION`"
@@ -137,7 +163,7 @@ def test_every_normative_rule_in_claudemd_is_accounted_for() -> None:
     known = {_norm(k) for k in RULE_COVERAGE}
     missing = [r for r in normative_rule_labels() if _norm(r) not in known]
     assert not missing, (
-        "§0: CLAUDE.md §1–§4 里以下规范句**没有登记谁来守它**:\n  "
+        "§0: CLAUDE.md §1–§7 里以下规范句**没有登记谁来守它**:\n  "
         + "\n  ".join(missing)
         + "\n登记成 (guard, 测试文件) / (matrix, 矩阵行) / (registered, 为什么不能机械检查) 三者之一。"
     )
@@ -148,7 +174,7 @@ def test_the_rule_registry_has_no_stale_entries() -> None:
     actual = {_norm(r) for r in normative_rule_labels()}
     stale = [k for k in RULE_COVERAGE if _norm(k) not in actual]
     assert not stale, (
-        "以下登记项在 CLAUDE.md §1–§4 里**已不存在**(规则被改写或删除)—— 请删除或改名:\n  "
+        "以下登记项在 CLAUDE.md §1–§7 里**已不存在**(规则被改写或删除)—— 请删除或改名:\n  "
         + "\n  ".join(stale)
     )
 
