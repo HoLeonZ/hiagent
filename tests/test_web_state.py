@@ -87,3 +87,33 @@ def test_run_dir_is_created_under_home(monkeypatch, tmp_path):
     d = run_dir("abc123")
     assert d == tmp_path / "runs" / "abc123"
     assert d.is_dir()
+
+
+def test_a_relative_state_home_cannot_sneak_inside_the_repo(monkeypatch, tmp_path):
+    """**相对路径的 `HIAGENT_PLATFORM_HOME` 不许因为换了 cwd 就绕过闸。**
+
+    闸把"已验证过的路径"缓存起来（每个进程每个路径只验一次）。原实现的**缓存键是
+    未解析的字符串**，而相对路径在不同 cwd 下解析到**不同目录** —— 于是同一个字符串
+    先在一个 cwd 下被判"在仓库外"并缓存，随后 chdir 到仓库根，它解析**进**仓库里，
+    **却因缓存命中而放行**。
+
+    实测（2026-10-19）：`HIAGENT_PLATFORM_HOME=hiagent_evil`，
+    先 cwd=/tmp → 放行；再 chdir 到仓库根 → 解析到 `<repo>/hiagent_evil`（**仓库内**）
+    → 缓存命中 → **放行**，产物就落进仓库了。
+
+    判据是"**解析后**的路径是否在仓库内"，缓存键就必须是解析后的路径；
+    否则缓存的是**输入**，而输入在这里恰恰是**会随环境变的那一半**。
+    """
+    from web import state as state_mod
+
+    monkeypatch.setenv("HIAGENT_PLATFORM_HOME", "hiagent_evil")
+    state_mod._ASSERTED.clear()
+
+    # 仓库外：解析到 tmp_path/hiagent_evil，确实在仓库外 → 放行（并写进缓存）
+    monkeypatch.chdir(tmp_path)
+    state_mod.assert_state_writable()
+
+    # **同一个 HOME 字符串**，现在解析进仓库里 → 必须重新判定并拒绝
+    monkeypatch.chdir(REPO_ROOT)
+    with pytest.raises(RuntimeError, match="inside the git repository"):
+        state_mod.assert_state_writable()

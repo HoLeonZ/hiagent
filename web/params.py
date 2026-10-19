@@ -123,7 +123,8 @@ PARAM_METADATA: dict[str, dict[str, dict[str, Any]]] = {
     "cycle_price_action": {
         "tp_pct": {"label": "止盈", "type": "float", "unit": "比例"},
         "sl_pct": {"label": "止损", "type": "float", "unit": "比例"},
-        "max_hold": {"label": "最长持有", "type": "int", "unit": "交易日"},
+        # ⚠️ **自然日，不是交易日。** 本引擎的 `hold_days()` 是 `(on_date - entry_date).days`（cycle_price_action/portfolio.py:292），而 `max_hold` 正是与它比较的；另三个引擎用的是 bar 数（交易日）。
+        "max_hold": {"label": "最长持有", "type": "int", "unit": "自然日"},
         "atr_period": {"label": "ATR周期", "type": "int", "unit": "交易日"},
         "atr_sl_mult": {"label": "ATR止损倍数", "type": "float"},
         "threshold": {"label": "周期评分阈值", "type": "float"},

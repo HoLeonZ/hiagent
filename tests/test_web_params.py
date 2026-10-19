@@ -452,3 +452,27 @@ def test_a_non_finite_rejection_names_the_reason_not_the_range():
     with pytest.raises(OverrideError) as e:
         validate_overrides("chase_up", CHASE_PRESET, {"tp_pct": float("nan")})
     assert "有限数" in str(e.value) or "finite" in str(e.value)
+
+
+def test_cycle_max_hold_is_declared_in_calendar_days_because_that_is_what_it_compares():
+    """`cycle_price_action` 的 `max_hold` 单位是**自然日**，另三个是**交易日**。
+
+    实测（2026-10-19）逐引擎读出来的：
+
+      · `short_reversal`  `held = len(self) - pos["entry_bar"]`，与 `max_hold` 比较 → **bar 数**
+      · `chase_up`        `code_data[...].head(max_hold + 5)` → **行数**
+      · `cycle_price_action`  `hold_days()` = `(on_date - entry_date).days`
+                              （cycle_price_action/portfolio.py:292）→ **自然日**
+
+    三个引擎对同一个 UI 字段的期望单位不同，而元数据只有一份。
+    原先四处都写"交易日" —— 用户按 5 个"交易日"填，在 cycle 上实际是 5 个**自然日**
+    （约 3 个交易日），**会比预期早平仓**。改的是**声明**，不是引擎行为。
+    """
+    from web.params import PARAM_METADATA
+
+    assert PARAM_METADATA["cycle_price_action"]["max_hold"]["unit"] == "自然日"
+    for eng in ("short_reversal", "chase_up", "uptrend_pullback"):
+        assert PARAM_METADATA[eng]["max_hold"]["unit"] == "交易日", \
+            f"{eng} 的上限是按 bar 数比的，不该标成自然日"
+    # `atr_period` 在四个引擎里都是 bar 数 —— 别被上面那条带偏
+    assert PARAM_METADATA["cycle_price_action"]["atr_period"]["unit"] == "交易日"

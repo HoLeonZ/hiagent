@@ -160,3 +160,21 @@ def test_an_infinite_profit_factor_becomes_None_not_Infinity():
     """
     assert canonical_metrics({"profit_factor": float("inf")})["profit_factor"] is None
     assert canonical_metrics({"profit_factor": float("-inf")})["profit_factor"] is None
+
+
+def test_avg_hold_days_label_admits_the_unit_varies_by_engine():
+    """`avg_hold_days` 这一列在不同引擎下**不是同一个单位**，标签必须说出来。
+
+    实测：`short_reversal` 的 `hold_days = len(self) - pos["entry_bar"]` → **交易日**；
+    `chase_up` 记的是 `(exit_date - entry_ts).days`（backtrader_engine.py:294）、
+    `cycle_price_action` 的 `hold_days()` 同 → **自然日**。
+
+    本模块的整个存在理由是"让四个引擎的指标可比"（避免"每引擎一列集错位"），
+    而这一列**恰好不可比**。不做换算：日历↔交易日需要交易日历，而且那会成为
+    引擎语义的第二份实现（§6）。**如实标注口径，比给一个看起来可比的数强。**
+    """
+    from web.metrics_view import METRIC_LABELS
+
+    label = METRIC_LABELS["avg_hold_days"]
+    assert "口径" in label, f"标签必须提示口径随引擎而变，现在是 {label!r}"
+    assert METRIC_LABELS["trades_count"] == "交易笔数", "别把无关的标签也改了"

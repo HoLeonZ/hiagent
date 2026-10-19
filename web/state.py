@@ -68,7 +68,16 @@ def assert_state_writable() -> None:
 
     **闸要设在咽喉处，不是设在一个消费者身上。** 任何写状态的模块都先调它。
     """
-    home = state_home()
+    # ⚠️ **缓存键必须是解析后的路径。**
+    # 原实现存的是 `state_home()` 的**原始**值。`HIAGENT_PLATFORM_HOME` 可以是相对路径，
+    # 于是**同一个字符串**在不同的 cwd 下解析到**不同的目录** —— 而缓存只看字符串。
+    # 实测（2026-10-19）：
+    #   cwd=/tmp/hp_rel、HOME="../hiagent_evil" → 解析到 /tmp/hiagent_evil（仓库外）→ 放行并缓存
+    #   chdir 到仓库根、**同一个 HOME 字符串** → 解析到 <repo>/hiagent_evil（**仓库内**）
+    #     → 缓存命中 → **放行**，产物就落进仓库了。
+    # 判据是"解析后的路径是否在仓库内"，缓存键就必须是解析后的路径 —— 否则缓存的是**输入**，
+    # 而输入在这里恰恰是**会随环境变的那一半**。
+    home = state_home().resolve()
     if home in _ASSERTED:
         return
     assert_outside_repo(home)

@@ -79,7 +79,14 @@ METRIC_LABELS: dict[str, str] = {
     "win_rate":      "胜率",
     "profit_factor": "盈亏比",
     "total_pnl":     "总盈亏",
-    "avg_hold_days": "平均持仓天数",
+    # ⚠️ **这一列的口径随引擎而变，标签必须说出来。**
+    # 实测：short_reversal 的 `hold_days = len(self) - pos["entry_bar"]` → **交易日**；
+    # chase_up 记的是 `(exit_date - entry_ts).days`（backtrader_engine.py:294）、
+    # cycle_price_action 的 `hold_days()` 同 → **自然日**。
+    # 本模块的整个存在理由是"让四个引擎的指标可比"，而这一列**恰好不可比**。
+    # **不做换算**：日历↔交易日需要交易日历，而且那会成为引擎语义的第二份实现（§6）。
+    # 如实标注口径，比给一个看起来可比的数强。
+    "avg_hold_days": "平均持仓（天，口径随引擎）",
 }
 
 #: 规范键的顺序（前端指标表按它渲染）
