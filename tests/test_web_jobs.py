@@ -253,3 +253,47 @@ def test_a_real_preview_run_completes_in_a_subprocess(home):
     assert got.status == "done", got.error
     assert got.mode == "preview"
     assert isinstance(got.result.trades, list)
+
+
+def test_a_timeout_terminates_the_child_instead_of_leaving_an_orphan(home, fast_child, monkeypatch):
+    """**超时之后必须真的把子进程杀掉。**
+
+    原实现只是 `join(timeout=5)` 然后放弃：
+    一次 5–8 分钟的全量回测在"作业已判 failed"之后**继续满跑 CPU**，
+    而 `job.proc` 随后被置 `None` —— **`cancel()` 再也够不到它**。
+    用户看到"作业失败了"，机器上却还有一个进程在烧。
+
+    判据落在**进程对象**上（不是 status）：超时后 `is_alive()` 必须为假。
+    """
+    import subprocess
+
+    monkeypatch.setattr(jobs_mod, "JOB_TIMEOUT_SECONDS", 2)
+    monkeypatch.setenv("HIAGENT_JOBS_FAKE_SLEEP", "120")   # 子进程睡很久，必然超时
+
+    rid = jobs_mod.submit("short_reversal", "v50_slope", None,
+                          "2024-01-01", "2025-01-01", "full")
+
+    # 抓下子进程的 pid（它稍后会被置 None）
+    pid = None
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        j = jobs_mod.get(rid)
+        if j.proc is not None and j.proc.is_alive():
+            pid = j.proc.pid
+            break
+        if j.status in {"done", "failed", "cancelled"}:
+            break
+        time.sleep(0.02)
+    assert pid is not None, "没抓到子进程 pid —— 这条测试没有真正执行过它的判据"
+
+    got = jobs_mod.wait(rid, timeout=60)
+    assert got.status == "failed", f"超时应当判 failed，实际 {got.status}"
+    assert "timeout" in (got.error or ""), f"失败原因应说明是超时：{got.error!r}"
+
+    # **关键**：给它一点时间收尸，然后确认那个 pid 真的没了
+    time.sleep(1.0)
+    alive = subprocess.run(["ps", "-p", str(pid)], capture_output=True).returncode == 0
+    assert not alive, (
+        f"超时后子进程 {pid} 还活着 —— 它会在无人能取消的情况下继续烧 CPU"
+        "（`job.proc` 已被置 None，`cancel()` 够不到它）"
+    )

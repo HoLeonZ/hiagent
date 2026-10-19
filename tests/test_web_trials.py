@@ -152,3 +152,38 @@ def test_recent_runs_returns_newest_first_and_honours_the_limit(home):
                      param_diff={}, start="2024-01-01", end="2025-01-01", mode="full")
     assert [r["run_id"] for r in recent_runs()] == ["r3", "r2", "r1"], "必须是倒序"
     assert [r["run_id"] for r in recent_runs(limit=2)] == ["r3", "r2"], "limit 取最近的 N 条"
+
+
+def test_one_torn_line_does_not_take_the_whole_ledger_down(home):
+    """**一行坏数据的代价不该是"整个记账不可用"。**
+
+    账本是 append-only 的，所以半行是**正常会发生的**：进程被杀、磁盘写满、断电，
+    都会在文件尾留下一条不完整的 JSON。实测（2026-10-19）：手工追加一行撕裂记录后，
+    `count_trials` / `distinct_manual_configs` / `recent_runs` **全部抛
+    JSONDecodeError** —— §5 唯一的记账机制在最需要它的时候消失了。
+
+    这条断言：坏行被**跳过**，其余记录照常可读。
+    """
+    append_trial(run_id="r1", engine="short_reversal", preset="v50_slope",
+                 param_diff={"tp_pct": 0.09}, start="2024-01-01", end="2025-01-01", mode="full")
+    append_trial(run_id="r2", engine="short_reversal", preset="v50_slope",
+                 param_diff={"tp_pct": 0.10}, start="2024-01-01", end="2025-01-01", mode="full")
+
+    # 撕裂：追加一条**不完整**的 JSON（模拟进程被杀 / 磁盘写满）
+    with (home / "trials.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write('{"trial_no": 3, "run_id": "r3", "ban')
+
+    assert count_trials("short_reversal", "v50_slope") == 2, \
+        "坏行让整个账本不可读了——§5 的 n_trials 会凭空消失"
+    assert distinct_manual_configs("short_reversal", "v50_slope") == 2
+    assert [r["run_id"] for r in recent_runs(10)] == ["r2", "r1"], "好记录必须照常可读"
+
+
+def test_writing_after_a_torn_line_still_works(home):
+    """坏行之后**继续追加**也要正常——不能因为尾部有半行就再也写不进去。"""
+    with (home / "trials.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write('{"torn": ')
+    n = append_trial(run_id="r1", engine="short_reversal", preset="v50_slope",
+                     param_diff={"tp_pct": 0.09}, start="2024-01-01", end="2025-01-01", mode="full")
+    assert n == 1, "trial_no 从可读记录数推——坏行不该把编号也算进去"
+    assert count_trials("short_reversal", "v50_slope") == 1

@@ -166,17 +166,30 @@ def _run_one(run_id: str) -> None:
         job.status = "running"
     child_conn.close()               # 父进程不持有子进程那一端（否则 poll 永远等不到 EOF）
 
+    timed_out = False
     try:
         if parent_conn.poll(JOB_TIMEOUT_SECONDS):
             payload = parent_conn.recv()
         else:
             payload = {"ok": False,
                        "error": f"timeout: job exceeded {JOB_TIMEOUT_SECONDS}s"}
+            timed_out = True
     except EOFError:
         payload = {"ok": False, "error": "child process died without sending a result"}
     finally:
         parent_conn.close()
+        # ⚠️ **超时之后必须真的把它杀掉。** 原实现只是 `join(timeout=5)` 然后放弃，
+        # 于是：一次 5–8 分钟的全量回测在"作业已判 failed"之后**继续烧 CPU**，
+        # 而 `job.proc` 随后被置 `None` —— `cancel()` **再也够不到它**。
+        # 用户看到的是"作业失败了"，而机器上还有一个进程在满跑。
+        # `terminate()` 对已退出的进程是 no-op，所以这里只需在超时分支上做。
+        if timed_out:
+            proc.terminate()
         proc.join(timeout=5)
+        if proc.is_alive():
+            # terminate 无效（子进程卡在不可中断的调用里）时强杀，别留孤儿。
+            proc.kill()
+            proc.join(timeout=5)
 
     with _LOCK:
         if job.status == "cancelled":

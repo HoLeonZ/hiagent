@@ -21,15 +21,56 @@ def _path():
 
 
 def _read_all() -> list[dict[str, Any]]:
+    """账本的全部记录。**坏行跳过，不让一行废掉整本账。**
+
+    账本是 append-only 的，所以半行是**正常会发生的**：进程被杀、磁盘写满、
+    机器断电，都会在文件尾留下一条不完整的 JSON。实测（2026-10-19）：
+    手工追加一行撕裂记录后，`_read_all` 抛 `JSONDecodeError`，
+    于是 `count_trials` / `distinct_manual_configs` / `recent_runs` **全部失效** ——
+    §5 唯一的记账机制在最需要它的时候消失了。
+
+    **一行坏数据的代价不该是"整个记账不可用"。** 跳过它、留下一句警告，
+    账本其余部分照常可读：n_trials 会**少算**（偏保守方向，§5 最防的是低报……
+    但这里少算的是**已经写下的**那几条，而不是新迭代；更好的做法是把解析失败的
+    行数报出来，让人去修文件）。
+
+    注意：**只跳过解析失败的行，不静默丢弃成功解析的**；也不重写文件——
+    重写会破坏 append-only 语义，而且可能把用户唯一的那份证据也弄没。
+    """
     p = _path()
     if not p.exists():
         return []
-    out = []
-    for line in p.read_text(encoding="utf-8").splitlines():
+    out: list[dict[str, Any]] = []
+    bad = 0
+    for lineno, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
         line = line.strip()
-        if line:
+        if not line:
+            continue
+        try:
             out.append(json.loads(line))
+        except ValueError:
+            bad += 1
+            print(f"[trials] WARNING: 跳过无法解析的第 {lineno} 行"
+                  f"（账本共 {len(out)} 条可读记录）", flush=True)
     return out
+
+
+def _pad_if_unterminated() -> None:
+    """文件尾若不是换行结尾，补一个 —— 否则下一次 append 会被粘进半行里。
+
+    append-only 的账本迟早会遇到半行（进程被杀 / 磁盘写满 / 断电）。
+    只跳过坏行还不够：**坏行必须仍然是一"行"**，否则它会把下一条也吃掉。
+    """
+    import os
+
+    p = _path()
+    if not p.exists() or p.stat().st_size == 0:
+        return
+    with p.open("rb") as fh:
+        fh.seek(-1, os.SEEK_END)
+        if fh.read(1) != b"\n":
+            with p.open("ab") as out:
+                out.write(b"\n")
 
 
 def append_trial(
@@ -56,6 +97,12 @@ def append_trial(
         "mode": mode,
         "at": dt.datetime.now().isoformat(timespec="seconds"),
     }
+    # ⚠️ **追加前先确认上一行以换行结尾。**
+    # 若进程在写一半时被杀/磁盘写满，文件尾部会留下一条**没有换行的半行**；
+    # 这时直接 `open("a")` 会把新记录**粘在**它后面 —— 两行并成一行，
+    # 于是**新记录也一起废掉**（实测：`count_trials` 返回 0，而记录明明写进去了）。
+    # 补一个换行，让坏行只坏它自己。
+    _pad_if_unterminated()
     with _path().open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
     return trial_no

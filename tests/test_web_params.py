@@ -408,3 +408,47 @@ def test_declaration_rejection_does_not_depend_on_preset_membership(monkeypatch)
     # 同一预设里**已声明**的契约键依旧报 declaration（现有行为不得被破坏）
     with pytest.raises(OverrideError, match="declaration"):
         validate_overrides("short_reversal", "v50_slope", {"position_fraction": 0.5})
+
+
+#: 一个**真实存在**的 chase_up 预设：它的 sl_pct/tp_pct 在 PARAM_METADATA 里没有 range，
+#: 正是"非有限数能溜过去"的那一类。
+CHASE_PRESET = "chase_v10_pos2_equal_atr_tp6_sl15_mh18_score16"
+
+
+def test_non_finite_numbers_are_rejected_even_without_a_range():
+    """`NaN` / `±Inf` 必须拦下，**不能只靠 range 检查**。
+
+    实测（2026-10-19）：`PARAM_METADATA` 里**大多数**数值键没有 `range`
+    （chase_up 的 `sl_pct`/`tp_pct`/`atr_*`、cycle 的 `threshold`、
+    short_reversal 的 `pct_chg_low` …），于是 `inf`/`NaN` 一路通过
+    `isinstance(value, float)` 进引擎。只有恰好带 range 的键才被间接拦下
+    （靠 `not (lo <= nan <= hi)` 为真）。
+
+    后果不只是"引擎收到怪值"：账本与 `result.json` 都是 `json.dumps(..., default=str)`，
+    非有限数会被写成 `Infinity` / `NaN` 字面量 —— **那不是合法 JSON**，
+    浏览器 `JSON.parse` 读不了，一次"成功"的运行会把历史/对比面板弄坏。
+    """
+    import math
+
+    for bad in (float("inf"), float("-inf"), float("nan")):
+        for key in ("sl_pct", "tp_pct"):          # 这两个在 chase_up 上都没有 range
+            with pytest.raises(OverrideError) as e:
+                validate_overrides("chase_up", CHASE_PRESET, {key: bad})
+            msg = str(e.value)
+            assert ("有限数" in msg or "finite" in msg), f"消息没说清原因: {msg}"
+
+    # 反例：有限值照常放行（别把规则做成"数值一律拒"）
+    got = validate_overrides("chase_up", CHASE_PRESET, {"sl_pct": 0.05})
+    assert got == {"sl_pct": 0.05}
+    assert math.isfinite(got["sl_pct"])
+
+
+def test_a_non_finite_rejection_names_the_reason_not_the_range():
+    """被拒时的消息要指向**真正的原因**，不是"超出范围"。
+
+    `nan` 落在任何 range 检查下都会失败，但报"outside range [0.0, 1.0]"会把人
+    引到错误的修复方向（去调范围，而不是发现自己发了一个 NaN）。
+    """
+    with pytest.raises(OverrideError) as e:
+        validate_overrides("chase_up", CHASE_PRESET, {"tp_pct": float("nan")})
+    assert "有限数" in str(e.value) or "finite" in str(e.value)

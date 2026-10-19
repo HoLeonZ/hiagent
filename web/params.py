@@ -4,6 +4,8 @@
 """
 from __future__ import annotations
 
+import math
+
 from typing import Any
 
 from web.catalog import DECLARATION_KEYS, all_presets
@@ -306,6 +308,23 @@ def validate_overrides(engine: str, preset: str, overrides: dict[str, Any]) -> d
             )
         elif want == "dict" and not isinstance(value, dict):
             raise OverrideError(f"type error: {key} expects dict, got {type(value).__name__}")
+
+        # ⚠️ **非有限数在这里拦下，不能只靠下面的 range 检查。**
+        # PARAM_METADATA 里**大多数**数值键没有 range（chase_up 的 sl_pct/tp_pct/atr_*、
+        # cycle 的 threshold、short_reversal 的 pct_chg_low …），于是 `inf`/`NaN` 一路
+        # 通过 `isinstance(value, float)` 进引擎。实测（2026-10-19）：
+        #   validate_overrides("chase_up", <preset>, {"sl_pct": inf}) -> {'sl_pct': inf} ✓通过
+        #
+        # 后果不只是引擎收到怪值：**账本与 result.json 都是 `json.dumps(..., default=str)`**，
+        # 非有限数被写成 `Infinity` / `NaN` 字面量 —— **那不是合法 JSON**，
+        # 浏览器 `JSON.parse` 与任何严格解析器都读不了。一次"成功"的运行会把
+        # 历史面板与对比面板弄坏，而且失败点离原因很远。
+        # 语义上它本来也错：无限的止损百分比没有意义（§0 的静默降级）。
+        if isinstance(value, float) and not math.isfinite(value):
+            raise OverrideError(
+                f"type error: {key}={value} 不是有限数"
+                "（NaN/Inf 没有意义，且会让 trials.jsonl / result.json 变成非法 JSON）"
+            )
 
         lo_hi = spec.get("range")
         if lo_hi and isinstance(value, (int, float)) and not isinstance(value, bool):
