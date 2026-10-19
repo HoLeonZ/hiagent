@@ -95,8 +95,18 @@ def test_compute_indicators_is_causal(panel, t: int) -> None:
     cut = _truncate(panel, t)
     got = compute_indicators(cut)
     days = np.sort(panel["date"].unique())[:t]
+    # ⚠️ §13.147: 本列表面是**硬编码的 10 个**, 而信号选择器
+    # (`select_entries_v33_long_mirror`) 实际读的指标列**比它多 6 个** ——
+    # `above_ma60_ratio` / `amount60` / `down_streak` / `macd_bar_prev` /
+    # `macd_dea` / `macd_dif` 从未被截尾检验过。
+    # ⇒ **一个只验了部分列的判据, 会让人以为"整个指标层已验"** ——
+    #   这正是本册反复记的「判据的**作用域**弱于它声称的性质」。
+    # 现按**选择器真正读的列**取 (ns 与 _select_inputs 交叉核对)。
     cols = [c for c in ("ma5", "ma20", "ma60", "ma120", "mom120", "atr_pct",
-                        "above_ma20", "ret1", "prev_down_streak", "macd_bar")
+                        "above_ma20", "ret1", "prev_down_streak", "macd_bar",
+                        # ↓ §13.147 补齐: 选择器读、而上面那 10 个没覆盖的
+                        "above_ma60_ratio", "amount60", "down_streak",
+                        "macd_bar_prev", "macd_dea", "macd_dif")
             if c in got.columns and c in panel.columns]
     assert cols, "找不到任何可比指标列 ⇒ 判据的扫描单位不存在 (那样本断言恒真)"
     a = panel[panel["date"].isin(days)].sort_values(["thscode", "date"]).reset_index(drop=True)
