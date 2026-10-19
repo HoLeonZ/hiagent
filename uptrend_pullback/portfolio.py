@@ -30,6 +30,7 @@ from core.dual_price import (
     STAMP_DUTY_RATE,  # §2: canonical 万5
     effective_slippage,  # §4/§13.96: 入场与**出场**共用的有效冲击系数
     extract_execution_bar,
+    is_limit_down,
     is_limit_up,
     validate_price_source,
     volume_cap_fill,
@@ -459,6 +460,27 @@ def simulate_portfolio(
                     f"intraday_tiebreak must be 'sl_first' (CLAUDE.md §4), "
                     f"got {intraday_tiebreak!r}"
                 )
+
+            # ----- §4/§13.106 (2026-10-19): 跌停**封板**时卖单无法成交 -----
+            # §4 明文: "Limit-Up / Limit-Down No-Fill: ... a **sell/cover on a
+            # limit-down-sealed bar MUST be rejected (no fill)**"。
+            # ⚠️ 本族此前**只有买入侧的 `is_limit_up`**, 完全没有卖出侧 ——
+            #    而 §4 那句话的另一半正是卖出侧。
+            # **"封板"的无歧义判据**: 本 bar 的 o/h/lo **三者相等** (单一价 ⇒ 全天没有
+            # 成交区间) 且该价在跌停之下 ⇒ 物理上卖不出去, 不是"价格不好"。
+            # ⚠️ **只守这一种**。「开盘跌停、但盘中成交过」**不在其中** —— 那种该不该拒单
+            #    是一个**建模选择** (拒单可能因随后的反弹而变好), **方向不单一** ⇒
+            #    已登记、未改 (§13.106(d))。
+            # ⚠️ 一律用 **raw** 价判 (§3: 涨跌停是**未复权**世界的制度约束)。
+            _r_o, _r_h, _r_lo = pi["raw_open"][j], pi["raw_high"][j], pi["raw_low"][j]
+            _r_pc = pi["raw_prev_close"][j]
+            if (
+                not np.isnan(_r_o) and not np.isnan(_r_h) and not np.isnan(_r_lo)
+                and not np.isnan(_r_pc) and _r_pc > 0
+                and _r_o == _r_h == _r_lo
+                and is_limit_down(float(_r_pc), float(_r_o))
+            ):
+                continue  # 封死跌停 ⇒ 本 bar 不成交, 持仓顺延到下一根
 
             if o <= sl_p:
                 px, reason = o, "SL"
