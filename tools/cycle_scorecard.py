@@ -25,7 +25,8 @@
 扩资时偏乐观; 100 股整手与 §4 成交量上限都让收益率带轻微规模依赖。
 
 用法:
-    python3 tools/cycle_scorecard.py              # 两张表
+    python3 tools/cycle_scorecard.py              # (b)(d) 两张表
+    python3 tools/cycle_scorecard.py --axis       # 再加 (e) max_positions 各档 + (f) 三条排序规则
     python3 tools/cycle_scorecard.py --trials 50  # 减少随机 trial
 """
 from __future__ import annotations
@@ -70,13 +71,15 @@ def _trading_days(w0: str, w1: str) -> list:
     return [r[0] for r in rows]
 
 
-def _with_fused(trades, days, fused, preset, weights):
+def _with_fused(trades, days, fused, preset, weights, max_positions=None):
     orig = A._fused
     A._fused = fused
     try:
         return A.portfolio_metrics(A.allocate(
             trades, trading_days=days, initial_capital=INITIAL_CAPITAL,
-            max_positions=preset["max_positions"], weights=weights,
+            max_positions=(preset["max_positions"] if max_positions is None
+                           else max_positions),
+            weights=weights,
         ))
     finally:
         A._fused = orig
@@ -85,6 +88,10 @@ def _with_fused(trades, days, fused, preset, weights):
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--trials", type=int, default=200, help="随机排序的 trial 数")
+    ap.add_argument("--axis", action="store_true",
+                    help="额外跑 (e) max_positions 各档 + (f) 三条预登记排序规则")
+    ap.add_argument("--ns", type=int, nargs="+", default=[1, 2, 3, 4, 5],
+                    help="--axis 要扫的 max_positions 档位")
     args = ap.parse_args()
 
     preset = dict(PRESET_V1)
@@ -136,6 +143,49 @@ def main() -> None:
 
     print("\n读法 (§5): 这是**对照**不是搜索 —— 不选最好的种子。默认分位要按"
           "「trial 数 × 窗口数」做多重比较后才可引用。")
+
+    if args.axis:
+        print(f"\n=== (e) `max_positions` 各档 (登记的「各 N 全负」重测) ===")
+        print("⚠️ §5: **只报符号与计数, 不报'哪一档最好'、不做跨档排名。**")
+        print(f"{'N':>3} " + " ".join(f"{w:>14}" for w in ("W2", "IND", "IS1", "IS2"))
+              + f" {'为正':>6}")
+        tot_pos = 0
+        for n in args.ns:
+            cells, pos = [], 0
+            for label, _w0, _w1 in WINDOWS:
+                trades, days = cache[label]
+                r = _with_fused(trades, days, A._fused, preset, weights,
+                                max_positions=n)["total_return"]
+                pos += (r > 0)
+                cells.append(f"{r:>+14.2%}")
+            tot_pos += pos
+            print(f"{n:>3} " + " ".join(cells) + f" {pos:>5}/4")
+        print(f"⇒ {len(args.ns) * len(WINDOWS)} 格里为正 {tot_pos} 格 —— "
+              f"「各 N 全负」{'成立' if tot_pos == 0 else '不成立'}")
+
+        print(f"\n=== (f) 三条**预登记**排序规则 (N=1) ===")
+        print(f"{'窗口':<5} {'默认(最高分)':>14} {'反向(最低分)':>14} {'随机中位':>12}")
+        for label, _w0, _w1 in WINDOWS:
+            trades, days = cache[label]
+            if not trades:
+                continue
+            keys = [(t.entry_date, t.thscode) for t in trades]
+            base = _with_fused(trades, days, A._fused, preset, weights)["total_return"]
+            scores = {k: A._fused(t, weights) for t, k in zip(trades, keys)}
+            rev = _with_fused(trades, days,
+                              lambda t, w, m=scores: -m[(t.entry_date, t.thscode)],
+                              preset, weights)["total_return"]
+            outs = []
+            for s in range(args.trials):
+                rng = random.Random(s)
+                perm = {k: rng.random() for k in keys}
+                outs.append(_with_fused(
+                    trades, days,
+                    lambda t, w, pm=perm: pm[(t.entry_date, t.thscode)],
+                    preset, weights)["total_return"])
+            outs.sort()
+            print(f"{label:<5} {base:>+14.2%} {rev:>+14.2%} "
+                  f"{outs[len(outs)//2]:>+12.2%}")
 
 
 if __name__ == "__main__":
