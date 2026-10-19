@@ -456,8 +456,8 @@ class Portfolio:
         互为镜像,且按 `test_cycle_limit_up_guard_lives_in_the_execution_layer`
         的 §6 裁定,**同属执行层**,故放在同一个类里、只实现一次。
 
-        此前 cycle 全包**零处** `is_limit_down`,而 chase_up(:508) 与
-        uptrend_pullback(:464) 都有这道门 —— 于是 cycle 的出场阶梯会在一个
+        此前 cycle 全包**零处** `is_limit_down`,而 chase_up(portfolio.py 的出场路径) 与
+        uptrend_pullback(同上) 都有这道门 —— 于是 cycle 的出场阶梯会在一个
         物理上取不到的价位上"卖出"。
         """
         if prev_close is None:
