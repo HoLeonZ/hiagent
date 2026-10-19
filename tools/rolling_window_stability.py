@@ -47,29 +47,49 @@ def main() -> None:
     ap.add_argument("--preset", default="v33_long_reverse_v22")
     ap.add_argument("--months", type=int, default=24)
     ap.add_argument("--step", type=int, default=6)
+    ap.add_argument("--drop-best", type=int, default=0,
+                    help="同时报「去掉本窗最好 k 笔」后的超额 (依赖恒等式 末值=初值+Σnet_pnl)")
     args = ap.parse_args()
 
     p = get_preset(args.preset)
     starts = pd.date_range(START_FLOOR, END_CAP, freq=f"{args.step}MS")
     print(f"preset = {args.preset}   滚动 {args.months} 个月窗, 步长 {args.step} 个月, "
           f"共 {len(starts)} 窗   末窗截到 {END_CAP}")
+    extra = f" {'去最好'+str(args.drop_best)+'超额':>14}" if args.drop_best else ""
     print(f"{'起始':<12} {'终止':<12} {'总收益':>10} {'等权基准':>10} {'超额':>10} "
-          f"{'笔数':>5} {'前3占Σ':>9}")
+          f"{'笔数':>5}{extra}")
 
-    rows = []
+    rows, dropped = [], []
     for s in starts:
         w0 = s.strftime("%Y-%m-%d")
-        w1 = min((s + pd.DateOffset(months=args.months)).strftime("%Y-%m-%d"), END_CAP)
+        full_end = s + pd.DateOffset(months=args.months)
+        w1 = min(full_end.strftime("%Y-%m-%d"), END_CAP)
+        # ⚠️ 末窗会被 END_CAP 截短 —— 而**不同长度的窗口不可比**。
+        # 本工具第一版把它们一并混进分布里, 打出了 "6/18 为正" 这个**长度的产物**
+        # (末几个窗只有 4.5–16.5 个月, 恰好都在上涨段)。现要求 ≥ 90% 的请求长度。
+        got = (pd.Timestamp(w1) - s).days / 30.44
+        if got < 0.90 * args.months:
+            dropped.append((w0, w1, round(got, 1)))
+            continue
         try:
             r = AT._one_window(p, w0, w1)
         except Exception as e:  # noqa: BLE001
             print(f"{w0:<12} {w1:<12} **{type(e).__name__}: {str(e)[:36]}**")
             continue
         exc = r["total_return"] - r["benchmark"]
-        rows.append((w0, w1, r["total_return"], r["benchmark"], exc, r["n_trades"]))
+        dem = float("nan")
+        if args.drop_best and len(r["net_pnl"]):
+            pnl = np.sort(r["net_pnl"])[::-1]
+            kept = float(pnl.sum()) - float(pnl[:args.drop_best].sum())
+            dem = kept / 1_000_000.0 - r["benchmark"]
+        rows.append((w0, w1, r["total_return"], r["benchmark"], exc, r["n_trades"], dem))
+        col = f" {dem:>+14.2%}" if args.drop_best else ""
         print(f"{w0:<12} {w1:<12} {r['total_return']:>+10.2%} {r['benchmark']:>+10.2%} "
-              f"{exc:>+10.2%} {r['n_trades']:>5}", flush=True)
+              f"{exc:>+10.2%} {r['n_trades']:>5}{col}", flush=True)
 
+    if dropped:
+        print(f"\n⚠️ 跳过 {len(dropped)} 个被 END_CAP 截短的窗 (不足请求长度的 90%, 不可比): "
+              + ", ".join(f"{a}→{b}({m}m)" for a, b, m in dropped))
     if not rows:
         return
     exc = np.array([x[4] for x in rows])
@@ -78,6 +98,11 @@ def main() -> None:
     print(f"  超额: 为正 {int((exc > 0).sum())}/{len(exc)} 窗; 中位 {np.median(exc):+.2%}; "
           f"均值 {exc.mean():+.2%}; 极差 {exc.min():+.2%}..{exc.max():+.2%}")
     print(f"  总收益: 为正 {int((tr > 0).sum())}/{len(tr)} 窗; 中位 {np.median(tr):+.2%}")
+    if args.drop_best:
+        exc2 = np.array([x[6] for x in rows])
+        print(f"  **去掉最好 {args.drop_best} 笔后**: 超额为正 "
+              f"{int((exc2 > 0).sum())}/{len(exc2)} 窗; 中位 {np.nanmedian(exc2):+.2%}; "
+              f"极差 {np.nanmin(exc2):+.2%}..{np.nanmax(exc2):+.2%}")
     print(f"  超额符号变号 {int((np.sign(exc)[1:] != np.sign(exc)[:-1]).sum())} 次 "
           f"/ {len(exc)-1} 个相邻对")
     print("""

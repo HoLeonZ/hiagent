@@ -124,6 +124,8 @@ def _one_window(preset: dict, w0: str, w1: str) -> dict:
         "exposure": m["exposure"], "avg_hold_days": m["avg_hold_days"],
         "total_return": m["total_return"],
         "exc_a": np.asarray(exc_a, float), "gross_a": np.asarray(gross_a, float),
+        # 已实现盈亏 (供「去掉最好 k 笔」的精确减法; 依赖恒等式 末值=初值+Σnet_pnl)
+        "net_pnl": (trades["net_pnl"].to_numpy(float) if len(trades) else np.zeros(0)),
         "exc_top1": top1["exc"].to_numpy(float),
         "exc_all": mg["exc"].to_numpy(float),
     }
