@@ -3,12 +3,12 @@
 > ## ⚠️ 状态头(2026-10-19)—— 读 §0 之前先看这里
 >
 > 本报告 §0–§8 的判定是**对 `main @ 94ca15d`(2026-10-14 快照)** 的:**不合规(NO-GO)**。
-> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **96 条附录**,
+> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **97 条附录**,
 > **§0 列的 11 个 BLOCKER 族全部已处置**(修 / 登记 / 待口径决策,逐条见附七十九 §1)。
 >
 > **不要把本报告开头的 NO-GO 当成对今天代码的判定。**
 >
-> * 现在的**未结清单**只有一处权威来源:**附七十九**(收官台账),最新增补见**附九十六**。
+> * 现在的**未结清单**只有一处权威来源:**附七十九**(收官台账),最新增补见**附九十七**。
 > * 每条修复都给出文件、证据与验证方式(多数含**双向验证**与量化影响)。
 > * 有两条**结果变更**特别醒目,已发布的数字须重算(清单见附七十九 §3 + 附八十一 §5):
 >   附五十二(做空跳空止损成交价)、**附八十一/八十二(DSR 的两个分母各取错一个量:
@@ -8080,3 +8080,93 @@ DSR,却**不声明这是样本内选择** —— 读者会把「挑出来的最�
 
 剩下的三条(`Partial Fill Tolerance`、`Exit Thresholds 相对百分比`、`Short-Side Feasibility`)
 仍在名单上。
+
+---
+
+## 附九十七 —— 一条守卫**守着已被标准删掉的那句话**:TP/SL 的 §4 条款被整句换过,而没人跟着改
+
+(本轮去补 附九十五 登记的"3 条无具名守卫"里的第二条:`Exit Thresholds (TP/SL)`。
+结果发现**不是没守卫,而是这个位置上杵着一条守错东西的守卫**。)
+
+### 1 · 病史(从 git 史查清,不是猜的)
+
+提交 `2260ba1`(2026-09-29)`docs(CLAUDE.md): codify Single-Bullet, IOC, and TP/SL target
+projection rules` **把 §4 这一条整句换掉了**:
+
+```
+- **Exit Thresholds (TP/SL):** … They MAY be either fixed … or ATR-based …
+-     Both are valid; **document the choice in the preset's compliance header**.
++ **Exit Thresholds (TP/SL) & Target Projection:** … TP/SL and slippage must **always** be
++     communicated from Strategy to Broker as **relative percentages (e.g., `sl_pct = 0.05`)**,
++     **NEVER** as absolute point differences derived from adjusted prices …
+```
+
+即**删掉了**「compliance header」那条要求(现行 CLAUDE.md 里
+`grep "compliance header"` **为空** —— 这个概念已经不存在),**换成了**「必须用相对百分比」。
+
+而仓库后来的动作全都建立在**旧文本**上:
+
+| 谁 | 做了什么 |
+|---|---|
+| `48fc309` | 「fix(§4): 45/81 个 preset 缺 compliance header」—— 为满足**旧条款的守卫**,给 45 个 preset 补加了注释 |
+| `tests/test_tp_sl_compliance_header_4engine.py` | 至今把旧文本当作 **"CLAUDE.md §4 (verbatim)"** 逐字引用,并**强制每个 preset 必须有 §4 退出阈值注释** |
+| `tests/test_tp_sl_compliance_header.py` | 同上(3 引擎的旧版,4engine 那份是它的超集) |
+| **标准新增的那半**(相对百分比 / NEVER 绝对价差) | **没有任何守卫** |
+
+**后果不是崩溃,而是把错误告诉下一个人**:那条守卫的失败信息(实测该文件第 224 行)
+会**逐字引用一句标准里不存在的话**,还标着"per CLAUDE.md §4"。而真正的要求无人守。
+
+> 与本会话反复出现的"修复漏了覆盖面"是同一个病的**另一面**:
+> 那边是**该修的没修到**,这边是**该退休的没退休**。判据都得落在"标准的**当前**文本"上。
+
+### 2 · 处置:退休旧守卫,按**现行**条款重写
+
+新增 `tests/test_tp_sl_are_relative_percentages.py`,对四个引擎的**每一个** preset 断言:
+
+1. **不得声明绝对价阈值** —— 键名形如 `tp_price` / `sl_price` / `stop_price` /
+   `target_price` / `exit_price` 一律拒绝(这正是 §4 说的 "NEVER absolute point differences");
+2. `tp_pct` / `sl_pct`(若声明)必须是**相对分数** `(0, 1]`;
+3. `atr_tp_mult` / `atr_sl_mult`(若声明)必须为正 —— 它们乘的是 **ATR%**,同为相对量。
+
+**上界为什么取 `1.0` 而不是 `< 1.0`**:`short_reversal/v73_nosl` 用 `sl_pct=1.0` 表达
+「不止损」—— 那**仍然是相对量**(100% 的入场价),不是绝对价差。我第一版写成 `< 1.0`,
+实测把它误判成违例。
+
+**实测**:101 个 preset 里,绝对价键 **0** 个、pct 越界 **0** 个 ⇒ **现行条款本来就成立**,
+只是此前没人守。
+
+**两个旧守卫已删除**(删除是 `git rm`,可回溯)。另加一条:`test_the_retired_clause_is_not_quoted_as_a_standard`
+—— 全库不得再把那句被删的话当作现行标准引用;**允许引用,但必须写明它被删于哪个提交**
+(一段"病史"要能贴出原话才有用)。这条判据**当场抓到了我自己**(我在本文件的病史里逐字引了它,
+于是必须同时写出 `2260ba1`)—— 与 附九十 那次"守卫惩罚它自己的更正记录"同型。
+
+**45 个 preset 上的旧注释保留为可选文档** —— 删 45 条注释是纯 churn,而它们并无害处;
+本附录记下"这条要求已不在标准里",由后人对是否清理自行决定。
+
+### 3 · §1–§7 对账分布更新
+
+| 归类 | 条数(附九十六 → 本轮) |
+|---|---|
+| 具名守卫 | 9 → **10** |
+| 矩阵覆盖 | 5 |
+| 待决策口径 | 1 |
+| **无任何具名守卫** | 3 → **2** |
+
+登记表里 `Exit Thresholds (TP/SL) & Target Projection` 从 `unguarded` 改为指向新守卫,
+并把"旧守卫守的是被删条款"一并写在理由里。
+
+### 4 · ⚠️ 本轮的环境事故(如实记)
+
+执行到"起终局套件"那一步时,`git status` 报 **not a git repository**。诊断结果:
+
+* `/tmp/hiagent-fix/.git`(worktree 的链接文件)**消失**;
+* worktree 里 **149 个文件被物理删除**(`README.md`、各引擎的 `__init__.py`/`data.py`/
+  `signals.py`、`tests/golden/*.json` 等);
+* **本批的 4 处改动恰好完好**(恰因为它们的状态是"已改/新增/已删",不是"未改")。
+
+处置:`git worktree repair` 修回链接;按 `git status` 的 ` D` 清单精确 `git checkout --` 恢复
+147 个文件(**没有**动我那 4 处);随后把本批改动**另存一份到 job 临时目录**再起套件。
+`git status` 恢复正常后**只剩本批的 4 处**。
+
+**已提交并推送的 `790af4a` 从未受影响**(远端可查)。事故原因未知(该 worktree 在 `/tmp` 下),
+**不猜**;但这次的教训是可操作的:**改动先落盘备份,再跑小时级的套件**。
