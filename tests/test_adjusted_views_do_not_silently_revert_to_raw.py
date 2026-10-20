@@ -138,7 +138,10 @@ def test_the_gap_is_a_pure_tail() -> None:
                 ON vv.thscode = f.thscode AND vv.date = f.date
               WHERE f.thscode IS NULL
             )
-            SELECT count(*), sum(CASE WHEN date > ? THEN 1 ELSE 0 END) FROM gap
+            -- COALESCE 必须:空集上 sum() 返回 NULL,而 0 == None 是 False
+            -- => 缺口**完全消失**时这条断言会红(附一百一十六:2026-10-20 数据刷新后
+            -- 因子表补齐,缺口从 38,870 行变成 0 行)
+            SELECT count(*), COALESCE(sum(CASE WHEN date > ? THEN 1 ELSE 0 END), 0) FROM gap
             """,
             [factor_max],
         ).fetchone()
@@ -280,7 +283,9 @@ def test_the_engine_refuses_a_window_with_uncovered_trading_days() -> None:
 
     # ② **周末当终点** ⇒ 放行:窗口里没有任何未覆盖的**交易日**
     #    (这条正是第一版判据的漏洞:字面上 end > coverage,但没有数据)
-    weekend = coverage + timedelta(days=1)
+    # 不能假定"因子表末日 + 1 天是周末":只在末日恰为周五时成立。
+    # 实测:末日曾为 2026-09-18(周五),刷新后为 2026-10-20(周二)(附一百一十六)。
+    weekend = coverage + timedelta(days=(5 - coverage.weekday()) % 7 or 7)
     assert weekend.weekday() >= 5, f"夹具失效:{weekend} 不是周末"
     con = _con()
     try:
