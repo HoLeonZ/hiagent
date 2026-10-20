@@ -9336,3 +9336,108 @@ uptrend_pullback/grid.py:134  select_entries(**cfg['signal'])
 * 覆盖的是 `**X["signal"|"regime"]` 这一形态(`X` ∈ `preset/cfg/p/base/params/profile`);
   整块 preset 的展开(`**p`)**实测全库 0 处**,故未覆盖;
 * 函数在本文件内定义时,形参从 **AST** 取 —— **不 import 脚本**(import 会执行其模块级代码)。
+
+---
+
+## 附一百一十一 —— 那条"不得硬编码绝对路径"的判据**早就有**,而它的面是**一个文件**:另有 13 处,其中 2 处让工具**静默连到另一个库**
+
+(本批从 §6 的两个子句出发 —— "tests 在 DB/产物缺失时要 skip 而不是 error" 与
+"golden baseline 要为**每个引擎**锁住成交清单"。前半个查出了 **0 error / 20 条信息完整的 skip**;
+后半个查出**四引擎的基线都在且全绿**。两个都是"本来就做对了"。
+**而顺着那 20 条 skip 里唯一不说明"覆盖在哪"的那一条,挖到了这一批的真问题。**)
+
+### 1 · §6 的两半:先报好消息
+
+| 检查 | 实测 |
+|---|---|
+| golden baseline 覆盖四引擎? | **是**:`tests/golden/` 20 个 tracked 文件 = chase 13 + uptrend 3 + cycle 1 + short_reversal 2 |
+| 它们现在真的在验? | **是**:四个 `*sha256_baseline*` / `test_chase_up_no_lookahead` 合计 **41 passed,0 skip,0 fail** |
+| 无产物时是 skip 而非 error? | **是**:把 `uptrend_pullback/results/`(259 项)**挪开**模拟 fresh clone,那批测试 **107 passed / 20 skipped / 0 error** |
+
+§6 这两条**没有违反**。**但 20 条 skip 里有一条是哑的。**
+
+### 2 · 那一条哑的 skip:fixture 路径写成了**作者机器的绝对路径**
+
+20 条 skip 的文本几乎**全部**写明了"替代覆盖在哪"(`附三十七` 的产出型守卫、`附四十四` 的
+重算不变量、`审计 §8` 的登记)。唯一例外:
+
+```
+test_backtrader_engine_net_return_entry_commission.py:80:
+    fixture /Users/holeon/code/hiagent/uptrend_pullback/results/v33_long_reverse_v19_trades.csv not present
+```
+
+读进去才看清它为什么哑 —— **参数化里写死的是绝对路径**:
+
+```python
+@pytest.mark.parametrize("fixture_csv", [
+    "/Users/holeon/code/hiagent/uptrend_pullback/results/v33_long_reverse_v19_trades.csv",
+    "/Users/holeon/code/hiagent/uptrend_pullback/results/v33_long_reverse_v20_trades.csv",
+])
+```
+
+这有两层后果,而**第二层更坏**:
+
+1. 在**任何别的 checkout**(包括我当时所在的 worktree)里,`os.path.exists(...)` 检查的是
+   **另一个目录** ⇒ **永远 skip**;
+2. 若那个目录**碰巧存在**(比如同一台机器上有另一份 checkout),它会
+   **拿别人的产物来验本仓库的代码** —— 而且**看起来在跑**。
+
+### 3 · 类:13 处**可执行代码**里的家目录绝对路径(含**另一个用户**的)
+
+我把"绝对路径"做成 AST 级普查(**排除 docstring** —— 那里是散文引用),得到 13 处:
+
+| 处 | 形态 | 后果 |
+|---|---|---|
+| `chase_up/audit_phantom.py`、`uptrend_pullback/audit_phantom.py` | `DB_PATH = "/Users/holeon/Library/…/market.duckdb"` | **绕过 `hiagent_config`** |
+| `chase_up/render_v3_trades_html.py` | `OUT_HTML = Path("/Users/holeon/…")` | 产物写进**另一个 checkout** |
+| `chase_up/render_top2_trades_html.py` | `RESULTS_DIR = Path("/Users/holeon/…")` | 读**另一个 checkout** 的产物 |
+| `tests/test_backtrader_engine_net_return_entry_commission.py` | fixture ×2 | 见上 |
+| `tests/_capture_presets.py`、`_run_all_presets.py`、`golden/_capture_baseline.py` | `sys.path.insert(0, "/Users/holeon/…")` | 同上 |
+| `tests/_combine_preset_html.py` | `GOLDEN = Path("/Users/holeon/…")` | 同上 |
+| `tests/_run_all_presets_2yr.py`、`…_continue.py` | `REPO = Path("/Users/**zhl**/code/hiagent")` | **另一个用户**的家目录 |
+
+**两个 DB 路径那两行最值得单说**:它们不只是"换机器就废" —— 它们**忽略 `DNA_STRAT_DB`**
+(项目文档明写"环境变量优先,CLI/测试覆盖用")。也就是说:整个测试套件、以及我这十几批跑工具时
+一直用 `DNA_STRAT_DB` 指库,而**这两个工具会静默连到机器默认库上去**。
+它们报出来的"phantom 0 个"因此是**在另一个连接上**得到的 —— 数值上没问题(默认就是那个库),
+但**契约已经断了**:换库那天,它不会跟着换。
+
+### 4 · 为什么这一类能长期存在:**判据存在,面按文件划**
+
+`tests/test_run_all_backtests_html_renders.py:110` 已经有这条判据:
+
+```python
+def test_tool_derives_paths_from_file_not_hardcoded() -> None:
+    """§0 可复现性:不得出现硬编码绝对路径(审计在别的脚本里抓到过这一条)。"""
+    assert "/Users/" not in src            # src = TOOL_PATH —— **一个**文件
+```
+
+它的 docstring 甚至**自己写着**"审计在**别的**脚本里抓到过这一条" —— 却只对
+`TOOL_PATH` 一个文件生效。⇒ **这是本会话第五次同一形状**
+(附八十五/八十六 的 DSR 面、附一百零八 的 preset 面、附一百一十 的 `**` 面,加这次的路径面)。
+
+### 5 · 修法与验证
+
+* 12 处改为 **repo-relative**(`Path(__file__).resolve().parents[N]`)或
+  `from hiagent_config import DB_PATH`;另更正了 `_run_all_presets_2yr*.py` 的 docstring
+  (它写"本身也未列入 git",**而两个文件都在 git 里**);
+* 两个 `audit_phantom` 改用 `hiagent_config.DB_PATH` 后**实跑验证**:
+  仍能报出一百零六 那只低价票的 phantom(`600795.SH 2025-09-26`,相对差 4.77%)⇒ **修法未削弱判据**;
+* 新增守卫 `tests/test_no_absolute_home_paths.py` 两条判据:
+  1. **可执行代码里不得有家目录绝对路径**(AST 取字符串字面量;**docstring 里的散文引用不算**,
+     单独一个 `/Users/` 也不算 —— 那正是旧判据自己的搜索字面量);
+  2. **DB 文件名只准出现在 `hiagent_config.py`**(非测试代码;`tmp_path / "market.duckdb"`
+     这种临时夹具库借用同名属测试惯例,故层 2 不看 `tests/`)。
+* **四向验证**:回装修复前的 `audit_phantom.py` ⇒ **红**(两层都红);
+  种 `/Users/<名>/…` ⇒ 红;在非测试模块种 `…/market.duckdb` ⇒ 红;恢复 ⇒ 3 passed。
+
+### 6 · ⚠️ 本批我自己踩的坑(值得记,因为它是"我的修复被自己的验证流程冲掉")
+
+做 (a) 那一步"回装历史版本"时,我用了 `git checkout -- chase_up/audit_phantom.py` 来"恢复"。
+**但我的修复当时还没提交** ⇒ `git checkout` 把工作区**退回 HEAD**,也就是**修复前**的版本 ⇒
+**修复被冲掉了**。而我事先做的备份是**修复前**的快照(用于"回装历史版本"),自然还不回来。
+
+⇒ 两条落地:
+1. **破坏性验证之前先提交**(本批之后我就是这么做的:先 commit+push,再跑全量);
+2. `git checkout -- <file>` 只等于"回到 HEAD",**不等于"恢复我刚才的编辑"** ——
+   要备份**修复后**的状态,或者干脆先提交。
