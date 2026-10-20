@@ -146,12 +146,20 @@ def test_overrides_rejects_a_string_for_a_dict_param():
 
 
 def test_overrides_accepts_a_dict_for_a_dict_param():
+    """dict 参数接受 dict —— **键取引擎真实的键**。
+
+    原稿写的是 `{"foo": 1}`：一个**编造的占位键**。它本意是验"容器类型对不对"，
+    却顺带断言了"任意键都放行"——而那已确认是错的（未知键在引擎里会变成 `TypeError`
+    → 500 而不是 400）。占位键让这条测试在**该红的时候一直绿着**。
+    """
     from web.catalog import all_presets
+    from web.params import split_params
 
     eng = "chase_up"
     preset = next(iter(all_presets()[eng]))
-    got = validate_overrides(eng, preset, {"signal": {"foo": 1}})
-    assert got == {"signal": {"foo": 1}}
+    real = dict(split_params(eng, preset)["tunable"]["signal"])
+    got = validate_overrides(eng, preset, {"signal": dict(real)})
+    assert got == {"signal": dict(real)}
 
 
 # --- Minor 6: bool 是 int 子类，不得冒充数值 ---
@@ -476,3 +484,58 @@ def test_cycle_max_hold_is_declared_in_calendar_days_because_that_is_what_it_com
             f"{eng} 的上限是按 bar 数比的，不该标成自然日"
     # `atr_period` 在四个引擎里都是 bar 数 —— 别被上面那条带偏
     assert PARAM_METADATA["cycle_price_action"]["atr_period"]["unit"] == "交易日"
+
+
+def test_nested_dict_keys_are_checked_against_the_engine_itself():
+    """嵌套 dict 的**键**要对 —— 但只对"引擎入口唯一"的那部分。
+
+    引擎的 `select_entries` 是仅关键字、无 `**kwargs` 的签名（实测），未知键会在
+    引擎里抛 `TypeError`；runner 只把 `ValueError` 具名化，`TypeError` 会一路漏到
+    HTTP 层 → **变成 500**。可这是输入错误，应该是 400。
+
+    允许键**从引擎的签名里读**，不手抄白名单（手抄的必然随引擎漂移）。
+
+    ⚠️ **`uptrend_pullback` 故意不校验**：它按 `entry_mode` 分派到两个不同函数，
+    `regime` 又去第三个（`compute_regime`）。要正确校验就得把引擎的分派逻辑复制一份
+    ——那是 §6 违规，比不校验更糟。
+    """
+    CHASE_PRESET = "chase_v10_pos2_equal_atr_tp6_sl15_mh18_score16"
+    from web.catalog import all_presets
+    from web.params import split_params
+
+    good = dict(split_params("chase_up", CHASE_PRESET)["tunable"]["signal"])
+
+    validate_overrides("chase_up", CHASE_PRESET, {"signal": dict(good)})
+
+    with pytest.raises(OverrideError, match="unknown key"):
+        validate_overrides("chase_up", CHASE_PRESET,
+                           {"signal": {**good, "并不存在的键": 1}})
+    with pytest.raises(OverrideError, match="unknown key"):
+        validate_overrides("chase_up", CHASE_PRESET, {"signal": {"bogus_only": 2}})
+
+
+def test_no_existing_preset_is_rejected_by_the_nested_key_check():
+    """**新校验绝不能误拒平台自己的预设。**
+
+    这条是加嵌套键校验时全量扫出来的：若按 `uptrend_pullback.select_entries`
+    的签名校验，v33_long_reverse_v19/v20/v21 的 `signal`（含 `pct_chg_high`、
+    `pct_chg_low`、`min_above_ma60_ratio`）与 v21 的 `regime`（`breadth_window` 等）
+    **会被全部误拒** —— 因为那个引擎按 `entry_mode` 分派到 `select_entries_v33_long_mirror`，
+    签名完全不同。
+
+    于是"校验"本身成了一处新的 §7 风险：用户**改不了一个没碰过的预设**。
+    这条测试把"现有预设全部能过"钉成不变式。
+    """
+    from web.catalog import all_presets
+    from web.params import validate_overrides
+
+    checked = 0
+    for eng, presets in all_presets().items():
+        for name in sorted(presets):
+            for nested in ("signal", "regime"):
+                v = presets[name].get(nested)
+                if not isinstance(v, dict) or not v:
+                    continue
+                checked += 1
+                validate_overrides(eng, name, {nested: dict(v)})
+    assert checked >= 20, f"只检查了 {checked} 个组合 —— 扫描范围可能没覆盖到"

@@ -205,6 +205,66 @@ def split_params(engine: str, preset: str) -> dict[str, Any]:
     }
 
 
+#: 嵌套 dict 参数 → 引擎里对应的入口（用来从**签名**取它接受哪些键）。
+#:
+#: ⚠️ **不能跨引擎共用一份白名单。** 实测（2026-10-19）：
+#:   chase_up 的 20 个可选键  —— breakout_*/macross_*/atr_pct_*/close_ma60_buffer …
+#:   uptrend_pullback 的 15 个 —— entry_mode/ma20_tol/ma60_rising_lookback/max_pullback …
+#: 两者**几乎没有交集**；共用一份会让其中一个引擎要么误拒合法参数、要么放过非法参数。
+#:
+#: 取不到入口时返回 None = **不校验**，而不是假装校验过了。
+#: ⚠️ **只登记"入口唯一"的引擎。** 没有登记的键 = **不校验键**，而不是猜一个。
+#:
+#: `uptrend_pullback` **故意不登记**：它按 `entry_mode` **分派到两个不同函数** ——
+#:   `uptrend_pullback/backtest.py:134-142`
+#:     if p["signal"].get("entry_mode") == "v33_long_mirror":
+#:         from uptrend_pullback.signals import select_entries_v33_long_mirror
+#:         sig_kwargs = {k: v for k, v in p["signal"].items() if k != "entry_mode"}
+#:     ...
+#: 而 `regime` 又去**第三个**函数 `compute_regime(panel, **p["regime"])`。
+#: 实测：v33_long_reverse_v19/v20/v21 的 `signal` 用的是
+#: `pct_chg_high`/`pct_chg_low`/`min_above_ma60_ratio` —— **`select_entries` 的签名里没有**；
+#: `regime` 的 `breadth_window`/`ma_window`/`min_breadth`/`require_rising` 也没有。
+#: 若按 `select_entries` 校验，这 **4 个平台自己的预设会被误拒**（全量扫出来的）。
+#:
+#: 而要正确校验就得**先把引擎的分派逻辑复制一份**——那是 §6 违规，
+#: 比"不校验"更糟（它会随引擎演进而静默失准）。
+#: 所以：**能唯一确定入口才校验，不能就不校验，并把这句话写在代码里。**
+_NESTED_ENTRYPOINT: dict[tuple[str, str], tuple[str, str]] = {
+    ("chase_up", "signal"): ("chase_up.signals", "select_entries"),
+}
+
+
+def _allowed_nested_keys(engine: str, key: str) -> set[str] | None:
+    """该嵌套 dict **引擎自己**接受哪些键。
+
+    直接读引擎函数的签名，而不是手抄一份白名单——手抄的必然与引擎漂移
+    （`IGNORED_KEYS` 已经这么坏过一次）。
+
+    两个引擎的 `select_entries` 都**没有 `**kwargs``**（实测），所以未知键在引擎里
+    会抛 `TypeError`；而 runner 只把 `ValueError` 具名化，`TypeError` 会一路漏到
+    HTTP 层 → **变成 500**。可这是**输入错误**，应该是 400。
+
+    返回 `None` 表示"取不到，不校验"——宁可少一道，也不要一道**看起来**在把关
+    而实际会随引擎演进而失准的检查。
+    """
+    spec = _NESTED_ENTRYPOINT.get((engine, key))
+    if spec is None:
+        return None
+    try:
+        import importlib
+        import inspect
+
+        mod = importlib.import_module(spec[0])
+        sig = inspect.signature(getattr(mod, spec[1]))
+    except (ImportError, AttributeError, TypeError, ValueError):
+        return None
+    if any(p.kind is p.VAR_KEYWORD for p in sig.parameters.values()):
+        return None          # 引擎自己兜得住，就不该由平台拦
+    names = {n for n, p in sig.parameters.items() if p.kind is p.KEYWORD_ONLY}
+    return names - {"start_date", "end_date"}
+
+
 def validate_overrides(engine: str, preset: str, overrides: dict[str, Any]) -> dict[str, Any]:
     """校验并清洗 overrides。
 
@@ -309,6 +369,20 @@ def validate_overrides(engine: str, preset: str, overrides: dict[str, Any]) -> d
             )
         elif want == "dict" and not isinstance(value, dict):
             raise OverrideError(f"type error: {key} expects dict, got {type(value).__name__}")
+        elif want == "dict":
+            # 只校验"容器是 dict"是不够的：**键**也要对。
+            # 引擎的 `select_entries` 是仅关键字、无 `**kwargs` 的签名（实测），
+            # 未知键会在引擎里抛 `TypeError` → runner 只具名化 `ValueError`
+            # → 漏到 HTTP 层变成 **500**。可这是输入错误，应该是 400。
+            allowed = _allowed_nested_keys(engine, key)
+            if allowed is not None:
+                unknown = sorted(set(value) - allowed)
+                if unknown:
+                    raise OverrideError(
+                        f"unknown key(s) in {engine}.{key}: {unknown}. "
+                        f"引擎入口只接受 {sorted(allowed)[:6]}… —— "
+                        "未知键会变成引擎里的 TypeError，即 500，而不是 400。"
+                    )
 
         # ⚠️ **非有限数在这里拦下，不能只靠下面的 range 检查。**
         # PARAM_METADATA 里**大多数**数值键没有 range（chase_up 的 sl_pct/tp_pct/atr_*、
