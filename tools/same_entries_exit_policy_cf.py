@@ -168,6 +168,100 @@ def _load(family: str, preset_name: str, w0: str, w1: str):
     return preset, panel, res
 
 
+def _load_pair(family: str, preset_name: str, w0: str, w1: str):
+    """**一次加载、跑两个政策** (基线 / ATR 档) —— panel 只建一次, 避免重复昂贵加载。"""
+    if family != "uptrend_pullback":
+        raise SystemExit(f"⛔ {family} 不在已对齐的出场语义清单 {SUPPORTED} 内 ⇒ 拒跑。")
+    from uptrend_pullback.backtest import run_backtest
+    from uptrend_pullback.data import load_panel
+    from uptrend_pullback.presets import get_preset
+    from uptrend_pullback.signals import compute_indicators
+    from uptrend_pullback.universe import load_universe
+
+    preset = dict(get_preset(preset_name))
+    uni = set(load_universe(preset["universe"], DB_PATH, asof_date=w0))
+    panel = compute_indicators(load_panel(DB_PATH, w0, w1, universe=uni))
+    atr_p = dict(preset)
+    atr_p.update(atr_tp_mult=ATR_TP_MULT, atr_sl_mult=ATR_SL_MULT, max_hold=ATR_MAX_HOLD)
+    rb = run_backtest(dict(preset), w0, w1, DB_PATH, panel_ind=panel)
+    ra = run_backtest(atr_p, w0, w1, DB_PATH, panel_ind=panel)
+    return preset, panel, rb, ra
+
+
+def _exposure(family: str, preset_name: str) -> int:
+    """★ 这条线上**唯一还没关**的一路: **暴露 / 数量通道** (§13.208)。
+
+    每窗比较 基线 vs ATR 档 的**完整重模拟** (净):
+      `n` 笔数 · 净 Σ · 净/笔 · `Σ持有日` · **暴露 = Σ持有日 / 该窗交易日数**
+    以及 §13.207 的**同一批入场净几何** ⇒ **残差 (数量通道) = 完整重模拟的差 − 几何差**。
+
+    ⚠️ **残差混着"各臂自有股数"** (§13.200(g)) ⇒ 只作**定性方向**读, **不当量用**;
+    ⚠️ `IND`/`IS2` 重叠 ⇒ 独立单位 ≈ 4。
+    """
+    print(f"\n=== --exposure: {family} / {preset_name} (基线 vs ATR 档, 完整重模拟, 净) ===")
+    print(f"  {'窗口':<7}{'政策':<7}{'笔数':>5}{'净 Σ':>14}{'净/笔':>11}"
+          f"{'Σ持有日':>10}{'暴露':>8}{'窗内交易日':>10}")
+    out = {}
+    for win, (w0, w1) in WINDOWS.items():
+        preset, panel, rb, ra = _load_pair(family, preset_name, w0, w1)
+        days = int(panel["date"].nunique())
+        rows = []
+        for tag, res in (("基线", rb), ("ATR", ra)):
+            tr = pd.DataFrame(res["trades"]).copy()
+            net = float(res["metrics"]["final_equity"]) - 1_000_000.0
+            n = len(tr)
+            hold = (float(pd.to_numeric(tr["hold_days"], errors="coerce").sum())
+                    if n and "hold_days" in tr.columns else 0.0)
+            rows.append((tag, n, net, hold))
+            print(f"  {win:<7}{tag:<7}{n:>5}{net:>+14,.0f}{(net / n if n else float('nan')):>11,.0f}"
+                  f"{hold:>10,.0f}{(hold / days if days else float('nan')):>8.1%}{days:>10}")
+        # 同批入场 (基线入场) 的**净几何**差 —— 用 §13.207 的关掉净模式
+        trb = pd.DataFrame(rb["trades"]).copy()
+        trb["entry_date"] = pd.to_datetime(trb["entry_date"])
+        trb["exit_date"] = pd.to_datetime(trb["exit_date"])
+        bars = {c: s.reset_index(drop=True) for c, s in panel.groupby("thscode", sort=False)}
+        tp_, sl_, mh_ = (float(preset["tp_pct"]), float(preset["sl_pct"]),
+                         int(preset["max_hold"]))
+        g_base = _policy_stats(bars, trb, tp_, sl_, mh_, net=True)[0]
+        # ATR 档在**逐笔**上是各自一个值 (异质政策) ⇒ 必须逐笔重放, 不能用共值网格
+        g_atr = 0.0
+        ok_n = 0
+        for t in trb.itertuples():
+            d = bars.get(t.thscode)
+            if d is None:
+                continue
+            a = _signal_day_atr(d, t.entry_date, ATR_FLOOR, ATR_CAP)
+            if a is None:
+                r = _replay(d, t.entry_date, float(t.entry_price), tp_, sl_, mh_)
+            else:
+                r = _replay(d, t.entry_date, float(t.entry_price),
+                            ATR_TP_MULT * a, ATR_SL_MULT * a, ATR_MAX_HOLD)
+            if r is None:
+                continue
+            px, size = float(r[1]), int(t.size)
+            g_atr += (px - float(t.entry_price)) * size - entry_fee(float(t.entry_price), size) \
+                - exit_fee(px, size)
+            ok_n += 1
+        geom = g_atr - g_base
+        full = rows[1][2] - rows[0][2]
+        out[win] = (rows[0][1], rows[1][1], full, geom, full - geom)
+        print(f"  {'':<7}⇒ 完整差 {full:>+13,.0f} · 同批入场净几何 {geom:>+13,.0f}"
+              f" · **残差(数量) {full - geom:>+13,.0f}**  (可逐笔重放 {ok_n}/{len(trb)})")
+    print(f"\n  === 汇总 ===")
+    print(f"  {'窗口':<7}{'基线n':>7}{'ATRn':>7}{'完整差':>14}{'几何差':>14}{'残差':>14}{'残差符号':>10}")
+    for w_, (nb, na, full, geom, resid) in out.items():
+        print(f"  {w_:<7}{nb:>7}{na:>7}{full:>+14,.0f}{geom:>+14,.0f}"
+              f"{resid:>+14,.0f}{'正' if resid > 0 else '负':>10}")
+    resid_pos = sum(1 for v in out.values() if v[4] > 0)
+    fewer = sum(1 for v in out.values() if v[1] <= v[0])
+    print(f"  ⇒ ATR 档笔数 ≤ 基线的窗: **{fewer}/{len(out)}**")
+    print(f"  ⇒ 残差为正的窗: **{resid_pos}/{len(out)}** (独立单位 ≈ {len(out) - 1})")
+    print("""  读法: 残差 = 「压笔数 / 改暴露」那一路。**为正 ⇒ 少交易在帮忙。**
+  ⚠️ 残差混着各臂自有股数 (§13.200(g)) ⇒ 只作**定性方向**读, **不当量用**;
+  ⚠️ "暴露"是按 Σ持有日/窗内交易日 直接数的, 不经过任何口径换算。""")
+    return 0
+
+
 def _replay(bars: dict, e0, e0_px: float, tp_eff: float, sl_eff: float,
             max_hold: int, perturb: str = ""):
     """从入场日之后逐 bar 判出场 ⇒ (exit_date, exit_px, reason) 或 None。
@@ -546,6 +640,9 @@ def main() -> int:
     ap.add_argument("--net", action="store_true",
                     help="扣规范费用 (core.dual_price: 双边佣金含 ¥5 地板 + 卖出印花税); "
                          "股数仍固定在基线那一档")
+    ap.add_argument("--exposure", action="store_true",
+                    help="★ 这条线上唯一还没关的一路: 五窗量暴露/数量通道 "
+                         "(完整重模拟的差 − 同批入场的净几何差 = 残差)")
     ap.add_argument("--grid", action="store_true",
                     help="★ 最终形态问题: 同一批入场上 5x5 (tp,sl) 网格, 数每格在几个窗上超过基线 "
                          "(只报计数的分布, 不报哪一格最好)")
@@ -559,6 +656,10 @@ def main() -> int:
     if NET:
         print("⚠️ `--net`: 已扣规范费用 (core.dual_price); 股数**仍固定在基线那一档** ⇒ "
               "与引擎 `final_equity` 仍不是同一个量。\n")
+
+    if args.exposure:
+        preset_name = args.preset or DEFAULTS["uptrend_pullback"][0]
+        return _exposure(args.family, preset_name)
 
     if args.grid:
         preset_name = args.preset or DEFAULTS["uptrend_pullback"][0]
