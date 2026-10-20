@@ -26,7 +26,7 @@ from web.metrics_view import (
 )
 from web.params import OverrideError, split_params, validate_overrides
 from web.runners import RunResult
-from web.state import state_home
+from web.state import run_artifact, state_home
 from web.trials import count_trials, distinct_manual_configs
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -569,7 +569,7 @@ def create_app() -> FastAPI:
         job = jobs_mod.get(run_id)
         if job is None and jobs_mod.load_persisted(run_id) is None:
             raise HTTPException(404, detail=f"unknown run: {run_id}")
-        p = state_home() / "runs" / run_id / "run.log"
+        p = run_artifact(run_id, "run.log")
         if not p.exists():
             return {"text": "", "offset": 0, "done": True}
         data = p.read_bytes()

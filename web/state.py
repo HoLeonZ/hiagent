@@ -85,8 +85,22 @@ def assert_state_writable() -> None:
 
 
 def run_dir(run_id: str) -> Path:
-    """单次运行的产物目录，不存在则创建。"""
+    """单次运行的产物目录，不存在则创建。**写盘前唯一的 §7 闸。**"""
     assert_state_writable()
     d = state_home() / "runs" / run_id
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def run_artifact(run_id: str, name: str) -> Path:
+    """`runs/<id>/<name>` 的路径 —— **布局的单一来源**，供**读**用。
+
+    为什么需要它（2026-10-19 实测）：`runs/<id>` 这个布局当时被**手工拼了 7 处**
+    （jobs.py 的 5 处、app.py 的 1 处，加上这里），而**只有 `submit()` 走 `run_dir()`**——
+    于是 `_persist_result` 自己是"拼路径 + mkdir + 写"，**没经过闸**。
+    今天能安全只是因为 `submit()` 先建好了目录：**靠顺序，不靠结构**。
+    下一次有人加一个"别的入口写产物"，闸就被绕过去了 —— 这已经是我第四次修同一个形状。
+
+    **写**一律用 `run_dir()`（它过闸并建目录）；**读**用本函数（不建目录、不开闸）。
+    """
+    return state_home() / "runs" / run_id / name

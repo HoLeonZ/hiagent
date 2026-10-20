@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from web.runners import RunResult
-from web.state import run_dir, state_home
+from web.state import run_artifact, run_dir, state_home
 from web.trials import append_trial, recent_runs
 
 #: 单个作业的墙钟上限（防呆）。正常全量回测 5–8 分钟，30 分钟已是异常。
@@ -146,7 +146,7 @@ def _run_one(run_id: str) -> None:
         target=_child_entry,
         args=(child_conn, job.engine, job.preset, job.overrides,
               job.start, job.end, job.mode,
-              str(state_home() / "runs" / job.run_id / "run.log")),
+              str(run_artifact(job.run_id, "run.log"))),
         daemon=True,
     )
     # **`proc.start()`、`job.proc`、`status="running"` 三件事必须在同一个临界区里发布。**
@@ -221,8 +221,7 @@ def _persist_result(job: "Job", payload: dict) -> None:
     """
     import datetime as _dt
 
-    d = state_home() / "runs" / job.run_id
-    d.mkdir(parents=True, exist_ok=True)
+    d = run_dir(job.run_id)          # 过 §7 闸并建目录（不要自己拼路径 + mkdir）
     (d / "result.json").write_text(
         json.dumps({
             "run_id": job.run_id, "engine": job.engine, "preset": job.preset,
@@ -240,7 +239,7 @@ def load_persisted(run_id: str) -> RunResult | None:
 
     服务重启后 `_JOBS` 为空，但历史仍在磁盘上——**因此可以跨会话对比，而不必重跑**。
     """
-    p = state_home() / "runs" / run_id / "result.json"
+    p = run_artifact(run_id, "result.json")
     if not p.exists():
         return None
     d = json.loads(p.read_text(encoding="utf-8"))
@@ -254,7 +253,7 @@ def meta_persisted(run_id: str) -> dict[str, Any] | None:
     服务重启后 `_JOBS` 是空的，但 `job.json` 还在——**`overrides` 只在这里**，
     `result.json` 里没有（`load_persisted` 返回的 `RunResult` 也不带它）。
     """
-    p = state_home() / "runs" / run_id / "job.json"
+    p = run_artifact(run_id, "job.json")
     if not p.exists():
         return None
     try:
@@ -304,7 +303,7 @@ def list_runs(limit: int = 50) -> list[dict[str, Any]]:
             "at": r.get("at"), "trial_no": r.get("trial_no"),
             "param_diff": r.get("param_diff") or {},
             "status": job.status if job else None,          # 仅本进程内可知
-            "has_result": (state_home() / "runs" / rid / "result.json").exists(),
+            "has_result": run_artifact(rid, "result.json").exists(),
         })
     return out
 
