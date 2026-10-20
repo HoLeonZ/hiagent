@@ -311,7 +311,26 @@ def _policy_stats(bars_by_code: dict, tr: pd.DataFrame, tp_eff: float, sl_eff: f
     return (float(sum(pnls)), reasons, float(sum(sorted(pnls, reverse=True)[:3])), len(pnls))
 
 
-def _all_windows(family: str, preset_name: str) -> int:
+def _stats_row(win: str, label: str, bars_by_code: dict, tr: pd.DataFrame,
+               preset: dict) -> tuple[float, float, float, float, float, int] | None:
+    """给一批入场算 (T, S, 基线 Σ, Σ(×0.5), Σ(×3.0), 笔数); 自检不过 ⇒ None (该子块作废)。
+
+    ⚠️ **`narrow`/`wide` 必须**单独算**出来, 不能写成 `base ∓ S`** ——
+    `S = wide − narrow` 是一个**增量**, 而 `base` 是**水平**;
+    `Σ` 对 tp 不是线性的 ⇒ `base − S ≠ narrow`。第一版把它打错了 (差 20 万–140 万)。
+    """
+    if len(tr) == 0:
+        return None
+    if not _self_check(_build_df(bars_by_code, tr, preset), f"{win}{label}", quiet=True):
+        return None
+    tp, sl, mh = float(preset["tp_pct"]), float(preset["sl_pct"]), int(preset["max_hold"])
+    base, _, top3, n = _policy_stats(bars_by_code, tr, tp, sl, mh)
+    wide = _policy_stats(bars_by_code, tr, tp * 3.0, sl, mh)[0]
+    narrow = _policy_stats(bars_by_code, tr, tp * 0.5, sl, mh)[0]
+    return (top3 / base if base else float("nan"), wide - narrow, base, narrow, wide, n)
+
+
+def _all_windows(family: str, preset_name: str, split: int = 0) -> int:
     """§13.202(g) 的**可证伪推论**: 「宽 TP 受益多少」应由该窗的**尾部集中度**决定。
 
     逐窗在**基线政策**下量两个量 (全在同一批入场、同一批股数上):
@@ -319,13 +338,19 @@ def _all_windows(family: str, preset_name: str) -> int:
       `S` = Σ(tp×3.0) − Σ(tp×0.5)   (宽减窄; >0 ⇒ 该窗要宽)
     机理预测: **T 高的窗 S 应当为正、T 低的窗 S 为负 ⇒ 按 T 排序与按 S 排序同序。**
 
+    `split=N>0` 时 (§13.204): 把每窗的入场按 `entry_date` 切成 N 个**连续块**, **逐块**算 `T`/`S`
+    —— 这不需要任何额外模拟 (反事实把入场固定住了 ⇒ 任意子集都能重算),
+    用来问「`S` 的符号是**时期性质**还是**成交层特异**」。
+    ⚠️ 切块后 n 很小 ⇒ 每行都**带着笔数**读; 且这是**同一个窗内的子样本**, 不是新窗、不是样本外。
+
     ⚠️ **每个窗都过一遍 §13.199 的自检**; 任何一窗复现不了基线 ⇒ 该窗作废 (不静默略过)。
     ⚠️ 独立单位: `IND` 与 `IS2` 时间**重叠** ⇒ 有效独立单位 ≈ 4 而非 5 (§13.192)。
     """
-    print(f"\n=== --all-windows: {family} / {preset_name} ===")
+    print(f"\n=== --all-windows: {family} / {preset_name}"
+          + (f"  (split={split})" if split else "") + " ===")
     print(f"  {'窗口':<7}{'笔数':>5}{'基线毛 Σ':>14}{'T=top3/Σ':>11}"
           f"{'Σ(tp×0.5)':>14}{'Σ(tp×3.0)':>14}{'S=宽−窄':>14}{'符号':>7}")
-    rows, dead = [], []
+    rows, dead, flip_wins = [], [], []
     for win, (w0, w1) in WINDOWS.items():
         preset, panel, res = _load(family, preset_name, w0, w1)
         tr = pd.DataFrame(res["trades"]).copy()
@@ -335,19 +360,59 @@ def _all_windows(family: str, preset_name: str) -> int:
         tr["exit_date"] = pd.to_datetime(tr["exit_date"])
         bars_by_code = {c: s.reset_index(drop=True)
                         for c, s in panel.groupby("thscode", sort=False)}
-        if not _self_check(_build_df(bars_by_code, tr, preset), win, quiet=True):
+
+        if not split:
+            r = _stats_row(win, "", bars_by_code, tr, preset)
+            if r is None:
+                dead.append(win); continue
+            T, S, base, narrow, wide, n = r
+            rows.append((win, n, base, T, S))
+            print(f"  {win:<7}{n:>5}{base:>+14,.0f}{T:>11.1%}"
+                  f"{narrow:>+14,.0f}{wide:>+14,.0f}{S:>+14,.0f}{'宽' if S > 0 else '窄':>7}")
+            continue
+
+        # --- split 模式: 窗内切成连续块, 逐块算 ---
+        tr = tr.sort_values("entry_date").reset_index(drop=True)
+        whole = _stats_row(win, "整窗", bars_by_code, tr, preset)
+        if whole is None:
             dead.append(win); continue
-        tp, sl, mh = float(preset["tp_pct"]), float(preset["sl_pct"]), int(preset["max_hold"])
-        base, _, top3, n = _policy_stats(bars_by_code, tr, tp, sl, mh)
-        wide = _policy_stats(bars_by_code, tr, tp * 3.0, sl, mh)[0]
-        narrow = _policy_stats(bars_by_code, tr, tp * 0.5, sl, mh)[0]
-        T = top3 / base if base else float("nan")
-        S = wide - narrow
-        rows.append((win, n, base, T, S))
-        print(f"  {win:<7}{n:>5}{base:>+14,.0f}{T:>11.1%}"
-              f"{narrow:>+14,.0f}{wide:>+14,.0f}{S:>+14,.0f}{'宽' if S > 0 else '窄':>7}")
+        bounds = [int(round(i * len(tr) / split)) for i in range(split + 1)]
+        signs, blk = [], []
+        for b in range(split):
+            seg = tr.iloc[bounds[b]:bounds[b + 1]]
+            r = _stats_row(win, f"#{b + 1}", bars_by_code, seg, preset)
+            if r is None:
+                continue
+            T, S, base, narrow, wide, n = r
+            signs.append(1 if S > 0 else -1)
+            blk.append((b + 1, n, base, T, narrow, wide, S,
+                        f"{str(seg['entry_date'].iloc[0])[:10]}..{str(seg['entry_date'].iloc[-1])[:10]}"))
+            rows.append((f"{win}#{b + 1}", n, base, T, S))
+        if len(blk) < 2:
+            dead.append(win); continue
+        flipped = len(set(signs)) > 1
+        if flipped:
+            flip_wins.append(win)
+        for b, n, base, T, narrow, wide, S, span in blk:
+            print(f"  {win+'#'+str(b):<7}{n:>5}{base:>+14,.0f}{T:>11.1%}"
+                  f"{narrow:>+14,.0f}{wide:>+14,.0f}{S:>+14,.0f}"
+                  f"{'宽' if S > 0 else '窄':>7}   {span}")
+        # ★ 免费的一致性检查: `S` 是**逐笔 P&L 之差的和** ⇒ 对**不相交**的入场子集**可加**
+        #   ⇒ 三个块的 `S` 必须**精确**加回整窗的 `S`。不对 ⇒ 分块或重放写错了。
+        win_S = sum(x[6] for x in blk)
+        ok_add = abs(win_S - whole[1]) < 1.0
+        print(f"  {'':<7}⇒ 该窗内 `S` 的符号 **{'变号' if flipped else '稳定'}**"
+              f"  · 三块 S 合计 {win_S:>+14,.0f} vs 整窗 {whole[1]:>+14,.0f}"
+              f"  ⇒ 可加性自检 **{'过' if ok_add else '⛔ **不过** (分块或重放写错了)'}**")
     if dead:
         print(f"  ⛔ 自检未过的窗**作废**: {dead}")
+
+    if split:
+        tot = len({r[0].split('#')[0] for r in rows})
+        print(f"\n  ⇒ **{len(flip_wins)}/{tot} 个窗在自己的子样本里就变号**: {flip_wins}")
+        print("""  读法: 若 `S` 是**时期性质**, 同一窗的子块应当同号。变号 ⇒ 它是**成交层特异**。
+  ⚠️ 每块 n 很小 (见笔数列) ⇒ 只作**一致性检查**; 且子样本不是新窗, 不是样本外。""")
+        return 0
 
     ok = [r for r in rows if r[3] == r[3]]
     by_T = [r[0] for r in sorted(ok, key=lambda r: r[3])]
@@ -361,6 +426,7 @@ def _all_windows(family: str, preset_name: str) -> int:
     print(f"  ⇒ S>0 的窗 **{n_pos}/{len(ok)}** · T>0 的窗 **{n_hiT}/{len(ok)}**")
     print("""  读法: 机理说「T 高 ⇒ 要宽」。同序 = 支持; 乱序 = 该机理**降级为对两窗的事后描述**。
   ⚠️ 排序一致在 4 个单位上是很弱的检验 ⇒ 只作**一致性检查**, 不当作"证明了机理"。""")
+    return 0
 
 
 def main() -> int:
@@ -375,11 +441,14 @@ def main() -> int:
                     help="在同一批入场上一次只动一根轴, 只报形状 (±1.0 那点有自检); 不报最优")
     ap.add_argument("--all-windows", action="store_true",
                     help="五个窗逐个跑: 量「尾部集中度 T」与「宽减窄 S」, 查机理预测 (同序?)")
+    ap.add_argument("--split", type=int, default=0,
+                    help="配合 --all-windows: 把每窗入场按时间切成 N 个连续块, 逐块算 T/S "
+                         "(零额外模拟; 用来问 S 的符号是时期性质还是成交层特异)")
     args = ap.parse_args()
 
     if args.all_windows:
         preset_name = args.preset or DEFAULTS["uptrend_pullback"][0]
-        return _all_windows(args.family, preset_name)
+        return _all_windows(args.family, preset_name, split=args.split)
 
     preset_name, win = DEFAULTS.get(args.family, (None, None))
     preset_name = args.preset or preset_name
