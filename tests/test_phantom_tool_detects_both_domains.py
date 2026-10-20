@@ -57,8 +57,15 @@ from tests.conftest import require_market_db
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def _tool():
-    return importlib.import_module("chase_up.audit_phantom")
+#: 读 trades.csv 的 phantom 检测器 —— **一族两个**(附一百零七):
+#: `uptrend_pullback/audit_phantom.py` 自称与 chase 版"同构",实测确实同构 ⇒ 同款盲区同款修。
+#: (`cycle_price_action/audit_phantom.py` 是**另一种**:它做的是**源码级**审计(`checks[...]`),
+#:  不读交易明细,故不在本族内。)
+TRADE_CSV_TOOLS = ("chase_up.audit_phantom", "uptrend_pullback.audit_phantom")
+
+
+def _tool(mod_name: str):
+    return importlib.import_module(mod_name)
 
 
 def _opens(code: str, d: str) -> tuple[float, float, float]:
@@ -82,13 +89,13 @@ def _opens(code: str, d: str) -> tuple[float, float, float]:
     return float(row[0]), float(row[1]), float(row[2])
 
 
-def _run(tmp_path: Path, code: str, d: str, exit_price: float) -> int:
-    p = tmp_path / "t.csv"
+def _run(tmp_path: Path, mod_name: str, code: str, d: str, exit_price: float) -> int:
+    p = tmp_path / f"{mod_name.replace('.', '_')}.csv"
     pd.DataFrame([{
         "thscode": code, "entry_date": d, "exit_date": d,
         "exit_price": exit_price, "exit_reason": "TP",
     }]).to_csv(p, index=False)
-    return int(_tool().audit_trades_csv(p).get("phantom", -1))
+    return int(_tool(mod_name).audit_trades_csv(p).get("phantom", -1))
 
 
 #: 高价票:旧判据在这里**能**触发(qfq 与 raw 差 601 元) ⇒ 用来钉"域"这一半。
@@ -98,25 +105,27 @@ _HIGH = ("688256.SH", "2026-05-07")
 _LOW = ("600795.SH", "2025-09-26")
 
 
+@pytest.mark.parametrize("mod_name", TRADE_CSV_TOOLS)
 @pytest.mark.parametrize("code_date", [_HIGH, _LOW], ids=["高价票", "低价票"])
 @pytest.mark.slow
-def test_both_adjusted_domains_are_detected_but_raw_is_not(tmp_path, code_date) -> None:
+def test_both_adjusted_domains_are_detected_but_raw_is_not(tmp_path, mod_name, code_date) -> None:
     require_market_db()
     code, d = code_date
     qfq, raw, hfq = _opens(code, d)
 
-    assert _run(tmp_path, code, d, qfq) >= 1, f"{code} {d}: 出场价取自 **qfq** 域却未报"
+    assert _run(tmp_path, mod_name, code, d, qfq) >= 1, f"{mod_name} {code} {d}: qfq 域未报"
     if abs(hfq / raw - 1.0) > 5e-3:
-        assert _run(tmp_path, code, d, hfq) >= 1, (
-            f"{code} {d}: 出场价取自 **hfq** 域(今天的**信号**域)却未报 —— 这是附一百零六 修的那半"
+        assert _run(tmp_path, mod_name, code, d, hfq) >= 1, (
+            f"{mod_name} {code} {d}: 出场价取自 **hfq**(今天的**信号**域)却未报"
         )
-    assert _run(tmp_path, code, d, raw) == 0, (
-        f"{code} {d}: 出场价取自 **raw**(正确的执行域)却被误报"
+    assert _run(tmp_path, mod_name, code, d, raw) == 0, (
+        f"{mod_name} {code} {d}: 出场价取自 **raw**(正确的执行域)却被误报"
     )
 
 
+@pytest.mark.parametrize("mod_name", TRADE_CSV_TOOLS)
 @pytest.mark.slow
-def test_the_relative_threshold_is_necessary_on_low_priced_names(tmp_path) -> None:
+def test_the_relative_threshold_is_necessary_on_low_priced_names(tmp_path, mod_name) -> None:
     """**证明那个修法是必要的**:低价票上,旧判据的两个绝对阈值都不成立 ⇒ 它必然漏。
 
     (这条不打桩、不 mock —— 直接算旧判据的两个条件,让"它漏"这件事本身成为断言。
@@ -133,4 +142,45 @@ def test_the_relative_threshold_is_necessary_on_low_priced_names(tmp_path) -> No
     )
     assert abs(qfq / raw - 1.0) > 5e-3, "夹具失效:该样本的相对差不够大"
     # ⇒ 旧判据在这只票上必然漏,而新判据(相对)照常命中
-    assert _run(tmp_path, code, d, qfq) >= 1, "新判据在这只低价票上未命中"
+    assert _run(tmp_path, mod_name, code, d, qfq) >= 1, "新判据在这只低价票上未命中"
+
+
+def test_every_trade_csv_phantom_tool_uses_the_relative_dual_domain_rule() -> None:
+    """**族守卫**:凡读 trades.csv 的 phantom 检测器,都必须用**相对**阈值 + **两个**复权域。
+
+    (附一百零六 只修了 chase 版;附一百零七 发现 uptrend 版**同构且同盲**。
+     这条把"族"钉住 —— 第三个同类工具不能悄悄带着绝对阈值进来。)
+    """
+    import re
+
+    family = []
+    for f in sorted(REPO_ROOT.glob("*/audit_phantom.py")):
+        src = f.read_text(encoding="utf-8")
+        if "read_csv" in src:          # 读交易明细的那种;源码级审计(cycle)不在族内
+            family.append((f, src))
+    assert len(family) == len(TRADE_CSV_TOOLS), (
+        f"读 trades.csv 的 phantom 工具实际有 {len(family)} 个({[f.name for f, _ in family]}),"
+        f"而 TRADE_CSV_TOOLS 里写了 {len(TRADE_CSV_TOOLS)} 个 —— 族变了,请同步"
+    )
+    bad = []
+    for f, src in family:
+        problems = []
+        # ⚠️ 判据要落在**用法**上,不是"常量有没有声明":实测第一版查的是
+        # "_PRICE_MATCH_REL 出现过" + "hfq_open 出现过",而把判据退回旧版时这两样**都还在**
+        # (常量仍声明、查询仍取 hfq_open)⇒ 它**没红**。这正是本会话反复记的那条:
+        # 守卫要盯"有没有在用",不是"有没有那个名字"。
+        if not re.search(r"<\s*_PRICE_MATCH_REL", src):
+            problems.append("判据没在用相对阈值 `_PRICE_MATCH_REL`")
+        if not re.search(r"<=\s*_MIN_ADJ_GAP_REL", src):
+            problems.append("没在用 `_MIN_ADJ_GAP_REL`")
+        # 两个复权域都要**进循环**(qfq 与 hfq 同时出现在同一个 for 的元组里)
+        if not re.search(r'for name, adj_open in \(\(\s*"qfq".*"hfq"', src, re.S):
+            problems.append("判据没有同时对 qfq 与 hfq 两个域求值")
+        if not re.search(r"abs\(ep\s*/\s*adj_open", src):
+            problems.append("价格匹配不是**相对**判据(未见 `abs(ep / adj_open` )")
+        if problems:
+            bad.append(f"{f.relative_to(REPO_ROOT)}: {';'.join(problems)}")
+    assert not bad, (
+        "§3: 以下 phantom 检测器**没有在用**「相对阈值 + 双复权域」的判据"
+        "(低价股上会静默失明、hfq 域的错误看不见):\n  " + "\n  ".join(bad)
+    )
