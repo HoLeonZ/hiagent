@@ -1524,6 +1524,20 @@
 >   * **§5**: +30 次测量 (5 窗 × 3 块 × 2 取值) ⇒ `n_comparisons` **196 → 226** (更保守);
 >     ⚠️ 子样本**不是新窗、不是样本外**; ⚠️ 每块 n 小 (`IS2` 只 5–6 笔), 但 `W2` 的块有 28–29 笔也变号
 >     ⇒ **不能全靠小样本解释**。
+> * ✅ **§13.205: 全量回归的失败清单**第一次**落成一张表** —— 并**实测**它与本轮改动无关。**
+>   * 实测 (2026-10-20 全量): **`49 failed, 1074 passed, 22 skipped, 11 xfailed` (36m31s)**;
+>     对比本册上次记载 (2026-10-17): **61 failed / 880 passed** ⇒ **失败 −12 · 通过 +194**
+>     (通过数的大头是本循环后续补的守卫)。23 个文件归并成表 (§13.205(c))。
+>   * ★★ **归因是实测的**: 把 `presets.py` 取到**第一次 bump 之前**的提交 (`96e68c8`, `n_comparisons=162`),
+>     跑同一批 49 个用例 ⇒ **也是 49 failed, 清单逐条 diff 完全一致** ⇒
+>     **三次 bump (162→190→196→226) 对测试结果的影响是 0。**
+>   * ⚠️ **方法更正 (已记)**: **已提交**的改动 `git stash` **什么都不做** (它回的是 HEAD, 而 HEAD 已含该改动) ——
+>     本节第一版就踩了 (`grep '"n_comparisons": 226'` 仍命中才发现);
+>     **回溯历史版本的唯一正确工具是 `git checkout <commit> -- <path>`**。§13.88 那句在已提交场景再中一次。
+>   * ★ **顺带一条对当前最优有用的读数**: `test_uptrend_pullback_sha256_baseline` 失败的是
+>     **`v19`/`v20`, 不是 `v22`** ⇒ 与 §13.201 量到的"v22 交易层零漂移"一致。
+>   * ⚠️ **本节不做逐条根因分析、不声称任何一条良性、不重生成 golden baseline** (§6 禁令);
+>     且**一次运行不是"稳定清单"** ⇒ 记的是**一次实测 + 一次归因对照**。
 > * ⚠️ **§3.1 与 §3.2 是留档, 不是行动清单** —— 见两节各自的更正横幅。
 >   **文档的阅读顺序与结论的时间顺序相反, 所以旧节可能比新节更"乐观"。**
 ---
@@ -17570,3 +17584,59 @@ W2·tp 的 top-3 占比: **−64.6% → −285.7% → +269.2% → 117.7% → 185
 * ⚠️ 每块 n 很小 (`IS2` 只有 5–6 笔) ⇒ 变号**部分**可归因于小样本;
   但 `W2` 的块也有 28–29 笔却仍变号 ⇒ **不能全靠小样本解释**;
 * ⚠️ 仍未做: §13.200 的**净**读数; 用**逐笔 tp/sl 分布** (而非共值点) 去拆那个几何通道。
+
+---
+
+### 13.205 ✅ **全量回归的失败清单**第一次**落成一张表** —— 并**实测**它与本轮的改动无关
+
+#### (a) 为什么这一轮要做它
+本册 §6 那条规矩是: **"Pre-existing failures are registered debt with an owner, not background noise."**
+—— 但本循环此前**只有计数** (61 failed / 880 passed, 2026-10-17), **没有清单**。
+**没有清单的"债"不能算已登记** (它既没有 owner 也没有条目), 只能算"背景噪音" —— 正是 §6 禁止的那种。
+
+#### (b) 实测 (2026-10-20, 全量)
+```
+49 failed, 1074 passed, 22 skipped, 11 xfailed in 2191.69s (0:36:31)
+```
+对比本册上一次的记载 (2026-10-17): **61 failed / 880 passed**
+⇒ **失败 −12 · 通过 +194** (通过数的大头来自本循环后续补的守卫, 与 §13.120/§13.144/§13.199 等一致)。
+
+#### (c) 清单 (按文件归并, 共 23 个文件)
+| 条数 | 文件 | 主题 |
+|---|---|---|
+| **8** | `test_chase_up_no_lookahead.py` | chase 的 golden-hash (本册 §13.1xx 记的"两段漂移") |
+| **4** | `test_preset_to_engine_api_conformance.py` | chase/short/cycle 的 preset 键到达率 |
+| **4** | `test_cycle_limit_up_guard.py` | cycle 的涨停守卫 |
+| 3 | `test_equity_curve_cash_walk_output.py` | 权益曲线/现金走动产物 |
+| 3 | `test_corporate_actions_gap.py` | 公司行动 |
+| 3 | `test_corporate_actions_dividend_deposit.py` | 红利入账 |
+| 3 | `test_backtest_metrics_canonical_schema.py` | 指标 schema |
+| **2** | `test_uptrend_pullback_sha256_baseline.py` | **`v19`/`v20` 的成交表哈希 (不是 `v22`)** |
+| 2 | `test_limit_up_guard_cross_engine.py` | 跨引擎涨停 |
+| 2 | `test_dual_price.py` | 双价 |
+| 2 | `test_cash_walk_and_metrics_provenance.py` | 出处 |
+| 1 ×12 | `sql_order_by_discipline_4engine` · `section4_microstructure_gap` · `round30_cycle_limit_up_guard` · `phase3_v3_bugfixes` · `metrics_output_conformance` · `metrics_basis_table_is_pinned` · `immutable_state_4engine` · `cycle_price_action_sha256_baseline` · `cycle_buy_execution_bar` · `claudemd_full_audit` · `chase_up_phase2_sl_first` · `chase_up_phase2_limit_up_skip` · `assert_vs_raise_audit` | 各 1 条 |
+
+#### (d) ★★ **归因是**实测**的, 不是推理的** —— 而且这次的方法与 §13.201 不同
+本轮我改过三个文件 (`docs/strategy_mining_log.md` · `tools/same_entries_exit_policy_cf.py` ·
+`uptrend_pullback/presets.py` 里的注释与 `n_comparisons` 162→190→196→226)。
+**做法**: 把 `presets.py` 取到**我第一次 bump 之前**那个提交 (`96e68c8`, 仍是 `n_comparisons=162`),
+**跑同一批 49 个用例**:
+```
+49 failed in 10.01s        (162 版)
+49 failed, 1074 passed …   (226 版)
+⇒ 失败清单逐条 diff: **完全一致**
+```
+⇒ **三次 bump 对测试结果的影响是 0。**
+> ⚠️ **方法更正 (值得记)**: §13.201 我用的 `git stash push -- <文件>` 当时**有效**, 因为那处改动**还没提交**;
+> 而**已提交**的改动 `git stash` **什么都不做** (它回的是 HEAD, 而 HEAD 已经含我的改动) ——
+> 本节第一版就踩了这个, `grep '"n_comparisons": 226'` 仍命中, 才发现。
+> ⇒ **回溯历史版本的唯一正确工具是 `git checkout <commit> -- <path>`** (或 `git show`), 不是 `stash`。
+> ★ **"我以为我把文件改回去了" 与 "文件真的改了" 是两件事** —— §13.88 那句在**已提交**的场景下再中一次。
+
+#### (e) ⚠️ 本节**不**做的事 (边界)
+* **不做逐条根因分析** —— 那是一件独立的工作, 且 49 条里多数需要读各自的领域 (公司行动/双价/涨停守卫);
+* **不声称其中任何一条是良性的** —— 只登记"它们存在、与本轮改动无关";
+* **不重生成任何 golden baseline** (§6 的既定禁令: 未验证的漂移不得被锁成金标准);
+* ⚠️ **一次运行不是"稳定清单"**: 49 这个数若再跑可能变 (§13.94 的"写下即过期") ⇒
+  本节记的是**一次实测** + **一次归因对照**, 不是一个被钉住的状态。
