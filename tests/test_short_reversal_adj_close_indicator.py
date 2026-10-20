@@ -171,3 +171,95 @@ def test_short_reversal_strategy_no_longer_constructs_sma_from_d_close() -> None
         f"  ATR(d, ...) = {has_buggy_atr}\n"
         f"Per §3 dual-price contract, indicators MUST use adj_close."
     )
+
+# ---------------------------------------------------------------------------
+# 附四十七(2026-10-17):同一份契约在**扫描路径**上也要成立
+#
+# N5 的契约锁(本文件上半部分)只覆盖了**策略构造**:它断言 strategy 的
+# SMA/MACD/ATR 取自 adj_close。而信号扫描走的是完全另一条路 ——
+# `scan_signals_fast._compute_indicators` 自己用 pandas 算指标,数据来自
+# `_panel_loader.load_panel_for_signal`,而那个 loader 的 SELECT **只有 v_daily
+# (= raw)**,没有 adj_* ⇒ 扫描的 5 条件与 F–K 整体算在**原始价**上。
+# 实测暴露面:adj_close != close 的行占 **94%**,价格水平最高差 28%
+# (000001.SZ 2026-01-12:11.48 vs 14.74)。
+#
+# 下面两条把这个缺口钉住:①loader 必须暴露 adj_*(且缺复权视图时给出 NULL 而不是崩);
+# ②扫描器的条件必须**跟随复权价** —— 用一个"raw 与 adj 结论相反"的合成面板,
+# 两侧都跑,结果必须分道扬镳。
+# ---------------------------------------------------------------------------
+
+_CFG = {
+    "tp_pct": 0.06, "sl_pct": 0.05, "max_hold": 5,
+    "pct_chg_low": 0.02, "pct_chg_high": 0.06,
+    "d_mode": "d_only",          # 只看 dif<0,避免把 MACD 收敛细节写进夹具
+    "a_condition": "default",
+}
+
+
+def _diverged_panel() -> pd.DataFrame:
+    """raw 长期下行(< 自己的 MA60);adj 恒为 100(= 自己的 MA60)。
+
+    ⇒ A 条件在 **raw 上成立**、在 **adj 上不成立**。若扫描器跟随复权价,
+    这个面板**不该**产出信号;若它(错)用原始价,则会产出信号。
+    """
+    n = 130
+    raw = np.concatenate([np.linspace(120.0, 80.0, n - 3), [82.0, 84.0, 86.1]])
+    adj = np.full(n, 100.0)
+    dates = pd.bdate_range("2025-01-01", periods=n)
+    return pd.DataFrame({
+        "thscode": "X.SH", "date": dates,
+        "open": raw, "high": raw * 1.01, "low": raw * 0.99, "close": raw,
+        "adj_open": adj, "adj_high": adj * 1.01, "adj_low": adj * 0.99,
+        "adj_close": adj, "amount": np.full(n, 5e7), "volume": np.full(n, 1e6),
+    })
+
+
+def _hits(panel: pd.DataFrame) -> int:
+    from short_reversal.scan_signals_fast import _compute_indicators, _filter_signals
+
+    df = _compute_indicators(panel)
+    return len(_filter_signals(df, dict(_CFG), panel["date"].iloc[-1].strftime("%Y-%m-%d")))
+
+
+def test_scanner_follows_adj_close_when_the_two_domains_disagree() -> None:
+    """扫描器必须按**复权价**判定 ⇒ 该面板(adj 上 A 不成立)不得产出信号。"""
+    assert _hits(_diverged_panel()) == 0, (
+        "扫描器在 adj 域上产出了信号 —— 说明它仍在用原始价算条件(§3 violation)"
+    )
+
+
+def test_the_same_panel_on_raw_would_produce_a_signal() -> None:
+    """**双向对照**:同一面板若丢掉 adj_*(= 修复前的行为)则**会**产出信号。
+
+    没有这一半,"0 命中"无法区分"跟随了复权价"与"夹具压根不触发任何条件"。
+    """
+    raw_only = _diverged_panel().drop(columns=[c for c in ("adj_open", "adj_high",
+                                                          "adj_low", "adj_close")])
+    assert _hits(raw_only) == 1, (
+        "丢掉 adj_* 后也应命中 —— 否则本组夹具不具判别力(说明 A 条件在此面板上"
+        "本来就成立/不成立,与价格域无关)"
+    )
+
+
+def test_the_signal_loader_exposes_adjacent_adjusted_columns(tmp_path: Path) -> None:
+    """§3:扫描用的 loader 必须给出 adj_* 列。
+
+    缺 `v_daily_hfq` 的库(合成夹具)里也应给出 **NULL 的 adj_*** 而不是抛错 ——
+    "没有复权数据"是一个**已声明**的回退状态(策略侧与扫描器侧都定义了回退规则),
+    不是崩溃。
+    """
+    import duckdb
+
+    from short_reversal._panel_loader import load_panel_for_signal
+
+    db = tmp_path / "syn.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("CREATE TABLE v_daily (thscode VARCHAR, date DATE, open DOUBLE, "
+                "high DOUBLE, low DOUBLE, close DOUBLE, amount DOUBLE, volume DOUBLE)")
+    con.execute("INSERT INTO v_daily VALUES ('X.SH', DATE '2025-01-02', 1,1,1,1,5e7,1e6)")
+    con.close()
+
+    df = load_panel_for_signal(db, "2025-01-10")
+    for col in ("adj_open", "adj_high", "adj_low", "adj_close"):
+        assert col in df.columns, f"loader 未暴露 {col}"
+    assert df["adj_close"].isna().all(), "缺复权视图时 adj_* 应为 NULL(触发已声明的回退)"

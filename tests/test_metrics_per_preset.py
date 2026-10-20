@@ -180,3 +180,12 @@ def test_short_reversal_main_writes_per_preset_metrics_json(tmp_path: Path) -> N
     )
     for key in ("preset", "cagr", "sharpe", "win_rate", "trades_count"):
         assert key in stripped
+
+    # 2026-10-17: 逐 bar 权益曲线同样**不得**进入聚合 metrics JSON —— 它的产物是
+    # equity_curve.csv。附三十八 把它接入 metrics(当 writer 的输入通道)时漏了这条
+    # 既有约定(Tick 58:metrics JSON 只放聚合键)。
+    sample_metrics["equity_curve"] = [{"date": "2026-01-02", "equity": 1.0}] * 3
+    stripped2 = _strip_trades_for_json(sample_metrics)
+    assert "equity_curve" not in stripped2, (
+        "逐 bar 曲线必须剥掉 —— 200 行塞进『聚合指标』文件正是 Tick 58 要防的事"
+    )

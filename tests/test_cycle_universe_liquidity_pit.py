@@ -39,9 +39,12 @@ avg_turn = df.groupby("thscode")["amount"].mean()          # 全段历史的**�
 
 * 第 1 条是**正向对照** —— 两段都达标的票必须入选。它证明本文件的机制不空转
   (若哪天 `load_universe_data` 干脆返回空集, 它会先红)。
-* 第 2 条是**真判据** —— 今天 **xfail**(§13.27 登记的债)。
-  用 `strict=True`: 一旦有人把流动性查询按 `asof` 收口, 它会 **XPASS ⇒ 测试失败**,
-  逼着来的人把 `xfail` 标记删掉并登记结果漂移 —— **不允许"修好了但债还挂着"**。
+* 第 2 条是**真判据** —— ✅ **2026-10-20 合并 main 后已转为 PASS**: main 的
+  `data_feed.py` 把流动性查询按 `asof` 收口(`AND date <= asof`), 本判据的实现
+  因此落地, 原先的 `xfail(strict=True)` 已按它自己的要求**删除**。
+  ⚠️ 这同时是一次**结果漂移**(§13.27 → §13.214 登记): 该收口让"用窗口之后的数据
+  换来入选资格"的票退出 universe(实测 **2,990 → 2,717**), 会改变含该形态标的的
+  窗口的交易清单。
 """
 from __future__ import annotations
 
@@ -103,12 +106,6 @@ def test_never_liquid_stock_is_excluded(tmp_path):
     assert "600004.SH" not in universe
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="§13.27: 流动性筛选用的是**全历史** mean(amount), 含 asof 之后的数据 "
-           "⇒ 用未来流动性选票 (§1/§3 违反)。实测差异 277/2990 只 (9.4%)。"
-           "修好后本测试会 XPASS(strict) ⇒ 删掉这个 xfail 并登记结果漂移。",
-)
 def test_stock_liquid_only_after_asof_is_excluded(tmp_path):
     """真判据: `asof` 前不达标、之后才变大的票, **不得**入选。
 

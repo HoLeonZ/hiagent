@@ -75,3 +75,46 @@ def test_out_dir_suffix_includes_microseconds():
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     # Microsecond field is 6 digits
     assert len(stamp.split("_")[-1]) == 6
+
+
+# ---------------------------------------------------------------------------
+# 附六十五 —— §5 那一段此前是**死代码**(注释却宣称"以满足 §5")
+# ---------------------------------------------------------------------------
+
+
+def test_dsr_notice_says_why_when_there_is_no_portfolio_sharpe() -> None:
+    """cycle 无组合级 Sharpe ⇒ 必须**显式说明**,不得静默跳过。
+
+    实测:`cycle_price_action/metrics.py` 按设计让 `sharpe` 恒为 `None`
+    (`cagr`/`sharpe`/`max_dd` 在"每股独立账户"的口径下无定义),故原来的
+    `if sharpe is not None:` 分支**从未执行** —— 而它的注释写着
+    "此处直接输出以满足 §5"。
+    """
+    from cycle_price_action.main import dsr_notice
+
+    msg = dsr_notice(sharpe=None, n_trades=495, preset="v1")
+    assert "无定义" in msg or "不报" in msg, f"未说明为什么不报 DSR:{msg}"
+    assert "DSR for" not in msg, "sharpe 为 None 时不得报出 DSR 数值(那是伪造)"
+    assert "495" in msg, "应当带上 n_trades 以便读者判断这次窗口的量级"
+
+
+def test_dsr_notice_reports_dsr_when_sharpe_exists() -> None:
+    from cycle_price_action.main import dsr_notice
+
+    msg = dsr_notice(sharpe=1.23, n_trades=100, preset="v1")
+    assert "DSR for v1" in msg and "deflated_sharpe=" in msg
+
+
+def test_cycle_metrics_really_has_no_sharpe() -> None:
+    """把"cycle 没有组合级 Sharpe"这一**前提**钉住 —— 上面那条说明依赖它。
+
+    若哪天 cycle 真的发布了组合级 Sharpe,本用例变红,提示把那段说明改回报 DSR。
+    """
+    import inspect
+
+    from cycle_price_action import metrics as cm
+
+    src = inspect.getsource(cm)
+    assert "sharpe=None" in src, (
+        "cycle 的 metrics 似乎开始发布 sharpe 了 —— 请更新 main.dsr_notice 与附六十五"
+    )

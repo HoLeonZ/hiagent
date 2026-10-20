@@ -21,7 +21,12 @@ import json
 import sys
 from pathlib import Path
 
-ROOT = Path("/Users/holeon/code/hiagent")
+# §0 (audit P3, 2026-10-15): 原为硬编码绝对路径 Path("/Users/holeon/code/hiagent")。
+# 后果有两层:(a) 脚本不可复现 —— 在任何别的检出里运行都会去改**另一个**仓库的
+# golden(实测:在 worktree 里跑,却把哈希写进了共享树,而测试读的是 worktree,
+# 两边永远对不上,重刷也修不好);(b) 会静默污染不属于它的工作树。
+# 现从本文件位置推导。
+ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from chase_up.backtest import run_backtest
@@ -47,6 +52,9 @@ PRESETS = [
 ]
 
 GOLDEN_DIR = ROOT / "tests" / "golden"
+# 本脚本**不写**运行产物(只锁哈希),故也不创建 results/:创建它会把
+# "目录不存在 → skip" 的产物 gap-tracker 变成 "目录存在但无产物 → fail",
+# 等于用一个空目录反过来污染产物检查。
 RESULTS_DIR = ROOT / "chase_up" / "results"
 WINDOW = ("2025-09-19", "2026-09-19")
 
@@ -69,20 +77,21 @@ def main() -> None:
     print(f"[regen] window={WINDOW[0]}..{WINDOW[1]} universe={len(universe)}\n")
 
     for preset in PRESETS:
-        # 删除旧 trades.csv 强制重新生成
         short_name = preset.replace("chase_", "")  # v5_pos2_...
-        trades_csv = RESULTS_DIR / f"{short_name.split('_pos')[0]}_trades.csv"
-        if trades_csv.exists():
-            trades_csv.unlink()
 
         # 跑 backtest
         res = run_backtest(preset, WINDOW[0], WINDOW[1], DB_PATH, panel_ind=panel_ind)
         trades_df = res["trades"]
-        trades_df.to_csv(trades_csv, index=False)
-        # 测试侧用 pd.read_csv + to_csv, 必须 round-trip 同一份 trades.csv 才能 hash 一致
-        import pandas as pd
-        reread = pd.read_csv(trades_csv)
-        new_hash = _hash_csv(reread)
+        # §6 (audit P3, 2026-10-15): 不再写 trades.csv。
+        # 本脚本的职责是锁定**成交列表哈希**,而不是产出运行产物。原来写 CSV 是因为
+        # 测试侧会 round-trip 读回;哈希已改为直接取 DataFrame,写盘遂成冗余 ——
+        # 而它会把 results/ 变成"有 trades.csv 却无 metrics.json"的半套产物,直接
+        # 触发两个 provenance gap-tracker(实测)。产物由真实回测产生,不由重刷脚本。
+        # §6 (audit P3, 2026-10-15): 哈希**直接从 DataFrame** 取,不做 CSV round-trip。
+        # 测试侧现在一律重跑并哈希 `df.to_csv(index=False)`(与 uptrend_pullback 的
+        # sha256 基线同口径)。原实现 round-trip 后哈希,与测试侧约定不一致 —— 两边
+        # 各自"对"却永远对不上,重刷也修不好。
+        new_hash = _hash_csv(trades_df)
         m = res["metrics"]
 
         # 更新 golden baseline
@@ -102,23 +111,13 @@ def main() -> None:
         old_hash = baseline.get("trades_csv_sha256", "?")
         baseline["trades_csv_sha256"] = new_hash
         baseline["trades_csv_rows"] = len(trades_df)
-        # 同步 metrics
-        baseline["metrics"]["trades"] = len(trades_df)
-        baseline["metrics"]["win_rate"] = round(m["win_rate"], 4)
-        baseline["metrics"]["total_return"] = round(m["total_return"], 4)
-        baseline["metrics"]["cagr"] = round(m["cagr"], 4)
-        baseline["metrics"]["sharpe"] = round(m["sharpe"], 2)
-        baseline["metrics"]["max_dd"] = round(m["max_dd"], 4)
-        baseline["metrics"]["tp_count"] = m["tp_count"]
-        baseline["metrics"]["sl_count"] = m["sl_count"]
-        baseline["metrics"]["time_count"] = m["time_count"]
-        baseline["metrics"]["eod_count"] = m.get("eod_count", 0)
-        baseline["metrics"]["profit_factor"] = round(m["profit_factor"], 2)
-        baseline["metrics"]["avg_net_return"] = round(m["avg_net_return"], 4)
-        baseline["metrics"]["exposure"] = round(m["exposure"], 3)
-        baseline["metrics"]["final_equity"] = m["final_equity"]
-        baseline["metrics"]["avg_hold_days"] = round(m["avg_hold_days"], 1)
-        baseline["metrics"]["max_hold_days"] = m["max_hold_days"]
+        # §7 (audit P3, 2026-10-15): golden 只锁**成交列表**(sha256)与
+        # 结构(行数 / 列),不再写回任何绩效指标。
+        # 理由:CLAUDE.md §7 明令"fresh clone 必须包含零历史绩效声明";
+        # 而这些数字可由当前代码 + 一条命令重新生成,属"失效结果"。
+        # 且它们会随每次重刷覆盖而漂移,成为与 sha256 不同步的第二份事实。
+        baseline.pop("metrics", None)
+
         baseline["v6_change_note"] = (
             "V6 (2026-09-22): chase_up/portfolio.py intraday tiebreak flipped "
             "TP-first → SL-first per CLAUDE.md §4 worst-case. Some TP exits "

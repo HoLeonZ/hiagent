@@ -250,3 +250,57 @@ def test_core_dual_price_provides_is_limit_up() -> None:
         # If core module doesn't exist yet, this is GREEN-by-absence
         # (chase + uptrend would fail differently — they're using it)
         return
+
+# ---------------------------------------------------------------------------
+# 附五十一(2026-10-17):入场涨停守卫必须**同域比较**(raw_open vs **raw**_prev_close)
+#
+# 缺陷:面板的 `raw_prev_close` 列在活库上 **100% NULL**(实测非空 0 / 10,364,755),
+# 于是守卫的 `_pc` 回退到 **adj prev_close**,再与 **raw open** 比较 —— **跨域比较**。
+# 两个域在该库里**系统性不同**(后复权普遍低于原始价)⇒ 比值被调整因子放大 ⇒
+# 守卫**过度触发**。实测**同一批候选 bar**:
+#     跨域判定「涨停开盘」102,641 次(**6.409%**)
+#   vs 同域判定「涨停开盘」  8,200 次(**0.512%**)
+# 即约 **94,000 次合法入场被误拒** —— §4 的涨停规则反而成了"少交易"的来源。
+# (而黄金基线**零漂移**:那些误拒发生在未被选中的候选 bar 上,故未改变已选中的成交。)
+#
+# 修:`_build_index` 按 `raw_close` 的 shift **自己算** `raw_prev_close`(遇停牌缺口时
+# 取上一根实际存在的 bar,这正是涨跌停比较该用的"前收")。
+# ---------------------------------------------------------------------------
+def test_entry_limit_up_guard_compares_raw_against_raw() -> None:
+    """构造「跨域会误判涨停、同域不会」的场景,钉住配对口径。"""
+    import numpy as np
+    import pandas as pd
+    import pytest
+
+    from chase_up.portfolio import _build_index
+    from core.dual_price import is_limit_up
+
+    n = 5
+    raw = 10.0
+    adj = 8.0  # 后复权低于原始价(与活库的普遍方向一致)
+    panel = pd.DataFrame({
+        "thscode": "X.SH",
+        "date": pd.bdate_range("2025-01-01", periods=n),
+        "open": adj, "high": adj, "low": adj, "close": adj,          # 复权域
+        "raw_open": raw, "raw_high": raw, "raw_low": raw, "raw_close": raw,
+        # 活库里这一列是 NULL;夹具照抄它的缺失状态
+        "raw_prev_close": np.full(n, np.nan),
+    })
+    j = 3
+    assert np.isnan(panel["raw_prev_close"].iloc[j]), "夹具前提:该列与活库一样缺失"
+
+    idx = _build_index(panel)["X.SH"]
+
+    assert idx["raw_prev_close"][j] == pytest.approx(raw), (
+        f"引擎未自己算出 raw 前收(得到 {idx['raw_prev_close'][j]!r}) —— "
+        "守卫会回退到复权前收,即跨域比较"
+    )
+
+    # 跨域配对(旧行为):raw_open=10 vs adj_prev=8 ⇒ 比值 +25% ⇒ **误判涨停**
+    assert is_limit_up(float(adj), raw, threshold=0.098) is True, (
+        "夹具前提:跨域配对必须会误判(否则本用例证明不了什么)"
+    )
+    # 同域配对(修复后):raw_open=10 vs raw_prev=10 ⇒ 比值 0 ⇒ 不判涨停
+    assert is_limit_up(float(idx["raw_prev_close"][j]), raw, threshold=0.098) is False, (
+        "同域配对仍判涨停 —— 平盘开盘被当成涨停封板,合法入场会被误拒"
+    )

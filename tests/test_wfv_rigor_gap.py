@@ -83,44 +83,35 @@ def test_short_reversal_grid_runner_has_walkforward() -> None:
 
 
 def test_sweep_dsr_test_coverage_catches_grid_runner() -> None:
-    """§5 Test coverage: the sweep-DSR guard must actually collect `**/grid*.py`.
+    """§5 Test coverage:in-sample grid 脚本必须被**某个守卫真的枚举到**。
 
-    ⚠️⚠️ **2026-10-19 (§13.101): 本测试此前恒绿, 而它想抓的洞一直开着。**
-    旧判据 = 对**整文件文本**做一次正则搜索, 找 grid 通配符 ——
-    而 `_collect_sweep_scripts` 的 docstring 里**恰好写着**
-    「额外 glob `**/grid*.py` 由 ... 单独 verify」
-    ⇒ **那句描述这个洞的注释, 把这条"断言这里有洞"的测试满足了。**
+    ⚠️ 附一百零九 重写:本用例此前的判据是
+    `re.search(r"\\*\\*?/grid\\*?\\.py", Path("tests/test_sweep_scripts_dsr.py").read_text())`
+    —— 而那个字符串在该文件里**只出现在一行注释**里(原话:
+    「额外 glob `**/grid*.py` 由 test_sweep_dsr_test_coverage_catches_grid_runner
+    单独 verify(避免与 `uptrend_pullback/grid.py` 共触发新 RED)」)。
+    ⇒ **判据认的是"提到",不是"做到"**;而"单独 verify"只钉了 `short_reversal/grid_runner.py`
+    **一个文件名**,于是 `uptrend_pullback/grid.py`(真正的 §5 缺口)两边都不在。
 
-    ⚠️ **我第一次"加固"也失败了, 而且失败方式一样**: 改成"取 AST 字符串常量、排除 docstring"
-    —— 结果被 `_XFAIL` 的**理由字符串**满足 (它同时含 `*`、`.py`、`grid`)。
-    **两次都是"判据的单位是文本, 而某段文字算数"。**
-
-    ⇒ 最终判据改为**看结果, 不看文本**: 直接调用那个收集器, 看它**实际收到了什么**。
-    (本册的纪律: **核对必须停在「直接调扫描器, 看它是否看见」**。)
+    现在改为断言**机制**:存在一个把 `*/grid*.py` **枚举出来**的守卫,且那个集合里
+    **每一个**都在 §5 惩罚指标的判据下。判据落在一个**可枚举的类**上,而不是一段文本。
     """
-    import importlib.util
-    import sys as _sys
-
-    test_path = Path("tests/test_sweep_scripts_dsr.py")
-    if not test_path.exists():
-        return  # Skip if test file removed
-    spec = importlib.util.spec_from_file_location("_sweep_dsr_guard_probe", test_path)
-    mod = importlib.util.module_from_spec(spec)
-    _sys.modules["_sweep_dsr_guard_probe"] = mod
-    spec.loader.exec_module(mod)
-
-    collected = [p.as_posix() for p in getattr(mod, "_ALL", [])]
-    assert collected, (
-        "§13.101: 收集器一个脚本都没收到 ⇒ 判据的扫描单位不存在 (那样本断言恒真)。"
+    from tests.test_in_sample_grid_scripts_report_penalty_metric import (
+        grid_sweep_scripts,
     )
-    grids = [c for c in collected if "grid" in Path(c).name]
-    assert grids, (
-        f"GAP CAPTURED: tests/test_sweep_scripts_dsr.py 的收集器**实际收到**的脚本里没有 grid:"
-        f"\n  {collected}\n"
-        f"⇒ `uptrend_pullback/grid.py`(真实的 itertools.product 网格, 且**无任何 §5 指标**)"
-        f"与 `short_reversal/grid_runner.py` 都会**逃过检测**。\n"
-        f"GREEN fix: 把 `**/grid*.py` 加进 glob。"
+
+    enumerated = grid_sweep_scripts()
+    on_disk = {
+        str(p.relative_to(Path(__file__).resolve().parents[1]))
+        for p in Path(__file__).resolve().parents[1].glob("*/grid*.py")
+    }
+    missing = sorted(on_disk - enumerated)
+    assert not missing, (
+        "GAP CAPTURED: 以下 `*/grid*.py` 不在 §5 惩罚指标守卫的枚举里 —— "
+        "它们跑样本内网格却没人检查是否报了 DSR/Bonferroni:\n  " + "\n  ".join(missing)
     )
+    assert on_disk, "本仓库一个 `*/grid*.py` 都没有 —— 本用例失去对象(判据已失效)"
+
 
 def test_short_reversal_walkforward_uses_core() -> None:
     """§5 RED: short_reversal/walkforward.py must use core/walkforward.

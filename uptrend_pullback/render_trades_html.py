@@ -26,7 +26,7 @@ import pandas as pd
 
 from uptrend_pullback.presets import get_preset
 from uptrend_pullback.regime import compute_regime
-from uptrend_pullback.signals import compute_indicators, select_entries
+from uptrend_pullback.signals import compute_indicators, select_entries_for_preset
 
 from hiagent_config import DB_PATH
 
@@ -120,11 +120,12 @@ def find_signal_date(panel_ind: pd.DataFrame, thscode: str, entry_date: str,
     """
     entry_dt = pd.Timestamp(entry_date)
     lookback_start = entry_dt - pd.Timedelta(days=15)  # 持仓至多 8 天 + 缓冲
-    sigs = select_entries(
+    # §6 单源 (附一百零九):此前这里**漏了分派** ⇒ 对全部活 preset 当场 TypeError。
+    sigs = select_entries_for_preset(
         panel_ind,
+        signal=preset["signal"],
         start_date=lookback_start.strftime("%Y-%m-%d"),
         end_date=entry_date,
-        **preset["signal"],
     )
     sigs_for_code = sigs[sigs["thscode"] == thscode]
     if sigs_for_code.empty:
@@ -618,8 +619,8 @@ def build_portfolio_summary_svg(
 
     # --- 准备入场信号散点（按 score 着色需先查 panel_ind）---
     # 为节省 IO，只用 select_entries 拉一次候选，并按 entry_date 取 score
-    entries = select_entries(
-        panel_ind, start_date=start_date, end_date=end_date, **preset["signal"]
+    entries = select_entries_for_preset(
+        panel_ind, signal=preset["signal"], start_date=start_date, end_date=end_date
     )
     # entry_date = signal_date + 1 trading day
     sig_by_entry: dict[pd.Timestamp, list[float]] = defaultdict(list)

@@ -10,6 +10,9 @@ from __future__ import annotations
 import backtrader as bt
 import pandas as pd
 
+from chase_up.portfolio import LIMIT_UP_THRESHOLD  # §2 单源:涨停阈值只有一处定义
+from core.dual_price import is_limit_up
+
 
 class ChaseUpTradeReplay(bt.Strategy):
     """单笔多头交易的 backtrader 重放。
@@ -19,6 +22,7 @@ class ChaseUpTradeReplay(bt.Strategy):
         tp_price:    float     — 止盈价
         sl_price:    float     — 止损价
         max_hold:    int       — 最大持仓天数
+        prev_close_limit: float — 涨停阈值(取自 chase_up/portfolio.LIMIT_UP_THRESHOLD)
     """
 
     params = dict(
@@ -26,6 +30,11 @@ class ChaseUpTradeReplay(bt.Strategy):
         tp_price=0.0,
         sl_price=0.0,
         max_hold=8,
+        # §4/§2 (audit 2026-10-15): **引用** Phase 1 的常量,而不是再写一份字面量。
+        # 此前这里是 `0.098` 加一句"与 chase_up/portfolio.LIMIT_UP_THRESHOLD 一致"
+        # —— 注释保证不了任何事:两个值分处两文件,改一处不会有任何东西报错,
+        # 而这条阈值决定"涨停封板时能不能买"。同值不同源就是下一次漂移的起点。
+        prev_close_limit=LIMIT_UP_THRESHOLD,
     )
 
     def __init__(self):
@@ -47,7 +56,24 @@ class ChaseUpTradeReplay(bt.Strategy):
 
         # bar 0: signal_date,下买单
         if bar_idx == 0:
+            # bar 0 只负责下单。涨停与否要等 bar 1 的 open 才可见,在 bar 0 无法
+            # 因果预判 (§1),故 skip 判定放在 bar 1(见下方 §4 分支)。
             self.buy(size=self.p.target_size)
+            return
+
+        # --- §4 涨停不成交:复核入场 bar 是否涨停开盘 ---
+        # §4 (audit P1-8, 2026-10-15): 此前 `self.skipped` 字段声明了却**从未
+        # 赋值 True** —— Phase-2 会在涨停封板的开盘价上照常"买入",与 Phase-1
+        # (portfolio.py 的 is_limit_up 守卫)结论矛盾,同一 preset 两条入口给出
+        # 相反结果。口径与 uptrend_pullback/replay_strategy 一致,共用
+        # core.dual_price.is_limit_up 单一来源。
+        if not self.entry_done and is_limit_up(
+            float(self.data.close[-1]),
+            float(self.data.open[0]),
+            self.p.prev_close_limit,
+        ):
+            self.skipped = True
+            self.exit_reason = "limit_up"
             return
 
         # 买单已成交 (bar 1 起)
@@ -76,15 +102,22 @@ class ChaseUpTradeReplay(bt.Strategy):
 
         exit_price: float | None = None
         reason: str | None = None
-        # P5 优先级: TP-first (开盘跳空破止盈优先), SL, 盘中 TP, 盘中 SL, time
-        if o >= tp_p:
-            exit_price, reason = o, "TP"
-        elif o <= sl_p:
+        # §4 (audit P1-8, 2026-10-15): SL-first —— 见下方次序。
+        # CLAUDE.md §4 明令:同一根日线上 SL 与 TP **同时**被击穿时,必须按最坏
+        # 情形处理(SL 先中)。本处原为 TP-first,与 Phase-1
+        # (chase_up/portfolio.py,SL-first)相反 —— 同一 preset 的 Phase-1 /
+        # Phase-2 因此给出互相矛盾的出场结论,而默认 CLI 走 Phase-2。
+        # 口径对齐 uptrend_pullback/replay_strategy.py:126-136。
+        # Gap 情形仍按跳空价优先匹配(开盘已越过哪一侧就是哪一侧),
+        # 盘中双触发时取 SL。
+        if o <= sl_p:
             exit_price, reason = o, "SL"
-        elif h >= tp_p:
-            exit_price, reason = tp_p, "TP"
+        elif o >= tp_p:
+            exit_price, reason = o, "TP"
         elif lo <= sl_p:
             exit_price, reason = sl_p, "SL"
+        elif h >= tp_p:
+            exit_price, reason = tp_p, "TP"
         elif bars_in_pos >= self.p.max_hold:
             exit_price, reason = c, "time"
 

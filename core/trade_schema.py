@@ -21,6 +21,38 @@ Per-trade math closure invariant (per ``test_per_trade_math_closure.py``):
 """
 from __future__ import annotations
 
+# ---------------------------------------------------------------------------
+# 年化口径 —— §2 单源 (audit 2026-10-15)
+# ---------------------------------------------------------------------------
+#: A 股**交易日/年**。
+#:
+#: 日历日 ≠ 交易日。用 `calendar_days / 365` 年化日收益序列,与用
+#: `trading_bars / 243` 年化,会给出**不同**的 CAGR —— 而两边都"看起来合理"。
+#: 实测(同一窗口、同一 10% 总收益):
+#:
+#: | 窗口 | 交易日 / 日历日 | 交易日口径 CAGR | 日历日口径 CAGR |
+#: |---|---|---|---|
+#: | 2026-04-01→05-01 | 23 / 30   | 173.7% | 218.9% |
+#: | 2026-01-20→03-01 | 29 / 40   | 122.3% | 138.6% |
+#: | 2025 全年         | 261 / 364 |  9.28% | 10.03% |
+#:
+#: 本仓库此前有**三处**不同口径:chase_up / uptrend_pullback = 243(交易日)、
+#: short_reversal = 365(日历日)、dna_stats 默认 = 252。本常量是**引擎侧**的单源。
+#: `dna_stats` 的 252 属 §5 统计口径(改动会影响 DSR / Bonferroni 结论),
+#: 仍另行登记,不在此处一并改。
+TRADING_DAYS_PER_YEAR: int = 243
+
+
+def annualized_years(n_trading_days: int) -> float:
+    """交易日数 → 年数(下限一个交易日,避免除零)。
+
+    日收益序列的年化**必须**用交易日数,不得用日历日跨度。
+    """
+    return max(
+        n_trading_days / TRADING_DAYS_PER_YEAR, 1.0 / TRADING_DAYS_PER_YEAR
+    )
+
+
 # Canonical 14-column order — required for downstream analysis (trade_report,
 # render_html, sweep aggregation, deflated-sharpe stats). Engine modules MUST
 # use this exact order when writing trades.csv.
@@ -42,6 +74,25 @@ TRADE_COLS: tuple[str, ...] = (
     "atr_pct",
     # 子信号类型 ("A"/"B"/"C" 拼接 — chase_up 专用, 其他 engine 留空)。
     "sub_signal_type",
+)
+
+# §2 (audit P0-1, 2026-10-15): per-bar 权益账本列契约（single source）。
+# 前四列是既有读者依赖的兼容列；后三列是真实三池，供 cash_walk.csv 如实
+# 落盘 —— 旧实现在各 main.py 里把 locked_margin / settling_funds 硬编码为
+# 0，三池隔离在产物层完全不可见，任何基于 cash_walk 的对账都退化为单池。
+EQUITY_COLS: tuple[str, ...] = (
+    "date",
+    "cash",            # total_cash（券商侧总现金，兼容列）
+    "holdings",        # 持仓市值 Σ size × mark_price
+    "equity",          # canonical NAV == core.dual_price.portfolio_nav(...)
+    "free_cash",
+    "locked_margin",
+    "settling_funds",
+    # §3 (audit P2-10, 2026-10-15): 累计已入账的现金分红。分红是**独立于
+    # 逐笔 P&L 的现金流**,因此现金守恒必须写成
+    #   final_equity == initial + Σnet_pnl + Σcum_dividends
+    # 把它作为列落盘,便于产物层直接对账。
+    "cum_dividends",
 )
 
 # Canonical equity_curve.csv 的 5 列。

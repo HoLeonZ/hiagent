@@ -107,6 +107,28 @@ def _chart_payload(
     return payload
 
 
+#: §5 (audit 2026-10-15) Attribution Mandate —— CLAUDE.md §5 verbatim:
+#:   "Headline returns MUST be reported alongside benchmark-relative excess
+#:    return (index or style basket). Pure style-beta replication MUST NOT be
+#:    presented as alpha."
+#:
+#: 本地行情库**没有任何指数序列**(`dim_symbol.asset_type` 全为 a-share)——
+#: 但**这不等于"归因不可计算"**(2026-10-18 更正,附六十二):§5 允许
+#: 「index **or style basket**」,而**风格篮子**这一支已经落地并在每次回测里发布 ——
+#: `core/benchmark.py` 的「该窗口 PIT 宇宙等权买入持有」,产物带
+#: `benchmark_kind / benchmark_return / benchmark_members / excess_return`。
+#: 此前这段文字写的是"归因暂不可计算",它把**指数那一支**的缺口说成了**整条 §5 要求**
+#: 的缺口 —— 读报告的人因此会以为 §5 没被满足,而实际上只是**换了一支基准**。
+#: §5 真正禁止的是"把裸绝对收益当 alpha 呈现",这一点仍然必须显式标注。
+UNATTRIBUTED_NOTICE = (
+    "未归因(CLAUDE.md §5):本报告展示的是绝对收益,不含**指数**基准相对超额 —— "
+    "本地行情库无指数序列。**但这不等于 §5 未满足**:风格篮子基准"
+    "(该窗口 PIT 宇宙等权买入持有)已随回测产物发布 —— 见该次运行的 metrics 里的 "
+    "benchmark_kind / benchmark_return / excess_return;指数基准的补齐机制见 "
+    "core/benchmark.py 与 dna_stats/attribution.py。"
+)
+
+
 def _summary_html(trades: pd.DataFrame, preset: str, window: tuple[str, str]) -> str:
     n = len(trades)
     net = trades["net_pnl"].astype(float) if n else pd.Series(dtype=float)
@@ -120,6 +142,7 @@ def _summary_html(trades: pd.DataFrame, preset: str, window: tuple[str, str]) ->
         f"<p>回测窗口: {_esc(window[0])} → {_esc(window[1])} ｜ "
         f"交易数: {n} ｜ 胜率: {win_rate * 100:.1f}% ｜ "
         f"总净收益: {total_net:,.0f} ｜ 平均单笔净收益率: {avg_ret * 100:+.2f}%</p>"
+        f'<p class="attribution">{_esc(UNATTRIBUTED_NOTICE)}</p>'
         "</section>"
     )
 

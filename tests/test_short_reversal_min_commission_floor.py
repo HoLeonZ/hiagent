@@ -131,6 +131,12 @@ def test_trace_entry_fee_inherits_the_min_commission_floor() -> None:
     §13.52 把该覆写改成**包装**(调 `super()` 后只做记录) ⇒ 那段文本搬回了父类 ⇒ 本条变红。
     **而性质并没有丢**: 覆写不再自己算费用 ⇒ **不可能**与父类不一致。
     ⇒ 改为断言**"委派"这个事实**(它正是性质成立的原因), 并确认父类确实含下限。
+
+    审计 P3 (2026-10-15) 的另一半也在本条的断言里: 覆写**不得**再自行重算
+    `entry_fee` —— 正因为旧实现在这里分叉, `reserve_for_entry` 才没被调用
+    (`locked_margin` 恒为 0 ⇒ 引擎在每笔建仓后被融券费 fail-fast 打死),
+    于是"trace 测的不是生产行为"。故断言只落在**委派**与**父类含 floor** 两处,
+    不绑定任一版 `_close` 的实现细节。
     """
     from short_reversal.lookahead_trade_trace import TraceStrategy
     from short_reversal.replay_strategy_v3 import Phase3V3Strategy
@@ -139,6 +145,10 @@ def test_trace_entry_fee_inherits_the_min_commission_floor() -> None:
     assert "super()._fill_pending_entries()" in override, (
         "TraceStrategy._fill_pending_entries 必须**委派**给父类 —— 一旦它自己重算费用, "
         "就会与父类分叉 (§13.51 记过的那次分叉正是这样发生的)"
+    )
+    assert not re.search(r"entry_fee\s*=\s*\(", override), (
+        "§6 VIOLATION: TraceStrategy 仍在自行重算 entry_fee —— 分叉副本会让 harness "
+        "测的不是生产行为(旧分叉正是这样让三个窗口不变量用例常年 ERROR 的)"
     )
     parent = _method_source_block(Phase3V3Strategy, "_fill_pending_entries")
     assert re.search(r"max\s*\(\s*(?:self\.p\.min_commission|MIN_COMMISSION)", parent), (

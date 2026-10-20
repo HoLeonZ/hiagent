@@ -39,7 +39,6 @@ import pytest
 
 ROOT = Path(__file__).parent.parent
 
-
 def test_cycle_intraday_tiebreak_is_parameter() -> None:
     """§4 RED: cycle_price_action Portfolio must accept intraday_tiebreak
     parameter (matches chase/uptrend convention).
@@ -108,10 +107,22 @@ def test_cycle_preset_intraday_declared_has_engine_effect() -> None:
         "策略没有声明 intraday_tiebreak ⇒ preset 的值无处落地"
     )
 
-    # 4: 转发白名单 (preset → strategy 的闸门) 必须含它
+    # 4: 转发闸门 (preset → strategy 的闸门) 必须放行它
+    # 闸门有两种**都成立**的写法, 本条两种都认(它们都靠"策略确实声明了该参数",
+    # 即上一条断言, 来保证该键在集合里):
+    #   (a) 字面 `_accepted = {..., "intraday_tiebreak", ...}`;
+    #   (b) 从 `CyclePriceActionStrategy.params._getkeys()` **派生**(不存在
+    #       "加了 param 忘了同步白名单"这种漏键)。
+    # 反之, 若闸门变成一份**不含该键的手工名单**, 两种写法都不成立 ⇒ 本条照红。
     src = (ROOT / "cycle_price_action" / "backtest.py").read_text(encoding="utf-8")
-    assert re.search(r"_accepted\s*=\s*\{[^}]*intraday_tiebreak", src, re.S), (
-        "`_accepted` 白名单不含 intraday_tiebreak ⇒ preset 声明在转发处被丢弃"
+    gate_literal = re.search(r"_accepted\s*=\s*\{[^}]*intraday_tiebreak", src, re.S)
+    gate_derived = re.search(
+        r"_accepted\s*=\s*set\(\s*CyclePriceActionStrategy\.params\._getkeys\(\)",
+        src,
+    )
+    assert gate_literal or gate_derived, (
+        "转发闸门 `_accepted` 不含 intraday_tiebreak(也不是从 params 派生) "
+        "⇒ preset 的声明在转发处被丢弃"
     )
 
 
@@ -186,7 +197,11 @@ def test_all_engines_atr_slip_scale_opt_in() -> None:
         "chase_up/portfolio.py": "atr_slip_scale: float = 0.0",
         "uptrend_pullback/portfolio.py": "atr_slip_scale: float = 0.0",
         "cycle_price_action/portfolio.py": "atr_slip_scale: float = 0.0",
-        "short_reversal/engine.py": "atr_slip_scale=cfg.get",
+        # audit P1-B2 (2026-10-15): 该引擎的滑点标定值不再走 `cfg.get(..., 0.0)`
+        # 静默默认,而是经 core.dual_price.resolve_atr_slip_scale 解析 ——
+        # **缺声明 fail-fast**,仍来自 cfg(opt-in 语义不变,且更强:未声明会被
+        # 拦下而不是悄悄变成 0)。故断言改为新的取值路径。
+        "short_reversal/engine.py": "resolve_atr_slip_scale(cfg",
         "short_reversal/replay_strategy_v3.py": "atr_slip_scale=0.0",
     }
     for path, pattern in engines_with_atr_slip.items():

@@ -4,7 +4,6 @@
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -12,23 +11,26 @@ import pytest
 from short_reversal.engine import run_backtest_v3
 
 from hiagent_config import get_db_path
+from tests.conftest import market_db_available  # §6: 存在**且非空**
 
 REAL_DB = get_db_path()
-SKIP_REASON = "需要 DNA_STRAT_DB 或 hiagent_config.DEFAULT_DB_PATH"
+SKIP_REASON = "§6: 本地行情库不可用(DNA_STRAT_DB 未设 / 无库 / 0 字节占位)"
 
 
 def _real_db() -> Path | None:
-    env = os.environ.get("DNA_STRAT_DB")
-    if env and Path(env).exists():
-        return Path(env)
-    if REAL_DB.exists():
-        return REAL_DB
-    return None
+    """§6 (audit 2026-10-15): 库必须**存在且非空**。
+
+    原实现分两步只看 `exists()`:env 设成一个 **0 字节**文件时会直接返回它
+    (`if env and Path(env).exists()`),于是 3 个用例 FAIL。0 字节占位正是
+    fresh clone 的形状(`data/hiagent.db`),不是可用库。
+    """
+    return REAL_DB if market_db_available() else None
 
 
 pytestmark = pytest.mark.skipif(_real_db() is None, reason=SKIP_REASON)
 
 
+@pytest.mark.slow  # 真跑一次年度回测(约 5 分钟)
 def test_end_to_end_one_preset():
     db = _real_db()
     assert db is not None
@@ -62,6 +64,7 @@ def test_end_to_end_one_preset():
     assert 0.0 <= m["win_rate"] <= 1.0
 
 
+@pytest.mark.slow  # 真跑一次年度回测(约 5 分钟)
 def test_high_cagr_preset_profitable():
     """v35_agg_pctchg_04_09 preset 应触发交易且 CAGR 为正。"""
     db = _real_db()

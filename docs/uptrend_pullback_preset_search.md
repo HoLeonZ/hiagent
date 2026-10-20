@@ -47,14 +47,17 @@ equity 曲线把建仓名义额计入两次(Sharpe/回撤失真)、DSR 把年化
 ## 3. 工具与复现命令
 
 ```bash
-# (a) 单候选滚动窗口评估 + DSR(n_trials 必须显式传入)
+# (a) 单候选滚动窗口评估 + DSR(n_trials 与 window-role 都是**必需**参数)
+#     ⚠ 窗口是**滚动无划分**的(默认 2 月窗/1 月步 ⇒ 重叠 50%)⇒ 属**样本内**评估,
+#       只能作迭代期用;下结论要换一段区间并把它标成 holdout。
 python3 -m uptrend_pullback.wfv_eval --preset v33_long_reverse_v21 --n-trials 121 \
+    --window-role iteration \
     --start-month 2024-09 --end-month 2026-03 --label my_candidate
 
 # (b) 由 base preset 派生候选(点路径增量, 不写全量 dict)
 python3 -m uptrend_pullback.wfv_eval --base v33_long_reverse_v21 \
     --overrides '{"tp_pct": 0.30, "signal.min_mom120": 0.15}' \
-    --label cand_x --n-trials 122
+    --label cand_x --n-trials 122 --window-role iteration
 
 # (c) 尾部目标函数(在代码中直接调用)
 python3 -c "

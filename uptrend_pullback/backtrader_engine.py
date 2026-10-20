@@ -32,13 +32,29 @@ import numpy as np
 import pandas as pd
 
 from core.equity_invariants import assert_equity_curve_is_physical
-# §2 Canonical Cost Model: 只在 core/ 定义一次, 引擎必须**导入**而非重写。
-from core.dual_price import COMMISSION_RATE, MIN_COMMISSION, STAMP_DUTY_RATE
 from uptrend_pullback.backtest import INITIAL_CAPITAL, compute_metrics
 from uptrend_pullback.portfolio import TRADE_COLS, simulate_portfolio
 from uptrend_pullback.presets import MAX_HOLD_LIMIT, get_preset
 from uptrend_pullback.replay_broker import AStockBroker
 from uptrend_pullback.replay_strategy import UpullbackTradeReplay
+
+# §2 单源 (audit 2026-10-17): 契约键一律经 core.preset_contract 解析(缺声明即
+# fail-fast),不再用 `p.get(key, <看起来合理的默认值>)`。
+from core.preset_contract import (
+    ALL_IN,
+    resolve_nav_gate_ratio,
+    resolve_position_fraction,
+    resolve_position_sizing,
+    resolve_volume_participation,
+)
+
+# §2 Canonical Cost Model: 成本常量只在 core/ 定义一次, 引擎必须**导入**而非重写。
+from core.dual_price import (  # §2 单源 (audit P2-11, 2026-10-15)
+    resolve_atr_slip_scale,
+    COMMISSION_RATE,
+    MIN_COMMISSION,
+    STAMP_DUTY_RATE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -230,7 +246,7 @@ def run_backtrader_backtest(
     # ---------- Phase 1: portfolio.py 跑出候选 trade 列表 ----------
     from uptrend_pullback.data import load_panel
     from uptrend_pullback.regime import compute_regime
-    from uptrend_pullback.signals import compute_indicators, select_entries
+    from uptrend_pullback.signals import compute_indicators, select_entries_for_preset
     from uptrend_pullback.universe import load_universe
 
     if panel_ind is None:
@@ -252,16 +268,10 @@ def run_backtrader_backtest(
         reg = regime_df if regime_df is not None else compute_regime(panel_ind, **p["regime"])
 
     # 路由: entry_mode == "v33_long_mirror" → 走镜像信号选择器
-    if p["signal"].get("entry_mode") == "v33_long_mirror":
-        from uptrend_pullback.signals import select_entries_v33_long_mirror
-        sig_kwargs = {k: v for k, v in p["signal"].items() if k != "entry_mode"}
-        entries = select_entries_v33_long_mirror(
-            panel_ind, start_date=start, end_date=end, regime_df=reg, **sig_kwargs
-        )
-    else:
-        entries = select_entries(
-            panel_ind, start_date=start, end_date=end, regime_df=reg, **p["signal"]
-        )
+    # §6 单源 (附一百零九):同 `backtest.py`。
+    entries = select_entries_for_preset(
+        panel_ind, signal=p["signal"], start_date=start, end_date=end, regime_df=reg
+    )
 
     trades_p1, equity_p1 = simulate_portfolio(
         entries,
@@ -279,10 +289,12 @@ def run_backtrader_backtest(
         # (原本 position_sizing 默认 'equal', preset 的 'all_in' 从不被读)。
         # 显式传参 (非 None) 仍优先, 供测试覆盖用。
         position_sizing=(position_sizing if position_sizing is not None
-                         else p.get("position_sizing", "equal")),
+                         else resolve_position_sizing(
+                             p, p.get("_name", "uptrend_pullback"),
+                             allowed=frozenset({ALL_IN}))),
         kelly_fraction=(kelly_fraction if kelly_fraction is not None
                         else p.get("kelly_fraction")),
-        position_fraction=p.get("position_fraction", 1.0),
+        position_fraction=resolve_position_fraction(p, p.get("_name", "uptrend_pullback")),
         # Round 15 (2026-09-28, CLAUDE.md §0/§4): cost model plumbing
         # (commission/stamp/floor) + ATR-aware slippage from preset。
         # Defaults preserve pre-R15 behavior (legacy presets 无 key 时仍得
@@ -292,14 +304,16 @@ def run_backtrader_backtest(
         stamp_duty_rate=p.get("stamp_duty_rate", STAMP_DUTY_RATE),
         min_commission=p.get("min_commission", MIN_COMMISSION),
         slippage=p.get("slippage", 0.0),
-        atr_slip_scale=p.get("atr_slip_scale", 0.0),
+        atr_slip_scale=resolve_atr_slip_scale(p, p.get("_name", "uptrend_pullback")),
         # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System execution source。
         price_source_for_execution=p.get("price_source_for_execution", "raw_close"),
         # V8 (2026-09-22, CLAUDE.md §4): preset→strategy explicit plumbing。
         intraday_tiebreak=p.get("intraday_tiebreak", "sl_first"),
-        max_volume_participation=p.get("max_volume_participation", 0.10),
+        max_volume_participation=resolve_volume_participation(
+            p, p.get("_name", "uptrend_pullback")
+        ),
         # Round 14 (2026-09-28, CLAUDE.md §2): NAV-floor cash gate threshold from preset。
-        nav_gate_ratio=p.get("nav_gate_ratio", 0.05),
+        nav_gate_ratio=resolve_nav_gate_ratio(p, p.get("_name", "uptrend_pullback")),
     )
 
     if not verify or trades_p1.empty:

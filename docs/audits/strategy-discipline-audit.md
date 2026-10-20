@@ -1,5 +1,20 @@
 # hiagent 四策略研发/测试纪律审计 —— `main` 分支
 
+> ## ⚠️ 状态头(2026-10-19)—— 读 §0 之前先看这里
+>
+> 本报告 §0–§8 的判定是**对 `main @ 94ca15d`(2026-10-14 快照)** 的:**不合规(NO-GO)**。
+> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **107 条附录**,
+> **§0 列的 11 个 BLOCKER 族全部已处置**(修 / 登记 / 待口径决策,逐条见附七十九 §1)。
+>
+> **不要把本报告开头的 NO-GO 当成对今天代码的判定。**
+>
+> * 现在的**未结清单**只有一处权威来源:**附七十九**(收官台账),最新增补见**附一百零七**。
+> * 每条修复都给出文件、证据与验证方式(多数含**双向验证**与量化影响)。
+> * 有两条**结果变更**特别醒目,已发布的数字须重算(清单见附七十九 §3 + 附八十一 §5):
+>   附五十二(做空跳空止损成交价)、**附八十一/八十二(DSR 的两个分母各取错一个量:
+>   T 高估 2.10 倍 + `n_trials` 只数跑成功的那批 —— 方向都是偏乐观)**。
+
+
 **被审计对象**:`main` @ `94ca15d`,以只读 worktree 固定检出在 `/tmp/hiagent-main`,审计全程读取该快照。**不引用任何其它分支的实现状态。**
 
 审计依据:`CLAUDE.md` §0–§7(绝对确定性)。
@@ -268,7 +283,12 @@ self.release_margin(gross_in_cost)                      # 入场本金 → free_
 - 而 `scan_signals.py:107` 构造 `Phase3V3Strategy` 时**未传** `min_cash_ratio`(`grep` 零匹配),`lookahead_trade_trace.py:48` 又继承该类;
 - → 走 `scan_signals` 时在首个有 pending entry 的 bar 抛 `TypeError: unsupported operand type(s) for *: 'float' and 'NoneType'`,在测试套件中触发 **10 次失败**。
 
-**状态**:`b597d0c` 的 `c06ead1` 已将默认值改为 `0.05`(`replay_strategy_v3.py:196`),**该崩溃在当前 `origin/main` 上已消除**。
+**状态**:`b597d0c` 的 `c06ead1` 已将默认值改为 `0.05`(`replay_strategy_v3.py:196`),该次崩溃消除。
+
+> **2026-10-16 补充(附三十八)**:该表述**过窄** —— 那次只是补了**一个**参数。同一条生产扫描路径
+> 在 `min_cash_ratio` → `nav_gate_ratio` 改名并改为 fail-fast 之后**再次崩溃**(同一个工具、不同的漏参),
+> 且没有任何测试覆盖它。病根是「策略构造参数清单有两份、靠人手同步」。现已从根上修掉:
+> 抽出 `engine.strategy_kwargs` 单源,回测入口与扫描工具共用 55 项参数。
 
 ### S2 · 不可变性守卫可被"别名"绕过,源码注释明说这是为了绕过检测器 —— **已修复(附二十八)**
 
@@ -533,7 +553,7 @@ for path in paths:
 
 1. **§0 时区条款无实现、无检查**：`tools/update_db_direct.py`（写 `raw_kline_daily` 的入口，无测试）用本机时区把日期与毫秒时间戳互转，同一 API 负载在不同机器上会落成不同的 bar 日期。
 2. **§0 可复现性**：`requirements.txt` 只有版本范围、无 lockfile；`tests/conftest.py` 的合成库用 `hash(code)` 播种（受 PYTHONHASHSEED 影响），环境与夹具都不满足「同输入同输出」。
-3. **§5 Attribution Mandate 从未被任何 cell 检查，且全库无实现**：`core/trade_schema.py`、`chase_up/backtest.py`、`cycle_price_action/metrics.py`、`tools/render_top5_presets_html.py:905` 都只报裸收益，无基准超额；`tests/` 中 `benchmark|excess` 零命中。
+3. **§5 Attribution Mandate 从未被任何 cell 检查，且全库无实现 —— 已补齐(附三十四)**：`core/trade_schema.py`、`chase_up/backtest.py`、`cycle_price_action/metrics.py`、`tools/render_top5_presets_html.py:905` 都只报裸收益，无基准超额；`tests/` 中 `benchmark|excess` 零命中。
 4. **`data/exclude_thscodes.txt` 在多数引擎中是死路径**：harness 点名了它，但 chase_up / uptrend_pullback / cycle_price_action 的所有调用点都不传 `exclude_path` 且无 `DEFAULT_EXCLUDE_PATH`；文件本身还含重复代码。short_reversal 侧有两个 LOW 发现，其中一个被验证者判为「静默空转」，另一个被判为「在默认 preset 上不可达」。
 5. **raw/adj 语义的前提不可核（最重要）**：`v_daily` / `v_daily_qfq` / `v_daily_hfq` / `raw_kline_daily` 的 DDL 不在仓库；`sql/migrate_v_daily_dual.sql` 只是其消费方；`tests/conftest.py` 造的 `v_daily` 没有 adj/raw 列；`data/hiagent.db` 是 0 字节占位。**多个 §3 发现的载荷前提依赖这一条**：若生产库中 `v_daily` 实为复权价，则 `short_reversal` A 条件、cycle 指标域、公司行为三条需要重新推导。
 6. **`tools/render_top5_presets_html.py`（1162 行，无测试）** 重新实现了两个引擎的指标与 A/B/C 判定，并带着自己的第三个 metrics 函数，与 §6 的单一实现要求冲突。
@@ -588,15 +608,29 @@ for path in paths:
 12. `cycle_price_action` 的入场记账与资金池：统一用 broker 成交价记账；容量约束改为单一资金池。
 
 **P3 —— 验证层与统计严谨**
-13. 修三个空转守卫（`tests/test_reproducibility_audit.py:331`/`:352`、`tests/test_cycle_price_action_sha256_baseline.py:94`、`tests/test_cost_constants_single_source_4engine.py:265`、`tests/test_chase_up_no_lookahead.py:642-656`、`tests/test_backtest_data_integrity.py:58`），并把 61 failed + 3 error 登记 owner 或修绿。
+13. 修空转守卫（`tests/test_reproducibility_audit.py:331`/`:352`、`tests/test_cycle_price_action_sha256_baseline.py:94`、`tests/test_cost_constants_single_source_4engine.py:265`、`tests/test_chase_up_no_lookahead.py:642-656`、`tests/test_backtest_data_integrity.py:58`），并把 61 failed + 3 error 登记 owner 或修绿。
+    → **2026-10-17 更正(附四十三)**:本条此前**只做了一部分** —— 该文件里的无断言 `pass` 当时**仍在**(扫描器也同时在同一文件里误报)。现已修:扫描器改按名字判定、四个用例统一为真断言,并以正/负对照双向验证。
+      教训:修复计划里列了条目 ≠ 条目被修 —— 「账实不符」这是本审计第 6 次。
 14. 补 `tests/golden/short_reversal_*_baseline.json`（先修守卫，否则加了基线也无人执行）。
+    → **已完成(附三十九)**：`v50_slope`(28 笔) + `v58_mp_2`(58 笔)，守卫在测试内重算后比对；
+      生成时连续两次重算一致才 pin。`test_reproducibility_audit` 里的登记用例随之自然通过。
 15. §5：`dsr['p_value']` 键名错误、`n_trials` 累计口径、sweep 的 OOS 窗口（`uptrend_pullback/sweep_v33_long*.py`、`short_reversal/wf_v34_focused.py`、`chase_up/wf_sweep_all.py`）。
     → **已处理(见附十三)**:键名、`n_trials` 口径、DSR 分子/分母一致性、收益率当 Sharpe 均已修;
     **附三十二再补两处输入口径**:年化常量单源(引擎 243 / dna_stats 曾 252)、
     `n_returns` 不再硬编码(10 处写 252 → 来自本次运行的观测数);
-    **仍未闭合**:4 个脚本引用已删除的 preset(已登记 `KNOWN_DEAD_REFERENCES`)、以及原文点名的
+    **2026-10-17(附四十)**:F/G/H/I/K 已实现,指标走 `indicators_bt` 的 pandas 对偶并**逐值对拍**
+    (14 个指标全部在 rtol=1e-6 内一致),信号集端到端对拍扩到 11 个 preset ⇒ **可信 68/75**
+    (余 7 = J 3 + breadth 1 + ensemble 3,均原理性不可向量化)。
+    取舍如实记录:**未**把引擎指标层抽成纯函数(结果敏感的手术),而是『两份实现相邻 + 两级对拍』。
+    **2026-10-16(附三十八)**:`scan_signals_fast` 的参数已改读声明(可信 1→35/75),**对拍已就位**
+    (`tests/test_fast_scanner_matches_engine.py`:6 preset × 真引擎路径逐只比较);
+    **仍未闭合**:F–K 的实现需要先把 backtrader 指标抽成纯函数(否则就是新增重复实现),继续登记。
+    另:4 个脚本引用已删除的 preset(已登记 `KNOWN_DEAD_REFERENCES`)、以及原文点名的
     「窗口跨越已声明的 holdout」(需使用者确认 holdout 边界)。
 16. 补 §5 Attribution Mandate 的实现（基准超额），这是目前完全空缺的一项。
+    → **已实现(附三十四)**：基准 = 窗口 PIT 宇宙等权买入持有(实机库无指数数据，§5 允许
+      index **or style basket**)，`benchmark_kind` 随产物发布；chase/uptrend/short_reversal
+      均已接入，cycle 未改(另一 workstream 正在改该包，避免冲突)。
 
 **P4 —— 产物卫生与低危加固**
 17. §7：先修 `tests/_regen_chase_baselines.py:109`（否则清理后的数字会被再次写回），再清 `chase_up/presets.py`、`short_reversal/presets.py`、`tests/golden/*.json` 内嵌的业绩字段与选优叙述。
@@ -686,7 +720,7 @@ for path in paths:
 3. **§0 依赖锁定**:`requirements.txt` 只有版本范围、无 lockfile。本机为 conda 环境,`pip freeze` 会产出**误导性**锁定,故不代做 —— 建议用 uv / pip-tools 在指定 Python 下生成。
 3b. **§5 统计口径**:`dna_stats` 的 `trading_days_per_year` 默认 `252`,而引擎侧单源为 `243`(A 股)。改动它会影响 DSR / Bonferroni 的收缩量、使既往比较失效 —— 属统计口径变更,需使用者拍板(附十)。
 3c. **§5 迭代数**:`cycle_price_action/PRESET_V1` 的 `n_comparisons=1` 与仓库自身矛盾(其 sweep 的默认候选含出厂的 `threshold=2.0`)—— **需使用者提供迭代记录**才能据实填写;已登记于 `tests/...::KNOWN_UNRECORDED_TRIAL_COUNTS`(附十三 §5)。这是本轮唯一一处我明确交还给使用者的**数值**。
-4. **§7 产物 writer**:`equity_curve.csv` / `cash_walk.csv` / per-preset `backtest.json` 的 writer 尚未实现(相应断言按 §6 skip 登记)。注:`cycle` 的 `cagr/sharpe/max_dd` 返回 `None` 是**诚实**的"横截面无法定义",不是缺口。
+4. **§7 产物 writer**:**更正(附三十七)** —— 该说法不成立:四个 `main.py` 里都有 `_write_equity_curve`。真实缺口是**接线**:`short_reversal` 的 metrics 此前不带 `equity_curve` 键(writer 恒不执行,已修);`cycle_price_action` 的 writer **无调用点**(已登记并由守卫钉住)。注:`cycle` 的 `cagr/sharpe/max_dd` 返回 `None` 是**诚实**的"横截面无法定义",不是缺口。
 5. **§6 展示层重复**:`tools/render_top5_presets_html.py` 重述逐 bar 指标与 A/B/C 文案(回测本身调用真引擎);消解需引擎暴露逐 bar 指标序列,属重构。
 6. **"有实现、无消费者"的库函数**:`tail_objective.tail_stats`(测试外无调用点)与 `render_top5` 同类;建议统一清理而非逐个顺手改。
 6b. **§1 扫描器的覆盖面**:`sql/` 未被扫(AstScanner 是 Python AST 实现,SQL 视图/迁移需另一套检查)。当前 `sql/` 只有 `migrate_v_daily_dual.sql`,且本机活库的视图定义已人工核验过(附七);但**没有任何自动检查**防它将来被改坏。
@@ -858,7 +892,7 @@ RuntimeError: backtest failed for 000639.SZ: cannot sell more than held
 
 ### 仍未闭合的缺口(30 条 skip,均带点名文本,无静默跳过)
 
-- **§7 产物边界(8 条)**:`equity_curve.csv` / `cash_walk.csv` / per-preset `backtest.json` 的 **writer** 尚未实现。`results/` 按 §7 不入库,故这些断言只在产物存在时校验 schema、缺失时 skip 登记。§2 的实质要求(NAV 恒等式 + 现金守恒)已由 `test_nav_cash_ledger_invariants.py` 在内存中确定性覆盖。
+- **§7 产物边界(8 条)**:**更正(附三十七)** —— writer 存在,缺口是接线(见该附录)。该文件的四条守卫已由『等本机产物』改为**自己产出再校验**(合成输入 + 一条真跑端到端),不再真空。`results/` 按 §7 不入库,故这些断言只在产物存在时校验 schema、缺失时 skip 登记。§2 的实质要求(NAV 恒等式 + 现金守恒)已由 `test_nav_cash_ledger_invariants.py` 在内存中确定性覆盖。
 - **§0 cycle 慢 golden(1 条)**:需 `DNA_RUN_SLOW_GOLDENS=1` 显式开启(单次约 6.5 分钟)。
 - **§5 基准归因**:本地行情库**无任何指数序列**,归因无法计算(已由 `test_benchmark_data_gap_is_registered` 显式登记)。补齐需 `hithink-finance index history`,**选哪个基准是研究决策**。
 - **§4 滑点的实质**:100 个 preset 仍是 `SLIP_NONE_ACKNOWLEDGED`(= 0.0,"已知缺口"的确认值)。换成真实标定值会改变每一个成交价,属研究决策,且按 §5 必须计入 `n_trials`。
@@ -1935,7 +1969,7 @@ P3 轮已改为真断言,原语句留在注释里作记录。顺带核对了另�
 | 恒真断言 | 早已修;另 5 条经核对为真不变量 |
 | WFV 单 asof | **不是缺陷**(保守方向,已文档化) |
 | §4 Phase-2 语义(3 子项) | **全部闭合**(2 已修 + 1 审计已证伪) |
-| §6 条件重复实现 | **已修**(附三十一:它宣称的『与策略 100% 等价』实测 71/75 个 preset 不成立 ⇒ 改为不等价即 fail-fast;附二十二的『已声明,登记不重构』评级已被更正 —— **声明本身就是缺陷**) |
+| §6 条件重复实现 | **已修**(附三十一:假等价声明 ⇒ 不等价即 fail-fast;附三十八:参数改读声明,可信 1→35;**附四十:F/G/H/I/K 落地 + 两级对拍,可信 35→68/75**,余 7 个为原理性不可向量化)。附二十二的『已声明,登记不重构』评级已被更正 —— **声明本身就是缺陷** |
 | §6 信号层子进程 | 仍开(§8 7c) |
 | 滑点侧未知成交量 | 仍开(§8 7b) |
 
@@ -2745,3 +2779,6665 @@ v19 的归因(逐笔):旧代码在本窗口产出 98 行、sha256 == 上一版 p
 > 这是本审计第三次记录同一个教训(附五 的假阳性、附二十二的"已声明当成没问题"、
 > 以及本次的匿名 skip):**按写法匹配的守卫,会在代码演化时变成沉默**。
 > 能穿越重构的只有行为断言。
+
+---
+
+## 附三十四 —— §5 Attribution Mandate:**全库无实现** → 已补齐(基准 + 超额)
+
+### 1 · 缺口
+
+CLAUDE.md §5:
+
+> **Attribution Mandate:** Headline returns MUST be reported alongside
+> benchmark-relative excess return (index or style basket). Pure style-beta
+> replication (e.g. size/momentum factor exposure) MUST NOT be presented as alpha.
+
+审计时**全库无实现**:`core/trade_schema.py`、`chase_up/backtest.py`、
+`cycle_price_action/metrics.py`、`tools/render_top5_presets_html.py` 都只报裸收益;
+`tests/` 里 `benchmark|excess` 零命中;此前只在报告里打过一个"未归因"标签
+(附七第 5 条)。§8#16 记的正是这一项:"目前**完全空缺**的一项"。
+
+### 2 · 基准的选择(已声明、可替换,不是悄悄取一个)
+
+实机核对:`v_daily` 里**只有个股**(后缀分布 SZ 2901 / SH 2320 / BJ 344),
+**没有任何指数代码**(000300 / 399300 / 000905 / 000852 / 000001.SH 全部零命中)。
+故 §5 的 `index` 这一支**当前不可用**;§5 允许 `index **or style basket**`,遂取:
+
+    benchmark = 该窗口 **PIT 宇宙的等权买入持有**(不调仓)总收益
+
+理由:这些策略的候选池就是"全部主板 A 股",等权买入持有正是它们暴露的
+**规模/等权 beta** —— 拿它做基准,恰好回答 §5 真正关心的那个问题:
+"这份收益里,有多少只是『拿了那个池子』?"
+
+实现置于 `core/benchmark.py`,产物里同时发布 `benchmark_kind =
+"equal_weight_pit_universe_buy_and_hold"`。将来有指数数据时,新增一个 `index` 实现、
+由调用方声明即可 —— **读者永远知道这个数字是什么**(与 `sharpe_kind`(附十)、
+`n_daily_returns`(附三十二)同一条原则)。
+
+### 3 · 价格域(§3):基准必须用**复权**价
+
+策略侧是**总收益**(分红作为现金流入账,见各引擎的公司行为处理),故基准也必须是总收益
+⇒ 用复权价(`close` 列)。用原始价会把分红漏掉,等于**给策略送一个虚假的超额**。
+§3 的"raw 用于执行价"说的是**成交价**,不是收益序列 —— 这里要的是收益序列。
+
+### 4 · 口径细节(据实声明,不留沉默的默认)
+
+- 每只标的取窗口内**第一根与最后一根**可用 bar 之比 ⇒ 窗口中途才有行情的标的
+  从**它的第一根**起算(不能假装窗口初就持有);
+- bar 数 < 2 的标的**排除**,且排除数量由 `benchmark_members` **如实带出** ——
+  静默把"窗口内没有行情的标的"算成 0 收益,也是一种沉默的错(本项自身的守卫
+  就是拿这一点做双向验证的:把它改成 0 收益,守卫立刻变红);
+- 等权买入持有取**等权平均**(不是几何链式),与"等权指数"的常见口径一致,
+  且无路径依赖 ⇒ 符合 §0 的确定性要求。
+
+### 5 · 这一项**改变了什么**(为什么 §5 要强制它)
+
+补上之后,同一窗口里可以看到头条收益与超额**符号相反**的情形:某个 `chase_up`
+preset 的头条收益为正,而同期等权宇宙基准显著更高 ⇒ **超额为负**。
+在只报裸收益的世界里,这个 preset 看起来"小赚、可以继续研究";
+在报了超额的世界里,它其实是**负 alpha**(纯 style beta 都算不上)。
+
+(具体数字**故意不写进本文件** —— 按 §7,可由当前代码 + 一条命令复现;
+内嵌在文档里就会变成"失效的结论"。命令见 `core/benchmark.py` 的模块 docstring。)
+
+`short_reversal` 是空头策略,基准同样是那个等权池 —— 它的超额为正
+(池子走平时做空能赚钱),这正是"基准是否公平"该被看见的地方。
+
+### 6 · 覆盖范围与守卫
+
+| 引擎 | 状态 |
+|---|---|
+| `chase_up` / `uptrend_pullback` | 已发布 `benchmark_kind` / `benchmark_return` / `benchmark_members` / `excess_return` |
+| `short_reversal`(含 ensemble) | 同上;集成路径的基准取自子策略,并**要求子策略基准一致**,不一致即 fail-fast(子策略宇宙不同时,怎么合并基准是人为决定,不该静默取平均) |
+| `cycle_price_action` | **未改**(另一 workstream 正在改该包的文件,避免冲突);它已有 `account_model` 口径块,基准留待那一路收口 |
+
+守卫 `tests/test_benchmark_attribution.py`(9 条):
+
+- **确定性核心口径**:三只票(A +10% / B +20% / C 仅一根 bar)⇒ 基准必须**恰好**
+  0.15 且成员数 = 2 —— 直接钉住数值,**写死/算错的实现必然失败**;
+- 中途才有行情的标的从它的第一根 bar 起算;
+- 引擎层恒等式:`excess_return == 总收益 − benchmark_return`(chase 与
+  short_reversal 各自的键名不同,分别断言);
+- **结构层**:凡发布 `excess_return` 的文件必须同时发布 `benchmark_kind`。
+
+双向验证:把"仅一根 bar 的标的"改成按 0 收益计入 ⇒ 确定性用例立刻变红
+(期望 0.15 得到 0.10),恢复后 9 全绿。
+
+### 7 · 性质说明
+
+**这是补空缺,不是修缺陷** —— 没有既有数字被改动,只是在产物里**新增**了四个字段。
+故本轮无结果漂移(既有字段一个没动)。
+
+---
+
+## 附三十五 —— 收口:待决策清单、已登记的后续工作、以及两个并行 workstream 的交叉
+
+### 1 · 待决策(每条附我的建议;数字与证据都在对应附录里)
+
+| # | 事项 | 我的建议 | 依据 |
+|---|---|---|---|
+| 1 | **ATR 滑点标定值**(§4 要求动态滑点,而 100/100 个 preset 的 `atr_slip_scale` 全是 0 ⇒ 已发布结果全部**零滑点**) | **不替谁编一个值**。先决定"要不要按 §4 打开";要打开就得有标定依据(成交回报/冲击成本样本)。机制已就绪(单源 + 缺声明 fail-fast),且"成交量未知时的坑"已填(附三十) | §8#2、附三十 |
+| 2 | **`dna_stats` 与引擎的年化口径** | **已按单源修正为 243**(附三十二);若日后要改,只能改一处 | 附三十二 |
+| 3 | **cycle 成交口径**(3/4 引擎在下一根 bar 开盘成交,cycle 用**同 bar 收盘**) | 方向由 §0 悲观默认 + 三引擎先例决定(改为下一根开盘);但这是**全量结果变更**,且该包正被另一 workstream 改动 ⇒ **等那一路收口后由其一次改** | 附二十六 |
+| 4 | **`pos["bars"]` 按日历 bar 序号计持仓时长** | **不改**:持仓时长本来就随日历流逝(停牌也在持有),这属语义选择而非违约;但**必须声明**(已在附录写明) | 附二十四 §6 |
+| 5 | **基准数据** | 已用"PIT 宇宙等权买入持有"落地(§5 允许 style basket);有指数数据时再增一支 `index` 实现 | 附三十四 |
+| 6 | **`dna_stats` / lockfile / holdout 边界 / cycle `n_comparisons`** | 需你给事实(依赖锁定策略、holdout 起止、迭代次数) | 附十三/十六 |
+| 7 | **涨跌停阈值 0.098(仅 chase)vs 0.095(core 默认)** | 目前是**显式传参**的声明式差异,不是重复定义 ⇒ 可以先不动;若要统一,属策略参数决策 | 附二十六相关 |
+| 8 | **short_reversal 的空宇宙守卫** | **已完成**(附三十三),连同 PIT 退市判定一起 | 附三十三 |
+
+### 2 · 已登记的后续工作(不是缺陷,是缺口/功能)
+
+1. **快路径重构**:`scan_signals_fast.py` 现对 74/75 个 preset **拒绝作答**(附三十一)。
+   要让它对更多 preset 可用,需按附二十二 的设计把 5 条件抽成**纯函数**、由引擎与阶梯扫描共用,
+   再补"两处实现给同一结论"的对拍守卫。**这是功能工作**,不是正确性修复 ——
+   正确性(不再给错名单)已由 fail-fast 守住。
+2. **§7 产物 writer**:`equity_curve.csv` / `cash_walk.csv` / per-preset `backtest.json`
+   的 writer 仍未实现(相应断言按 §6 skip 登记)。
+3. **4 个脚本引用已删除的 preset**(`KNOWN_DEAD_REFERENCES` 已登记)。
+4. **cycle 的组合级缺口**:每股独立账户(设计未改,已加口径标注)。
+
+### 3 · 两个并行 workstream 的交叉(需要你知道)
+
+本仓库同时有**两条工作线**在改同一批文件:
+
+- 我这条:`fix/discipline-remediation`(代码)+ `audit/strategy-discipline`(审计台账);
+- 另一条:`mine/strategy-potential`(在 `~/code/hiagent` 的检出里),其提交包含
+  `fix(chase_up) 非交易日 asof`、`fix(cycle) 停牌崩溃 → 成交顺延`、
+  `fix(phase2) 拒绝发布负权益`、`perf(cycle) 18x`。
+
+**已经出现的重复**:对方的 `0162de5`(chase_up 非交易日 asof)与我这条的 `8b628b1`
+修的是**同一个缺陷**;对方的 `74b0368`(cycle 停牌)与我 `附二十四` 的 §1 停牌语义
+在同一片区域。合并时需人工对账,避免"两边各修一半、合并后又退回一半"。
+
+另外:`docs/audits/strategy-discipline-audit.md` 的**附三十二/附三十三**两个提交
+原本落在对方的分支上(该检出当时被切到了 `mine/strategy-potential`),我已用临时
+worktree 把这两个提交**补进** `audit/strategy-discipline` 并推送(远端 `169ff3e` →
+`e778f4f`)。对方分支上仍留有这两份重复的文档提交 —— **我没有改写他们的历史**。
+
+### 4 · 本轮的验证口径(便于复核)
+
+- 每一项修复都做了**双向验证**(守卫必须在"错误实现"上变红),各附录里记了具体手段与结果;
+- 全量套件在本轮各批次后分别跑过:1096 → 1103 → 1122 → 1138 → 1146 通过,
+  跳过 30、失败 0(每轮都是真库 + 真实回测);
+- 修好但**当时不可达**的两项(未知成交量滑点、DSR 年化常量)都如实标注为"潜伏/零漂移",
+  不夸大成"已修缺陷";
+- 被**证伪**的台账条目同样记录在案(§6 信号层子进程、§2 按字母序成交、
+  §1 settle 只冲刷正值等),避免后人按错的描述去改代码。
+
+---
+
+## 附三十六 —— 自查:我自己刚写的基准代码里,也有一个"静默的零"
+
+补 §5 归因(附三十四)之后自查那一笔提交,发现同一个缺陷类**出现在我自己刚写的代码里**:
+
+```python
+if not per_name:
+    return 0.0, 0        # ← 基准算不出时返回 0.0
+```
+
+后果:`excess_return = 总收益 - 0.0 = 总收益` ⇒ 产物读起来像「基准什么都没涨」,
+与「基准确实是 0%」**不可区分** —— 这正是本审计反复在修的那一类(静默的零 / 缺口靠
+沉默存在)。它出现在"补空缺"的新代码里,说明这类错不是历史遗留,而是**默认行为**:
+写一个数值函数时,返回 0 比返回"算不出"更顺手。
+
+修:无成员 ⇒ `(None, 0)`;三个引擎的 `_benchmark_block` 透传 ⇒
+`benchmark_return` / `excess_return` **双 None**,与仓库既有的"算不出就 None"口径
+一致(`profit_factor` 就是这个先例)。ensemble 路径另加一条:子策略基准**部分为 None**
+即 fail-fast(不许静默取平均);全为 None 则整体 None。
+
+守卫:`tests/test_benchmark_attribution.py` 增两条 —— 核心层(空面板 / 仅一根 bar ⇒
+`(None, 0)`)与引擎层(三引擎 × `_benchmark_block(空面板)` ⇒ 双 None)。
+双向验证:还原 `0.0` ⇒ **4 red**;恢复后整文件 12 全绿。
+
+> 记在这里的原因不是"这一行有多重要",而是它与本审计的一条核心结论互为印证:
+> **"算不出"必须是一种显式状态**。凡是让"算不出"与"算出来是 0"共用同一个值的地方,
+> 下游就一定会把它读成后者 —— 而这在本仓库已经发生过多次
+> (`profit_factor` 的 `Infinity`、DSR 的 `n_returns=252`、`mark_price` 的入场价兜底、
+> `_fetch_name_map` 的空 dict、容量闸门缺失时的"经济约束")。
+
+---
+
+## 附三十七 —— "§7 产物 writer 尚未实现"**不成立**:writer 早就有,缺的是**接线**
+
+### 1 · 台账的说法被推翻
+
+台账有两处写着「`equity_curve.csv` / `cash_walk.csv` / per-preset `backtest.json` 的
+**writer 尚未实现**」(§8 第 4 条、以及"仍未闭合的缺口"一节)。复核结果:**四个
+`main.py` 里都有 `_write_equity_curve`** —— writer 不但存在,而且带 canonical 列名与
+§2 的三池落盘逻辑。
+
+真实缺口完全在别处,而且是**两个不同**的东西:
+
+**(a) `short_reversal`:writer 存在、调用点存在,但链路断在中间 —— 永远不可达。**
+`main.py:188` 读 `eq_rows = m.get("equity_curve")`,而 `run_backtest_v3` 返回的 metrics
+**没有这个键**(实测:22 个键里没有它)。策略每个 bar 都在往
+`result_holder["equity_curve"]` 里写(全年窗口实测 200 行、键名齐全),但这些行
+**从来没有被带进 metrics** ⇒ `eq_rows` 恒为 None ⇒ 产物永远不出现,而且**静默**。
+
+**(b) `cycle_price_action`:`_write_equity_curve` 没有任何调用点。**
+`grep` 计数 1(只有定义)。def 与 call 的区别,在这份台账里此前被记成了"未实现"。
+
+> 这两处合起来说明一件事:**"未实现"与"实现了但不可达"是两种病,修法完全不同**
+> (前者要写代码,后者要接线 + 找断点)。台账把它们记成同一个,于是既低估了
+> short_reversal(其实只差一个键),又高估了 cycle(其实连调用都没有)。
+
+### 2 · 修法
+
+- `_metrics_from_holder` 把逐 bar 曲线**带进 metrics**(`"equity_curve": list(holder.get(...))`);
+- 集成路径**显式置 `None`** —— 多子组合的曲线尚未聚合。用 `None` 而不是"不放这个键":
+  缺键会与"字段根本没实现"不可区分(附三十三 的教训);`None` 可被读取方明确抱怨。
+- `main.py`:取不到曲线时 **`logger.warning`**(此前静默跳过)。"没写产物"必须出声 ——
+  否则"没写"与"写了但为空"同形。
+- `cycle_price_action`:**未代改**(该包正被另一 workstream 改动),改为在守卫里
+  **钉住事实**:测试断言 writer 仍无调用点 —— 谁接上了它,测试就会失败并被迫更新台账。
+
+### 3 · 守卫:把"真空的 skip"换成"自己产出再校验"
+
+那四条产物守卫此前形如「产物在 → 校验;不在 → skip 并登记缺口」。听起来稳妥,实则:
+`results/` 按 §7**必须**不入库 ⇒ fresh clone 下**永远 skip** ⇒ 它们从未校验过任何东西
+(而且 `_GAP` 文本里"缺少 writer"的说法是错的)。
+
+现改为**自己产出产物**:
+
+| 守卫 | 做什么 | 成本 |
+|---|---|---|
+| `test_writer_produces_both_artifacts`(3 引擎) | 合成输入 → 调 writer → 表头 == canonical | 毫秒 |
+| `test_cash_walk_pools_are_written_through_not_zeroed`(3 引擎) | 三池**逐列不同且非全 0**、且 `free_cash != locked_margin`(锁住 §2 P0-2 那个"硬编码 0"的形态) | 毫秒 |
+| `test_short_reversal_metrics_carry_the_equity_curve` | 单元层钉住本轮那个**具体**缺陷(键必须被带出) | 毫秒 |
+| `test_end_to_end_real_run_writes_artifacts`(仅 short_reversal) | 真跑一次 → 一路到文件落盘 | 约 5 分钟 |
+| `test_cycle_writer_is_still_unwired_and_that_is_recorded` | 钉住 cycle 的事实 | 毫秒 |
+
+**取舍记录**:最初做法是三个引擎各真跑一次 = **11 分钟**;而 writer 只需要"形状正确的
+输入",不需要真回测 ⇒ 改为合成输入后 3 分钟内解决,只保留**一条**真跑端到端
+(short_reversal,即本轮修的链路)。实测 5.4 分钟(原为全 skip、0 秒)。
+
+双向验证:回退 metrics 的 `equity_curve` 接入 ⇒ 单元断言以 `KeyError` 变红;恢复后
+9 passed / 4 skipped。
+
+### 4 · 台账更正(第五次"说法比事实重")
+
+已把 §8 与"仍未闭合"两处的「writer 尚未实现」更正为「writer 存在,**接线**问题」,
+并写明 cycle 的具体状态(定义了但无调用点)。
+
+本审计到目前已经推翻/更正过五条"已复核过"的台账说法:§4 Phase-2(自己已撤回)、
+§1 `settle()` 只冲刷正值、§6 信号层子进程(不存在)、§2 按字母序成交(实为合规)、
+以及本条"writer 未实现"。它们的共同形态是:
+**台账描述的是"当时观察到的表象",而代码在演化 —— 于是"未实现"可能早已变成
+"无效/不可达/已重命名"。凡引用台账,必须重新落到代码上核一遍。**
+
+---
+
+## 附三十八 —— 实时扫描工具**手抄参数子集 ⇒ 运行期崩溃**;策略构造改为单源
+
+### 1 · 起因:给快速扫描器写对拍,第一次调用"真值路径"就崩了
+
+`附三十一` 把快速扫描器的"与策略 100% 等价"改成"不等价即拒答"之后,我在 `附三十八`
+里把它的参数改为**读 preset 声明**,并打算用**对拍**给出等价性证据 —— 对拍对象是
+`scan_signals._scan_preset`(它逐股构造**真实** `Phase3V3Strategy` 跑 cerebro,即回测引擎本身)。
+
+第一次调用就抛:
+
+```
+§2: nav_gate_ratio 必须由 Control Plane 从 preset 声明解析后注入
+    (engine.run_backtest_v3 → core.preset_contract.resolve_nav_gate_ratio)。
+```
+
+也就是说:**实时扫描工具当时根本跑不起来**。
+
+### 2 · 根因:`scan_signals` 手抄了策略构造参数的**子集**
+
+它写的是 `cerebro.addstrategy(Phase3V3Strategy, tp_pct=…, sl_pct=…, …, result_holder=holder)`
+—— **12 项手抄关键字**,而引擎侧传 **55 项**。漏掉的东西分两类:
+
+| 漏掉的 | 后果 |
+|---|---|
+| `nav_gate_ratio`(§2 要求由声明解析后注入,fail-fast) | **运行期直接崩溃** |
+| F/G/H/I/J/K 开关、`max_positions`、`position_sizing`、`signal_price_domain`、`max_volume_participation`、`intraday_tiebreak`、`window_start/end` … | 即便把崩溃那一项补上,扫描出的信号集也会**比回测宽**(开关全走默认值)——与快速扫描器同一类错,只是方向相反 |
+
+**而这正是我在附三十一/三十八 里推荐给使用者的"可信路径"。** 台账 §4 的 S1 记过一次
+同类事故(`b597d0c` 修的是 `min_cash_ratio` 未传),但那次是**补一个参数**;
+这次换个参数又会崩 —— 说明病根不是"漏了某项",而是**"参数清单有两份,靠人手同步"**。
+
+**为什么没人发现**:`scan_signals._scan_preset` 不被任何测试调用 ⇒ 崩溃对套件不可见。
+
+### 3 · 修法:构造逻辑单源
+
+抽出 `short_reversal/engine.py::strategy_kwargs(cfg, name, *, holder, start, end)`
+——55 项参数**逐字搬过去**,回测入口与扫描工具**都**调它:
+
+```python
+cerebro.addstrategy(Phase3V3Strategy, **strategy_kwargs(cfg, _name, …))
+```
+
+**搬运过程中被抓出的两处作用域泄漏**(值得记一笔):helper 里引用了调用方的局部变量
+`_name` 与 `price_source_for_execution` —— 我不是靠眼看发现的,而是仓库里**已有的**
+两个行为测试(`test_short_reversal_v8_plumbing.py` 里 spy `Phase3V3Strategy.__init__`
+的那两条)立刻变红报 `NameError`。**行为测试在这里替我兜住了手工重构的错。**
+
+### 4 · 快速扫描器:参数改为读声明,覆盖 1 → 35 / 75
+
+`_filter_signals` 此前把 liq(3e7/3e8)、up_streak(3/10)、below_ratio(0.6) **写死**,
+且只实现 `d_mode='strict'`、不看 `close_ma60_buffer`。现一律读声明,并补齐三种
+`d_mode`(`strict` / `d_only` / `converge_strict`,与引擎逐字对应)。
+
+| | 之前 | 之后 |
+|---|---|---|
+| 可信 preset | **1 / 75** | **35 / 75** |
+| 仍拒答 | 74 | 40(F/G/H/I/J/K、市场宽度、ensemble) |
+
+**为什么不顺手把 F–K 也实现了**:引擎把它们算成 **backtrader 指标类**
+(`ReturnN(period=63)`、`AmountRatio(...)`、RSI 等),要在 pandas 侧支持就得**重新推导**
+这些定义 —— 那是**新增一处重复实现**,恰好与本附录在修的东西相反。正确做法仍是
+`附二十二` 的建议:**先把它们抽成纯函数**再由两处共用(继续登记为功能工作)。
+
+### 5 · 对拍(等价性的证据,而不是"说了算")
+
+新增 `tests/test_fast_scanner_matches_engine.py`:同一 preset、同一信号日(2026-09-18),
+**快速扫描器 vs 真引擎路径**逐只比较信号集,6 个 preset 覆盖本轮新读的每一项参数
+(`strict`/`converge_strict`、ratio、buffer、liq 放宽、cascade、up_streak 收窄)。
+子集 = 快扫描命中 ∪ 定序取样 300 只 —— 后者保证"快扫描漏、真值选中"这个方向也在射程内
+(只比命中会自证)。另有一条**非空断言**:六个 preset 至少有一个有命中,防止日期/数据变化后
+整个文件退化成空转。
+
+**它对拍出了我自己的错**:第一版把**未按 universe 过滤**的面板喂给快扫描器,于是报出三只
+非主板票(`301187.SZ` 创业板 / `688816.SH` 科创板 / `920036.BJ` 北交所)。核对后发现
+`scan_signals_fast.main()` 本来就按 preset 的 universe 过滤面板,而且**注释里写的正是这个坑**
+—— 错在测试。**教训:对拍失败时,先核对"真值路径"的前置条件,再指控实现。**
+
+顺带:这条对拍也是**实时扫描路径的回归守卫** —— 第 2 节那个崩溃,它第一次调用就会红。
+
+### 6 · 台账更正
+
+- §4 的 S1(scan 路径崩溃)原记为"已在 `b597d0c` 修复"。**该表述过窄**:那是补了一个参数,
+  2026-10-16 同一个工具因**另一个**参数再次崩溃。现已从**根上**修掉(构造单源),
+  同类问题不再是"记得同步"而是"结构上不可能不同步"。
+- §8#7d("先抽纯函数、再补对拍")**部分兑现**:对拍已就位;**纯函数抽取仍未做**
+  (F–K 的实现前提),继续登记。
+- §8#7c 提到的"信号层"相关登记随之更新:扫描工具的构造已收口到单源。
+
+---
+
+## 附三十九 —— 补上 short_reversal 的成交列表基线:这是此前**缺的那张安全网**
+
+### 1 · 缺口
+
+§6 明文:「Golden-baseline hashes lock trade-list behavior **for every engine**;
+any logic change that alters the trade list MUST regenerate the baseline and
+justify the drift in the PR.」
+
+实测 `tests/golden/`:chase **13** 条、uptrend **3** 条、cycle **1** 条,
+**short_reversal 0 条** —— 而它是四个引擎里迭代最频繁的一个(v35 → v83,75 个 preset)。
+后果:任何触碰它信号/出场/sizing/容量的改动,判据只剩"套件还是绿的",
+**而套件里没有一条锁住成交列表**。
+
+§8 早已登记此项,并写明了正确的做法:**"先修守卫,否则加了基线也无人执行"** ——
+即基线必须像 `test_uptrend_pullback_sha256_baseline.py` 那样**在测试内重算**再比对,
+不能去读 gitignored 的 `results/`(那种写法在 fresh clone 下会静默 PASS,
+本仓库在 uptrend 上吃过一次这个亏)。
+
+### 2 · 本轮补齐
+
+| preset | 覆盖 | 成交 |
+|---|---|---|
+| `v50_slope` | 单腿生产路径的规范形态 | 28 笔 |
+| `v58_mp_2` | **多仓容量路径**(附二十七 改过其 sizing 与容量闸门) | 58 笔 |
+
+窗口 `2026-03-01..2026-08-31`。生成脚本 `tests/_capture_short_reversal_baseline.py`:
+每个 preset **连续重算两次、要求哈希一致**才落 pin(不可复现的东西不该被 pin);
+哈希**直接取 DataFrame**,不做 CSV 往返 —— 后者两边各自"对"却永远对不上
+(该教训写在 `_regen_chase_baselines.py` 里;附三十三 repin 时我也踩过一次)。
+
+**代价如实记**:面板的暖机缓冲主导运行成本(实测 6 个月 ≈3.9 分钟/preset、
+一年 ≈5.3 分钟,故缩短窗口收益有限),两条共约 **8 分钟**加到套件里。
+这是"成交列表可锁"的价格,写进 golden 的 `pinned` 块。
+
+### 3 · 双向验证(以及一次**无效**的验证)
+
+把 `core/dual_price.py` 里**真正的** `COMMISSION_RATE` 赋值从 `0.00025` 改到 `0.000257`
+(2.8%)⇒ 守卫立刻变红,并打印 expected/actual 与 §6 的漂移要求;恢复后干净。
+
+> **第一次双向验证是无效的**:我用正则 `COMMISSION_RATE\s*=\s*([0-9.eE-]+)` 去改,
+> 它匹配到的是**注释里的**那一行(`#   - short_reversal engine.py:24  COMMISSION_RATE = 0.0006 (2.4x off)`),
+> 于是"跑完没变红"其实是**改错了地方**,不是基线失效。现改为锚定整行赋值,
+> 且**先看 `git diff` 确认只动了那一行,再跑**。
+> 这是本审计第 N 次遇到同一件事:**按正则/子串下手之前,先确认命中的是哪一处**
+> (附三十:AST 守卫多抓出 3 处;附三十六:子串守卫命中我自己的注释)。
+
+### 4 · 顺带闭合的登记
+
+`tests/test_reproducibility_audit.py::test_short_reversal_has_trades_csv_sha256_baseline`
+是一条 "GAP CAPTURED" 登记用例(用红灯表达待办)。它的判据正是"`tests/test_short*` 里
+存在 sha256 基线" ⇒ 本提交之后它**自然通过**,无需改动它 —— 登记与实现对齐。
+
+### 5 · 这张网解开了一个此前的僵局
+
+附三十八 里我拒绝"顺手把 F–K 也用 pandas 重写"的理由是:引擎用 backtrader 指标类算它们,
+在 pandas 侧支持 = **重新推导**这些定义 = 新增一处重复实现;正确做法是先把它们抽成
+**纯函数**再两处共用。而我当时不愿动引擎指标层的原因正是:**short_reversal 没有成交列表基线,
+改坏了没人知道**。
+
+现在这张网有了(`v50_slope` 28 笔 + `v58_mp_2` 58 笔,逐字节可锁)。故那条重构的风险
+从"无保护"降到"有基线可对照",可以立项 —— 但仍**不在本轮做**:它需要把 backtrader 指标
+逐个与 pandas 实现**逐值对拍**后才敢替换,是独立一件事。
+
+---
+
+## 附四十 —— 快速扫描器:F/G/H/I/K 落地,可信度 **1 → 68 / 75**(附两级对拍)
+
+### 1 · 做了什么
+
+`scan_signals_fast` 此前对 74/75 个 preset **拒绝作答**(附三十一 修掉"假等价声明"、
+附三十八 让它读 preset 声明的参数)。本轮把**剩下能实现的条件**补上:
+
+- **指标**:F/G/H/I/K 需要的 `ma20_slope_5d` / `return_1m|3m|6m` / `amount_ratio` / `rsi`
+  一律调用 `short_reversal/indicators_bt.py` 里**新增的 pandas 对偶**。放进那个文件,
+  是为了让每个指标的 backtrader 原件与 pandas 版**在同处可查**,而不是像以前那样
+  在扫描器里各抄一份。
+- **条件**:`_filter_signals` 里逐条照 `_all_conditions` 写(NaN 语义也一致 ——
+  引擎遇 NaN 一律 `return False`,pandas 的 NaN 比较亦为 False)。
+- **仍拒答 7 个**:J 冷静期 3 条 + 市场宽度 1 条 + ensemble 3 条。前两者是**路径依赖**
+  的(J 取决于运行历史里的 SL 出场时点;breadth 取决于当日全市场宽度),
+  单行向量化**原理上**复现不了 ⇒ 拒绝是对的,不是缺口。
+
+| | 之前 | 现在 |
+|---|---|---|
+| 可信 preset | 1 / 75(附三十八 参数化后 35) | **68 / 75** |
+| 拒答 | 74 | **7**(全部为原理性不可复现) |
+
+### 2 · 证据(这才是本附录的重点)
+
+"读对了参数"和"抄对了公式"是两件事。故做了**两级**对拍:
+
+**(a) 逐值对拍**(`tests/test_indicator_equivalence_pandas_vs_backtrader.py`):
+同一批 25 只代码、同一天,**引擎的 backtrader 指标值** vs **pandas 对偶**,
+逐指标比较 —— 14 个指标全部在 `rtol=1e-6` 内一致(其中 RSI 精确到 1e-14)。
+范围不止新增的五个:`ma5/10/20/60`、`pct_chg`、`am60`、`up_streak`、
+`below_ma60_ratio_60`、`ma20_slope_5d`、`return_1m/3m/6m`、`amount_ratio`、`rsi`
+—— **基础五条件的指标此前同样只是"假设等价",现在也一并被钉住**。
+
+**(b) 信号集端到端对拍**(`tests/test_fast_scanner_matches_engine.py`):
+扩到 **11 个 preset**(F/G/H/I/K 各一条 + 参数类各一条),同一信号日,
+快扫描器 vs **真引擎路径**(逐股构造真实 `Phase3V3Strategy` 跑 cerebro)逐只比较 ⇒ 全一致。
+
+### 3 · 一次"形态指明成因"的调试(值得单独记)
+
+第一次逐值对拍报出:**只有 RSI 不一致**,相对差约 1e-6。
+
+这个**形态**本身就是线索:候选指标里只有 RSI 是**对整条序列递归**的(Wilder 平滑),
+其余都是滚动窗口 —— 于是"只有它差"极可能意味着**输入不同**,而不是**公式不同**。
+验证:把 backtrader 的 RSI 单独跑在**同一条序列**上,与 pandas 版比较 ⇒ 差 **0 ~ 1.4e-14**。
+
+根因确认:我的测试让引擎侧走引擎自己的 loader、pandas 侧走另一个 loader,
+两者给的**历史长度不同** ⇒ Wilder 的种子不同 ⇒ 残差约 1e-6(随递归衰减但不为零)。
+改用同一个 loader 后,RSI 与其余指标一样精确。
+
+> 两件事记在这里:
+> 1. **测量胜于假设**。我先有一个"种子应该是前 period 个增量的均值"的假设,照它改了一版,
+>    残差**丝毫未动** —— 因为真实成因在别处。把指标隔离出来单独跑,两分钟就定位了。
+> 2. **我随后把为了掩盖残差而加的"逐指标容差"删掉了**。它当时看着"合理"(浮点路径差),
+>    实则是在为一个**测试自身的错**开后门;留着它,将来真的把 Wilder 抄成简单均值
+>    (百分之几的差)也会被这层容差吞掉一部分。现在全键统一 `rtol=1e-6`。
+>    ——这与附六「用红灯表达待办」是同一类问题:**守卫里最危险的不是没写,而是写成了
+>    一个能被绕过的形状**。
+
+### 4 · 与 §6「单一实现」的关系(如实说明取舍)
+
+§6 偏好"一条规则只有一处实现"。本项**没有**做到那一点:引擎仍是 backtrader 类、
+扫描器仍走 pandas。之所以不重构引擎指标层:那是**结果敏感**的手术(指标值喂给每一条
+条件与每一次回测),而它的收益只是"少一份实现"。
+
+故选择的是**能力等价 + 证据**:两份实现放在**同一个文件**里相邻可查,
+并配 **两级对拍**。§8#7d 当初的建议是"先抽纯函数、再补对拍" —— 本轮把顺序倒过来了:
+**先把对拍建起来,于是"等价"从假设变成可验证的事实**,而重构与否就有了判据
+(要重构,也必须先有这层对拍来证明重构没改行为)。
+
+### 5 · 顺带钉住的一处能力
+
+`test_fast_scanner_equivalence_gate.py` 里原本有一条"`v50_slope` 启用 F ⇒ 必须被拒"。
+F 实现之后,这条**拒绝**正是应当消失的东西 —— 已改为钉住新能力
+(五条条件对应的 preset 现在都必须**可信**),而不是把覆盖删掉。
+可信集合快照 `KNOWN_FAITHFUL` 同步 35 → 68,并在注释里写明余下 7 个为何不可复现。
+
+---
+
+## 附四十一 —— 套件成本与"慢守卫"开关(**默认不减少覆盖**)
+
+### 1 · 背景:本会话把全套件从 43 分钟推到 49 分钟
+
+其中约 **29 分钟**集中在 19 条"以分钟计"的守卫上,全部是本会话新增的:
+
+| 守卫 | 条数 | 约计 |
+|---|---|---|
+| short_reversal 成交列表基线(附三十九) | 2 | 8 分钟 |
+| 快扫描器 vs 真引擎**信号集对拍**(附四十) | 12 | 6 分钟 |
+| 容量行为(附二十七) | 2 | 5.5 分钟 |
+| 基准归因(附三十四) | 2 | 4 分钟 |
+| 产物端到端(附三十七) | 1 | 5 分钟 |
+
+这些守卫**都替换了真空覆盖**(原先不是 skip 就是恒真),所以值得留。但成本必须
+**可见、可控** —— 否则"验证很慢"会以最坏的方式解决:有人把守卫删掉。
+
+### 2 · 做法
+
+新增 `pytest.ini`,注册 marker `slow` 并开启 `--strict-markers`。
+后者是**必须**的:未注册的 marker 会被 pytest **静默忽略**,于是"我打了标记,所以这组
+被排除了"会变成看不见的事 —— 静默忽略 = 测试被悄悄排除,正是本审计反复在修的那一类
+(附五 假阳性、附六 用红灯表达待办、附二十二 "已声明=没问题"、附三十三 静默 skip)。
+
+三条命令(实测数字):
+
+| 用途 | 命令 | 收集 | 耗时 |
+|---|---|---|---|
+| **完整验证(默认,CI 应当用这个)** | `pytest` | **1213 条全收** | 49m00s |
+| 本地快速迭代 | `pytest -m "not slow"` | 1194 条(19 条被显式排除) | **19m46s(省 29 分钟)** |
+| 找出"下一条该标的" | `pytest --durations=20` | — | — |
+
+### 3 · 关键设计选择:**默认仍然执行全部**
+
+本仓库已经被"守卫悄悄失效"伤过多次,而"**默认跳过重型守卫**"正是同一族缺陷:
+它不会报错、不会变红,只会在**一片绿**里把覆盖拿掉,而且事后无从察觉。
+故 marker 只作**显式**开关。实测:不加 `-m` 过滤时收集 1213 条 = 加标记之前**完全一致**。
+
+> 一句话原则:**让"跳过"必须由人打出来**(`-m "not slow"`),而不是由默认值决定。
+
+### 4 · 未做完的部分(如实说明)
+
+我只标了**本会话新增**的重型守卫。更早的历史测试(governor、golden 等)尚未逐条标 ——
+那需要一次 `--durations` 跑分才能**诚实地**标(按感觉标会让"哪些慢"变成传闻)。故
+`-m "not slow"` 省下的 29 分钟**少于**理论上限,这一点写进了 `pytest.ini` 的注释里,
+免得后人以为已经标全了。
+
+顺带:快速模式那一跑(19m46s)本身也让 1164 条非重型守卫**全部通过 / 0 失败** ——
+即这条开关不是"跳过就算",被留下的那部分确实还是绿的。
+
+---
+
+## 附四十二 —— 补完 slow 标记:`--durations` 实测把快速模式压到 **3 分钟**
+
+附四十一 只标了本会话新增的重型守卫,并写明"更早的历史测试需要一次 `--durations` 跑分
+才能**诚实地**标"。本轮把那次跑分做了(52m09s,1183 passed,0 failed),按 **≥60s** 的判据
+补标两处 —— 而这两处**都不是靠感觉猜得到的**:
+
+| 未标但很慢的 | 实测 | 为什么先前的"逐条标"会漏掉它 |
+|---|---|---|
+| `test_short_reversal_no_lookahead.py` 的 `test_pre_window_entry_count_is_zero` | **438s,全在 setup** | `trace_report` 是 **module 级 fixture**;该文件里**三条**测试共享它。只标报时的那一条**毫无作用** —— 另两条照样把它拉起来 ⇒ 必须按 **fixture 的使用者**标,而不是按"谁报了时间"标 |
+| `test_engine_v3.py` 的 `test_end_to_end_one_preset` / `test_high_cagr_preset_profitable` | 320s / 312s | 历史文件,不在本会话改动范围内;不跑一次 `--durations` 就只能凭猜 |
+
+结果(实测):
+
+| | 标记前 | 现在 |
+|---|---|---|
+| **默认(不加过滤)** | 收集 1213 条 | 收集 **1213 条**(**完全一致** —— 标记不减少默认覆盖) |
+| `-m "not slow"` | 19m46s / 19 条被排除 | **3m03s / 24 条被排除** / 1159 passed / 0 failed |
+| 全套件 | 49m00s | 52m09s(`--durations=30` 本身有开销) |
+
+> **两条教训**:
+> 1. **共享 fixture 会隐藏成本归属。** 438 秒记在一条测试名下,实际是三条共用的
+>    module 级 fixture;按"谁慢标谁"处理,等于没标。标之前要看 fixture 作用域。
+> 2. **体感估时不可靠。** 我先前把"基准归因两条"估成"约 4 分钟",实测 chase 那条只要
+>    **4.8s**、短反转那条 308s —— 差两个数量级。凡涉及"哪条慢",一律以
+>    `--durations` 为准;这也正是把"估时"写进守卫注释时的风险:一个错的数字比没有数字更坏。
+
+---
+
+## 附四十三 —— 系统扫"空转守卫":粗模式全清,但费率守卫确实是空转的(并修了扫描器自身的误报)
+
+### 1 · 起因:把"检查器本身才是问题"这一类**系统地**扫一遍
+
+此前几次都是**个案**发现(附二十五 的静默 skip、附三十三 拼写匹配的守卫、附四十 的
+"为测试自己的错开后门")。这次写扫描器系统过一遍全库测试:
+
+| 粗模式 | 命中 |
+|---|---|
+| `assert True` / `assert 1 == 1` | **0** |
+| `if False` / `if False else` | **0** |
+| 无理由的 `pytest.skip()` | **0** |
+| `except Exception: pass` | **0** |
+
+> **一条自我纠正**:我的第一版检测器把 **84 个**测试判成"无断言 / 无失败路径",
+> 逐个查看后发现**全是假阳性** —— 本仓库的房规是 `if <bad>: raise AssertionError(...)`,
+> 因为 `python -O` 会剥掉 `assert`(这正是审计自己在 §0/§6 主张的)。检测器只认
+> `ast.Assert`,于是把**主流写法**判成空转。改成同时认 `raise AssertionError` /
+> `pytest.raises` / `_assert*` 助手后降到 **19 条**,再逐条看:其余都是"不抛异常即通过"
+> 的冒烟用例(函数名就写着 `..._does_not_raise`)。
+>
+> **假阳性扫描器比没有扫描器更毒** —— 这条教训这次应验在我自己的工具上。
+
+### 2 · 真缺陷一:四个费率用例里有三个从不失败
+
+`tests/test_cost_constants_single_source_4engine.py`:
+
+```python
+    if chase:
+        # Informational — chase_up has known duplicated cost constants
+        # per Tick 53. This is documented, not a regression.
+        pass                      # ← 扫完不看,永不失败
+```
+
+而同一个函数的 docstring 写着「This test **catches** NEW hardcodes introduced after
+refactor」—— **声明与实现相反**。`uptrend_pullback` 同形;`short_reversal` /
+`cycle_price_action` 稍好(有 `raise`),但只比对**特定错值**(0.0006 / 0.001)⇒
+"值抄对了但重复定义"这个**漂移起点**照样漏过。
+
+**这与台账的关系(第 6 次"账实不符")**:审计的 §3.2/§3.3 与 §8#13 都**点名**了这个文件的
+`:265`(无断言 `pass`),而 §8#13 是"修三个空转守卫"的**修复计划**。也就是说:发现记了、
+计划列了,**这个文件却没被真正修**。附六 当时说「恒真断言早已修」指的是**另一个**
+文件(`test_backtest_data_integrity.py:58`),措辞容易让人以为这一族都清了。
+
+### 3 · 真缺陷二:扫描器自己在误报
+
+`_scan_hardcoded_costs` 只按"数值命中费率表(0.00025 / 0.0005 / 0.0006 …)"判定,
+而它算出来的 `cost_context` 变量**从未被使用** —— 紧接着就是无条件 `append`,
+注释还写着 *"Always flag ... (even without context)"*。后果(实测):
+`short_reversal/replay_strategy_v3.py:185` 的 **`sl_pct=0.0005`**(止损百分比,
+一个策略参数)被报成"印花税重复定义"。
+
+在这条上假阳性尤其毒:它给了"这四个用例本来就抓不准"一个体面的理由,
+从而把真正的费率重复藏进噪声里。
+
+### 4 · 修法
+
+- 扫描器改**按名字**判定:赋值目标 / 关键字实参的名字含
+  `commission|stamp|duty|fee|cost|tax|borrow`,且值**非零**
+  (零值有合法用途:`cerebro.broker.setcommission(commission=0.0)` —— 成本由策略内部扣)。
+- 四个用例统一为**任何非零成本字面量即违规**,共用 `_assert_no_cost_literals`:
+  不再有 `if: pass`,也不再只盯特定错值 —— **值对错都不该出现在引擎里**
+  (同值不同源就是下一次漂移的起点,§2 单源)。
+
+重写后实测:四引擎**都是 0 处**,与审计"费率重复定义**已消失**"的结论一致 ⇒
+这些守卫现在是**为真且为绿**的,而不是"绿是因为什么都没查"。
+
+### 5 · 双向验证(含**负对照**)
+
+| 方向 | 手段 | 结果 |
+|---|---|---|
+| 正对照 | 往 `chase_up/portfolio.py` 注入 `commission_rate = 0.00025` | **变红**,并打印 `chase_up/portfolio.py:208 commission_rate=0.00025` ✓ |
+| **负对照** | 注入 `sl_pct = 0.0005`(旧扫描器误报的那个值) | **保持绿** ✓ —— 假阳性确实修掉了,而不是把守卫放宽成"什么都抓不到" |
+
+恢复后 5 passed,`git diff` 干净。
+
+---
+
+## 附四十四 —— 把"skip"当作一个**覆盖维度**来盘点:三处天花板守卫 + 一条未实现的要求
+
+### 0 · 方法
+
+继附四十三(系统扫"空转守卫")之后,换一个维度:把 skip **本身**当作覆盖来审计。
+做法便宜到只需三分钟 —— `pytest -m "not slow" -rs`(快模式列全部 skip 理由),
+然后逐条问:**"不 skip 的条件在这个仓库里可能满足吗?"**
+
+"在 fresh clone / 干净检出里必然 skip,且不 skip 的条件不可能满足"的守卫,
+提供的不是覆盖,而是**覆盖的错觉**。本轮据此找到三处,外加一个真缺陷。
+
+### 1 · 真缺陷:`build_trade_dates` 声明了"必须报 unverified",而实现里没有这个词
+
+`short_reversal/render_html_report.py` 的模块 docstring 第 4 条:
+
+> 4. 若所有候选都不通过校验, **必须报 "unverified"** (而不是任意挑一个错的)
+
+全文件 grep `unverified` ⇒ **零命中**。实际行为:退化取最早候选,并**凭空推**
+`exit_date = entry + BDay(hd)` —— 那个 bar 可能根本不存在。于是 HTML 报告里会出现一个
+"看起来正常、数字是编的"日期。**这正是该文件当初要防的那个 bug 的变体。**
+
+修:回退路径**状态随行发布**(`_date_status` ∈ `verified` / `unverified` /
+`no_kline_match`),初值取 `unknown` —— fail-safe 方向:漏标记只会让状态更**保守**,
+不会更乐观;汇总处打印未通过校验的条数。
+
+> 又是"声明与实现不符"(本审计第 7 次)。这次的形态最刺眼:**声明就写在同一文件的
+> docstring 里,而正文从未实现它** —— 说明"写在旁边"完全不能替代"落到代码"。
+
+### 2 · 三条守卫依赖**已删除 preset** 的产物,并给出不可能执行的指引
+
+`tests/test_render_html_date_mapping.py` 原由真实产物驱动,而
+`v33_mainboard_tp2_sl05_dneg` / `v33_mainboard_tp6_sl005_mh5_realistic`
+**已裁剪出 PRESETS** ⇒ 产物再无法重生成 ⇒ 三条用例**永远 skip**,理由还写着
+"需用 `--save-trades` 重跑 <已不存在的 preset>" —— **一条不可能执行的指引**
+(比"没有指引"更坏:它让人以为再跑一次就能恢复覆盖)。另外它把 DB 与 results 路径
+**硬编码到别人的检出**(`/Users/holeon/code/hiagent/short_reversal/results`),
+与审计在 `_regen_chase_baselines.py` 修过的"硬编码绝对路径会读/写别的检出"同类。
+
+修:改为**合成夹具** —— 不依赖产物、不需要 DB,**任何检出里都能跑**(0.02 秒),
+四条不变量全部仍被钉住,其中包含**历史 bug 本体**:歧义入场价时必须选
+**能通过 `exit_price` 校验**的那根,而不是日期最早的那根。
+
+### 3 · 11 条"等 csv 生成"的守卫:不变量并入已有的重算测试(零额外成本)
+
+`test_short_reversal_trade_math_consistency.py` 守的是 **SHORT 方向语义**
+(SL ⇒ `xp > ep×(1+sl_pct−tol)`;TP ⇒ `xp < ep×(1−tp_pct+tol)`;违反即**幻影出场** ——
+审计 §4 的实锤族),但它靠 gitignored 的 `results/*_trades.csv` 驱动 ⇒ fresh clone 里
+**11 条全 skip**。
+
+而 `test_short_reversal_sha256_baseline.py` **本来就要重算成交列表** ⇒ 把该不变量跑在
+**重算出来的**数据上:**零额外成本、不依赖产物**。
+
+实测:两个 preset 的**全部真实成交均无方向违规**(verified-clean)
+—— 即"幻影出场"在当前数据上不存在,而这个结论现在**每次跑基线都会被重新验证**,
+不再是"没人查过"。另配一条**植入幻影必须被报出**的单元对照(0.02 秒),
+证明检查器有牙而不是恒绿。
+
+### 4 · cycle 的成交列表基线:默认从"永远不跑"改为**默认跑**
+
+`test_cycle_price_action_sha256_baseline.py` 用**环境变量**默认跳过
+(`DNA_RUN_SLOW_GOLDENS=1` 才跑),理由写着"放进默认套件会让整体不可用" ——
+该理由在**没有 marker 机制**时成立,而附四十一 刚把 `slow` marker 建好。
+故改用 marker:**默认执行**(实测 7 分钟、**通过**),本地快速迭代用 `-m "not slow"`
+显式排除。
+
+**为什么这条重要**:它是四个引擎里**唯一**锁住 cycle 成交列表的守卫。
+默认跳过它,等于 cycle 的成交列表**从来没有被验证过** —— 而这正是本审计一直在批的
+"覆盖在绿色里消失"。marker 机制的价值在这里第一次真正兑现:让"重型"与"默认不跑"
+**解耦** —— 重型可以默认跑,需要快的人显式说不。
+
+### 5 · 双向验证
+
+| 项 | 手段 | 结果 |
+|---|---|---|
+| 日期映射 | 还原为"静默 verified" | **2 red**(`unverified` / `no_kline_match`),恢复后 5 全绿 |
+| 方向语义 | 合规样本 vs **植入幻影** | `[]` vs 报出 2 条(单元级,0.02 秒) |
+| cycle 基线 | 先以显式环境变量确认可通过(7m09s)再改为默认跑 | 通过,且默认收集数 +1 |
+
+---
+
+## 附四十五 —— 扫描"声明了但代码里没有的机制":命中 1 处(其余 23 处为合法),扫描器精度不足故不做守卫
+
+### 1 · 方法(承接附四十四 那个 `unverified` 缺陷的**形态**)
+
+附四十四 的真缺陷有一个共同外形:**docstring 里点名了一个机制/标签,而代码里没有它**。
+于是写扫描器把这种外形找出来:收集 docstring 里被引号或反引号点名的 token
+(`"unverified"` / `` `raw_close` `` 这类写法),再看它是否出现在**代码区**
+(即去掉 docstring 之后的源码)里。覆盖 107 个生产模块。
+
+### 2 · 结果:24 处命中,逐条看过后**只有 1 处是真缺陷**
+
+| 类别 | 例子 | 判定 |
+|---|---|---|
+| 跨模块引用 | `dna_data/dual_price_loader.py` 提到 `extract_execution_bar` / `is_limit_up` | 合法 |
+| 历史沿革说明 | `core/preset_contract.py` 提到改名前的 `min_cash_ratio` | 合法 |
+| 跨引擎一致性备注 | `short_reversal/engine.py` 提到 `profit_factor` 的 None 口径 | 合法 |
+| 通用词 | `cycle_price_action/presets.py` 的 `time` | 噪声 |
+| **真缺陷** | `short_reversal/feed_bt.py` 声称加了 `raw_*` lines | **见下** |
+
+### 3 · 那 1 处:`feed_bt` 的模块 docstring 描述了一个**不存在、也不需要**的机制
+
+模块 docstring 写着「V3a: 添加 raw_open/raw_high/raw_low/raw_close lines,strategy 在
+`price_source_for_execution="raw_close"` 时切换 SL/TP/intraday trigger 价格到 raw_*
+lines;raw_* 缺失 → fallback 到 adj …」。实测:
+
+- `lines` 元组里**没有任何 raw_***;
+- 全模块 grep `d.raw_close` / `d.lines.raw_*` **零命中**。
+
+而这个机制**本来就不需要**:`v_daily` 本身就是原始价 ⇒ raw 域执行直接用默认的
+`close` line;复权域另开 `adj_open/adj_high/adj_low/adj_close` 四条。
+`price_source_for_execution="raw_close"` 的含义正是"用默认(原始)列"。
+
+**为什么值得修**(而不只是"文字不准"):这段描述会让人或 agent 以为
+`d.lines.raw_close` 存在(→ 写出 AttributeError),或者据此对价格域下错结论 ——
+而"短反转的 `close` 到底是 raw 还是 adj"正是审计 §3 **反复要钉住的前提**
+(它决定了 A 条件、公司行为、D 条件那些结论是否成立)。
+
+**类** docstring(`AShareData`)本来就准确 —— 它明确写着「当前 strategy 仍读 raw
+(v_daily IS raw)」。故只更正模块级那一段,并使其与类级说法一致。纯文档改动。
+
+### 4 · 扫描器本身的评价:**精度不足,不做成守卫**
+
+24 处里 23 处合法 ⇒ 假阳性率约 96%。按本审计自己的判据(**假阳性比假阴性更毒** ——
+它会让真缺陷藏在噪声后、并最终导致守卫被关掉),这种精度的扫描器若固化成守卫,
+只会制造长期噪声。故它只当**一次性排查工具**用,结论记在这里,不入库。
+
+> 这也是本会话第 N 次遇到同一个元问题:**"扫描器"永远要先验证它自己**。
+> 今天早些时候,我自己的检测器分别把 84 个合规测试判成空转(附四十三)、
+> 把 `sl_pct=0.0005` 判成印花税重复(附四十三)、把 `pytest.skip()` 的检测写成零命中
+> (附四十四)。**先量自己的假阳性率,再决定它配不配当守卫。**
+
+### 5 · 本轮在"覆盖"这条线上的收获汇总(附四十三 → 附四十五)
+
+| 维度 | 手法 | 结果 |
+|---|---|---|
+| 空转守卫 | AST 扫 `assert True` / `if False` / 无理由 skip / 吞异常 | 粗模式**全清**;真缺陷在费率守卫(4 个用例 3 个从不失败) |
+| skip 当覆盖 | `-m "not slow" -rs` 列理由,逐条问"不 skip 的条件可能满足吗" | 3 处天花板守卫 + 1 条未实现的要求(附四十四) |
+| 声明 vs 代码 | docstring 点名的 token 是否出现在代码里 | 24 命中 / **1 真缺陷**(附四十五,本条) |
+
+合计把**4 条永远 skip 的守卫换成真覆盖**(cycle 基线 + 3 条 render_html),
+外加把 11 条依赖 gitignored csv 的不变量并入已有的重算测试 ——
+全套件因此 **skip 30 → 26、passed 1183 → 1190**,两个方向同时动,方向正确。
+
+---
+
+## 附四十六 —— 契约模块的**禁令**在代码里被违反 14 处,其中一处**真的在生效**
+
+### 1 · 方法:拿模块自己的禁令去核代码
+
+`core/preset_contract.py` 的模块 docstring 有一条**明文禁令**:
+
+> 引擎不得再用 `p.get(key, <看起来合理的默认值>)` —— 那正是让缺口靠沉默存在的写法。
+
+于是把六个契约键(`max_positions` / `position_fraction` / `position_sizing` /
+`nav_gate_ratio` / `max_volume_participation` / `atr_slip_scale`)对四个引擎逐条核了一遍
+—— 注意**要覆盖 Phase-1 与 Phase-2 两条路径**(审计早先发现过两条路径语义分歧,
+只核一条会漏掉另一半,也会放大分歧)。
+
+### 2 · 结果:14 处仍在用被禁的写法;其中一处**不是潜在风险,而是真的在生效**
+
+| 文件 | 被禁写法 |
+|---|---|
+| `chase_up/backtest.py` | position_sizing / max_volume_participation / nav_gate_ratio |
+| `chase_up/backtrader_engine.py` | 同上三处 |
+| `uptrend_pullback/backtest.py` | 上述三处 + position_fraction |
+| `uptrend_pullback/backtrader_engine.py` | 同上四处 |
+| `short_reversal/engine.py` | max_positions / max_volume_participation |
+
+**真正在生效的那一处**:`uptrend_pullback` 的**三个 preset(v19 / v20 / v21 —— 即全部)
+从未声明 `nav_gate_ratio`**,而引擎 `p.get("nav_gate_ratio", 0.05)` 静默兜底 ⇒
+它们一直跑在一个**没有任何人声明过**的 0.05 上。"没声明"与"声明为 0.05"不可区分 ——
+正是契约模块要防的那件事,也正是本审计在别处反复修的形态
+(附五「被声明却无人读取」的**镜像**:这里是"未声明却有人默认")。
+
+### 3 · 修法
+
+1. **补声明**:uptrend 三个 preset 写上 `nav_gate_ratio: 0.05` —— 就是**当时实际生效**的值
+   ⇒ **零行为变化**(这类"把隐式默认写成显式声明"的修法是最干净的一种:它让契约为真,
+   而不动任何数字)。
+2. **14 处全部改走 `resolve_*`**(缺声明即 fail-fast),两条路径一起改。
+3. **`resolve_max_positions` 增加 `capacity=None`**:该参数原先**必填**(给"单仓引擎恒 1"用),
+   但 chase / uptrend / short_reversal 的引擎**都支持任意 N**(按 `free_cash / N` 分散,
+   容量闸门逐 bar 约束)—— 给它们编一个"物理上限"是**假事实**。`None` 的含义是
+   "**无物理上限,但仍强制必须声明**":把契约的本意(声明必须到达引擎)留下,
+   把虚构的上界去掉。三档行为都验过(声明=2 通过 / 声明=2 且 capacity=1 报错 / 未声明报错)。
+
+### 4 · 行为中性:用基线验证,不是靠推理
+
+所有涉及的键在三个引擎的**全部 preset** 里都已声明(实测)⇒ `resolve_*` 返回的正是
+原先 `.get` 读到的同一个值 ⇒ 结果不变。验证(全部通过):
+
+- chase 黄金基线 **8/8**;
+- uptrend 基线 **3/3**;
+- short_reversal 基线(哈希 + 方向语义)**3/3**(7m34s)。
+
+### 5 · 守卫(附四十六)
+
+`tests/test_preset_declarations_are_load_bearing.py` 增一条 AST 判定:
+**关键字实参名是契约键、而值是 `.get(...)`** ⇒ 违规。
+边界的处理是刻意的:`p["max_positions"]` **直接索引不算**(缺键 KeyError 是响亮的,符合契约);
+`resolve_*` 自然不算。另含"植入一处静默兜底必须被报出"的**自检**
+(否则这组断言恒绿也无人知道)。双向验证:把 uptrend 的 nav_gate_ratio 还原成 `.get`
+⇒ 立刻报 `uptrend_pullback/backtest.py:205 nav_gate_ratio`;恢复后 19 全绿。
+
+### 6 · 两次自我纠错(记录,因为都是本会话反复出现的类型)
+
+1. **锚点只看"字符串唯一",没看缩进/上下文**:给 `uptrend_pullback/backtrader_engine.py`
+   插入模块级 import 时,我锚到了 `from uptrend_pullback.universe import load_universe`
+   —— 而它在这个文件里位于**函数体内**(缩进 4 空格)。于是模块级 import 被塞进函数体 ⇒
+   IndentationError。而且我的脚本是**先写盘后解析**,坏内容当场落盘,只能 `git checkout` 恢复。
+   两条修复:**锚定顶格导入**;**先 `ast.parse` 再 `write`**。
+2. **重新引入了我自己修过的作用域泄漏**:在 `short_reversal/engine.py` 里写
+   `resolve_max_positions(cfg, _name)`,而那几行位于附三十八 抽出的
+   `strategy_kwargs` helper 内 —— 该作用域的形参叫 `name`,不是 `_name` ⇒ NameError。
+   修复后按附三十八 的老办法复查 helper 内自由名字,确认只剩模块级常量/resolver。
+   **教训**:抽出的 helper 改变了"局部变量从哪来",而按文件全局 grep 是看不出这一点的 ——
+   编辑前要先确认**目标行属于哪个作用域**。
+
+---
+
+## 附四十七 —— **信号扫描器一直在原始价上算条件,而引擎用复权价**(94% 的行受影响)
+
+### 1 · 怎么发现的:按 `core/dual_price.py` 的 MUST 逐条核代码
+
+`core/dual_price.py` 的模块 docstring 有两条 MUST:
+
+> - 信号/指标 (MACD, MA, ATR, Volatility, ...) → MUST use **adjusted_close**
+> - 限价单触发 / SL / 物理 cash mark-to-market (含 entry fill) → MUST use **raw_close**
+
+核第一条落到 short_reversal 时,引擎侧没问题(见下),但**扫描器侧**错了 ——
+而且这正是本审计 V5 修过的那个缺陷("原始 close 与复权 MA60 混域"),
+**修复只落在引擎,漏了扫描器**。
+
+### 2 · 事实
+
+两条面板加载路径:
+
+| 路径 | SELECT | 价格域 |
+|---|---|---|
+| `load_panel_for_backtest`(引擎) | `v_daily LEFT JOIN v_daily_hfq`,暴露 `adj_*` | **复权** ✓ |
+| `load_panel_for_signal`(**两个扫描器都走它**) | 只有 `v_daily`(= raw) | **原始** ✗ |
+
+引擎侧因此正确:策略构造时 `adj_close_src = d.lines.adj_close`(面板有 adj_close 且首值非 NaN)
+⇒ `signal_price_domain="adj"`(shipped 默认)下 A/B/C/D 与 F–K 全在**复权**域
+—— 与 V5 的修复一致 ✓。而扫描器拿不到 `adj_close`,于是**整体算在 raw 上** ✗。
+
+实测暴露面(活库,lookback 250 日):
+
+| 量 | 值 |
+|---|---|
+| `adj_close != close` 的行 | **873,979 / 928,733 = 94%** |
+| 例:`000001.SZ` 2026-01-12 | raw **11.48** vs adj **14.74** —— 差 **28%** |
+| 近 250 个交易日内有公司行为的标的 | **3,775 只 / 5,143 个事件**(≈ 全市场) |
+
+### 3 · 修法
+
+1. `load_panel_for_signal` 加 `LEFT JOIN v_daily_hfq` 暴露 `adj_*`(**与引擎同一口径**)。
+   慢扫描器构造**真实策略**,于是它自动选中 `adj_close_src` ⇒ 无需另改。
+2. `scan_signals_fast._compute_indicators` 引入 `_px`(信号域序列 = `adj_close`,
+   逐行回退 `close`,与引擎 `adj_close_src` 同一规则),用于
+   MA 族 / `below_ma60_ratio` / `pct_chg` / `up_streak` / MACD / `return_n` / `rsi`
+   以及 A 条件(含 cascade 分支)。
+   **K 条件刻意保留 raw** 的 `open/high/low/close` —— 引擎 `_all_conditions` 里那几行
+   用的就是 `d.open/high/low/close`(= feed 默认列 = 原始价)。这是**镜像**,不是遗漏。
+3. 逐值对拍的 pandas 侧也改用信号域 —— 见下。
+
+### 4 · 一个重要的"守卫喂错了输入"教训(本会话第三次)
+
+逐值对拍(`test_indicator_equivalence_pandas_vs_backtrader.py`)**通过**,而它当时
+**没能发现**这个域错误 —— 因为它的 pandas 侧取的是 `df["close"]`(= raw),
+与引擎侧在同一份(也是 raw 的)面板上比较 ⇒ 它验证的是"**两份实现同口径一致**",
+而不是"**这个口径是对的**"。
+
+同理,信号集对拍(fast vs 慢扫描器)也是两侧共用 `load_panel_for_signal` 的面板 ⇒
+两边**一起错**,于是"一致"掩盖了"一致地错"。
+
+> 与附四十三/附四十四 同一族:**守卫的输入必须先被验证**。
+> 这次修正后,两级对拍都在**生产口径**上跑,因而具备资格作为"域正确"的证据。
+
+### 5 · 影响:输入是系统性的,输出是"每天一两只"(实测,不夸大)
+
+在 5 个日期 × 4 个 preset 上实测(旧 raw vs 新 adj 的信号集):
+
+| 日期 | v35 | v44 | v50 | v61 |
+|---|---|---|---|---|
+| 2026-09-18 | 9→8 | 22→24 | 21→21 | 17→19 |
+| 2026-06-19 | 3→4 | 4→5 | 4→5 | 2→3 |
+| 2026-04-17 | 1→1 | 1→1 | 1→1 | 1→1 |
+| 2026-08-14 / 2026-03-13 | 0→0 | 0→0 | 0→0 | 0→0 |
+| **合计** | | | | **旧 86 → 新 93;不一致 9 只(10.5%)** |
+
+**为什么不是灾难性的**:多数条件(MA 交叉、MACD 收敛、连阳)是**形状/比率**比较,
+对整体水平平移不敏感;**除权日的 `pct_chg`** 与 `below_ma60_ratio` 才是水平敏感的,
+正是它们把名单改掉。**为什么仍须修**:对一个"下单前清单"而言,**每天错/漏一两只**
+就是这类缺陷的真实代价 —— 而且它是在**大半个市场**上以 28% 的价格水平差异在算。
+
+### 6 · 验证
+
+- 逐值对拍(14 个指标 vs backtrader 原件):**在改正后的信号域上通过**;
+- 信号集对拍(11 个 preset,fast vs 真引擎路径):**13/13 通过**
+  —— 两条路径现在都在复权域上评估,且互一致。
+
+### 7 · 覆盖面之外的同类风险(登记)
+
+`load_panel_for_signal` 还被 `lookahead_trade_trace.py` 使用 —— 它是**校验工具**,
+其面板现在也带上 `adj_*`,于是它构造的策略同样切到复权域(与引擎一致 ✓,这是修正而非回归),
+但它的输出口径变化**未逐条复核**(属"顺带受影响"的一类,登记待查)。
+
+---
+
+## 附四十八 —— 追加:契约锁**早就有**,只是只锁住了两处实现里的一处
+
+### 1 · 一个必须记下来的事实
+
+附四十七 修的那个缺陷(扫描器在原始价上算条件)之所以能长期保持绿色,
+原因不是我"没写守卫",而是:
+
+`tests/test_short_reversal_adj_close_indicator.py` **早就存在**,其 docstring 写着:
+
+> GAP CAPTURED (N5, 2026-09-28): strategy 声明 `price_source_for_signal="adj_close"`
+> 却静默忽略 …… **TDD: 本文件就是契约锁。RED → 切 adj_close → GREEN。**
+
+它确实把**策略构造**锁住了(并且已经 GREEN)。但信号扫描走的是**另一条路**
+(`scan_signals_fast._compute_indicators` 自己用 pandas 算指标),
+**那条路上的价格域从未被任何守卫覆盖** ⇒ "引擎已修、扫描未修"可以长期保持全绿。
+
+> **同一个契约、两处实现、只有一处有锁** —— 这与本次审计反复遇到的族内不对称
+> (附二十四/二十五/二十七)是同一种病的**测试侧**形态:
+> 修一处 ≠ 修一族,**锁一处 ≠ 锁一族**。
+> 判定"某契约是否被守住"时,问题不该是"有没有这条守卫",而是
+> **"这条契约的每一处实现,是否各自有守卫"**。
+
+### 2 · 新增的三条(同一个文件,同一份契约)
+
+| 用例 | 钉什么 |
+|---|---|
+| `test_scanner_follows_adj_close_when_the_two_domains_disagree` | 合成面板让 raw 与 adj 结论**相反**(raw 长期下行 ⇒ A 成立;adj 恒等于自身 MA60 ⇒ A 不成立)⇒ 扫描器**不得**产出信号 |
+| `test_the_same_panel_on_raw_would_produce_a_signal` | **双向对照**:丢掉 `adj_*`(= 修复前行为)⇒ **恰好命中 1 只**。没有这一半,"0 命中"分不清"跟随复权价"与"夹具压根不触发条件" |
+| `test_the_signal_loader_exposes_adjacent_adjusted_columns` | loader 必须暴露 `adj_*`;缺复权视图的库给 **NULL** 而非抛错 |
+
+三例都与真实库无关(一个纯合成面板 + 一个临时合成库),合计 **0.1 秒**。
+
+### 3 · 顺带修的脆性
+
+附四十七 的修法让 `load_panel_for_signal` **必须**能 JOIN `v_daily_hfq`,
+而合成夹具只建 `v_daily` ⇒ 立刻 `CatalogException`(实测打红了
+`test_fail_fast_cross_engine` 的异常传播用例)。
+现改为先查 `information_schema`:**视图不存在时给 NULL 的 adj_*** ——
+因为"没有复权数据"是一个**已声明**的回退状态(策略侧"adj_close 全 NaN ⇒ 回退
+`d.close`"、扫描器侧"逐行回退 `close`"两条规则都已定义),不该表现为崩溃。
+
+> 这条自己也说明一件事:**修好一个缺陷时引入的脆性,一样要被跑一遍**才看得见。
+> 我是靠"改动后立刻跑相关测试"发现的(而非靠推理)—— 这也是本会话里
+> "先 parse 再写盘、改完先跑局部"这套习惯第 N 次救场。
+
+---
+
+## 附四十九 —— 第二条 MUST(执行/SL/盯市用 raw):**未被违反**,并补上真数据证据
+
+### 1 · 逐引擎核对
+
+`core/dual_price.py` 第二条 MUST:「限价单触发 / SL / 物理 cash mark-to-market
+(含 entry fill)→ MUST use **raw_close**」。四引擎逐个看过:
+
+| 引擎 | 机制 | 判定 |
+|---|---|---|
+| `chase_up` / `uptrend_pullback` | 显式 `price_source_for_execution == "raw_close"` 分支(各 5 处、22 次 `raw_*` 使用)，raw-first + 逐行回退 | ✓ |
+| `short_reversal` / `cycle_price_action` | **不需要显式分支**:feed 的默认价线直接来自 `v_daily`(= raw)，`adj_*` 另设一条线 ⇒ 执行域天然是 raw | ✓ |
+| `cycle_price_action/signals.py`(**信号**层) | 曾被审计点名 §3 混域(`:87`)，**现已是** `cl = df["adj_close"] if "adj_close" in df.columns else df["close"]`，带 §3 注释 | ✓(已修) |
+
+**结论:这一条未被违反。** 但"看代码没看出问题"在本会话已被证明不够 ——
+附四十七 的域错误就是这样看漏的(它藏在**两条路径**的差异里)。故补证据。
+
+### 2 · 两条**非空转**的证据(共 3.3 秒)
+
+**(a) 真数据对账** —— 真跑 `chase_v10` 一个年度窗口,把每笔成交的 `entry_price` 与
+库里的 `v_daily.open`(raw)、`v_daily_hfq.open`(adj)逐笔对照:
+
+| 量 | 实测 |
+|---|---|
+| 成交笔数 | 15 |
+| 其中 **raw open != adj open** | **14(93%)** |
+| 其中 **entry_price != raw open** | **0** ✓ |
+
+即:**入场处两个价格域确实不同(93% 的样本),而入场价一律取自 raw** ✓。
+断言里带**非空转钳制**:样本中必须存在 raw != adj 的成交 —— 否则这条断言换个窗口
+就可能沦为"什么都没验"。
+
+**(b) feed 默认线域** —— 合成面板让 raw(8.5)与 adj(12.5)刻意分离,断言
+short_reversal 的 feed **默认价线 = raw**、`adj_close` 线 = adj ⇒ 钉住
+"它靠哪条线满足第二 MUST"(它的 SL/TP/盯市读的正是默认线)。
+
+### 3 · 第三次同类教训:域类契约需要**真数据 + 非空转**
+
+本会话已经三次遇到同一件事 —— **守卫的口径/输入没有被验证**:
+
+1. 附四十七:逐值对拍与信号集对拍都在**同一份(错误的)口径**上比较 ⇒ "一致"掩盖了
+   "一致地错";它们的夹具与真值同口径,却都不是生产口径;
+2. 附四十六:契约键守卫的输入(哪些 preset 声明了什么)此前从未被核过 ⇒ uptrend
+   三个 preset 少了 `nav_gate_ratio` 而无人知;
+3. 本条:第二 MUST 的既有守卫**只建在合成夹具上**(8.0 vs 12.0 的 phantom)。
+
+故把"价格域类契约"的验收标准定为:**一条真数据断言 + 一条非空转钳制**。
+本条已按此补齐(93% 的样本确实跨域,故这条真数据断言是有牙的)。
+
+---
+
+## 附五十 —— 公司行为 MUST:**未被违反**;但账本分红此前从未被**对账**
+
+### 1 · 覆盖面核对(全部通过)
+
+`core/corporate_actions.py` 的两条 MUST:
+
+> - "Cash dividends must explicitly trigger a physical cash deposit into `Free_Cash`."
+> - "Stock splits must trigger an atomic multiplier adjustment to `Position_Quantity`
+>    and `Average_Cost`."
+
+| 引擎 | 接线 | 行为测试 |
+|---|---|---|
+| `chase_up` | `portfolio.py` ✓ | `test_corporate_actions_events.py` ✓ |
+| `uptrend_pullback` | `portfolio.py` ✓ | `test_uptrend_pullback_corporate_actions_exposure.py` ✓ |
+| `short_reversal` | `replay_strategy_v3.py`(4 处)✓ | `test_short_reversal_dividend_payout.py` ✓(**方向相反:空头付分红**) |
+| `cycle_price_action` | `portfolio.py` ✓ + `backtrader_engine.py` ✓ | `test_cycle_corporate_actions.py` ✓ |
+
+**结论:这一条未被违反** ✓(四引擎都接线、都有行为测试,含做空方向)。
+
+### 2 · 但发现一个**空洞**:分红的真跑断言对分红不敏感
+
+既有的真跑断言(`test_nav_cash_ledger_invariants`)把 `cum_dividends` 放进了守恒恒等式
+`equity = init + Σnet_pnl + Σ分红 + 未平仓净额` —— 而这条**对分红不敏感**:
+**若分红根本没入账,等号两边会同时为 0,等式照样成立。**
+
+> 这与附四十九 里"0 命中分不清『跟随了复权价』与『夹具压根不触发条件』"、
+> 以及附五十 之前的"恒等式在两边同为零时无法察觉缺失"是**同一类空洞**:
+> **一个核对式的断言,只在其两边都可能为非零时才有判别力。**
+
+### 3 · 新增:独立复核(真数据 + 非空转)
+
+`test_booked_dividends_match_real_held_through_events`:真跑引擎,把账本的
+`cum_dividends` 与**独立算出来**的"持仓期内(**非**入场当天)、真发生过的除权事件 ×
+当时持股数"对账。实测:
+
+| 引擎 / preset | 账本 | 独立复核 | 事件数 |
+|---|---|---|---|
+| `chase_v1_atr_tp4_sl1` | **4,340.00** | **4,340.00** ✓ | 1(`002534.SZ` 2026-05-29,每股 0.10 × 43,400 股) |
+| `uptrend v19` | 0.00 | 0.00 | **0** |
+
+第一条带**非空转钳制**(必须 ≥1 条事件);第二条在该窗口实测 0 事件,故**只作一致性检查**,
+并在代码里写明"它的『分红确实入账』由合成用例覆盖" —— **不假装它证明了什么**。
+这正是本会话反复强调的:守卫的价值 = 它实际行使过判别力的次数。
+
+### 4 · 双向验证
+
+把 `apply_corporate_action` 的 `cash_delta` 放大 1% ⇒ chase 那条立刻变红
+(打印账本 vs 复核的差值);恢复后 11 全绿。
+
+### 5 · 登记(未做,如实列出)
+
+- **送股/拆股**的真实数据对账未做:它比分红稀疏(每票数年一次),而合成用例已钉住
+  "送股保总成本不变"的语义 ⇒ 属**可选加固**,登记待评估;
+- `short_reversal` / `cycle_price_action` 的真数据分红对账未做 ——
+  前者方向**相反**(空头付分红),后者是**多账户**结构,两者与 chase/uptrend 口径不同,
+  应各自单独处理(不硬套同一份夹具)。
+
+---
+
+## 附五十一 —— 入场涨停守卫**跨域比较** ⇒ 误拒约 9.4 万次合法入场
+
+### 1 · 缺陷
+
+按 `core/dual_price.py` 第二条 MUST 核代码时,走到入场涨停守卫(`chase_up` / `uptrend_pullback`
+各一处)。它取"前收" `_pc` 的顺序是:`raw_prev_close` → 回退 `prev_close`(**复权**)。
+
+而**面板的 `raw_prev_close` 列在活库上是 100% NULL**(实测非空 **0 / 10,364,755**)⇒
+`_pc` 实际拿到的是**复权**前收,却与 **raw open** 比较 —— **跨域比较**。
+
+两个价格域在该库里**系统性不同**(后复权普遍低于原始价),比值因此被调整因子放大 ⇒
+守卫**过度触发**。实测**同一批候选 bar(160 万行)**:
+
+| 配对 | 判定「涨停开盘」 | 占比 |
+|---|---|---|
+| **跨域**(现行:raw_open vs adj_close_prev) | 102,641 | **6.409%** |
+| **同域**(修正:raw_open vs raw_close_prev) | **8,200** | **0.512%** |
+
+即约 **94,000 次合法入场被误拒** —— **§4 的涨停规则反而成了"少交易"的来源**
+(与它要防的"买入不可成交的票"方向相反:它拒绝的是**本可成交**的票)。
+
+> **又一次"测量胜于推理"**:我原先**猜**方向是"守卫根本打不着"(因为域不同 ⇒ 比值失真
+> 后大概率为负)。实测把它**推翻**了:它打了**12 倍太多**。
+> 本会话记录在案的同类教训:附四十七 的域错误、"0 命中分不清"、以及这次的符号猜反。
+
+### 2 · 修法
+
+`_build_index`(两引擎)按 **`raw_close` 的 shift 自己算** `raw_prev_close`,不再读那个
+全 NULL 的面板字段 ⇒ 守卫变成**同域比较**。顺带更正确:遇停牌缺口时 shift 取的是上一根
+**实际存在**的 bar 的收盘 —— 这正是涨跌停比较该用的"前收"。
+
+### 3 · 零漂移(实测)**以及它不意味着什么**
+
+| 验证 | 结果 |
+|---|---|
+| chase 黄金基线 | **8/8** ✓ |
+| uptrend 基线 | **3/3** ✓ |
+| 限价守卫跨引擎 / dual-price 跨引擎 / v3a runtime | 8/8 / 25/25 / 全绿 ✓ |
+
+即那约 94,000 次误拒发生在**未被选中的候选 bar** 上,黄金窗口里已选中的成交未变。
+**但必须说清边界**:更宽的窗口或别的 preset 上,它**可能**改变成交列表 ——
+那时按 §6 必须重算基线并说明漂移。本条的"零漂移"只覆盖已测的那三个窗口。
+
+### 4 · 守卫
+
+`test_entry_limit_up_guard_compares_raw_against_raw`:构造「跨域会误判、同域不会」的场景
+(raw=10、adj=8、`raw_prev_close` 与活库一样为 NULL),断言 ①引擎自己算出了 raw 前收、
+②**跨域配对本会误判**(夹具前提 —— 保证用例有判别力)、③同域配对本不判涨停。
+双向验证:还原成读面板那列 ⇒ 立刻变红;恢复后 8 全绿。
+
+### 5 · 顺带勘误:`core/dual_price.py` 的加载指引是**没人遵守的规定**
+
+该文件开头写「数据加载请走 `dna_data.dual_price_loader.load_dual_price_panel()`」——
+而生产代码里**没有任何引擎**走它(只有 tests 引用):四个引擎各有加载器
+(`chase_up/data.py`、`uptrend_pullback/data.py`、`short_reversal/_panel_loader.py`、
+`cycle_price_action/data_feed.py`),外加扫描器的 `load_panel_for_signal`。
+`dna_data/` 那套 loader + resolver 是**迁移目标**,不是现状 ——
+其 resolver 的 docstring 也如实写着"legacy panel / 允许逐个策略增量迁移"。
+
+**这个"共享层存在但无人接线"的状态今天刚收过账**:附四十七 的域错误
+(`adj_close != close` 占 94%)本该是"只改一处"就能避免的事。
+**一个共享层只有被接线才算数** —— 与附四十八 的"锁一处 ≠ 锁一族"是同一条。
+
+接线本身是**结果敏感的重构**(各 loader 还带 warmup 缓冲、公司行为事件列、universe
+切片等各自的东西),故**登记待评估**,不在审计里顺手改。
+
+---
+
+## 附五十二 —— 跳空穿越止损按 `sl_p` 成交(原审计 **BLOCKER 族 6**):**成立**,已修 —— 100% 的 SL 被钉在 −0.05%
+
+### 1 · 缺陷(一个被"设计选择"名义冻结的乐观假设)
+
+`short_reversal/replay_strategy_v3.py::_check_exit`:
+
+```python
+if open_p >= sl_p:
+    reason, price = "SL", sl_p     # ← 做空:开盘已越过止损,却按止损价成交
+elif high >= sl_p:
+    reason, price = "SL", sl_p     # 盘内触价 → 按止损价成交(这条是对的)
+```
+
+做空的止损在上方(`sl_p = ep × (1 + sl_pct)`)。当**开盘价已越过**止损时,`sl_p` 是一个
+**当天物理上取不到**的价位;按它成交等于假设"跳空时还能拿回止损价"。§4 明文:
+
+> **Gap-Through-Stop:** If the bar opens beyond the stop, the exit fills at the **open**
+> (pessimistic), **never at the stop price**.
+
+`chase_up/portfolio.py:514`、`uptrend_pullback/portfolio.py:472`、`cycle_price_action/portfolio.py:493`
+三处的 `if open <= sl_p: fill = open` 全都合规 —— **只有本引擎相反**(族内不对称)。
+
+### 2 · 为什么它不是"口径选择":实测的钉死效应
+
+生产 preset 的 `sl_pct` 多为 **0.0005**(0.05%)。于是"开盘是否越过止损"几乎**恒真**,
+几乎每一笔 SL 都落进这条分支。在锁定窗口(2026-03-01..08-31)上:
+
+| | 修复前 | 修复后 |
+|---|---|---|
+| `v50_slope` SL 成交 `net` **恰好** = −0.0015 的笔数 | **16 / 16 = 100%** | 0 |
+| `v58_mp_2` 同上 | **34 / 34 = 100%** | 0 |
+| SL 单笔 `net` 均值 / 最差 | −0.0015 / −0.0015 | −0.024 / **−0.106** |
+| 同上(v58) | −0.0015 / −0.0015 | −0.030 / **−0.116** |
+
+`-0.0015` = `sl_pct`(0.0005)+ 往返成本。也就是说:**止损从来没有亏超过 0.05%**,与当天
+真实跳空 −1.4% … −11.6% 完全无关。这是一个"赢 8%、输 0.05%"的收益结构 ——
+也就是修复前 `sharpe` 4.09 / 5.66 的来源。
+
+### 3 · 结果变更(这次是**大**变更,登记在基线文件里)
+
+| | `v50_slope` | `v58_mp_2` |
+|---|---|---|
+| 成交笔数 | 28 → 30 | 58 → 58 |
+| final_capital | 2,398,274 → **1,403,968**(−41.5%) | 2,526,943 → **1,407,028**(−44.3%) |
+| sharpe | 4.09 → **1.12**(−72.6%) | 5.66 → **1.55**(−72.6%) |
+| win_rate | 42.9% → 33.3% | 41.4% → 37.9% |
+| 共有入场中 `exit_price` 改变 | 36.8%(7/19) | 39.6%(21/53) |
+| ……其中 `exit_reason` 仍是 SL 的占比 | **100%** | **100%** |
+
+方向与 §0 一致:只有**变悲观**。两条 golden 基线已按 §6 重算(生成脚本自带"连续重算两次
+哈希一致"的检查 ✓),并把**为何重算**写进基线文件自己的 `drift_log` —— 不只留在 PR 描述里,
+这样以后看到 pin 的人能立刻知道它不是第一次被 pin 的值。入场集合也有小幅变化(9→11 个只在
+一侧出现),来源是**提前释放的现金改变了后续候选**,属 §2 容量/现金耦合的连带效应,不是
+第二个缺陷。
+
+### 4 · 两条"反向守卫":本仓库此前把**错误方向**钉死了
+
+这是本条最该记下来的部分。缺陷之所以能存活,是因为有**两条测试断言了错误的行为**,
+且 docstring 把修复方向说反了:
+
+| 文件 | 原断言 | 原文措辞 |
+|---|---|---|
+| `tests/test_short_reversal_no_lookahead.py`(模块 docstring) | — | "SR-LA-06: SL gap-fill at sl_p … is **DESIGN CHOICE not a bug. Refutes the audit's recommendation** to flip to open_p" |
+| 同上 `::test_sl_gap_fill_uses_sl_p_loss_cap_semantics` | `exit_price == ep × 1.10` | "与另一条形成 **lock-in**:任何 flip 到 open_p 的提交都会同时打挂两个测试" |
+| `tests/test_phase3_v3_bugfixes.py::test_sl_exit_uses_sl_price_not_open_when_gap_up` | 同上 | "**Bug 修复前**:open_p 远高于 sl_p → 单笔 SL 损失被跳空放大数倍" |
+
+即:**审计的建议被一条测试"驳回"了**,而那条测试的判据是把乐观实现当成语义。两条一起
+lock-in,任何正确修复都会红灯 —— 与附四十七/四十八同属"守卫站在错误的一侧"。
+
+顺带一件小事:`no_lookahead` 那条用例的 docstring 引用「`presets.py` 注释:SL 跳空放大让
+单笔 SL 损失从 −0.05% 变 −10%」作为依据,而 **`grep 跳空 short_reversal/presets.py` = 0 命中**
+—— 依据本身已经不存在(又一次"守卫依赖已消失的产物")。
+
+**处置**:两条用例已按 §4 改写(更名为 `..._uses_open_p` / `..._uses_open_p_per_section_4`),
+并把新夹具的**跳空幅度压进 A 股 ±10% 之内**(+3.4%)—— 原夹具用 +12.6%,已越过涨停,
+于是场景里掺进了"封板→顺延"的额外机制,反而看不清 gap 分支本身。新用例各带一条
+**非空转前提**断言(`open > sl_p`),否则"通过"无法区分"实现正确"与"分支没走到"。
+
+### 5 · 双向验证
+
+把引擎那一行改回 `"SL", sl_p`:两条新用例**立刻变红**(`Obtained: 22.644`(= sl_p)
+vs `Expected: 23.0`(= open));恢复后 7 passed。基线石化:`v50_slope` 30 行 /
+`afd64bba…`,`v58_mp_2` 58 行 / `015787f0…`。
+
+### 6 · 顺带登记(未改)
+
+`core/dual_price.py::is_limit_down` 在 `prev_close is None` 时 **fail-open**(返回 False,
+即允许入场),docstring 写明是 "best-effort" 且与 `is_limit_up` 同语义。方向是**乐观**
+(§0 要求未知时取悲观),但**结构性不可达**:`prev_close` 只在 `len(d) <= 1`(该股在面板里的
+第一根 bar)时为 None,而入场受指标暖机门控,不可能落在第一根。故**登记不改** ——
+与附五十一 的"NaN 回退"同类(0 行可达),不为不可达路径加代码。
+
+---
+
+## 附五十三 —— 回补侧涨停守卫的阈值**不是 board-aware**;板块前缀还漏了 301/302/689
+
+顺着附五十一(涨停守卫误拒)往下问"还有谁会误判封板",在同一文件里找到两处。
+
+### 1 · (1) 同一文件里,入场侧走了 board-aware、回补侧没走
+
+```python
+# 入场侧(replay_strategy_v3.py:800)
+limit_thr = _board_limit_threshold(code, bar_date, self.p.limit_down_threshold)   # ✓
+...
+# 回补侧(:1038)
+if is_limit_up(prev_close=..., open_price=..., threshold=self.p.limit_up_threshold)  # ✗ flat 0.095
+```
+
+而本文件 **v67 的注释自己写着**:
+
+> 「20% 板的票用 10% 阈值会误判跌停,导致本可成交的空头 entry 被错误跳过。
+>  **`broad_only` universe 必须走此逻辑**。」
+
+只有入场侧走了。于是 300/301/302/688/689 上开盘 **+9.5%…+19.5%** 的**合法** bar
+被判成封板,回补被无谓推迟。
+
+**这不是"保守"**:封板是一个关于市场的**事实断言**。把没封板的 bar 判成封板,与把封板的
+bar 判成可成交,是同一类错误的两面 —— 而且它挡掉的是**合法**成交(与附五十一 同族:
+"守卫朝错误方向开火")。§0 的悲观默认要求的是"未知时取坏值",不是"把已知的好值改判成坏值"。
+
+### 2 · (2) 板块前缀本身不全
+
+`_board_limit_threshold` 只匹配 `300.SZ` 与 `688.SH`:
+
+| 板 | 真实涨跌停 | 代码识别 |
+|---|---|---|
+| 创业板 `300.SZ` | ±20%(2020-08-24 起) | ✓ |
+| 创业板 `301.SZ` / `302.SZ` | ±20% | **✗ 漏** |
+| 科创板 `688.SH` | ±20% | ✓ |
+| 科创板 CDR `689.SH` | ±20% | **✗ 漏** |
+
+讽刺的是:`cycle_price_action/universe.py::is_main_board` 的 docstring 明确写着「Excludes
+ChiNext (**300xxx/301xxx**), STAR (**688xxx/689xxx**)」—— **仓库在别处知道 301/689 存在**,
+只有这个阈值函数不知道。
+
+### 3 · 可行域(活库实测,不是推理)
+
+`v_daily`,2026 YTD,按 `open / lag(close) − 1` 分区间统计:
+
+| 板段 | 触发区间 | bar 数 | 被哪一处误判 |
+|---|---|---|---|
+| 300 / 688 | `[+9.5%, +19.5%)` | **439** | (1) |
+| 301 / 302 | `[+9.5%, +19.5%)` | **122** | (1)+(2) |
+| 301 / 302 | `(−19.5%, −9.5%]` | **75** | (2),入场侧 |
+
+代码段在库里的存在性:301 → **470** 只、302 → 1 只、689 → 1 只(共 13,221 只)。
+
+### 4 · 结果影响:**实测零漂移** —— 但这不是"不可达"
+
+`v67_broad` / `v75_broad`(唯二 `broad_only` preset,也是唯一能持有 20% 板的 preset)
+在 2026-03-01..08-31 上,修复前后成交列表 **逐条一致**,`final_capital` / `sharpe`
+**完全相同**(1,284,867 / 0.9995;1,167,139 / 0.7135)。
+
+**但请把这句话读完整**:这两个 preset **确实各持有 6 / 5 笔 20%-板(300/688)持仓**
+(如 `300411.SZ`、`300985.SZ`、`688069.SH`)。零漂移的原因是**该窗口里没有任何一根
+回补 bar 的开盘落进 `[+9.5%, +19.5%)`** —— 即"路径是活的,只是本窗口没踩中"。
+它与附二十四/三十 的"零漂移"不是一回事(那两条是窗口里确实没这个场景),更与
+"结构性不可达"不同。更宽的窗口、别的时期、别的 `broad_only` preset **可能改变成交列表**;
+届时无基线可 repin(没有 golden 覆盖 broad_only),故此处只如实记录。
+
+因为只有 `broad_only` 会持有 20% 板,而两条 golden 基线(`v50_slope` / `v58_mp_2`)
+都是 `mainboard_only` ⇒ **无需 repin**(实测也确认它们未变,见附五十二 的基线仍在原值口径)。
+
+### 5 · 守卫(4 条新增,含非空转钳制)
+
+| 用例 | 钉住 |
+|---|---|
+| `test_board_threshold_covers_every_twenty_pct_board` | 300/301/302/688/689 → 0.195;**且**主板 6 个代码段 → 0.095(反向防"守卫整体失效");含创业板 2020-08-24 历史规则 |
+| `test_the_missed_board_prefixes_actually_exist_in_the_data` | **非空转钳制**:301/302/689 在真实库里 `count(distinct thscode) > 0` |
+| `test_cover_guard_is_board_aware_like_the_entry_guard` | 301 +12% 开盘 ⇒ 回补**必须**照常成交 |
+| `test_cover_guard_still_rejects_a_sealed_bar_on_the_main_board` | 对照组:主板 +12% ⇒ **必须**被拒 |
+
+最后两条是一对:单看前一条,"通过"无法区分"守卫按板块判断"与"守卫根本没生效" ——
+**对照组把这两种解释分开**。这正是附五十一/五十二 记下的那条规矩(域契约需要
+真数据 + 非空转钳制)在**正向**上的应用。
+
+双向验证:分别还原 (1)(2) 两处 ⇒ 对应用例立刻变红(阈值断言 `0.095 == 0.195`;
+301 用例回补被 REJECT);恢复后 6 passed。相关守卫批次 47 passed。
+
+### 6 · 族内一致性核查(顺带做完)
+
+四个引擎的涨跌停守卫调用点已全部枚举:chase_up / uptrend_pullback / cycle_price_action
+的 universe 均为**主板**(`mainboard_only` / `is_main_board`),故 flat 阈值对它们是**正确**的,
+不需要 board-aware —— 只有 `short_reversal` 有 `broad_only`(含创业板+科创板)。
+即:本条的修法不是"给所有引擎加 board 判断",而是**让 short_reversal 的两侧同源**。
+
+---
+
+## 附五十四 —— §4「TP/SL 必须是相对百分比」在两个多头引擎里被违反;并登记 Phase-2 的公司行为缺口
+
+### 0 · 顺带核准的一条(先说合规的)
+
+**§4 T+1**:四引擎都有**显式**的"同日禁出场"门,不靠"出场段先于入场段"这种结构巧合:
+
+| 引擎 | 门 | 位置 |
+|---|---|---|
+| `chase_up` | `if t > 0 and t < last_t:`(入场段)**且**出场段在前 | `portfolio.py:530` |
+| `uptrend_pullback` | 同上 | `portfolio.py:489` |
+| `short_reversal` | `if held < 1: return` | `replay_strategy_v3.py:1010` |
+| `cycle_price_action` | `if bar["date"] > self._entry_day:` # P3: no same-day exit | `backtrader_engine.py:209` |
+
+即:四引擎**都**满足"T 日买入、T+1 前不可卖"。这条此前未被逐引擎核对过,现补上。
+
+---
+
+### 1 · 缺陷:阈值存成**绝对价**,而 CLAUDE.md §4 明文禁止
+
+```python
+# 入场时(chase_up/portfolio.py:735-736;uptrend_pullback/portfolio.py:659-660)
+"tp": entry_px * (1 + tp_eff),
+"sl": entry_px * (1 - sl_eff),
+# 出场时(:482 / :447)
+tp_p, sl_p = pos["tp"], pos["sl"]
+```
+
+§4 逐字:
+
+> TP/SL and slippage must always be communicated from Strategy to Broker as
+> **relative percentages** (e.g. `sl_pct = 0.05`), **NEVER as absolute point
+> differences derived from adjusted prices**, to guarantee reality mapping on
+> raw execution prices.
+
+**为什么"绝对价"在这里真的会坏**:除权日 `apply_corporate_action` 会把 `entry_price`
+重定为 `old_ep × size_old / size_new`(送股 1:1 时**腰斩**),而 `pos["tp"]/["sl"]` 不动。
+于是送股日 raw 价 ≈ 原价 × 1/(1+bonus),**必然**穿越那个陈旧止损 ⇒ 一笔与真实行情
+无关的强制出场,理由还被记成 `SL`。现算(`entry_price × 百分比`)则由构造自动传导。
+
+**两个多头引擎中招,两个没有** —— 又是族内不对称:
+
+| 引擎 | 阈值来源 | |
+|---|---|---|
+| `chase_up` | 入场时算成绝对价 | ✗ 违反 §4 字面 |
+| `uptrend_pullback` | 同上 | ✗ |
+| `short_reversal` | 每 bar `ep × (1 ± pct)` 现算 | ✓ |
+| `cycle_price_action` | 同上 | ✓ |
+
+### 2 · 修法
+
+持仓改存 `tp_pct` / `sl_pct`(百分比),出场判定处现算。这正是 §4 要求的**形态**,
+不是"把别扭写法梳理漂亮" —— §4 给的理由("guarantee reality mapping on raw execution
+prices")说的就是这个场景。
+
+### 3 · 暴露面:实测**几乎为零**(如实说明,不夸大)
+
+活库 2024-09-01..2026-09-01:
+
+| 数据集 | 笔数 | **跨越除权日**的笔数 |
+|---|---|---|
+| chase v8 / v10 / v19 | 129 | **1**(002534.SZ,2026-05-29,现金分红 0.1/21.61 = **0.46%**) |
+| uptrend v21 | 68 | **0** |
+
+那唯一一笔是**小额现金分红**,除权缺口 0.46% 远小于 5% 止损距离 ⇒ 即便阈值陈旧,
+出场判定也不受影响;Phase-1 与 Phase-2 在该笔上**逐字段一致**(58 笔成交、同价同
+`net_pnl`)。全窗口主板 送股(≥10%) 除权日 363 个 / 310 只,但无一笔落在持仓期内。
+
+**结论:契约违反成立;已发生的数值影响 = 0(实测)。** 修复是"拆掉一个尚未触发的陷阱",
+不是"修回一个已经发生的错误"——这两句话不能混。
+
+零漂移验证:chase **13/13** 条 golden(33 passed)+ uptrend **3/3** 条,修复前后
+成交列表**逐条一致**(阈值在没有除权日的窗口里,两种算法给出同一个数)。
+
+### 4 · 守卫(3 条,已双向验证)
+
+| 用例 | 性质 |
+|---|---|
+| `test_bonus_ex_date_does_not_trigger_a_stale_stop` | **行为**:10送10 除权日(原始价 10→5)不得被陈旧止损打出;并断言数量翻倍、成本价腰斩、**净盈亏 ≈ 0**(§3 除权不产生盈亏)。带非空转前提(`除权价 ≤ 陈旧止损`) |
+| `test_positions_hold_tp_sl_as_percentages_not_absolute_prices[chase/uptrend]` | **结构**(AST):持仓字面量必须含 `tp_pct/sl_pct`、不得含 `tp/sl`;且模块内不得再出现 `pos["tp"]` 这类下标读取 |
+
+第二条是**形状守卫**,不替代行为证据 —— 之所以对姊妹引擎只能钉形状:那条行为用例
+建在 chase 的 `entries` 夹具(`sig_*` 列)上,uptrend 的 entries schema 不同,同一夹具
+跑不了两边。这一点写在用例 docstring 里,免得后人以为它证明了行为。
+
+> **自查(本附录的第二个"测量纠正推理")**:这条结构守卫我**写错了两版**,两次都是
+> 选择器抓错了 dict —— 第一版抓到**成交记录 schema**(它也有 `entry_price`),第二版
+> 抓到 **kwargs 转发字典**(`{"entry_price": …, "size": …}`)。两次都在**运行时报错**
+> 而不是"悄悄通过"才被我看见。最终选择器要求 `{entry_price, atr_pct, bars}` 且不含
+> `exit_price`,并**断言恰好选到字面量**(选不到就报"守卫已失效")。
+> 教训与附四十一/四十三 同:**守卫的首要风险是它选错了对象,而它选错时往往还是绿的。**
+
+双向验证:把两处改回绝对价 ⇒ 3 条用例全部变红;恢复 ⇒ 全绿。
+
+### 5 · 登记(未改):Phase-2(backtrader)引擎**没有**公司行为代码路径
+
+查这段时的意外发现,比上面那条严重:
+
+| 事实 | 证据 |
+|---|---|
+| `chase_up.backtrader_engine` / `uptrend_pullback.backtrader_engine` **没有任何**公司行为代码路径 | AST 判定 `_engine_has_event_handler` = **False**(两个 Phase-1 模块为 True) |
+| 而 chase 的 CLI **默认引擎就是它** | `chase_up/main.py` 的 `--engine`, `default="backtrader"` |
+| 25 个 preset(22 chase + 3 uptrend)**全部**声明 `price_source_for_execution: "raw_close"` | `presets.py`;feed 据此重映射到**原始价**(`backtrader_engine.py:96-103`) |
+| Phase-2 是**逐笔 replay**:`target_size` 构造时固定 | `chase_up/replay_strategy.py` —— 没有"数量 ×(1+bonus)""成本价重定""分红入账"的通路 |
+| 后果 | 送股除权日按**原始股数**在**腰斩价**卖出 ⇒ 幻影 ≈ −bonus/(1+bonus);现金分红日把缺口记成亏损、分红永不入账 |
+
+**这条为什么能一直没被发现**:`test_corporate_actions_gap.py::test_engine_has_dividend_or_split_handler`
+把**四个 Phase-1 模块**当作"四个引擎"(参数表里就是 `chase_up.portfolio` 等四个),
+于是它宣布 §3 已闭合 —— 而**CLI 默认走的恰恰是没接的那条**。又一次"锁一处 ≠ 锁一族"
+(附四十八 的同一形态)。
+
+**处置:登记,不实现**。给 Phase-2 接公司行为不是"修一句话":replay 目前没有跨 bar 的
+持仓量/成本状态,引入它等于给这个**验证引擎**加一套账本 —— 属新功能 + 研究决策。
+故与 `test_benchmark_data_gap_is_registered` 同形,加一条**登记守卫**:
+
+```python
+@pytest.mark.parametrize("module", ["chase_up.backtrader_engine",
+                                    "uptrend_pullback.backtrader_engine"])
+def test_phase2_engine_corporate_action_gap_is_registered(module): ...
+```
+
+它钉住"现状 = 已登记的缺口":一旦有人把公司行为接进去,它**变红**,提示更新本附录
+的登记并改写守卫 —— 而不是让登记悄悄过期(本仓库吃过"登记逾期"的亏,见附十九)。
+
+**如实说明**:实测**没有**观测到 in-sample 数值背离(见 §3 那张表 —— 唯一跨越除权日的
+一笔在小额分红上,Phase-1/Phase-2 结果一致)。本缺口是**结构性**的,不是已发生的错误。
+
+### 附五十四 · 补记(同日)
+
+两件事,都是**测量**补充 §5 的论断:
+
+**(a) Phase-1 与 Phase-2 在 4 个 preset / 197 笔上成交列表**逐字节相同**。**
+
+| preset | P1 笔数 | P2 笔数 | trades sha256(前 16) |
+|---|---|---|---|
+| chase v8 | 58 | 58 | `133443c1eada1301`(同) |
+| chase v10 | 40 | 40 | `73fca3bc66f7f512`(同) |
+| chase v19 | 31 | 31 | `0d527daf98685c2a`(同) |
+| uptrend v21 | 68 | 68 | `f950383440d8a3a4`(同) |
+
+(窗口 2024-09-01..2026-09-01;`run_backtrader_backtest(..., verify=False)` 与
+`chase_up.backtest.run_backtest` 各自的 trades 直接哈希。)
+这比 §5 里"那一笔上逐字段一致"强得多 —— 两条推论:
+
+1. **Phase-2 的公司行为缺口在本窗口没有产生任何数值影响**(与 §3 的"仅 1 笔跨越
+   除权日、且是小额分红"互相印证);
+2. **§6 的「golden 锁住成交列表」在实践中确实覆盖了 CLI 默认路径** —— 13 条 chase
+   基线虽然都在 Phase-1 上重算,但 Phase-2 与它逐字节一致,故基线没有"只锁了引擎
+   A、放过了默认引擎 B"的漏洞。这一点此前**只是假设**。
+
+**(b) BLOCKER #2 的修复只做了一半。**
+
+审计 §0.1 的 BLOCKER #2 是「`chase_up` Phase-2 静默在**复权域**撮合」,修复把 feed
+切到 **raw 域**(`backtrader_engine.py:96-103`,依 preset 声明的
+`price_source_for_execution`)。但**切到 raw 域恰恰要求**引擎自己承担公司行为事件
+(§3 的两条 MUST)—— 而 Phase-2 至今没有这条通路(见 §5)。
+
+也就是说:#2 的"已闭合"是**域**那半边的闭合,**事件源**那半边从未存在过,且因为
+`test_corporate_actions_gap.py` 只参数化四个 Phase-1 模块而没有被发现。
+这正是本审计反复记录的那条:**一个共享层/一条规则只有被接线、被守卫覆盖才算数**
+(附四十八"锁一处 ≠ 锁一族"、附五十一"共享层存在但无人接线")。
+
+---
+
+## 附五十五 —— 送股把持仓变成**非整手**,broker 的整手断言让**整轮回测中止**(cycle)
+
+### 1 · 缺陷(在跑一次真实的暴露面测量时被撞出来)
+
+本来只是想量 cycle 的公司行为暴露面,结果回测**直接崩了**:
+
+```
+RuntimeError: backtest failed for 000793.SZ: qty must be positive multiple of 100
+  cycle_price_action/backtrader_engine.py:302  in next   → submit_sell(qty=position.shares)
+  cycle_price_action/replay_broker.py:148      in submit_sell
+```
+
+插桩后拿到完整链条:
+
+| 项 | 值 |
+|---|---|
+| 标的 / 日期 | `000793.SZ` / **2026-06-22** |
+| 该日事件 | `per_share_bonus = 0.0478`(10送0.478) |
+| 除权前持仓 | 330,800 股(整手) |
+| 除权后持仓 | `round(330800 × 1.0478)` = **346,612** 股(非整手) |
+| 引擎动作 | 时间出场 → `submit_sell(qty=346612)` |
+| broker 反应 | `qty % 100 != 0` ⇒ `ValueError` ⇒ 被包成 `RuntimeError` |
+
+而 `backtest.run_backtest` 把这个 RuntimeError 直接抛给调用方 ⇒ **整轮回测中止,
+一个结果都产不出**。也就是说:cycle 在**任何**持仓期内发生送股(比率非 1/N 时)的
+窗口上都跑不完 —— 而送股在 A 股是每年数千起(`raw_adjustment_events` 全库 12,295 起)。
+
+### 2 · 修法:A 股规则本来就是**买入要整手、卖出不必**
+
+> 买入必须是 100 股整数倍;**卖出不必** —— 持股因送股变成零股时,必须以**一笔**
+> 全部卖出。(本引擎只做整仓平仓,唯一的卖出调用传的就是 `position.shares`。)
+
+两处改动:
+
+1. `submit_sell` 不再要求卖出数量是整手;非整手时落 `[odd-lot]` 日志。
+2. 影子账 `_open_positions` 的 `raise ValueError("cannot sell more than held")`
+   **降级为告警**。它有两条**合法**分叉路径(下节),硬断言会把一次合法平仓
+   变成整轮中止;持股数的权威是组合账本,不是 broker 的影子账。
+
+**保留买入侧的整手约束** —— 并专门加了一条对照用例钉住它,防止"把不变量连同
+bug 一起删掉"。
+
+### 3 · 顺带发现的第二条缺陷:影子账从不因 SL/TP 出场减少(**已登记,未改**)
+
+`_open_positions` 只在 `submit_buy` 里 `+=`、只在 `submit_sell` 里 `-=`。而引擎
+**只在时间出场那一条分支**调用 `submit_sell`(`backtrader_engine.py:302`);
+SL/TP 出场走的是 `Portfolio.try_exit_with_intraday_check` → `try_exit`
+(**纯组合层操作,不通知 broker**)⇒ 那些平仓**永不减少影子账**。
+
+实测:崩溃现场 `held = 1,050,900`,而组合实际只持 **346,612** 股。影子账只增不减。
+
+影响:`"cannot sell more than held"` 这条断言在事实上是**空转/误报**的
+(`record_fill` 也是个 no-op 桩)。对**结果**无影响(费用与成交价都不读影子账)。
+**未修**:要让影子账准确,必须把 SL/TP 出场也接到 broker 上 —— 那是跨文件的设计改动,
+且这个包正由另一 workstream 并行开发。故登记。
+
+### 4 · 端到端证据(这才是本条的重量)
+
+崩溃窗口 `2026-01-01 .. 2026-09-01`(PRESET_V1):
+
+| | 修复前 | 修复后 |
+|---|---|---|
+| 结果 | `RuntimeError` —— **零结果** | **COMPLETED**(3,271 秒),**5,715 笔**成交 |
+| 非整手成交 | — | **2 笔**(即此前会中止的那两处) |
+
+即:**同一个窗口,修复前一个结果都产不出,修复后跑完并产出 5,715 笔**。
+(我的插桩脚本在打印明细时因 `exit_reason` 列不存在而 `KeyError` —— 那是**探针自身**
+的字段假设错了,不是引擎问题;故那 2 笔的明细没有留下,只有计数与完成状态。
+如实记在这里,而不是把"2 笔"说成"我核过明细"。)
+
+### 5 · 守卫(4 条,全部双向验证)
+
+| 用例 | 钉住 |
+|---|---|
+| `test_odd_lot_full_liquidation_is_allowed` | 346,612 股必须能**整笔**卖出(带非空转前提:该数必须非整手) |
+| `test_buy_lot_constraint_is_still_enforced` | **对照组**:买入的整手约束不得被一起删掉 |
+| `test_shadow_position_divergence_does_not_abort_the_run` | 影子账落后时必须告警而非中止,且影子账被清空而不是留负数 |
+| `test_bonus_adjusted_position_can_be_liquidated_end_to_end` | **崩溃链条的集成版**:建仓 → 送股 → 全仓平仓整条链走通 |
+
+双向验证:还原 (1) 的整手断言 ⇒ 零股用例红;还原 (2) 的硬断言 ⇒ 分叉用例红;
+恢复 ⇒ **6 passed**。
+
+### 6 · 关于"另一 workstream 的包"
+
+`cycle_price_action` 由 `mine/strategy-potential` 那条线并行开发。本条只做**这一处
+最小崩溃修复**(而且是"跑不完"级别的),其余(影子账、成交口径等)一律只登记不改。
+核对过对方分支:`submit_sell` 的调用点与整仓平仓假设与我这边一致
+(`git show mine/strategy-potential:cycle_price_action/backtrader_engine.py`),
+故合并语义清晰 —— 但仍然需要在合并时对账(附三十五 §3 的老问题)。
+
+零漂移:此前能跑完的窗口(含 `tests/golden/cycle_v1_baseline.json` 那条)行为不变 ——
+两处改动只会把"抛异常"变成"告警/放行",不会改变任何一次**已能完成**的回测的成交。
+
+### 7 · 自查:我的第一版修复被本仓库的 §0 守卫抓住了
+
+第一版把影子账的更新写成 `self._open_positions.pop(thscode, None)`,于是全量套件
+**1 failed**:`tests/test_immutable_state_4engine.py` 判定 cycle 出现
+`self.<attr>.<mutable_method>()` 调用(§0 不可变性)。
+
+这与本审计反复记的那件事是**同一件**:那个扫描器只看 `self.<attr>.<mutable_method>()`,
+所以原来的 `del d[k]`、以及下标赋值 `d[k] = v`,它**看不见** —— 于是"通过"不等于合规。
+处置:**不绕它**,把更新改成"重建一个新 dict 再 rebind"(与 `short_reversal` 在同类
+问题上的写法一致),语法上就合规,也不需要解释性注释。注释里明确写了"不绕扫描器"。
+
+复验:immutability + replay_broker + cycle golden 基线 + broker purity + exit contract
++ cycle portfolio = **44 passed**,cycle golden **零漂移**。随后重跑全量套件取净绿。
+
+> 记这一条是因为它是个**正例**:守卫在正确的一侧("把不变量的写法钉死"),而且它
+> **真的**在新代码上开了火 —— 与附五十二 里那两条"站在错误一侧、把缺陷锁死"的守卫
+> 恰成对照。同一个仓库里两种守卫都有,区别只在于它钉的是**行为/契约**还是
+> **当时那版实现的形状**;而能不能分辨,取决于写它的人有没有先把契约读懂。
+
+---
+
+## 附五十六 —— cycle 的**卖方跌停 no-fill 守卫缺失**:唯一一个"买得进有门、卖不出没门"的引擎
+
+### 1 · 缺陷
+
+CLAUDE.md §4 逐字:
+
+> A buy on a limit-up-sealed bar **and a sell/cover on a limit-down-sealed bar
+> MUST be rejected (no fill)**.
+
+查四个引擎的涨跌停调用点(全部枚举):
+
+| 引擎 | 买入侧(涨停) | 卖出侧(跌停) |
+|---|---|---|
+| `chase_up` | ✓ `LIMIT_UP_THRESHOLD` | ✓ `is_limit_down`(`portfolio.py:508`) |
+| `uptrend_pullback` | ✓ | ✓(`:464`) |
+| `short_reversal` | 入场=卖 → 跌停门 ✓;回补=买 → 涨停门 ✓(附五十三修正) | — |
+| **`cycle_price_action`** | ✓(`try_enter` 的涨停门,Round 30 补的) | **✗ 全包零处 `is_limit_down`** |
+
+即:**cycle 的买入侧有门、卖出侧没有** —— 而它的出场(长仓 SELL)会在跌停封板 bar 上
+"成交",在一个物理上取不到的价位上把仓位卖掉。
+
+**为什么一直没被发现**:审计 P1-9 为这一族写了守卫 `tests/test_limit_down_exit_guard.py`,
+而它建在 `chase_up.portfolio.simulate_portfolio` 上。同一个 P1-9 也修了
+`uptrend_pullback`,于是"两个引擎都有门"看起来像"这一族已闭合"。**又一次
+"锁一处 ≠ 锁一族"**(与附四十八、附五十四 §5 同形)。
+
+### 2 · 实测可行域(不是推理)
+
+**市场基线**:2026-01-01..2026-09-01 主板全体 bar 中,`open/prev_close − 1 ≤ −9.5%`
+(封板)的占 **1,548 / 878,229 = 0.176%**。
+
+**cycle PRESET_V1**(同窗口,5,715 笔成交):出场 bar 落在封板日的 **7 笔 = 0.12%**,
+且 7 笔**全部**落在 `r ≤ −9.9%`(真贴板,不是边缘判据):
+
+| 标的 | 出场日 | exit_price | open | prev_close | shares | pnl |
+|---|---|---|---|---|---|---|
+| 002342.SZ | 2026-07-15 | 8.06 | 8.06 | 8.96 | 105,800 | −201,923 |
+| 002848.SZ | 2026-06-08 | 14.18 | 14.18 | 15.76 | 63,800 | −147,681 |
+| 002883.SZ | 2026-01-29 | 10.03 | 10.03 | 11.14 | 88,300 | −114,821 |
+| 002932.SZ | 2026-03-23 | 16.61 | 16.61 | 18.46 | 52,300 | −132,175 |
+| 600543.SH | 2026-02-02 | 5.08 | 5.08 | 5.64 | 170,000 | −136,898 |
+| 600613.SH | 2026-09-01 | 10.04 | 10.04 | 11.16 | 79,300 | −187,991 |
+| 603359.SH | 2026-04-28 | 4.55 | 4.55 | 5.05 | 174,400 | −185,704 |
+
+7 笔全部 `exit_price == open`,即都是 `open <= sl_p → exit @ open` 那个缺口分支 ——
+**跌停跳空被当成止损成交价**。频率与市场基线同量级 ⇒ 不是罕见角例。
+
+### 3 · 修法(单一规则实现,两个决策点)
+
+按 `test_cycle_limit_up_guard.py::test_cycle_limit_up_guard_lives_in_the_execution_layer`
+的 §6 裁定("涨跌停不可成交是**执行**约束 → 归 Portfolio"),跌停侧的规则也放执行层,
+且**只实现一次**:
+
+```python
+class Portfolio:
+    def exit_blocked_by_limit_down(self, prev_close, open_price) -> bool:
+        """§4: 封板日卖不出去。与 try_enter 的涨停门互为镜像。"""
+```
+
+两个决策点共用它:
+* SL/TP 出场:`try_exit_with_intraday_check(..., prev_close=prev_close)` 在判定阶梯
+  之前 `return 0.0, "limit_down"`;引擎见该 reason 即 `return`(跳过本 bar 全部出场);
+* max_hold 出场:引擎的 `elif` 里加 `and not exit_blocked_by_limit_down(...)`。
+
+顺带把 `prev_close` 提到出场判定之前**只算一次**(此前只在入场分支里算,所以出场侧
+根本没有变量可用 —— 这也是守卫无处可写的直接原因)。
+
+新增 `is_limit_down_threshold`(默认 0.095,与 `is_limit_up_threshold` 镜像):
+A 股主板涨跌停带对称,但**分名**——混用会让两侧在以后某个非对称板上悄悄绑在一起。
+
+### 4 · 结果漂移:本窗口 **492 笔里只有 1 笔**,方向是**更悲观**
+
+| | pristine | 修复后 |
+|---|---|---|
+| 成交笔数 | 492 | 492(**同一批入场**) |
+| pnl 合计 | −776,948.64 | −817,628.11 |
+| 差异 | — | **−40,679.47**,全部来自 **1 笔** |
+
+那一笔:`603359.SH`(entry 2026-04-24)出场日 **2026-04-28 → 2026-04-30**,
+出场价 4.55 → 4.32,pnl −188,472 → −229,152。而 **2026-04-28 正是上表里的封板日**
+(`r = −9.9%`)⇒ 漂移**完全**由这条 §4 规则解释,不是无关扰动。
+
+基线已按 §6 重算(`python tests/_regen_cycle_baseline.py`),并把**为何重算**写进
+基线文件自己的 `drift_log`(不只留在 PR 描述里)。**方向是变悲观** —— 与 §0
+Pessimistic Default 一致。
+
+### 5 · 自查:我第一次量到的"零漂移"是**假的**,而且我能说清它是怎么来的
+
+第一版漂移测量得出"pre/post 成交与 pnl **完全一致**(连小数最后一位都相同)"。那个
+"一致"本身就是疑点:**一处本该改变行为的改动,不可能让 pnl 合计精确到小数点后 10 位
+还不变**。
+
+根因:我的"关掉守卫做对照"是把条件改成恒假(`if False:` / `and True`)。那**不是**
+回到原实现 —— 它产生了**第三种**行为:portfolio 仍然返回 `"limit_down"`,而引擎
+因为 `if False` 把它忽略掉,于是 SL/TP 出场被**静默跳过**、max_hold 也被关掉 ——
+效果恰好与"守卫开着"相似,于是两边一致。
+
+正确做法是**真的回到原实现**:`git stash` 掉补丁 → 重跑 → 取哈希。结果:
+
+| | csv_sha256(前 16) |
+|---|---|
+| pristine(`git stash`,无补丁) | **`753c1ef878bf9517`** = **pin 的基线原值** ✓ |
+| 修复后 | `c0cced3be0f790d3` |
+
+(pristine 哈希与 pin 值逐字符相同,同时证明了:基线此前是对的、漂移确实由本补丁引起、
+且窗口没有别的扰动源。)
+
+> 教训:**"关掉一个守卫来对照"必须真的回到原实现,不能把条件改成恒假** ——
+> 后者只是换了一种没人审查过的行为,而且它给出的"一致"看起来会非常像"零漂移"。
+> 这与附五十二 那条同源:**守卫/对照实验最容易在不报警的情况下测错东西。**
+
+### 6 · 顺带记录的两笔 cycle 暴露面(同一轮测量)
+
+同一次 2026-01-01..2026-09-01 运行(5,715 笔):
+
+* **74 笔持仓跨越除权日**:含现金分红 **73**、含送股 **2**(`000793.SZ` 送股 0.0478;
+  另一笔)、含配股 0。对比 chase/uptrend 在 2 年里只有 **1** 笔跨越 ⇒ **cycle 是四个
+  引擎里公司行为暴露面最大的一个**,而它的 `apply_corporate_action` 是接好的
+  (分红入 `free_cash`、送股调量+重定成本),故这 73 笔的账本面有真实覆盖。
+  —— 这也解释了为什么"非整手"只在 cycle 暴露(见附五十五)。
+* `000793.SZ` 的记录再次印证了附五十五 的崩溃链条:2026-06-16 入场 →
+  2026-06-22 除权 → 2026-06-23 出场,`shares = 346,612`。
+
+### 7 · 残差(如实标注,不假装已全清)
+
+max_hold 出场在 cycle 里是**次根 bar 开盘**成交(`submit_sell` → `_next_trading_date`
+→ `_open_price`),而 SL/TP 出场是**当根 bar** 成交。本守卫用的是**当根 bar 的封板状态**:
+对 SL/TP 路径这是**精确**的;对 max_hold 路径它是"当日不得做出场决策"的代理,次根 bar
+若恰好也封板则不再复查(次根的无 bar 情形由 broker 的停牌分支处理)。
+这属 cycle 的**成交口径**问题 —— 审计附二十六 已把它登记为待决策(方向由 §0 + 三引擎
+先例决定,但属全量结果变更),故此处**不顺手改**,只写明边界。
+
+---
+
+## 附五十七 —— `cycle` 的**审计工具自己是空转的**:一条盯错文件的守卫、一条**与审计修复相反**的判据、一条过期前提
+
+`cycle_price_action/audit_phantom.py` 是"Layout C 结构性 phantom-free"的检查工具,
+共 11 条 check,并与 `tests/test_cycle_price_action_layout_c_invariants.py` "同步"
+(测试文件头部原话)。逐条核对后发现三处问题,而**它一次都没跑过**(全库检索:没有任何
+测试或脚本调用 `audit_cycle_price_action_invariants` / 该模块;只有文档字符串提到它)。
+
+### 1 · 那条守卫**盯错了文件**,而且判词不判行为(恒绿)
+
+```python
+checks["replay_broker_fail_fast"] = "RuntimeError" in broker_text   # replay_broker.py
+```
+
+`replay_broker.py` 里**没有任何 `raise RuntimeError`** —— 仅有的两处 "RuntimeError"
+都在**注释**里(一处讲停牌路径的历史,一处是我附五十五 的修复说明)。真正的 fail-fast 在
+**另一个文件**:`data_feed.ReplayDataProvider.open_price`(库里**一行都没有**的标的抛错,
+而已知标的当日缺 bar(停牌)返回 `None`,由 `has_any_bar` 区分)。
+
+于是这条守卫有两层毛病,而它一直是 ✓:
+(a) 把 raise 从 `data_feed.py` 删掉,它**仍然绿**;
+(b) 注释里出现该词就够 —— 它判的是词。
+
+**镜像的测试** `test_replay_broker_fail_fast()` 一字不差地犯了同样的错。
+
+### 2 · 那条判据**要的与审计自己的修复相反**
+
+```python
+checks["data_feed_no_raw_adj_split"] = "raw_" not in text.replace("raw_close","").replace("adj_close","") and ...
+```
+
+实测这一条**一直是 ✗**(工具跑到最后会打印"⚠️ Layout C 结构性契约被破坏"),而套件全绿 ——
+两边**互相矛盾**,却没人发现,因为工具没人跑。它为什么 ✗:
+
+* 表名 **`raw_adjustment_events`**(§3 公司行为事件源,必需)含 `raw_`;
+* 散文里的 **`raw_only`**(raw-only 降级分支的说明)含 `raw_`;
+
+**更要紧的是它想要的东西与审计的修复方向相反**:审计 P2-10b 恰恰**要求** feed
+`LEFT JOIN v_daily_hfq`,把 `adj_close` 交给信号层(§3「指标必须用复权价」)。也就是说,
+这条判据会把审计自己的修复判成"Layout C 违约"。
+
+**真实属性**是:`Layout C` 的**执行**域必须单一(不得出现 `raw_*/adj_*` 的**价格列**),
+而**信号**域用 `adj_close` 是允许且必需的。已按**列名**精确重写
+(`raw_open/high/low/close/prev_close` + `adj_open/high/low/prev_close` 八个 token)。
+
+### 3 · 那条"数据 ETL 挡路"的前提**已不成立**
+
+原文(docstring 与 `main()` 的输出里都有):
+
+> 「由于 backtest 在真实 panel 上反复触发 fail-fast 数据缺口(000695.SZ@2025-04-30 /
+>   多次股票数据 NULL),trade-level 审计需要先打通数据 ETL。」
+
+实测:
+
+| 主张 | 实测 |
+|---|---|
+| "多次股票数据 NULL" | `v_daily` 全表 **10,364,755 行,OHLC 为 NULL 的行 = 0** |
+| `000695.SZ@2025-04-30` 是"数据缺口" | 该股 **04-25/04-28/04-29 有行,04-30 没有行**,05-06 又有 —— 那是**缺 bar = 停牌**,属 §1 的**合法市场状态**,引擎按设计处理(不成交、持仓顺延) |
+| "trade-level 审计做不了" | 已经在跑:`tests/golden/cycle_v1_baseline.json`(492 笔哈希基线,每次套件重算比对)+ 2026-01-01..2026-09-01 的 **5,715 笔**端到端回测 |
+
+即"登记逾期"的又一例(附十九 立过这条):**记录当初是诚实的,但它依赖的前提消失后没人回来改**。
+已把该前提删除,并写明本工具只做结构性检查、**不是** trade-level 审计的替代品,
+权威门禁是那个测试文件。
+
+### 4 · 自查:我第一次改的那版判据**仍然是可绕过的**
+
+把 check 8 改成 `"raise RuntimeError" in data_feed_text and "has_any_bar" in data_feed_text`
+之后,我做两向验证(把 `open_price` 的 fail-fast 整个删掉,看它是否变 ✗)—— 结果它
+**仍然 ✓**:因为同一文件里 `next_trading_date` 也有一处 `raise RuntimeError`
+(「no trading date after …」)。判据又被另一个无关的同类词满足了。
+
+改成**切出函数体再判**(与同文件 `sl_first_in_intraday_check` 的既有手法一致)后:
+删掉 fail-fast ⇒ `[✗] data_provider_fail_fast_on_unknown_symbol`(10 pass / 1 fail);
+恢复 ⇒ 11 pass / 0 fail。
+
+> 这是本轮第三次栽在同一处(附四十三 扫描器误报、附五十六 恒假对照、这里词法判据):
+> **写守卫时最该问的不是"它会红吗",而是"我把被测的东西删掉,它会不会红"。**
+> 前两次我靠"结果可疑"发现,这一次靠**主动两向验证**发现 —— 后者才是应该固化的习惯。
+
+### 5 · 改动清单
+
+| 文件 | 改动 |
+|---|---|
+| `cycle_price_action/audit_phantom.py` | check 7b 按列名精确重写;check 8 改盯 `data_feed.open_price` 的**函数体**;docstring 与 `main()` 输出里的过期前提删除 |
+| `tests/test_cycle_price_action_layout_c_invariants.py` | **删除**空转的 `test_replay_broker_fail_fast`(原地留注释说明为何删、为何不许加回来);**新增** `test_data_gap_fail_fast_versus_suspension_is_distinguished` —— 两向钉住「未知标的 ⇒ 抛错」「已知标的缺 bar(停牌)⇒ 返回 None」 |
+
+**没有**把工具挂进套件当门禁 —— 它的判据仍是文本型,而文本型判据会误报(本附录 §2 就是
+实证)。它作为**可读诊断**保留,门禁在测试文件里(含行为断言)。这一点写进了工具的文档字符串。
+
+---
+
+## 附五十八 —— 另两个 phantom 审计工具**在空输入上报告"0.00% 干净"**(静默的零,且是脚本的 headline)
+
+顺着附五十七 把同族工具过一遍:`chase_up/audit_phantom.py` 与
+`uptrend_pullback/audit_phantom.py`(cycle 的那个已在附五十七 处理)。
+
+### 1 · 缺陷:一行代码把"没有数据"变成一个看起来干净的成功率
+
+```python
+print(f"phantom ratio: {100*total_phantom/max(total_trades,1):.2f}%")
+```
+
+`max(total_trades, 1)` 是为避免 `ZeroDivisionError` 写的 —— 而它恰好把**空输入**
+变成 `0.00%`。实测(活库、fresh 检出):
+
+```
+$ python3 chase_up/audit_phantom.py
+审计 0 个 trades.csv:
+总计: trades=0 phantom=0
+phantom ratio: 0.00%          ← 读起来像"审过、且干净"
+
+未生成 trades.csv 的 preset (22/22):   ← 披露在**下面**
+```
+
+`uptrend_pullback` 的同名工具更糟:它连"哪些 preset 没有成交表"都不打印,
+输出只剩下那三行 —— **唯一可见的结论就是"0.00%"**。
+
+**为什么这在 fresh clone 里是恒定的**:`results/` 按 §7 **必须 gitignored**
+(仓库自己的测试在守这条),故 `glob("*_trades.csv")` 在干净检出里恒为空
+⇒ 这个 headline 恒为 `0.00%`。这不是"这次没数据",而是"**结构上永远**没有数据"。
+
+这与附三十六(我自己写的基准代码里"静默的零")、附五十一/五十二 的"非空转钳制"
+是同一条:**域为空时给出的 0 不是测量结果,是一个冒充测量结果的常量。**
+
+### 2 · 修法:空输入 ⇒ `N/A`,且**退出码非零**
+
+| 情形 | 修复前 | 修复后 |
+|---|---|---|
+| 0 个成交表 | `phantom ratio: 0.00%`,exit **0** | `phantom ratio: **N/A** —— 没有可审计的成交表,本工具**未做任何审计**`,exit **1** |
+| 1 笔、无 phantom | `0.00%`,exit 0 | `0.00%`,exit **0** |
+| 1 笔、真 phantom | `100.00%`,exit 0 | `100.00%`,exit **2** |
+
+三档退出码(1=**没审**(不得当作通过); 2=审出 phantom; 0=审过且干净)让这个工具
+**可以被 CI 使用** —— 而在此之前,它无论有没有输入都返回 0,"挂进流水线"只会得到一个
+永远绿的门。这正是"**静默的零比没有守卫更危险**"的样子:没有守卫至少看起来是空的,
+而这个是**看起来已经守过了**。
+
+### 3 · 两向验证(不是看代码,是跑出来)
+
+用真实 bar 合成成交表(`<engine>/results/` 是 gitignored,不污染仓库;用完即删):
+
+| 合成输入 | 结果 |
+|---|---|
+| `301230.SZ 2026-08-04`,exit_price = qfq_open = raw_open = 25.00(无复权差) | `trades=1 phantom=0`,`ratio 0.00%`,**exit 0** ✓ |
+| `688256.SH 2026-05-07`,exit_price = qfq_open = **1223.81** 而 raw_open = **1824.94** | `trades=1 phantom=1`,`ratio 100.00%`,**exit 2** ✓ |
+| 无文件 | `ratio N/A`,**exit 1** ✓ |
+
+即:钳制没有把工具**变成**永远报警(真 phantom 仍被检出),只是不再把"没数据"
+报成"干净"。
+
+### 4 · 顺带核对(结论:没问题)
+
+* 工具查的 `v_daily_qfq` / `raw_kline_daily` **都还在**活库里(逐名核对过
+  `duckdb_tables() ∪ duckdb_views()`);故它并非"schema 迁移后失效"的工具,
+  只是没人跑。
+* 三个 `audit_phantom.py` 与其它 `audit_*` 一样**没有任何调用点**
+  (`grep` 全库:只有文档字符串提到)。它们不是门禁,是**手工诊断**;
+  门禁在 `tests/test_*layout_c*`、`test_reproducibility_audit.py` 等处。
+  本条只让它们的输出**诚实**,不把它们挂进套件 —— 它们的判据仍是文本/启发式,
+  挂进套件会把误报变成阻塞(附五十七 §2 就是文本判据误报的实证)。
+
+---
+
+## 附五十九 —— 台面刷新:附五十二 ~ 附五十八 的结论、当前未结清单
+
+(附三十五 那次收口之后又落了 7 个附录。这里把它们归位,并给出**现在的**清单 ——
+后续接手的人读这一节就够,不必逐篇翻。)
+
+### 1 · 本段修好的(附五十二 ~ 附五十八)
+
+| 附录 | 缺陷 | 性质 | 提交 |
+|---|---|---|---|
+| 五十二 | 做空**跳空穿越止损按 `sl_p` 成交**(原审计 BLOCKER 族 6,此前被"设计选择"名义冻结) | **结果大变**:修复前 **100%** 的 SL `net` 恒为 −0.0015;v50_slope/v58_mp_2 的 `final_capital` −41.5%/−44.3%,sharpe 4.09→1.12、5.66→1.55 | `620495b` |
+| 五十三 | 回补侧涨停守卫**非 board-aware**,且板块前缀漏 `301/302.SZ`、`689.SH` | 零漂移(路径是活的,只是窗口内没踩中) | `7f65d60` |
+| 五十四 | `chase`/`uptrend` 的 TP/SL 存**绝对价**(违反 §4「必须是相对百分比」) | 除权日阈值失效;暴露面实测 1/197;零漂移(13+3 条 golden) | `8ab058a` |
+| 五十五 | **送股 ⇒ 非整手 ⇒ broker 整手断言让整轮回测中止** | 崩溃窗口修复前零结果、修复后 5,715 笔;`97d97ee` 补修 §0 不可变性 | `2dddb19`+`97d97ee` |
+| 五十六 | `cycle` 缺**卖方跌停 no-fill 守卫**(唯一"买得进有门、卖不出没门"的引擎) | 7/5,715 笔落在封板 bar;漂移 1/492 且方向更悲观 | `51761ac` |
+| 五十七 | `cycle` 的审计工具自身空转:守卫盯错文件 + 判据与审计修复相反 + 过期前提 | 工具 vs 套件互相矛盾且无人发现 | `76c8803` |
+| 五十八 | `chase`/`uptrend` 的 phantom 工具在**空输入**上报告 `0.00%`(静默的零) | 空输入 ⇒ `N/A` + 退出码 1;真 phantom ⇒ 退出码 2 | (本提交) |
+
+一条**此前已核对为合规**的(附五十四 §0):§4 的 **T+1** 在四引擎都有显式同日禁出场门。
+
+### 2 · 待决策(需要你给事实或拍板)
+
+| # | 事项 | 为什么卡在你这里 |
+|---|---|---|
+| 1 | **ATR 滑点标定值**(100/100 个 preset 的 `atr_slip_scale` 全为 0 ⇒ 已发布结果全部零滑点) | 要打开就得有标定依据(成交回报/冲击成本样本),不能编 |
+| 2 | **cycle 的成交口径**(SL/TP 在当根 bar 成交,max_hold 在**次根开盘**成交;另 3 引擎统一在次根开盘) | 改动=全量结果变更;且该包正由另一 workstream 开发,建议由其一并改 |
+| 3 | **`chase_up`/`uptrend` 的涨跌停阈值 0.098**(其余引擎 0.095) | 0.098 会把 +9.8%~+10% 的非封板 bar 判成封板 —— 方向是保守,但属**参数口径**决定 |
+| 4 | **lockfile / holdout 起止 / 各 preset 的 `n_comparisons` 迭代次数** | 只在你手上(§5 的 DSR/Bonferroni 计数需要) |
+| 5 | **基准选择**(现用"PIT 宇宙等权买入持有";有指数数据时可增 `index` 实现) | 需要指数序列来源 |
+
+### 3 · 已登记(不是缺陷,是缺口;未改,理由逐条写在对应附录)
+
+| 事项 | 附录 | 为什么不动 |
+|---|---|---|
+| `chase`/`uptrend` 的 **Phase-2 引擎没有公司行为路径**(而 chase CLI 的 `--engine` 默认就是它) | 五十四 §5 | 给 replay 引入跨 bar 持仓量/成本账本 = 新功能 + 研究决策;已加**登记守卫**(接进去即变红) |
+| 四引擎接 `dna_data.dual_price_loader`(共享层存在但无人接线) | 五十一 §5 | 结果敏感的重构(各 loader 还有 warmup/事件列/universe 切片等差异) |
+| **送股/配股的真数据对账**(§3 第二条 MUST 目前只有合成夹具) | 五十 | 需要"送股保总成本不变"的语义拍板 |
+| **`cycle` 的成交记录不带 `exit_reason`** | 五十六 §6 | 于是"幻影出场/方向语义"检查器在 cycle 上**跑不了**;补它要动 exit 路径 + 重算 golden,属另一 workstream 的包 |
+| `core.dual_price.is_limit_down` 在 `prev_close` 缺失时 **fail-open** | 五十二 §6 | 方向乐观但**结构性不可达**(入场受暖机门控) |
+| `cycle` 影子账 `_open_positions` **从不因 SL/TP 出场减少** | 五十五 §3 | 对结果无影响;修它需把 SL/TP 出场接到 broker(跨文件) |
+| phantom 工具用 `v_daily_qfq` 校准,而引擎的复权域是 `v_daily_hfq` | 五十八 §4 | 阈值 0.01/0.5 是 qfq 域的标定;换域要重新标定 |
+| 更宽窗口/更多 preset 上的**重新定价**(附五十一 的涨停域修复、五十三 的板块修复) | 五十一/五十三 | 已测窗口零漂移;**更宽窗口可能变**,届时按 §6 重算并说明 |
+
+### 4 · 本轮验证口径(便于复核)
+
+* 每一项修复都做了**双向验证**(守卫必须在"错误实现"上变红),手段与结果写在各自附录;
+* 结果变更的**全部**都量化了(附五十二 −41.5%/−44.3%、五十四 1/197、五十五 崩溃→5,715 笔、
+  五十六 1/492),并按 §6 重算基线、把漂移理由写进**基线文件自身的** `drift_log`;
+* 全量套件在每一批之后都跑过:1205 → 1209 → 1214 → 1218 → 1222 → (本批) —— 均为
+  真库 + 真实回测,失败 0;
+* **被我自己证伪 / 我自己写错的地方也记在案**:附五十二(猜错守卫的失效方向)、
+  附五十四(结构守卫选错 dict,两版)、附五十六("关掉守卫"写成了第三种行为 ⇒ 假零漂移)、
+  附五十七(第一版判据仍可被同文件另一处 raise 满足)、附五十八(工具 headline 的静默零)。
+  —— 这五处都是**测量/验证方法本身**出问题,而不是结论出问题;记下来是为了让下一个人
+  少走一遍。
+
+---
+
+## 附六十 —— §5 的 DSR 观测数 T:`short_reversal` 的 walk-forward **家族**把它写成常数(16 处);而家族守卫**要求**那个常数存在
+
+### 1 · 发现路径(不是"搜出来的",是"修一族"修出来的)
+
+起点是 `cycle_price_action/sweep_thresholds.py`:
+
+```python
+WINDOW_TRADING_DAYS = 126   # 注释:"窗口真实交易日数"
+...
+n_returns=WINDOW_TRADING_DAYS,
+```
+
+而 CLI 的 `--test-months` 默认是 **12 个月** —— 实测默认两个窗口的真实 T 是
+**243 / 242**,即 T 被低估 **1.92 倍** ⇒ DSR 的 `sqrt(T-1)` 变小 ⇒ **DSR 偏悲观**。
+
+修完这一处后我去加强该族的守卫(当时它只拦"字面量常量"),守卫**当场列出 16 个新命中**,
+全部在 `short_reversal`。**"修一处 ⇒ 顺手核对一族"再次直接产出发现。**
+
+### 2 · `short_reversal` 这一族:方向是**危险的那一侧**
+
+```python
+WINDOW_TRADING_DAYS = 126        # 注释:"窗口真实交易日数(6 个月)"
+def build_windows(..., window_months: int = 2, ...)   # ← 默认 **2 个月**
+n_returns=WINDOW_TRADING_DAYS,
+```
+
+2 个月 ≈ **42** 个交易日,常数却是 **126** ⇒ T 被**高估约 3 倍** ⇒ `sqrt(T-1)` 放大
+**≈1.75 倍** ⇒ **DSR 系统性偏乐观**(与附三十二 那次同族、同方向)。
+14 个 `wf_v*_focused.py` 各自**复制**了同一个常数(不是 import),同一个错被复制 14 份。
+
+> 那处**用法**旁边的注释还写着「n_returns 亦改为该窗口的真实交易日数,而非硬编码 252」——
+> 而实现只是把 `252` 换成 `126`,**还是常数**。**注释声称修过的,实现没修**
+> (与附四十六 的契约禁令、附五十四 的 presets 引用同形)。
+
+### 3 · 三个守卫盲点,其中一个是**守卫在要求缺陷存在**
+
+**(a) 只拦字面量。** `test_n_returns_is_never_a_hardcoded_literal` 的判据是
+`isinstance(kw.value, ast.Constant)` —— 而 `n_returns=WINDOW_TRADING_DAYS` 是
+`ast.Name`。于是"常数换个名字"从它眼皮下走过 **16** 次。
+→ 新增 `test_n_returns_is_never_a_module_level_constant`(+元测试)。
+
+**(b) 家族守卫本身把常数钉成了要求。** `tests/test_dsr_trial_basis.py`:
+
+```python
+assert re.search(r"^WINDOW_TRADING_DAYS = 126\b", src, re.M), \
+    "§5 VIOLATION: … 的窗口交易日数应为 126(6 个月);硬编码 252(全年)会低估 SE 项"
+```
+
+它的**意图**是"不许硬编码全年 252",**实现**却是"必须存在那个常数,而且必须是 126"。
+后果是双向的:它一边**放过**全部 16 个「T 与窗口长度不符」的脚本(它们都有那个常数),
+一边让"把 T 改成来自本次运行"的修复**变红**(实测:我改完后这一条以
+`15 failed` 的形式拦住了我)。
+—— 前面各条说的都是"守卫站在错误的一侧、把缺陷锁死";这一条更直接:
+**它不是没拦住,它是在要求缺陷存在。** 已按**性质**重写:不得有该常量、不得有字面量 T、
+且必须**真的**从 metrics 读取 `n_trading_days`。
+
+**(c) 扫描器静默跳过"无法解析的文件"。** `_dsr_call_sites()` 里
+`except (SyntaxError, UnicodeDecodeError): continue` —— 带语法错误的文件对**全套**
+DSR 守卫不可见(既不能说它违规,也不能说它干净)。这条是**我自己踩出来的**:
+第二次两向验证时我把常数插错缩进 ⇒ 语法错误 ⇒ 守卫全绿。现在扫描器把无法解析的
+文件报出来,由 `test_there_are_call_sites_to_guard` 断言为空。
+
+### 4 · 我在本条的验证过程里错了**四**次(逐条记账)
+
+| 第几次 | 我做了什么 | 守卫表现 | 为什么这个结果不构成证据 |
+|---|---|---|---|
+| 1 | 加模块级常数,但调用点仍传局部变量 | 绿 | **没复现缺陷的形状** —— 调用点不是那个常数 |
+| 2 | 复现了形状,但常数缩进写错 ⇒ 文件语法错误 | 绿 | **扫描器跳过了该文件**(盲点 c) |
+| 3 | 复现形状且语法正确 | **红**(精确到 `wf_v34_focused.py:82`) | ✓ 有效 |
+| 4 | 新守卫的"必须消费 n_trading_days"分支:我用 `"n_trading_days" in src` 判词 | 绿 | **我自己插入的注释里就有那个词** —— 把消费那一行删掉仍然通过 |
+
+第 4 次尤其值得记:我在同一批里刚写完"判词不判行为"的批评,转头就写了一条判词的断言。
+已改成 AST 判 `m["n_trading_days"]` 这个**读取**。至此该家族守卫的三条分支各有一次
+"删掉对应实现 ⇒ 必红"的实测。
+
+> 结论固化:**两向验证要成立,必须同时满足两件事 —— 复现出缺陷的**形状**,
+> 且确认**工具看得见**这个文件/调用点。少任何一件,"它没红"都不构成证据。**
+
+### 5 · 改动
+
+| 文件 | 改动 |
+|---|---|
+| `cycle_price_action/sweep_thresholds.py` | 删常数;新增 `_oos_trading_days(db_path, start, end)`(库日历 `count(DISTINCT date)`,**自成一体、单独可测**);按窗口取真实 T、缺则 fail-fast;打印带 `T=` |
+| `short_reversal/walkforward.py` | 删常数;`RESULT_COLS` 增 `n_trading_days`;DSR 用窗口均值,缺则 fail-fast;更正那处"声称已修"的注释 |
+| `short_reversal/wf_v34..v46, v56_focused.py`(14) | 机械变换(每条锚点先断言命中 1 次、`ast.parse` 通过才落盘):`t_days.append(int(m["n_trading_days"]))` + `_observed_t` 均值 + `n_returns=_observed_t` |
+| `tests/test_dsr_trial_basis.py` | 家族守卫按**性质**重写(原版在要求常数存在) |
+| `tests/test_dsr_inputs_single_source.py` | 新增模块级常数守卫 + 元测试;扫描器不再静默跳过无法解析的文件 |
+| `tests/test_sweep_thresholds_oos_compliance.py` | 夹具把 T 的来源一并 mock(`:memory:` 库没有 `v_daily`);该用例的主题是「哪两个日期转给 run_backtest」,与 T 无关 —— T 由上面两条守卫钉住 |
+
+口径**未变**:仍是"**一个**窗口的交易日数"(test 窗口之间可能重叠,`--roll-months`
+默认 6 < `--test-months` 默认 12,故不把各窗口相加当作独立观测)——
+只是把"常数"换成"事实"。
+
+### 6 · 没做的事(如实标注)
+
+* **那些脚本本身没有重跑**。每窗一次完整回测,wf 家族跑一遍是**小时级**;本条的验证
+  在单元/测量层面(T 的来源与取值、守卫三向、全文件 AST 绿),**不是**"重跑后 DSR
+  数字变了多少"。
+* 因此:**若此前有引用过这些脚本的 DSR 数字,应重算后再引用** ——
+  `short_reversal` 家族的 T 错了 3 倍(**偏乐观**),cycle sweep 的 T 错了 1.92 倍
+  (**偏悲观**)。处置与附三十二 一致(那次也只修口径并标注)。
+* 从今往后:任何把 `n_returns` 写成常数(字面量**或**模块级变量)或不再从运行取 T 的
+  脚本,这套守卫都会红。
+
+---
+
+## 附六十一 —— 消费端:`render_top5_presets_html.py` 的 short_reversal 路径**自己反推日期**(实测 11/16 错,其中两笔错了一个月)
+
+前面几十条的战场都在引擎/守卫;这一条换到**消费端** —— 谁读这些指标、读得对不对。
+`tools/render_top5_presets_html.py` 是五份 HTML 报告的产出者,其中 **4 份**走
+short_reversal 路径。
+
+### 1 · 缺陷 A:反推日期,而记录里本来就有日期
+
+```python
+"""Convert raw short_reversal trade dict to canonical TRADE_COLS row.
+   Reverse-engineers entry_date / exit_date via build_trade_dates' approach.
+   Synthesizes net_pnl / gross_pnl / fees / net_return from price+size+net%."""
+mask = (kline["open"].astype(float) - ep).abs() < 0.001      # ← 全部候选
+entry_date = pd.Timestamp(kline.loc[mask, "date"].iloc[0])    # ← **取第一根**
+...
+for _, row in after.iterrows():
+    if lo - 1e-9 <= xp <= hi + 1e-9: exit_date = ...; break   # ← 第一根"装得下"的
+if exit_date is None and not after.empty:
+    exit_date = pd.Timestamp(after["date"].iloc[min(hold_days - 1, len(after) - 1)])  # ← **编一个**
+```
+
+而引擎**早就**把 `entry_date` / `exit_date` / `exit_reason` 放进记录里了
+(`_canonical_trade_record`,附五十二 之后还带着 `gross_pnl/fees/net_pnl/net_return`)。
+
+**实测**(`2026-06-01..2026-08-31`,`v44_ratio02_buf07`,16 笔):
+
+| | |
+|---|---|
+| 日期与记录**不符** | **11 / 16 笔(69%)** |
+| 典型 | 记录 `2026-06-09→06-11`,工具 `06-09→06-10`(早一天) |
+| **最严重** | `003033.SZ` 记录 `06-29→07-01`,工具给你 `05-27→05-29`(**错一个月**) |
+| 同上 | `002605.SZ` 记录 `08-03→08-05`,工具 `05-29→06-01`(**错两个月**) |
+
+更值得记的是**这段代码是什么**:它是 `short_reversal/render_html_report.build_trade_dates`
+那套启发式的**第二份实现**,而且——本审计早前已经把那套启发式**修好过**
+(`test_ambiguous_entry_price_picks_the_candidate_that_validates`、
+`test_no_validating_candidate_is_marked_unverified`:歧义时选**能通过校验**的那根、
+无候选时标 `unverified`)。**活下来的这一份是修之前的那一版**:歧义取第一根、无候选就编。
+§6「一条规则一处实现」的反例,而且反的那一面是最坏的。
+
+### 2 · 缺陷 B:权益曲线是**合成**的,而引擎发布真曲线
+
+原实现用**逐笔** `net_return` 复利造一条 equity:
+
+```python
+cum = (1.0 + trades_sorted["net_return"].fillna(0.0)).cumprod()
+```
+
+它把 `max_positions>1`(多仓同时持有)、未满仓期、以及**逐 bar 回撤**全部抹平 ——
+曲线形状与任何由它推出的风险指标都不可信。而引擎发布的真曲线就在同一次调用里:
+实测 **141 行**,列为 `date / cash / holdings_value / equity / drawdown / free_cash`。
+
+### 3 · 一条**被实测推翻**的怀疑(如实记账)
+
+我一开始把这段里第三处也当成缺陷:**"用旧兼容字段 `net` 合成 `net_pnl`"**
+(`net_pnl = raw["net"] × (entry_price × size)`),理由是审计已知 `net` 是百分比率
+back-compat shim、且平行 workstream 修过几处"用了 `net`"。
+
+**实测推翻**:`net × (ep × size)` 与 canonical `net_pnl` **逐分一致**
+(两个 preset 共 30 笔,合计差 **0.00**,单笔最大差 0.00;胜率 37.5% vs 37.5%、
+42.9% vs 42.9%)。原因很直白:`net = gross_pct − 费用比率`,乘回名义额就是
+`gross_pnl − fees`,与 canonical 定义**同一个量**;`net` 与 `net_return` 的差别在
+**分母**(是否含 `entry_fee`),只在"聚合"时才咬人,不在单笔 P&L。
+
+**故这三行没改。** 这是本审计里第三次"测量更正了我的读法"(前两次见附五十二 §1、
+附五十七 §2 的自查)—— 记在这里是因为它比前两次更能说明问题:**"与已知缺陷同形的代码"
+不代表"就是缺陷"**,判据必须落到"两个数是不是同一个量"。
+
+### 4 · 改动与守卫(4 条,全部双向验证)
+
+| 改动 | 内容 |
+|---|---|
+| `_normalize_short_reversal_trade` | 字段**只从记录取**;缺 canonical 键 ⇒ `raise KeyError`(不再静默反推)。`klines` 参数保留(调用方还要它画指标),但本函数不再读它 |
+| `_run_short_reversal` | 权益曲线改为读引擎的 `equity_curve`;为 `None`(ensemble 路径)⇒ `raise RuntimeError`(宁可**可见地**失败,也不合成一张假曲线) |
+
+| 守卫 | 钉住 |
+|---|---|
+| `test_short_reversal_rows_take_dates_and_pnl_from_the_record` | **构造与记录矛盾的 klines**(没有一根 open≈ep、没有一根含 xp)⇒ 仍必须给出记录里的日期;旧实现在此返回 `None`(整笔从报告里消失) |
+| `test_short_reversal_missing_canonical_key_fails_loudly` | 缺 `net_pnl` ⇒ `KeyError` |
+| `test_short_reversal_equity_comes_from_the_engine` | 权益逐行等于引擎那张(mock `run_backtest_v3`) |
+| `test_short_reversal_missing_equity_curve_fails_loudly` | `equity_curve=None` ⇒ `RuntimeError` |
+
+双向验证:把工具文件还原到修复前(`git checkout --`)⇒ **这 4 条全红**;恢复 ⇒ 11 passed。
+
+**端到端复验**(真跑一次渲染:`--only short_reversal --start 2026-06-01 --end 2026-08-31`,
+4 份报告全部产出):
+
+| | 修复前(工具自造) | 修复后 |
+|---|---|---|
+| 报告里 `003033.SZ` 的日期 | `2026-05-27 → 05-29`(**错一个月**) | `2026-06-29 → 07-01`(记录值) |
+| 权益曲线 | 逐笔台阶(≈笔数行) | **引擎的 141 行逐日曲线**(带逐 bar 回撤) |
+
+> 副作用(有意):`main()` 对每个 preset 是 `except Exception: print("ERROR ...")`,
+> 故 ensemble 路径现在会打印 ERROR 而不是渲染一张假曲线报告。**可见的失败优于静默的伪造。**
+
+### 5 · 没做(与既有登记一致)
+
+`tests/test_render_top5_tool_consistency.py` 的 docstring 早已登记:该工具**展示层**还在
+重述 `_compute_short_indicators`(逐 bar 指标序列)与 `_build_entry_reasons_*`(A/B/C 文案),
+消解它需要引擎暴露逐 bar 指标序列 —— 属重构。本条**只**处理了"日期/权益这两处会给出
+**错误数字**的重复",没去动"重复但结论一致"的那部分。
+
+---
+
+## 附六十二 —— §5 归因的三件套来自**同一个提交**,却互相矛盾:报告告诉读者"归因不可计算",而同一提交里风格篮子基准已经落地并接线
+
+继续沿**消费端/声明面**走。这一条与前面各条不同:它不是引擎算错,而是**仓库对自己的
+描述互相矛盾**,且其中一句随**每一份报告**走到读者眼前。
+
+### 1 · 三件套(同一个提交 `008ea11`,`2026-10-16`)
+
+| 文件 | 状态 | 它对用户的说法 |
+|---|---|---|
+| `dna_stats/attribution.py` | `attribute()`(含 beta、可注入基准序列):**已实现、已有测试**(`tests/test_attribution.py`),但**没有任何生产代码调用** | 诚实:自己写明"⚠️ 当前数据缺口(必须先解决才能用)" |
+| `core/benchmark.py` | 风格篮子基准(该窗口 PIT 宇宙等权买入持有)——**已接线**,由各引擎逐次发布 `benchmark_kind / benchmark_return / benchmark_members / excess_return` | **不实**:"本仓库此前**完全没有实现**这一条(只报裸收益)" |
+| `core/trade_report.py::UNATTRIBUTED_NOTICE` | 渲染进**每一份**报告 | **过期**:"本地行情库无指数序列,**归因暂不可计算**" |
+
+### 2 · 为什么"归因暂不可计算"是错的
+
+§5 逐字允许两支基准:
+
+> Headline returns MUST be reported alongside benchmark-relative excess return
+> (**index or style basket**).
+
+本机确实没有**指数**序列 —— 但**风格篮子**正是 §5 给的另一支,而且它已经落地并接线。
+那段话把**指数那一支**的缺口,说成了**整条 §5 要求**的缺口。后果是:任何打开 HTML 报告
+的人都会读到"归因不可计算",从而以为 §5 未被满足 —— 而实际上只是**换了一支基准**。
+`tests/test_attribution.py` 的模块 docstring 当时也写着同一句。
+
+**同一提交里**写下的三句话,彼此矛盾,而没有任何一条守卫会注意到 ——
+这属"文档声称的状态与代码不符"(与附四十六 的契约禁令、附五十一 的加载指引同族),
+只不过这次行走到了用户面前。
+
+### 3 · 修法(把三处都改成**当下的真实状态**,并互相交叉引用)
+
+| 位置 | 改动 |
+|---|---|
+| `core/benchmark.py` | 删掉"完全没有实现"这一不实说法,补上它与 `dna_stats/attribution.py` 的关系(哪一支接线、哪一支在等数据) |
+| `dna_stats/attribution.py` | 补"本模块当前**已实现但未接线**"一段:它要的是**指数**序列;已接线的是 `core/benchmark.py`;指针指向登记守卫 |
+| `core/trade_report.py::UNATTRIBUTED_NOTICE` | 保留 §5 要求的「**未归因**」标签(对该报告是准确的:报告本身只展示绝对收益),但把"归因暂不可计算"改成"**这不等于 §5 未满足** —— 风格篮子基准已随产物发布,见 metrics 的 `benchmark_*`;指数基准待数据补齐" |
+| `tests/test_attribution.py` 模块 docstring | 同样更正(它复述了那句话) |
+
+> 保留「未归因」标签这一点是**先跑测试才定的**:我先写掉了那个词,
+> `test_report_labels_returns_as_unattributed` 立刻报红 —— 而它守的正是 §5 要求的
+> **显式标注**(不能让读者自己去怀疑)。正确的做法是**标签与更正并存**:标签描述
+> 这份报告,更正描述整个机制。
+
+### 4 · 守卫:把"未接线"这个**现状**登记下来
+
+```python
+def test_the_dormant_module_is_not_wired_is_registered() -> None:
+    """`dna_stats/attribution.py` 已实现、已被测试覆盖,**却没有任何生产代码调用** ——
+       它在等指数序列。一旦有人接上,本用例变红,提示同步更新说明与分工。"""
+```
+
+判据是 **AST 扫生产代码的导入**(排除 `tests/` 与 `dna_stats/` 自身),
+且**无法解析的文件会被报出来而不是跳过**(附六十 的教训:静默跳过 = 静默失去覆盖)。
+双向验证:临时给 `core/trade_report.py` 加一行 `from dna_stats.attribution import attribute`
+⇒ 该用例**变红**;撤销 ⇒ 10 passed / 1 skipped。
+
+**不删那个模块**:它是指数基准的现成实现,数据到位后正是要接的那一段。
+
+### 5 · 登记(未做)
+
+* **没有把真实超额收益接进 HTML 报告**。那需要把 metrics 一路 plumb 到渲染层;
+  目前报告里的那段文字改为**告诉读者去哪里看**(metrics 的 `benchmark_*`)。属改进项,登记。
+* **两支归因的合并口径未定**:风格篮子取的是各标的窗口收益的**算术等权平均**
+  (`core/benchmark.py`),而 `dna_stats.attribution.attribute()` 要的是**逐期收益序列、
+  复利**口径。等指数数据到位,必须明确是**替换**还是**并存**,以及两者口径如何对账 ——
+  **这是研究决策,登记在你这边**。
+
+---
+
+## 附六十三 —— `tools/` 五个工具里**四个**在"部分失败"时返回 0:结论只在 stdout,退出码恒 0
+
+沿着附六十一/六十二 的消费端继续走,顺手核了 `tools/` 的**退出语义**。结果是一族。
+
+### 1 · 实测(逐文件)
+
+| 工具 | 现状 |
+|---|---|
+| `update_db_direct.py` | **统计并打印 `errors`,然后 `return 0`** —— 而它写的是**共享行情库** |
+| `run_all_backtests_html.py` | **已经在数 `error_count`**,`return 0` |
+| `render_top5_presets_html.py` | 渲染 5 份报告,任一 `except Exception → print(ERROR) → return 0` |
+| `rerun_top_presets.py` | 两处 `except` 各自 `print(ERROR)` → `return 0` |
+| `compare_rolling_24m.py` | 只读汇总,无失败路径 —— 唯一"干净"的一个 |
+
+与附五十八 的 phantom 工具同族:**结论只在 stdout,退出码恒 0**。人会不看输出,
+机器不会 —— 而 pipeline 只读退出码。
+
+### 2 · 为什么这次比附五十八 严重
+
+`update_db_direct.py` 写的是 `raw_kline_daily`(共享行情库),而**所有回测都读它**。
+一次部分失败的更新以退出码 0 结束 ⇒ pipeline 当作成功继续 ⇒ 下一轮回测读到**半更新**
+的库 ⇒ **同一份代码在不同时间跑出不同结果**。这正是 §0 可复现性明写要防的事:
+
+> Reproducibility Mandate: Identical inputs MUST produce byte-identical outputs.
+> A backtest that cannot be reproduced is a bug, not a result.
+
+输入库被半更新,而"输入变了"这件事**没有任何信号**。
+
+`run_all_backtests_html.py` 那条尤其说明问题:它**已经在数 `error_count`** ——
+即"失败会被计数"这一层已经有了,缺的只是**把计数接到退出码上**。这类"数据已经在那儿,
+只是没人读"的缺陷,与本审计前面那些"守卫站在错误一侧"的形状不同,但同样静默。
+
+### 3 · 修法:一份**共享**的退出码判定
+
+新增 `core/cli_verdict.py::cli_verdict(failures, attempted, succeeded, what)`,
+四个工具共用(退出码映射是**纯函数**,便于单测、不碰网络/回测):
+
+| 情形 | 退出码 | 措辞 |
+|---|---|---|
+| 有失败 | **1** | `[PARTIAL] … 本次产出不完整…` |
+| 没有可处理的项目 | 0 | `[NO-OP] … 这不等于失败,也不等于成功。` |
+| 处理了 N 项但**无一产出结果** | 0 | `[NOTHING-DONE] … 也不等于成功(常见于窗口/目标日期选早了)` |
+| 否则 | 0 | `[OK] … N/M 项成功。` |
+
+**四档分开是刻意的**:附五十八 的教训是"空域被写成 `0.00%`,看起来像干净";
+那么这次连"**做了但没结果**"都不许与"成功"共用一句话 —— 于是 `NO-OP` 与
+`NOTHING-DONE` 各占一档。(`update_db_direct --target` 的默认值是一个写死的旧日期,
+选早了正好走 NOTHING-DONE。)
+
+> 顺带:`update_verdict()` 保留为 `update_db_direct` 的薄包装(委托给共享实现),
+> 免得两处各写一份映射 —— §6 的老要求。
+
+### 4 · 守卫(9 条,含一个家族 AST 检查)
+
+* 映射全覆盖(四条),其中 `test_no_op_is_zero_but_explicitly_not_success` 同时钉
+  `NO-OP` 与 `NOTHING-DONE` **两档**,并各自断言措辞里含"也不等于成功";
+* **家族 AST 检查**(参数化四个工具):入口函数必须**调用**共享判定,且函数体内
+  **不得再有写死的 `return 0`** —— 注释里写"我们返回了正确退出码"不算;
+* 共享实现唯一性(直接调用 `core.cli_verdict` 验映射)。
+
+**双向验证**:`git checkout -- tools/` 还原四个工具 ⇒ **8 条红**;
+恢复 ⇒ 20 passed(含 `test_render_top5_tool_consistency.py` 的 11 条)。
+
+### 5 · 没做
+
+* `tools/compare_rolling_24m.py` 未改(它没有失败路径)。
+* `update_db_direct.py` 的 `--target` 默认值仍是写死的 `2026-09-19` —— 属于"默认参数
+  该不该是今天"的口径决定;现在它至少会以 `NOTHING-DONE` **可见地**说明"什么都没做",
+  而不是静静返回 OK。**登记,不改。**
+* 没有给这些工具接 CI(它们要网络/长时间回测);本条的收益是**别人把它们接进 pipeline
+  时不会拿到一个永远绿的门**。
+
+---
+
+## 附六十四 —— **已接线**的 DSR 报告层在**猜**观察数 T(实测把惩罚抹平:DSR 0.99 → 0.07)
+
+沿着附六十(把 wf 脚本的 T 从常数改成实测)继续核"还有谁在猜 T",命中的是**一条已接线的**:
+
+### 1 · 缺陷
+
+`dna_stats/walkforward_report.py`:
+
+```python
+n_returns=max(n_windows * 63, 100)    # rough estimate: ~63 trading days/month
+```
+
+注释**自认**是 rough estimate,还带一个 `max(..., 100)` 兜底 —— 于是它**不可能**报出
+"取不到"。
+
+而**唯一接线的调用点**是 `uptrend_pullback/wfv_eval.py`:它跑 **23 个 2 个月窗口**
+(文件头写明"默认 23 个 2-month 窗口, 1m 步")。该式给 `23 × 63 = **1,449**`,
+而一个窗口的实际观察数是 **~42**(2 个月 ≈ 42 个交易日)。
+**T 被高估约 34 倍**。
+
+### 2 · 后果(用真函数算,不是推理)
+
+`T` 进入 DSR 的 `sqrt(T-1)`:
+
+| observed Sharpe | k(试过的配置数) | 诚实 T=42 | 旧猜法 T=1449 |
+|---|---|---|---|
+| 1.0 | 50 | **0.031** | 0.564 |
+| 2.0 | 50 | **0.072** | **0.995** |
+| 1.5 | 23 | **0.089** | 0.955 |
+| 0.8 | 100 | **0.014** | 0.281 |
+
+即:这条路会报出"DSR ≈ **0.99**,统计上非常扎实",而诚实的值是 **0.07** ——
+**§5 的选中偏差惩罚被它整条抹平了**。§5 存在的理由就是这个惩罚,而这里它等于不存在。
+
+### 3 · 最讽刺的一点:引擎**早就**为这个参数发布了观察数
+
+`uptrend_pullback/backtest.py` 里那段注释正是**附三十二**那次修复留下的:
+
+> §5 (audit 2026-10-16): 观察数**随产物发布**。DSR 的 `n_returns` 参数是
+> "Sharpe 用了多少个收益观测"(T = len(eq) − 1)… 而此前各 sweep 只能把这个数
+> **硬编码**(多处写 252)… ⇒ DSR 系统性**偏乐观**。
+
+修复方式就是发布 `n_daily_returns`。**于是:** 引擎发布了正确值 → `RESULT_COLS` 没带上 →
+`walkforward_report` 继续猜。**常量从 `252` 换成了 `n_windows × 63`:形状变了,性质没变。**
+这与附六十 里那条"家族守卫要求常数存在"是同一课的两面 —— 都是**把"当时那版实现"当成了契约**。
+
+### 4 · 修法
+
+| 位置 | 改动 |
+|---|---|
+| `uptrend_pullback/walkforward.py` | `RESULT_COLS += "n_daily_returns"`(引擎已发布,只是没带上来) |
+| `dna_stats/walkforward_report.py` | T 取自 df 的 `n_daily_returns` 列(各窗口均值)或显式 `n_returns=`;**两者都没有 ⇒ 抛错**,删掉 `max(n_windows*63, 100)`;打印改成 `DSR(obs=…[跨窗均值], k=…, T=…)`,让读者能核 |
+| 同上 | `observed_sharpe` 由**中位数**改为**跨窗口均值** |
+
+**口径(与附六十 一致,并写明理由)**:T 取"**一个**窗口的观测数",不把各窗口相加 ——
+2 月窗 / 1 月步之间**重叠**,相加会把不独立的东西当独立、反而**低估**标准误;单窗口径在
+方向上偏**保守**(SE 更大 ⇒ DSR 更小),符合 §0。
+
+`observed` 改用均值:本仓库另外两条路径(附五十九 的 wf 脚本、附六十 的 cycle sweep)
+定的都是"跨窗口均值 = WFV 的无偏汇总,n_trials 取配置数"——**三处此前各算各的分子**,
+现在统一。(中位数与均值的差别不是修辞:上表任何一行换个 observed 都会再动一次数。)
+
+### 5 · 守卫(3 条,全部双向验证)
+
+| 用例 | 钉住 |
+|---|---|
+| `test_T_must_come_from_the_run_not_from_a_guess` | 缺列且未传 ⇒ **ValueError**(旧实现因为那个 `max(...,100)` 兜底,永远不会抛) |
+| `test_T_is_taken_from_the_run_column` | 打印出的 T 与数值确实来自该列 —— 并且**与"旧猜法"的结果可区分**(否则断言没有判别力:我第一版用 `abs(got-expected)<1e-9` 比 3 位小数的打印值,是无效断言,已改) |
+| `test_observed_sharpe_is_the_cross_window_mean` | 构造 mean≠median 的夹具,断言用的是均值 |
+
+既有 3 条用例的夹具补上 `n_daily_returns`(契约变了;断言原样保留)。
+**双向验证**:`git checkout --` 还原模块 ⇒ 3 条红;恢复 ⇒ 7 passed。
+
+### 6 · 没做 / 需要你知道的
+
+* **没有重跑那个评估器**:`uptrend_pullback/wfv_eval.py` 一次要跑 23 个 2 个月窗口的
+  完整回测(小时级)。故本条的验证在**纯函数层**(上表那四行就是真函数算出来的)。
+* **若有引用过该评估器输出的 DSR,应重算后再引用** —— 那些数被高估得**很多**
+  (上表:`0.995` vs `0.072`)。处置与附三十二/六十 一致。
+* `wfv_eval.py` 自身**没改** —— 它传的是 df,列补上之后自动被用上。这一点是有意的:
+  修在**数据的来源**,而不是在每个调用点各写一遍。
+
+---
+
+## 附六十五 —— DSR 输入守卫的**第三种形状**;以及 cycle 里一段**永不执行**的 §5 块
+
+两件相邻的事,都是顺着附六十四 那条线摸出来的。
+
+### 1 · 守卫的空隙:内联表达式里的常数
+
+附六十 给 DSR 输入加了两条规则:字面量(`n_returns=252`)、模块级常量
+(`n_returns=WINDOW_TRADING_DAYS`)。而附六十四 那个**真实**形状是第三种:
+
+```python
+n_returns=max(n_windows * 63, 100)      # 注释自认 "rough estimate"
+```
+
+既不是字面量、也不是模块级名字 ⇒ **两条规则都看不见它**。它就这样带着一个能把 DSR 从
+**0.072** 抬到 **0.995** 的假设活到了被读到为止。**守卫的三种形状,只拦住了前两种。**
+
+**新增第三条规则**:`n_returns` 的表达式里**不得出现 0/1 以外的数字字面量** ——
+有,就是把某个假设烤进了 T。
+
+判据的边界是想清楚的:**"由本次运行算出"的写法都不需要烤任何数**。
+实测当前全库 **20 处**调用点全部通过:
+
+| 写法 | 走这条规则 | 性质 |
+|---|---|---|
+| `n_returns=_observed_t`(14 处) | ✓ | 变量(附六十 刚改的) |
+| `n_returns=n_obs` | ✓ | 变量(附三十二 的 fail-fast 版) |
+| `n_returns=int(panel["date"].nunique())`(6 处) | ✓ | 由面板算 |
+| `n_returns=int(m["n_trades"])` | ✓ | 由产物算(见 §2) |
+| `n_returns=max(n_windows * 63, 100)` | ✗ | 烤了 63 与 100 |
+| `n_returns=252` / `WINDOW_TRADING_DAYS` | ✗ | 前两条规则已拦 |
+
+配**元测试**:构造旧形状 ⇒ 必红;合法写法(`int(panel['date'].nunique())`、
+`len(panel) - 1`)⇒ 不得误伤。双向验证:把旧形状写回 `sweep_thresholds.py` ⇒ 该规则红。
+
+### 2 · `cycle_price_action/main.py` 里那段 §5 块**从不执行**
+
+```python
+# 此处直接输出以满足 §5。
+sharpe = m.get("sharpe")
+if sharpe is not None and m.get("n_trades", 0) > 0:
+    dsr = deflated_sharpe_ratio(...)
+```
+
+而 `cycle_price_action/metrics.py` 按设计让 `sharpe` **恒为 `None`**(它是"每股独立账户"
+的引擎,组合级 `cagr`/`sharpe`/`max_dd` 无定义 —— 模块 docstring 明写)。
+
+**实测确认**(不是读出来的):一次真实运行 `sharpe = None`,`n_trades = 495`
+(顺带:那次运行的日志里出现了附五十五 加的 `[broker-shadow]` 告警,说明那处修复也在正常发声)。
+⇒ 那个 `if` **从未成立**,DSR 一次都没打印过,而注释写的是"**此处直接输出以满足 §5**"。
+**注释声称的 §5 满足,从未发生。**
+
+**处置**:不伪造一个组合级 Sharpe(本引擎确实没有这个量),而是把"**不报**"这件事
+**显式说出来** —— 抽成纯函数 `dsr_notice(sharpe, n_trades, preset)`:
+
+* `sharpe is None` ⇒ 说明"每股独立账户,组合级 Sharpe 无定义 ⇒ 不报 DSR(不伪造)",
+  并带上 `n_trades` 让读者知道这次窗口的量级;
+* 有 `sharpe` ⇒ 照旧报 DSR(单 preset 单 trial,n_trials=1)。
+
+另加一条**前提守卫**:`test_cycle_metrics_really_has_no_sharpe` —— 钉住"cycle 没有组合级
+Sharpe"这个前提;若哪天它真的发布了,该用例变红,提示把说明改回报 DSR。
+**双向验证**:还原 `main.py` ⇒ 2 条红(无 `dsr_notice`);恢复 ⇒ 9 passed。
+
+### 3 · 一小段总结(三分之二的 §5 问题都在同一处)
+
+本审计在 §5 上落了五条(附五十九、六十、六十四、六十五,连同附三十二 的老底),
+**全部**是同一个量:DSR 的输入。
+它的形状在四种写法之间迁移过 —— 字面量 `252` → 模块级常量 `WINDOW_TRADING_DAYS` /
+`n_windows × 63` → 内联表达式 `max(n_windows*63, 100)` —— 而每一次"看起来已经修过",
+是因为**改了写法,没改性质**(总有个数不是从运行里来的)。
+
+> 这解释了为什么这类缺陷能连着活过两轮审计:每一轮的修复都对准了**当时那个形状**,
+> 而守卫也就跟着钉那个形状。真正该钉的是**性质**:"这个数是不是来自本次运行"。
+> 现在三条规则合起来才勉强逼近它 —— 而 `run_all_backtests_html` 那条"**已经在数
+> `error_count` 却仍返回 0**"(附六十三)是同一族的另一种表现:**量已经有了,没人读**。
+
+---
+
+## 附六十六 —— DSR 输入的**第四种形状**:T 从模块级数字常量借来(而它是被**另一个猜**背书的)
+
+### 1 · 缺陷
+
+`uptrend_pullback/iter_reverse.py`(反向 Monte-Carlo 调参脚本):
+
+```python
+#: §5 (audit 2026-10-15): 单窗交易日数 ≈ 21/月 —— 取自**仓库既有口径**:
+#: walk-forward 家族用 6 个月 = 126 个交易日,即 126 / 6 = 21。此处沿用同一比例,
+#: 而不是另发明一个数。
+WINDOW_TRADING_DAYS_PER_MONTH = 21
+...
+n_returns = WINDOW_TRADING_DAYS_PER_MONTH * args.window_months
+```
+
+两件事:
+
+**(a) 表达式里一个数字字面量都没有**(两个操作数都是名字)⇒ 附六十五 的第三条规则
+(`不得出现 0/1 以外的数字字面量`)**看不见它**;名字也不是"常数自身被直接传进调用点"
+⇒ 第二条规则也看不见。**第四种形状。**
+
+**(b) 它的理由更值得记**:「取自**仓库既有口径**:walk-forward 家族用 6 个月 = 126 个交易日,
+即 126/6 = 21」。而那个"既有口径"**本身就是附六十 修掉的那个猜** —— `126` 被当成
+"6 个月"写死,而窗口长度是 CLI 参数(`--test-months` 默认 12)。
+**用一个猜给另一个猜背书。**
+
+**实测偏差**:21/月 vs A 股实际月均 **20.25**(243/12)⇒ T **约 +4% 偏乐观**,
+与附三十二 那次(252 vs 242)同量级、同方向。
+
+### 2 · 修法
+
+T 取自本次运行的 per-window `n_daily_returns`(引擎已发布,附六十四 已把它加进
+`RESULT_COLS`)取**均值**;取不到 ⇒ **fail-fast**。删掉那个常量,连同它引用的"既有口径"
+理由(理由已不成立,留着就是下一次误读的种子)。
+
+### 2b · 同一处还有第二个陷阱:`row` 是**重建**的
+
+修完 T 我又撞了一次:`main()` 的 `rows` 不是 `score_windows` 的返回,而是**从它里面挑键
+重建**的一个 dict(score / median_ret / sharpe_med / …),**`windows` 明细不在其中**。
+于是"从 `rows[0]['windows']` 取 T"这条写法根本拿不到东西 —— 我第一版就是这样,
+既有测试 `test_iter_reverse_reports_penalty_metric` 当场报 ValueError(它的桩
+`score_windows` 返回 `"windows": []`,而现在 T 从那里取)。
+
+处置:在**评分时**就把该配置的窗口观测数折成一个标量带上(`n_daily_returns`,
+走纯函数 `_mean_window_returns`),DSR 段读它、缺则 fail-fast。
+测试的桩相应补上 `n_daily_returns=42`(断言主体 `n_trials=3` 原样保留)。
+
+> 两次都栽在"数据在哪"上:第一次是**守卫**看不见(调用点只传名字),
+> 第二次是**新代码**看不见(row 会重建)。两次都是被**已有的守卫/测试**当场抓出来的 ——
+> 这也说明这批守卫和测试确实在承重。
+
+### 3 · 守卫:我为它写的第一版**不起作用** —— 是两向验证当场证伪了我自己的判据
+
+我为第四种形状写了一条规则:检查调用点表达式里引用的名字是否能**解析回模块级数字**。
+写完做两向验证 —— 把 `iter_reverse.py` 复现成旧形状,守卫**依然全绿**。
+
+原因:真实代码在调用点传的是**裸名字**:
+
+```python
+n_returns = WINDOW_TRADING_DAYS_PER_MONTH * args.window_months   # ← 上一行(本地赋值)
+...
+dsr = deflated_sharpe_ratio(..., n_returns=n_returns)            # ← 调用点只给名字
+```
+
+三条规则都只看**调用点表达式**,而关键的那个数在**上一行的本地赋值**里。
+**规则没错,是它看不见这条路径。**
+
+**改法**:加一层数据流 —— 若调用点是裸名字,就把**同一函数/同一模块里对该名字的赋值
+表达式**也纳入检查对象。然后按本审计的标准做**最强验证**:把 `iter_reverse.py` 还原到
+**发现缺陷的那一版**,守卫精确报出
+
+```
+uptrend_pullback/iter_reverse.py:285 n_returns 引用了模块级数字常量 WINDOW_TRADING_DAYS_PER_MONTH = 21
+```
+
+修复后 13 passed。**"能抓住真实历史缺陷"才算验证过** —— 这比"合成的夹具会红"强得多。
+
+### 4 · 至此:四种形状各有规则,且都以同一标准验证
+
+| # | 形状 | 例子 | 规则 |
+|---|---|---|---|
+| 1 | 字面量 | `n_returns=252` | 附录六十 §3(a) |
+| 2 | 模块级常量(直传) | `n_returns=WINDOW_TRADING_DAYS` | 附六十 §3(b) |
+| 3 | 内联表达式烤数 | `max(n_windows*63, 100)` | 附六十五 §1 |
+| 4 | 经本地变量间接引用常量 | `_pm = 21; n_returns=_pm * m` | **附六十六 §3**(含一层数据流) |
+
+四条合起来的判据仍是同一句话:**T 必须由本次运行算出**。而这四轮里,每一轮都是
+"修掉当时的形状"→ 下一轮在**另一种写法**上发现同一个性质问题 —— 与附六十 §3 的
+总结一致(§5 这条线上落的六条,全部是同一个量)。
+
+> 也要如实说清了:**这四条是语法/浅数据流规则,不是证明**。真要有心绕过去,
+> 仍然可以(例如先算进一个列表再取下标)。它们的作用是让**"顺手猜一个"这种自然的
+> 写法**过不去 —— 而本仓库实测的四种违规**全部**是这种自然写法。
+
+---
+
+## 附六十七 —— 第二次台面刷新:附六十 ~ 附六十六,以及**该重算的数字清单**
+
+(附五十九 那次收口之后又落了 7 条。这里把它们归位,并给出**现在的**清单。)
+
+### 1 · 本段修好的(附六十 ~ 附六十六)
+
+| 附录 | 缺陷 | 影响 | 提交 |
+|---|---|---|---|
+| 六十 | DSR 的观测数 T 在 `short_reversal` 的 walk-forward **家族**里是常数(16 处);而家族守卫**要求**那个常数存在 | T **高估约 3 倍** ⇒ DSR 偏**乐观** | `01f3a95` |
+| 六十一 | 5 份 HTML 报告里 **4 份**的日期是**反推**的 | 实测 **11/16 笔日期错**,两笔错一个月 | `a87a535` |
+| 六十二 | §5 归因三件套来自同一提交却互相矛盾(报告说"归因不可计算") | 声明面;读者以为 §5 未满足 | `cd63587` |
+| 六十三 | `tools/` **4/5** 在"部分失败"时返回 0 | 其中一个是**共享行情库更新器** | `48eae78` |
+| 六十四 | **已接线**的 DSR 报告层在猜 T(`n_windows×63`) | **DSR 0.995 → 0.072**:惩罚被整条抹平 | `3604ab2` |
+| 六十五 | ①守卫的第三种形状(内联表达式烤数字);②`cycle` 一段**永不执行**的 §5 块 | — | `23e65be` |
+| 六十六 | 第四种形状(经本地变量引用模块级常量);"用另一个猜背书" | T **+4% 偏乐观** | `2c7f827`+`5f1b02b` |
+
+另有一批**守卫自身**的修复(它们不是"引擎算错",而是"守卫看不见 / 站错边 / 空转过"):
+`test_dsr_trial_basis` 那条**在要求缺陷存在**的断言、`_dsr_call_sites` 静默跳过无法解析的
+文件、两个 phantom 工具的"空输入报 0.00%"、cycle 审计工具的三处问题(附五十七/五十八/六十)。
+§5 这条线上前后落了 **六条**(附三十二/五十九/六十/六十四/六十五/六十六),
+**全部是同一个量:DSR 的输入**。
+
+### 2 · ⚠️ 该**重算**的数字清单(引用过就作废)
+
+| 来源 | T 的错法 | 方向 | 量级 |
+|---|---|---|---|
+| `uptrend_pullback/wfv_eval.py` 打印的 DSR | 估计 1,449 vs 真实 ~42 | **偏乐观** | **0.995 vs 0.072** |
+| `short_reversal` 的 14 个 `wf_v*_focused.py` + `walkforward.py` | 常数 126 vs 真实 ~42 | **偏乐观** | 约 3 倍 T |
+| `cycle_price_action/sweep_thresholds.py` | 常数 126 vs 真实 242 | 偏**悲观** | 1.92 倍 T |
+| `uptrend_pullback/iter_reverse.py` | 21/月 vs 20.25 | 偏乐观 | ~4% |
+| `dna_stats/walkforward_report.format_walkforward_stats` | 同上第一条 | 偏乐观 | 同上 |
+
+**没有重跑那些脚本**(每个窗口一次完整回测,wf 家族是小时级);验证做在**纯函数层**
+(把真函数在两种 T 下各算一次,上表的数字就是这么来的)。
+处置与附三十二 一致:**引用过就先重算**。
+
+### 3 · 待决策(需要你的判断或事实)
+
+| # | 事项 | 为什么卡在这里 |
+|---|---|---|
+| 1 | **ATR 滑点标定值**(100/100 个 preset 的 `atr_slip_scale` 全为 0 ⇒ 已发布结果全部零滑点) | 要打开就得有标定依据(成交回报/冲击成本样本) |
+| 2 | **cycle 的成交口径**(SL/TP 在当根 bar,max_hold 在**次根开盘**;另 3 引擎统一在次根开盘) | 改动=全量结果变更;该包由另一 workstream 开发 |
+| 3 | **`chase_up`/`uptrend` 的涨跌停阈值 0.098**(其余 0.095) | +9.8%~+10% 的非封板 bar 被判成封板:方向保守,但属参数口径 |
+| 4 | **lockfile / holdout 起止 / 各 preset 的 `n_comparisons`** | 只在你手上(§5 的 DSR/Bonferroni 计数) |
+| 5 | **基准选择**;以及**两支归因的合并口径** | 前者需要指数数据来源;后者是"风格篮子(算术等权平均)vs `attribute()`(逐期复利序列)"—— 指数数据到位时必须定**替换还是并存**(附六十二 §5) |
+| 6 | `update_db_direct --target` 的**默认值**该不该是"今天" | 现在至少会以 `NOTHING-DONE` 可见地说"什么都没做"(附六十三) |
+
+### 4 · 已登记(不是缺陷,是缺口;未改,理由见对应附录)
+
+| 事项 | 附录 |
+|---|---|
+| `chase`/`uptrend` 的 **Phase-2 引擎没有公司行为路径**(而 chase CLI 默认引擎就是它) | 五十四 §5 |
+| 四引擎接 `dna_data.dual_price_loader`(共享层存在但无人接线) | 五十一 §5 |
+| **送股/配股的真数据对账**(§3 第二条 MUST 目前只有合成夹具) | 五十 |
+| `cycle` 的成交记录**不带 `exit_reason`** ⇒ 幻影出场检查在它身上跑不了 | 五十六 §6 |
+| `core.dual_price.is_limit_down` 在 `prev_close` 缺失时 fail-open(结构性不可达) | 五十二 §6 |
+| `cycle` 影子账 `_open_positions` **从不因 SL/TP 出场减少**(对结果无影响) | 五十五 §3 |
+| phantom 工具用 `v_daily_qfq` 校准,而引擎的复权域是 `v_daily_hfq` | 五十八 §4 |
+| HTML 报告**未 plumb** 真实超额(改为指向 metrics 的 `benchmark_*`) | 六十二 §5 |
+| 更宽窗口/更多 preset 上的**重新定价**(附五十一/五十三 的涨停域与板块修复) | 五十一/五十三 |
+| DSR 的四条规则是**语法/浅数据流**,不是证明(有心绕过仍可) | 六十六 §4 |
+
+### 5 · 这一段的验证口径(便于复核)
+
+* 每一项修复都有**双向验证**,且本轮起把标准提到:**能抓住真实历史缺陷**才算验证过
+  (附六十六:把 `iter_reverse.py` 还原到出缺陷的那一版,守卫精确报出该常量);
+* 结果变更**全部量化**(附六十/六十一/六十三/六十四/六十六);
+* 全量套件每批都跑:1229 → 1238 → 1241 → 1246 → 1248,失败 0;
+* **我自己写错的地方逐条记账**,这一段是 7 处:附六十(两向验证第 1、2 次无效)、
+  附六十一(docstring 声称"完全没有实现")、附六十二(漏掉 §5 要求的「未归因」标签)、
+  附六十四(断言比 3 位小数的打印值到 1e-9)、附六十六(守卫判据无效 + 新代码取不到 row)、
+  附五十七(第一版判据仍可被同文件另一处 raise 满足)。
+  —— **七处里五处是"验证方法本身"的问题**,而不是结论错。已把两条固化成文:
+  (a) 两向验证须同时**复现形状**且**确认工具看得见**;(b) 写守卫时问的是
+  "**把被测的东西删掉,它会不会红**"。
+
+---
+
+## 附六十八 —— 兄弟函数里的**同一处单位混用**:Bonferroni p 量级错约 15 个数量级,**印的是事实的反面**
+
+按上一轮的建议,把审计从"DSR 的**输入**"转到"DSR 的**公式**"。第一个撞上的不是公式,
+而是**同文件里没被一起修的兄弟函数**。
+
+### 1 · 缺陷
+
+`dna_stats/deflated.py::sharpe_significance_pvalue` 修前:
+
+```python
+se = 1.0 / math.sqrt(n_returns - 1)
+z = observed_sharpe / se
+```
+
+而 `observed_sharpe` 按本模块**约定是年化值**(见同文件 `deflated_sharpe_ratio` 的
+docstring 与 `annualized_sharpe()`),`se` 却是**逐期**标准误 ⇒ z 被放大约
+`sqrt(243) ≈ 15.6` 倍 ⇒ p 被压到 ~0。实测(真值用逐期公式**独立**复算):
+
+| 年化 SR | T | 修前 | 真值 |
+|---|---|---|---|
+| 0.84 | 1071 | **0.0** | 0.039 |
+| 0.50 | 250 | 1.6e-15 | **0.306** |
+| 0.30 | 243 | 1.5e-06 | **0.382** |
+| 1.00 | 42 | 7.6e-11 | **0.341** |
+| 2.00 | 252 | 0.0 | **0.021** |
+
+另一个旁证:参数 `trading_days_per_year` 修前**被接受但完全没用**(不参与任何运算)——
+单位换算根本没落地。
+
+### 2 · 后果:**报告印的是事实的反面**
+
+`dna_stats/walkforward_report.py` 印出来的 **Bonferroni p 正是由它算**:
+
+| 年化 SR | T | k | 修前的 p_bonf | 修后的 p_bonf |
+|---|---|---|---|---|
+| 0.84 | 42 | 19 | **7.1e-07** | 1.0000 |
+| 1.50 | 42 | 23 | **0.0** | 1.0000 |
+| 0.60 | 42 | 50 | 3.1e-03 | 1.0000 |
+| 2.00 | 243 | 100 | **0.0** | 1.0000 |
+
+修前:那行对**全部**这些情形都印"极其显著";修后印"不显著"。也就是说,
+**这条路此前把每一个 Sharpe 都报成显著** —— §5 的多重比较惩罚在这一行上完全不存在。
+
+> 如实说明修后的形态:对这些 2 个月窗口(T≈42)与 k=19~100 的组合,修正后的 p
+> **饱和在 1.0** —— 这不是公式的毛病,而是一句**真话**:42 个观测 + 几十次比较,
+> 本来就压不倒 H0。它是"测试设计给不出这个显著性"的信息,方向也是保守的。
+
+### 3 · 为什么它活到今天:三个原因叠在一起
+
+**(a) 同一处混用在兄弟函数上被修过,没一起修。**
+`deflated_sharpe_ratio` 在 **2026-10-13** 就修了这处(那版注释写明症状:
+"年化 Sharpe=0.84 / k=19 / T=1071 被判成 DSR=0.000 … 把「有边际优势」误读成
+「毫无优势」")——**修一处 ≠ 修一族**,又一例。
+
+**(b) 还有一条测试把 bug 写成了期望。**
+
+```python
+def test_sharpe_significance_basic():
+    """V7: 高 Sharpe + 大样本 → 极低 p-value。"""
+    p = sharpe_significance_pvalue(observed_sharpe=2.0, n_returns=252)
+    assert p < 0.001          # ← 正确值是 ~0.021
+```
+
+年化 2.0 在 252 个观测上只是 **约 2σ**(p≈0.021),而这条断言要求它"极低"。
+**它断言的就是那个单位错误** —— 于是修复反而打红它。(与附六十 那条"要求常数存在"的
+家族守卫同形:守卫站在缺陷那一侧。)
+
+**(c) 自称校验"单位口径"的那条守卫,自己两边用了不同的年化常量。**
+`tests/test_deflated_sharpe_units.py` 的参考实现 `trading_days: int = 252`,而被测实现
+用 **243**,差值 0.008~0.013,恰好被 `abs=0.02` 的容差吞掉(实测:实现与 **243** 参考
+一致到 **1e-10**)。
+**一个守不住自己要守的东西的守卫比没有守卫更糟:它提供的是虚假的安心。**
+
+### 4 · 改动
+
+| 位置 | 改动 |
+|---|---|
+| `dna_stats/deflated.py::sharpe_significance_pvalue` | 年化 → 逐期再乘 `sqrt(T-1)`(与 `deflated_sharpe_ratio` **同一换算**);docstring 里记下量级表与因果 |
+| `tests/test_dna_stats_deflated.py::test_sharpe_significance_basic` | 期望从 `p < 0.001` 改成 `≈0.021`,并写明"那条旧断言本身就是单位错误" |
+| `tests/test_deflated_sharpe_units.py` | 参考实现改用 `core.trade_schema.TRADING_DAYS_PER_YEAR`(单源);容差 `abs=0.02` → **1e-9** |
+
+### 5 · 守卫(3 组,全部双向验证)
+
+| 用例 | 钉住 |
+|---|---|
+| `test_pvalue_matches_reference`(6 组参数) | 与独立参考实现一致(`abs=1e-9`) |
+| `test_pvalue_is_not_absurdly_small_for_a_modest_sharpe` | **非空转钳制**:年化 0.5 的 p 必须落在 0.05~0.8 —— 1e-15 那种数量级只可能来自"年化当逐期" |
+| `test_pvalue_actually_uses_the_annualization_parameter` | 该参数必须**真的参与换算**(修前它被忽略) |
+
+**双向验证**:`git checkout -- dna_stats/deflated.py` ⇒ **9 条红**;恢复 ⇒ **27 passed**。
+
+### 6 · 给下一步的线索
+
+公式本身(`_norm_ppf`、`expected_max`、非正态项、自相关项)我对着论文逐项核过,并与
+stdlib 的 `NormalDist` 独立复算一致(见 `tests/test_deflated_sharpe_units.py` 的
+`_reference_dsr`,现已把它的常量也接到单源上)。
+**但有一处合同问题留着**(登记,未改):`deflated_sharpe_ratio` 的 `kurtosis` 参数
+**默认 3.0(原始峰度)**、公式按原始峰度使用(`(γ4−1)/4`,正态时给 0.5 ✓),
+而 docstring 写着「**We accept excess** here」——**文档与实现相反**。
+当前所有调用点都不传该参数(默认 3.0),故**行为正确**;但只要有人按 docstring 传
+"超额峰度"(正态=0),就会静默算错。**登记,留给下一步**(改文档还是改实现是个口径决定)。
+
+---
+
+## 附六十九 —— `kurtosis` 的口径合同**自相矛盾**(docstring 说"接受超额",实现按**原始**用)
+
+### 1 · 缺陷:文档与实现相反
+
+```python
+kurtosis: float = 3.0,          # 明天是"原始峰度"的默认值(正态 = 3)
+...
+kurtosis:         Return distribution **excess** kurtosis (default 3 = normal).
+                  Note: scipy uses Fisher (excess); Bailey uses raw kurtosis
+                  which equals excess + 3. **We accept excess here.**
+```
+
+同一段 docstring 里,"default 3 = normal" 与 "We accept excess"(正态超额 = 0)**互相矛盾**。
+看实现:公式用的是 `(γ4 − 1)/4`,γ4=3 给 **0.5** ✓ —— 那是论文 Bailey & López de Prado
+eq.(5) 的**原始峰度**口径。**行为是对的,合同是错的。**
+
+### 2 · 后果:实测**不大,但方向是乐观的**(我先把数字算出来再说)
+
+谁按 docstring 传"超额峰度"(正态 = 0),旧代码会静默用 `(0−1)/4 = −0.25`:
+
+| 年化 SR | k | T | 正确(原始 3.0) | 误传超额 0.0 |
+|---|---|---|---|---|
+| 1.0 | 10 | 250 | 0.2866 | 0.2871(+0.0005) |
+| 2.0 | 50 | 243 | 0.3864 | 0.3912(+0.0048) |
+| 0.8 | 19 | 1071 | 0.4206 | 0.4212(+0.0006) |
+| 0.3 | 100 | 243 | 0.0128 | 0.0128(0.0000) |
+
+即差别在 **1e-4 ~ 5e-3** 量级,方向是**偏乐观**(峰度传小 ⇒ 方差项变小 ⇒ DSR 变大)。
+
+> **这里记一次我自己的预测被实测推翻**:我原本预期"传 0.0 会算出**负**的方差项、
+> 撞上那个静默下限 `max(..., 1e-12)`、于是 DSR 直接变成 **1.0**"。**不成立** ——
+> 因为逐期 Sharpe 很小(`0.25·sr²` 撑不出负号),负方差需要逐期 SR > 2(年化 31),
+> 现实里到不了。**先算再写**,数字才是 1e-3,不是"灾难"。
+
+尽管如此,它仍然值得修:合同相反意味着**下一个按文档写代码的人会静默拿到错数**,
+而错的方向是乐观的。
+
+### 3 · 修法(按 §0:显式 + fail-fast,而不是替谁选口径)
+
+实现保持论文口径(**原始峰度**),把合同写清,并对**数学上不可能是原始峰度**的值拦下:
+
+1. docstring 改成明确说**原始**(正态 3.0),并给出换算入口;
+2. **fail-fast**:原始峰度按定义恒 ≥ 1(`E[X⁴] ≥ E[X²]²`,Cauchy–Schwarz),故
+   `kurtosis < 1` 必是误用(最常见就是传了超额)。报错信息**指出成因与修法**:
+   `请用 raw_kurtosis_from_excess(0.0) = 3.0`;
+3. 提供有名字的换算 `raw_kurtosis_from_excess(excess)`,偏移量只定义一次 ——
+   免得每个调用方各写一个 "+3"。
+
+**为什么不反过来把实现改成收超额**:那等于改掉一个与论文一致的实现去迁就一句写错的
+文档,还会让现有默认值(3.0)与现有参考实现(`tests/test_deflated_sharpe_units.py` 里
+`1 + 0.5·sr²`)全部失去意义。**文档错就改文档**,并让错用无法静默通过。
+
+### 4 · 守卫(3 条,双向验证)
+
+| 用例 | 钉住 |
+|---|---|
+| `test_default_kurtosis_is_raw_normal_not_excess` | 默认 3.0 必须**等价于**"超额 0 ⇒ 原始 3"(即口径真的是原始) |
+| `test_excess_kurtosis_is_rejected_loudly` | 传 0.0 ⇒ `ValueError` 且信息里含 `raw_kurtosis_from_excess` |
+| `test_raw_kurtosis_helper` | 换算本身:超额 0→3、2→5、−1→2(薄尾) |
+
+既有那条 `kurtosis=5.0` 的用例改成 `raw_kurtosis_from_excess(2.0)` —— 让口径**在调用点
+可见**,而不是靠读者记得"这里要不要 +3"。
+**双向验证**:去掉 fail-fast ⇒ 拒绝用例红;恢复 ⇒ 15 passed。
+
+### 5 · 顺带记一条"同族但**不是**缺陷"的
+
+那个 `max(nonnorm_var * autocorr_mult, 1e-12)` 的下限,形状上与"静默兜底"同族
+(附六十/六十四/六十六 修的都是那种),但**这里它拦不住任何合法输入** ——
+`nonnorm_var` 在合法参数下恒正(上面的实测也印证:连误传的 0.0 都没让它变负)。
+故**不改**,只记录:判断一个"兜底"是否该删,看的是"它会不会吞掉真实错误",
+而不是"它长得像不像兜底"。
+
+---
+
+## 附七十 —— `bonferroni_correct` 接受**不可能**的 `n_comparisons`(0/负数 ⇒ 校正被整个取消);以及 `_norm_ppf` 的精度声明与实测差一个量级
+
+继续"公式/合同"这条线,量了两处。
+
+### 1 · 缺陷 A:坏输入把多重比较校正**取消掉**,而输出看起来更显著
+
+```python
+corrected = np.minimum(np.asarray(p_values) * n_comparisons, 1.0)
+```
+
+对 `n_comparisons` 不设防。实测:
+
+| `n_comparisons` | 结果(`p=0.4`) | 读作 |
+|---|---|---|
+| 0 | **[0.0]** | "极其显著" |
+| −1 | **[−0.4]** | 负数 p,任何 `p < 0.05` 都通过 |
+| 1 | [0.4] | ✓ |
+
+即**用一个不可能的输入把 §5 的多重比较校正整个取消掉** —— 与附六十八 那条单位 bug
+同类:**坏输入 ⇒ 输出朝"显著"方向失真**。而这些数字还会被 `min(·,1)` 收拾得像正常值。
+
+**修**:`n_comparisons < 1` ⇒ fail-fast,报错里写明为什么(0/负数会把校正后的 p 变成
+0 或负数,即"极其显著",等于取消校正)。
+
+### 2 · 缺陷 B:精度声明"~1e-9",实测 ~7.9e-9
+
+`_norm_ppf` 的 docstring 写「Accurate to ~1e-9」。与 stdlib
+`statistics.NormalDist().inv_cdf` 逐点比对:
+
+| 区域 | 最大绝对误差 |
+|---|---|
+| 中心区 `p∈(0,1)`,步长 1e-3 | **2.9e-9** |
+| E[max] 用到的远端(`k=1e12`, `p = 1−1/(k·e)`) | **7.9e-9** |
+
+**声明小了一个量级。** 影响可忽略(E[max] 上 8e-9 传到 DSR 也是 8e-9),但"声明 ≠ 实测"
+正是本审计反复记录的那一类;而且这一次的处置不是"改一句话了事"——
+
+**把这个声明变成守卫**:新增两条用例(中心区 < 1e-7、远端 < 1e-6),于是
+"声称的精度"从**注释**变成了**被执行的判据**。
+
+守卫的**灵敏度**也量过(否则"它有牙齿吗"只是感觉):常见的那种低阶有理近似
+(Abramowitz-Stegun 26.2.23 式)误差实测 **4.4e-4** —— 远在 1e-7 之外,会被拦下;
+而当前实现有约 **34 倍**余量。
+
+### 3 · 双向验证
+
+去掉 `bonferroni_correct` 的 fail-fast ⇒ 拒绝用例红;恢复 ⇒ 全绿。
+两向都做了,没有出现前面几轮那种"验证方法本身失效"的情况(这一批的判据都是纯函数级,
+没有"看不见"的路径 —— 附六十六 那条教训在这里用不上,如实说明)。
+
+### 4 · 这一批的性质
+
+与附六十四/六十八 不同,**这一批没有影响任何已发布的数字**:`bonferroni_correct` 的
+调用点全都传 `len(...) ≥ 1`(实测核对过),`_norm_ppf` 的误差本来就在 1e-8 量级。
+它们属于**"把不可能输入与不实声明收口"**——按 §0 的 fail-fast 与显式原则。
+写清楚这一点,是为了不让"修了两处"听起来比实际更重要。
+
+---
+
+## 附七十一 —— 报告说「每行的 `sharpe_kind` 已随数据发布」,而 HTML 里**从不显示它**
+
+继续消费端。`tools/run_all_backtests_html.py` 是那份"全 preset 一览表"的产出者,
+跨 4 个引擎。
+
+### 1 · 缺陷:警示**指向一个读者在页面上看不见的东西**
+
+那张表的跨策略排名段落早就写着(R527/2026-10-15):
+
+> ⚠ 跨策略可比性:… ② **Sharpe 在三个引擎里不是同一个量** —— chase_up / uptrend_pullback 是
+> `daily_returns_annualized`(日收益年化),short_reversal 是 `per_trade_ratio_approx`
+> (逐笔比率);故「按 Sharpe 排序」**跨策略没有意义**,只在同一策略内可比
+> **(每行的 `sharpe_kind` 已随数据发布)**;
+
+这段警示本身**写得很好**。但实测:
+
+* `sharpe_kind` 确实写进了行数据(4 处 `row["sharpe_kind"] = …`)✓;
+* 它也进了 JSON 产物 ✓ ——所以"已随数据发布"**字面为真**;
+* 而**渲染层从来没有引用过它**:全文件 `grep sharpe_kind` 只有那 4 处赋值 + 警示里的一次提及。
+
+于是那句"每行的 `sharpe_kind` 已随数据发布"让读者**去页面上找每行的 kind**,而页面上没有 ——
+要真的核到,得离开 HTML 去翻同目录的 JSON。**缺的不是数据,是渲染这一步**(附三十七 同款:
+"writer 早就有,缺的是接线")。
+
+### 2 · 修法:把量纲**渲染**出来
+
+Sharpe 格改成「数字 + 量纲小标签」,全名放 `title` 悬停可见:
+
+```html
+<td class='num good'>1.50<span class='kind' title='sharpe_kind = per_trade_ratio_approx'>逐笔近似</span></td>
+<td class='num good'>2.00<span class='kind' title='sharpe_kind = daily_returns_annualized'>日年化</span></td>
+```
+
+两张表都改了(逐策略表 + 跨策略排名表),并加了一小段 `.kind` 的 CSS。
+**未知 kind 原样显示**而不是留空 —— 留空会让"没有量纲信息"与"量纲恰好为空"分不开
+(本仓库反复吃过"静默的零"的亏)。同时把警示里那句改成指向**页面上可见的**标注。
+
+### 3 · 我在这一处踩了自己的坑(记下来,并把它变成守卫)
+
+第一版我把 `<td>` 一起包进了 `_sharpe_cell` 的返回值,于是它从 `<td>` 变成了 `<span>` ——
+**CSS 里的 `td.num` / `td.good` / `td.bad` 全部失效**(选择器对的是 `td`)。
+
+这不只是"样式没了":这个文件自己有一段注释(`bar_pct` 绕过 `_fmt_pct` 的 NaN 保护)
+说明过这类"渲染层静默失效"的代价。故新增一条**回归守卫**
+`test_sharpe_cell_keeps_the_td_for_css`:断言 `_sharpe_cell` 只返回 `<td>` 的**内容**,
+且渲染结果里 `td class='num …'` 仍然存在。**把我自己的错变成一个不会再犯的判据。**
+
+### 4 · 守卫(6 条,双向验证)
+
+| 用例 | 钉住 |
+|---|---|
+| `test_kind_is_rendered_in_the_per_strategy_table` | 两种 kind 的短标签 + `title` 全名都在 |
+| `test_kind_is_rendered_in_the_cross_strategy_rank` | **那句警示说的正是这张表** ⇒ 量纲必须在这张表上可见 |
+| `test_unknown_kind_is_shown_not_blanked` | 未知 kind 原样显示 |
+| `test_missing_kind_renders_plain_number_without_a_tag` | 无 kind ⇒ 只剩数字,不出现空标签 |
+| `test_sharpe_cell_keeps_the_td_for_css` | **回归守卫**:`<td>`/class 结构不许被挤掉 |
+| `test_full_page_render_carries_kind_and_css` | **整页渲染**:标签、`title`、`CSS` 三者齐备 |
+
+**双向验证**:把两处渲染改回 `_fmt_num(...)` ⇒ **3 条红**;恢复 ⇒ 6 passed。
+另:整页渲染那条是我**先手写夹具踩了 `KeyError: 'engine'`** 之后补的 —— 手写夹具漏键这件事,
+恰好说明"整页渲染"这一层值得单独守(它会把 schema 缺键当场暴露)。夹具现已按**生产端真正的
+schema**(`run_all_backtests_html.py` 的返回处)构造。
+
+### 5 · 这一条的影响边界
+
+* **不影响任何数字**:排名逻辑、过滤(`cycle` 的 None 不参与排名)、排序键都没动;
+* 影响的是**读者能不能看懂那张表** —— 而这正是该文件自己在警示里想解决的问题:
+  它写对了警示,却没让警示的前提可见。
+
+---
+
+## 附七十二 —— 两张榜:一张把**回撤最大**的排在最前(标题却写"回撤最小"),一张把**旧快照**与新鲜行混在一起
+
+继续消费端。这一条落在**两张"榜"**上 —— 人最终看的就是它们。
+
+### 1 · `run_all_backtests_html.py`:标题与表**相反**
+
+那个段落有三张榜(CAGR / Sharpe / max_dd)。第三张的标题是:
+
+> 按 max_dd (**升序,回撤最小**)排序
+
+而 `max_dd` 是**负数**(−0.30 = 回撤 30%)。`render_rank("max_dd", ascending=True)`
+⇒ 升序 ⇒ **−0.30 排在最前**。精确提取表体实测:
+
+```
+rows = [small_dd(-0.05), BIG_dd(-0.30)]  ⇒  表里 #1 = BIG_dd
+```
+
+即**标题声称"回撤最小在前",表里是回撤最大在前** —— 与附六十八 那条"印的是事实的反面"
+同族,只是这次在渲染层。(变量名本来就叫 `dd_best`,意图很清楚。)
+
+**修**:排序改成**降序**(−0.05 在前),标题与警示措辞同步改成"降序,回撤最小在前"。
+修后实测:`#1 = small_dd` ✓。
+
+### 2 · `rerun_top_presets.py`:三件事叠在同一张榜上
+
+这个脚本重跑 chase/uptrend、**复用 short_reversal/cycle 的 `2026-10-08` 快照**,然后把
+**四个引擎**的行一起按 Sharpe 排出 **TOP 5** 并**写进报告 JSON**(`"top5"`)。
+
+| # | 问题 | 事实 |
+|---|---|---|
+| (a) | 行**不带 `sharpe_kind`** | 同族的 `run_all_backtests_html.py` 带 —— 它甚至写着"Sharpe 在三个引擎里不是同一个量"。这里四个构造器(含快照加载器)都把该字段丢了 |
+| (b) | 榜上**不标数据版本** | 只有**小节标题**写着 "reused 10-08";榜上逐行不标 ⇒ 读者分不清哪几行与今天重跑的同源。而那段快照**早于其后的引擎修复**(例如 §4 跳空止损成交价的修复把 short_reversal 的结果动了 ~40%),"新鲜行 vs 快照行"并列比较本身不成立 |
+| (c) | 第三个排序键**方向反了** | `key=(…, max_dd)` 升序 ⇒ 平局时把**回撤最大**的排前面 —— 而榜单叫 **TOP** |
+
+**修**:四个构造器与快照加载器都带上 `sharpe_kind` + `data_vintage`;排名与打印抽成
+纯函数 `rank_presets()` / `format_top5()` —— 后者**必须**印出两条可比性警示
+(跨引擎 Sharpe 不可比;`[旧快照]` 行与新鲜行不同源)与逐行的量纲/版本标注;
+持久化的 `top5` 载荷同样带上这两个字段(它会被下游/人消费);第三个排序键改为降序。
+
+### 3 · 我在这一处的**检查方法**又错了一次(第三次)
+
+我先用了一个粗糙检查:在 HTML 里从"按 max_dd"那片切 400 字符,看 `small_dd` 还是
+`BIG_dd` 先出现 —— 结论是 `small_dd` 先,**据此我说"实测推翻了我的判断"**。
+
+随后按**行结构**精确提取(`<tr>` → `<td>`),得到的是 **`BIG_dd` 在 #1** ——
+**缺陷确实存在,我第一版检查方法给出的"没问题"是错的。**
+
+> 累计下来,这一轮审计里"**验证方法本身**出问题"已有三次(附六十的两向验证无效、
+> 附六十六的守卫判据无效、本次的字符切片误判)。三次的形态各不相同,但都属于同一件事:
+> **用了一个比自己以为的更弱的检查,却把它当成了结论。**
+> 这次的写法固化下来:**判断渲染结果时,先把结构(行/单元格)提取出来再判,
+> 不要按字符位置猜** —— 后者会把"邻近位置的其它文本"当成答案。
+
+### 4 · 守卫(7 条新增,全部双向验证)
+
+| 用例 | 钉住 |
+|---|---|
+| `test_dd_table_puts_the_smallest_drawdown_first` | **标题与表一致**:回撤最小者必须在 #1,且标题说明了方向 |
+| `test_rank_orders_by_sharpe_then_cagr_then_dd` | 三键排序(含**回撤更小者在前**的平局裁决) |
+| `test_rank_handles_none_without_crashing` | cycle 的 None 不炸 |
+| `test_top5_prints_the_two_comparability_caveats` | 榜**自带**两条警示 |
+| `test_top5_marks_kind_and_vintage_per_line` | 逐行有 `[日年化]/[逐笔近似]` 与 `[今日重跑]/[旧快照]` |
+| `test_unknown_kind_and_vintage_are_shown_not_blanked` | 未知值原样显示(留空分不开"没有"与"为空") |
+| `test_every_row_literal_carries_kind_and_vintage` + `test_main_prints_via_format_top5` | 结构:每个行字面量都带这两个字段;`main()` 必须走 `format_top5`(警示不会被漏) |
+
+**双向验证**:把两处排序方向还原 ⇒ **2 条红**;恢复 ⇒ 14 passed。
+
+### 5 · 影响边界
+
+**没有任何数字被改动** —— 改的是**两张榜的方向与标注**;变化在于:
+(1) 回撤榜从此与它的标题一致;(2) TOP-5 从此能看出哪些行是旧快照、哪些 Sharpe 不可比;
+(3) 持久化的 `top5` 载荷自带量纲与版本。
+
+---
+
+## 附七十三 —— 报告层的**通用自洽守卫**:标题声称的排序必须与表体一致(起因是我自己又犯了一次)
+
+### 1 · 为什么要通用的
+
+这一轮的三个消费端发现**全在报告层**:附六十一(日期反推)、附七十一(`sharpe_kind` 不渲染)、
+附七十二(标题与表相反 + 旧快照混排)。引擎那侧有 golden 基线守着,**报告层没有** ——
+债就积在那里;而**逐个工具人工核是抓不完的**:我在附七十二 刚把回撤榜的方向修好,
+转头在另一个工具里把"**改了排序键却忘了改声称**"重犯了一遍 ——
+
+```python
+_TOP5_CAVEAT = ("=== TOP 5 (Sharpe DESC, CAGR DESC, max_dd ASC) ===", …)
+# 而 rank_presets 的第三个键已经改成 -(max_dd)(回撤更小者在前 = DESC)
+```
+
+**这正是"标题与表相反"那类缺陷,只是这次作者是我、而且发生在我刚修完它的下一次提交里。**
+
+### 2 · 守卫钉的是**性质**,不是逐个数字
+
+`tests/test_report_self_consistency.py`,四条对**任何**渲染产物都成立的不变量:
+
+| # | 不变量 | 抓什么 |
+|---|---|---|
+| 1 | 凡 `<h3>按 <列> …排序</h3>` 后的那张表,表体必须在**该列**上单调;标题若写明方向(升序/降序/最小在前),方向必须一致 | 附七十二 的"标题与表相反" |
+| 2 | 榜单第一行是可机检的声称 `(Sharpe DESC, CAGR DESC, max_dd DESC)`,解析后**按键元组**与实际顺序比对 | 改键忘改声称(§1 那次) |
+| 3 | 单元格里不得出现 `nan` / `inf` / `None` / `NaT` 字样(对**整份产物**检查) | `bar_pct` 曾把 `width:nan%` 写进 HTML(那条是**局部**修的) |
+| 4 | 每行单元格数不得少于表头列数 | 表结构坏了 |
+
+不变量 1 与 2 的差别值得说明:1 管**人写的标题**,2 管**机器可读的声称** —— 后者存在的前提是
+标题行写成 `(列 方向, …)` 这个形状(已在工具里注明"这行是可机检的声称")。
+
+### 3 · 守卫的第一版**判据自己写错了**(第四次"我的检查方法出问题")
+
+第一版对**每个**键都要求"全局单调"。而榜单的第 2、3 个键**只在并列时才起作用** ——
+跨 Sharpe 分组后 CAGR 自然不单调,于是它**假红**:
+
+```
+声称 `max_dd DESC` 与实际顺序不符:['c','a','b','d'] 的 max_dd=[-0.1, -0.05, -0.3, -0.01]
+```
+
+(这次是**守卫自己的失败输出**把它暴露出来的 —— 换一个角度说:它报了错,而错在它自己。)
+改为**按键元组整体比对**(并补上"展示名 `Sharpe` → 数据键 `sharpe`"的解析,解析不到就报错
+而不是静默跳过那一列)。
+
+> 这已是本轮第 **4** 次"验证方法本身"出问题(附六十 的两向验证无效、附六十六 的守卫判据无效、
+> 附七十二 的字符切片误判、本条)。共同点完全一样:**用了一个比自己以为的更弱的检查,
+> 却把它当成了结论。** 记录在案,不当趣闻。
+
+### 4 · 双向验证(5 条分支,全部有牙齿)
+
+| 注入的退化 | 被哪条抓住 |
+|---|---|
+| 回撤榜排序方向还原成升序 | 不变量 1(两组夹具都红) |
+| TOP-5 声称改回 `max_dd ASC`(与实际 DESC 不符) | 不变量 2 |
+| `_fmt_pct` 去掉 NaN 保护(复现 `width:nan%` 泄漏) | 不变量 3(两种渲染都红) |
+
+注入后 **5 条红**,恢复后 **7 passed**。
+
+### 5 · 顺带修掉的那处自己的不一致
+
+`_TOP5_CAVEAT[0]` 改为 `(Sharpe DESC, CAGR DESC, max_dd DESC)`,并在源码里注明
+"这行是**可机检的声称**,由 tests/test_report_self_consistency.py 解析后与实际顺序比对"。
+—— 声称从此**由守卫保证为真**,而不是靠作者记得同步。
+
+---
+
+## 附七十四 —— `wfv_eval` 自称"§5 合规的 **WFV** 评估器",却**没有 OOS 划分**;而三处引用指向一个不存在的机制
+
+继续 §5 这条线,这次落在**评估器自己**身上。
+
+### 1 · 缺陷:名字叫 WFV,行为是**样本内**
+
+`uptrend_pullback/wfv_eval.py` 的 docstring 首行原文:
+
+> `"""§5 合规的 preset 评估器 — **WFV** + DSR。`
+
+而它的窗口来自 `core.walkforward.monthly_windows` —— **滚动、无 train/test 划分**;
+默认 **2 月窗 / 1 月步** ⇒ 相邻窗**重叠 50%**。实测:`grep -n "train|test|split"` 全文件
+只命中**两处注释**(其中一处还是"迭代期用 train 段;结论用 holdout 段"这条**人工约定**),
+没有任何 `--train-months/--test-months` 之类的参数。
+
+§5 逐字要求:
+
+> **Walk-Forward Validation:** Optimization logic must **enforce** WFV with strict
+> **out-of-sample (OOS)** testing windows.
+
+`wfv_eval` **没有** enforce 任何东西:OOS 靠操作者自己换 `--start-month/--end-month`。
+直接后果:**搜索日志里分不出哪一行是结论期的** —— 那一行 JSON 只带 `start_month/end_month`,
+不带"这段区间扮演什么角色"。而 §5 要的恰恰是"结论必须来自 OOS"。
+
+### 2 · 同一件事的第二个面:三处引用**不存在的机制**
+
+| 位置 | 原文 |
+|---|---|
+| `iter_reverse.py:301`(注释) | 「要把某个 config 当作结论,必须另外跑 OOS —— 见 `wfv_eval.py` 的 **train/test 划分**。」 |
+| `iter_reverse.py:332`(打印) | 「请走 uptrend_pullback/wfv_eval.py 的 **train/test 划分**。」 |
+| `tests/test_iter_reverse_reports_penalty_metric.py`(docstring) | 「要下结论须另跑 `wfv_eval.py` 的 **train/test**。」 |
+
+**那个划分不存在。** 三处都把一个"应该有的机制"当成了"已有的机制"——
+与附四十六(契约禁令)、附五十四(presets 注释)的"引用不存在的东西"同族,
+只是这次被引用的东西**是本该存在的那一个**(§5 要的 OOS 划分)。
+
+### 3 · 修法:让它**必须**被声明(与 `--n-trials` 同法)
+
+§5 的这两半(迭代计数、样本外)有一个共同点:**它们都只能由调用方声明**。前半已经这么做了
+(`--n-trials` 是 `required=True`);这次把后半也补上:
+
+* `--window-role {iteration,holdout}` —— **必需**参数,写进 JSON 记录 `window_role`;
+* 打印里说清:**"窗口为滚动无划分(默认 2 月窗/1 月步 ⇒ 重叠 50%)⇒ 本次是样本内评估"**,
+  以及该角色的含义(`holdout`:应只跑一次;此后若再改 candidate,则本行不再有效);
+* docstring 去掉「§5 合规 …WFV」的过度声称,写明它实际是什么;
+* 解析器抽成 `build_parser()` —— **好让"哪些参数必需"能被行为性验证**(而不是靠人读代码);
+* 三处假引用改成实话(并写明**本仓库没有代码强制的划分**);
+* `docs/uptrend_pullback_preset_search.md` 的两条示例命令补上 `--window-role` ——
+  否则照抄会**直接报错**(属"文档给出不可执行的指引",与本仓库早前修过的 `--save-trades`
+  死引用同类)。
+
+### 4 · 登记(口径决定,留给你)
+
+**要不要把 train/test 划分做进代码**(即改成 `walkforward_windows` 那样在 **test 窗**上评估)?
+—— 方向清楚(§5 要 OOS),但它会**让既往的搜索日志行失去可比性**(那些行是在滚动样本内
+算出来的)。故**不擅自改默认**;现在的处置是"**让角色必须被声明并落盘**",
+于是至少:新写的每一行都能分辨,而旧行不会被我单方面改写。
+
+### 5 · 守卫(7 条,双向验证)
+
+| 用例 | 钉住 |
+|---|---|
+| `test_window_role_is_required` | 缺 `--window-role` ⇒ `SystemExit`(行为验证,不是读代码) |
+| `test_window_role_choices_are_constrained` | 只允许 `iteration` / `holdout` |
+| `test_n_trials_is_still_required` | 这次改动没碰掉 §5 的另一半 |
+| `test_record_carries_the_window_role` | JSON 记录带 `window_role`(AST) |
+| `test_print_says_the_windows_are_not_split` | 打印含"无划分"与"样本内" |
+| `test_doc_commands_include_the_required_flag` | 文档示例命令都带该参数(否则照抄失败) |
+| `test_doc_says_the_windows_are_in_sample` | 文档写明口径,不只给命令 |
+
+**双向验证**:退化 `required` / 记录字段 / 打印措辞 / 文档命令 ⇒ **4 条红**;恢复 ⇒ 7 passed。
+
+### 6 · 这一条的性质
+
+**不改任何数字** —— 改的是:①工具不再自称它是它不是的东西;②产物带上了角色声明;
+③文档命令重新可执行;④"哪些参数必需"从此可被机器验证。
+`--window-role` 会在**既有用法**上强制一次显式声明 —— 这是有意的:§5 的两半都要求
+调用方**说出**自己在做什么。
+
+---
+
+## 附七十五 —— WFV 的**跨窗口**语义:默认参数下相邻 test 窗重叠 50%,而没有任何地方说过
+
+顺着附七十四(OOS 靠人工约定)继续往下,落到**OOS 保证实际所在的那一层**:
+`core/walkforward.py::walkforward_windows` 的窗口生成器。
+
+### 1 · 缺陷:窗口内 OOS 有保证,跨窗口的关系**没人算过**
+
+生成器只保证**窗口内**的 `train_end < test_start`(构造即成立)。而**跨窗口**的关系由
+`roll_months` 与 `test_months` 决定 —— 它既不校验、也不提示。实测(2020-01..2026-09,
+train 12 / test 12):
+
+| `roll_months` | 窗数 | 相邻 test 窗的**重叠/空档**(实测) |
+|---|---|---|
+| `6`(**仓库默认**) | 10 | **重叠 6 个日历月**,9 对全部如此 |
+| `12`(= test) | 5 | 首尾相接,不重不漏 |
+| `18`(> test) | 4 | **空档 6 个月**,3 处 —— 那段行情没人评估 |
+
+而 `tests/test_core_walkforward.py::test_walkforward_windows_enforces_oos_test_window`
+的 docstring 写的是:
+
+> 「每个 window 的 train_end < test_start (**无 sample overlap**).」
+
+**那句话只在窗口内成立。** 跨窗口并不成立 —— 默认参数下相邻 test 窗重叠一半。
+
+### 2 · 为什么这不是"措辞问题"
+
+聚合层会把"N 个窗"当成 N 份证据:`walkforward_report` / 各 sweep 打印跨窗**均值/中位数**
+Sharpe,`deflated_sharpe_ratio` 的 `n_returns` 取"一个窗口的观测数"(附六十/六十四 的口径)。
+窗口重叠时:**同一段行情被重复计入多次**,而 `n_trials` 那边却是按"配置数"算的 ——
+分子分母各自口径都自洽,但读者会以为那是 N 份独立样本。
+
+顺带说明:我**没有**在附六十/六十四 时把这件事挖出来 —— 当时我把重叠当作"已知事实"
+写进了 T 口径的注释("test 窗口之间重叠,故不把各窗口相加当独立观测"),却**没有去问
+生成器为什么不校验它**。这一条是本轮"顺着上一处往下问一层"的产物。
+
+### 3 · 修法(不报错 —— 重叠/空档是**选择**,不是 bug;但必须被说出来)
+
+| 改动 | 内容 |
+|---|---|
+| 新增纯函数 `window_coverage(windows)` | 返回 `(overlaps, gaps)`,按**日历月**计;可单测 |
+| `walkforward_windows` | 重叠/空档时**告警**,给出月数、窗数,以及"这 N 个窗并非 N 份独立证据" |
+| docstring | 一张表写清三种关系(`roll < = > test`)各自的后果 |
+| 既有 OOS 测试的 docstring | 更正"无 sample overlap"这句过度声称,并指向新的守卫 |
+
+### 4 · 自查:我的月份算法**第一版差一个月**
+
+第一版按天数差取整,默认参数下把"共享 **6** 个日历月"算成 **5** ——
+而这是要写进**告警文本**的数(外加将来可能进附录/文档)。一个"报告里的数"差一个月就不可用。
+已改为按**月序号**计算,并对三档(重叠/相接/空档)各写一条单测钉住。
+
+> 这已是本轮第 **5** 次"验证/实现方法本身出问题"(前四次:附六十 的两向验证无效、
+> 附六十六 的守卫判据无效、附七十二 的字符切片误判、附七十三 的次级键当全局单调)。
+> 共同点仍然一样:**用一个比自己以为的更弱的检查 —— 或者更粗的算法 —— 却把它当成了结论**。
+> 这次的处置与那四次相同:**把算出来的数用测试钉住**(三种情形各一条)。
+
+### 5 · 守卫(9 条,双向验证)
+
+| 用例 | 钉住 |
+|---|---|
+| `test_roll_less_than_test_overlaps` / `test_roll_equal_to_test_is_contiguous` / `test_roll_greater_than_test_leaves_gaps` | 三档语义(纯函数,日历月口径) |
+| `test_coverage_is_empty_for_a_single_window` | 单窗无相邻对 ⇒ 空 |
+| `test_overlap_is_warned` / `test_gap_is_warned` / `test_no_warning_when_contiguous` | 该说的说出来,干净的那一档不吵 |
+| `test_repo_default_arguments_overlap_by_half` | **把默认参数的事实钉住**:默认重叠 = test 的一半;谁改默认谁得同步 T 口径的说明 |
+| `test_within_window_oos_holds_for_every_relation` | 无论 roll 取多少,**窗口内**不变量都成立(roll ∈ {3,6,12,18,24}) |
+
+**双向验证**:移除告警 ⇒ 2 条红;恢复 ⇒ 9 passed。
+
+### 6 · 登记(口径决定,留给你)
+
+**要不要把默认 `roll_months` 改成等于 `test_months`(即不重叠)?**
+—— 它会改变**每一次 sweep 的窗口集合** ⇒ 全量结果变更,且会让既往的跨窗统计不可比。
+方向上看,"不重不漏"更符合"N 个窗 = N 份证据"的读法;但那是**测试设计**的选择,
+不擅自改。现在的处置:**把事实算出来、说出来、钉住**,并把选择权留给你。
+
+---
+
+## 附七十六 —— 共享层 `v_daily_dual` 被**错标**为"前复权"(实测:它是**后复权**);顺带钉住一处接线兼容性
+
+这一轮换到**还没逐行读过**的 `dna_data/`(已登记为"未接线的迁移目标")。查它的**语义与在跑的引擎是否一致** —— 因为将来接线时,不一致会静默改变每一个结果。
+
+### 1 · 缺陷:**一处错标,传播到了三个地方**
+
+`sql/migrate_v_daily_dual.sql` 的注释原文:
+
+```sql
+-- Create v_daily_dual view joining forward-adjusted (v_daily_hfq) with
+-- raw (raw_kline_daily) prices ...
+```
+
+**`hfq` 是后复权(backward-adjusted),`qfq` 才是前复权。** 实测(活库,全表):
+
+| 比较 | 一致率 |
+|---|---|
+| `v_daily_dual.adj_close` vs `v_daily_hfq.close` | **10,364,755 / 10,364,755 = 100.00%** |
+| `v_daily_dual.adj_close` vs `v_daily_qfq.close` | 524,069 / 10,364,755 = **5.06%** |
+| `v_daily_dual.raw_close` vs `v_daily.close` | **100.00%** |
+
+这处错标**已经传播出去**:`dna_data/dual_price_loader.py` 的 docstring 同样写着
+"forward-adjusted";而 `tools/*/audit_phantom.py` 用 **qfq** 校准它的 phantom 判据
+(附五十八 §4 登记过那一处的后果,当时只记了"工具用 qfq、引擎用 hfq",没找到**错标**这个根)。
+
+### 2 · 为什么修的是**文档**而不是数据
+
+选后复权是对的:**前复权的历史价位会随之后每一次分红而改变** —— 同一份代码 + 同一份库,
+在不同日期跑会得到不同的历史价格,直接违反 §0 的可复现性。所以数据没问题,**词错了**。
+
+### 3 · 需要你知道的一处**契约**措辞
+
+`CLAUDE.md` §3 逐字:
+
+> ALWAYS use **Forward-Adjusted** Prices (`adj_close`) for mathematical indicators …
+
+而**四个引擎 + 这个视图实际一律用后复权**(实测如上)。即"契约原文的措辞"与"全仓库的实现"
+不一致 —— 我**没有**改契约文件(那是你的标准文本,不该我单方面动),但在加载器 docstring 里
+把这一点写明了:**方向不是本仓库的口径,"用复权价算指标、用原始价执行"才是**。
+要不要把 §3 的措辞改成"adjusted(本仓库用后复权)"由你定。
+
+### 4 · 顺带钉住一处**接线兼容性**(把一个推断变成事实)
+
+附五十一 发现引擎面板里的 `raw_prev_close` 列 **100% NULL**,于是在 `_build_index` 里
+**手算**了 `shift(raw_close)`。而 `v_daily_dual` 的这一列是**满的**。实测:
+
+| 检查 | 结果 |
+|---|---|
+| `raw_prev_close` == `lag(raw_close)`(从 **`v_daily`** —— 引擎真正读的那张表 —— 算) | **100%**,0 行例外 |
+| NULL 形态与 `lag` 是否一致 | **完全一致**;5,565 个 NULL 恰好是各票首根 bar |
+
+即:**接线 `dna_data.dual_price_loader` 不会改变附五十一 的守卫行为**。
+这把那条"结果敏感的重构"的一项风险从**推断**变成了**被钉住的事实** —— 正是 §5/§6 里那类
+重构最需要的东西。
+
+### 5 · 守卫(5 条,含两条真数据比对)
+
+| 用例 | 钉住 |
+|---|---|
+| `test_dual_view_adj_is_backward_adjusted_not_forward` | `adj_close` == hfq(**>99.99%**)且 **不是** qfq(**<10%**)—— 两边都卡,既是"别切到 qfq",也是"别按 forward 字面去改" |
+| `test_dual_view_raw_is_the_execution_domain` | `raw_close` == `v_daily.close` 100% |
+| `test_dual_view_raw_prev_close_is_lag_of_raw_close` | == `lag(raw_close)`,且 NULL 只在首根 bar |
+| `test_dual_view_prev_close_matches_the_engines_hand_rolled_shift` | **从 `v_daily` 算**左侧,与视图列逐行同值(= §4 的绿灯) |
+| `test_sources_call_hfq_backward_adjusted` | 描述行必须说 hfq 是后复权、且不得称它前复权 |
+
+### 6 · 自查:这一条里**两处检查都是假的**,都是靠双向验证才发现的(本轮第 6、7 次)
+
+**(a) "错标不许回来"那条守卫是空转的。** 我第一版写 `assert "backward-adjusted" in sql` ——
+而文件里**我自己写的更正说明**就含这个词 ⇒ 把描述行改回 `forward-adjusted` 之后,守卫
+**仍然绿**(实测)。现已改成**逐行**判据(只检查"描述视图组成的那一行"/"列清单那一行")。
+
+**(b) "接线兼容性"那条第一版是同义反复。** 它的左右两边都从 `v_daily_dual` 算 ——
+即使视图换了一套行集合也测不出来。现改为**左侧从 `v_daily` 算**(引擎真正读的表),
+这才是"两套口径是否同值"的真比对。
+
+> 累计:本轮"验证/实现方法本身太弱"已有 **7 次**。它们的共同点仍然一句话:
+> **用一个比自己以为的更弱的检查,却把它当成了结论。**
+> 而这一条里两次都**只有靠双向验证才发现** —— 这恰好说明那一步不是仪式。
+
+---
+
+## 附七十七 —— 给一个"我自己踩过两次"的形状做普查:检测器第一版**是坏的**,靠种样本才发现
+
+前面各轮修过三处"守卫断言的是**词**而不是**行为**"(附五十七 的 `RuntimeError`-in-注释、
+附六十 的判词判据、附七十六 我自己新写的更正说明把方案又满足了)。收官这一条把那个形状
+**机械化**地找一遍,而不是继续靠人工撞见。
+
+### 1 · 检测器
+
+`tests/_census_comment_guards.py`:扫 `tests/*.py` 里 `assert "<token>" in <源码文本>` 的形状,
+再要求该 token 在目标文件里**去掉注释/docstring 后不存在、原文里存在** ⇒ 列成候选。
+
+### 2 · 第一版**是坏的**,而"0 命中"差一点就被我当成结论
+
+第一版路径正则写成只认**双引号** —— 而 `ast.unparse` 输出的是**单引号**
+(`REPO_ROOT / 'core' / 'cli_verdict.py'`)。于是**所有**目标文件都解析不出来,
+它打印的是:
+
+```
+候选(断言 'token in 源码',而 token 只在注释/docstring 里):0
+```
+
+**"0 候选"读起来像"仓库干净"。** 我按这一轮反复吃过的教训,**先种一个已知形状**:
+临时写一个探针用例(断言某个只出现在 `core/cli_verdict.py` docstring 里的 token),
+再跑 —— 仍然 0 ⇒ **检测器坏了,不是仓库干净**。改掉引号问题后,探针**当场被认出来**,
+这时"6 候选"才有意义。
+
+> 这是本轮第 **8** 次"检查方法本身出问题"。与前 7 次不同的是:**这一次是我主动种样本
+> 抓到的**,而不是被结果的可疑性撞出来的 —— 也就是说,那条规矩(先验证判据,再用它下结论)
+> 是能用的,只是我前面几次没照做。
+
+### 3 · 实跑结果:6 个候选,**全部是已知的两类误报**
+
+| 候选 | 主题是什么 | 判定 |
+|---|---|---|
+| `test_dual_view_semantics.py` ×2(加载器 docstring 的 "backward-adjusted") | **文档措辞** | 误报(附七十六 的守卫,主题就是 docs) |
+| `test_fail_fast_cross_engine.py` ×4(`# noqa: BLE001`) | **注释标记** | 误报(它**就是**在断言注释存在) |
+
+即:**没有残留的空转 comment-guard** —— 真实的两处已在附五十七/七十六 修掉。
+这个"负面结果"之所以可信,恰恰是因为同一条检测器**先在种样本上过了关**。
+
+### 4 · 交付物
+
+| 文件 | 作用 |
+|---|---|
+| `tests/_census_comment_guards.py` | 普查**工具**(不是门禁 —— 其误报模式是内在的:守卫主题若是注释就必然命中) |
+| `tests/test_census_detector_has_teeth.py` | **牙齿**:真形状(词只在注释里)必须被列出;合法形状(词在代码里)不得误报;对本仓库跑一遍必须能跑通 |
+| 两处站点的注释 | 在已知误报处标明"本条主题就是注释/文档,普查会列它为候选" —— 免得下次人工分类再推一遍 |
+
+### 5 · 这一批的边界(如实说)
+
+* 这次没有发现新缺陷。**产出是方法与一个可信的负面结论**,不是修复。
+* 检测器只覆盖 `assert "<token>" in <源码文本>` 这一种拼写;`assert "<token>" not in ...`、
+  以及经变量中转多层的写法**不在覆盖面内**(我在工具 docstring 里写明了)。
+* 它**不进 CI**:误报模式内在,当门禁会制造噪音;它的正确用法是"跑一次、人工分类"。
+
+---
+
+## 附七十八 —— 自查:把本轮一直在批的那几类缺陷,回头量**我自己新加的东西**
+
+本轮我在四个引擎、共享层、消费端、守卫自身里批了 26 条。收官这一条换个方向:**量自己**。
+方法与本轮批别人的完全一样(五个机械检查 + 一个真数据检查),结果如下。
+
+### 1 · 五个体检项
+
+| # | 检查 | 结果 |
+|---|---|---|
+| (a) | 恒真/空转断言(`assert True`、`len(x) >= 0`、`x or True`) | **全库 0 命中** ✓ |
+| (b) | "能吞掉被测缺陷"的宽容差(`abs=0.01`/`rel=0.01` 之类) | 命中多为 1e-12 的紧容差;偏松的两处中**一处是我新写的** ⇒ 已改(见下) |
+| (c) | 我新加的 6 个测试文件是否真在跑(不是被 skip) | **40 passed / 0 skipped** ✓ |
+| (d) | **关键守卫在最终状态下是否还有牙齿** | 4 条各做一次变异:**4/4 变红** ✓(见下) |
+| (e) | 我改过行为的文件里有没有留下描述**旧行为**的文本 | **抓到 1 条实的**(见下) |
+
+### 2 · (b) 我自己的那条:魔法数 + 宽容差
+
+`tests/test_dna_stats_deflated.py::test_sharpe_significance_basic` 原本是我在附六十八 写的:
+
+```python
+assert p == pytest.approx(0.021, abs=0.003)
+```
+
+它够用来抓单位 bug(那会把 p 压到 ~0),但沿用的是"把一个期望值记在代码里"的写法。
+已改为**独立复算**(stdlib `NormalDist` + 单源年化常量),容差收到 **1e-12** ——
+"实现变了多少"从此由复算本身约束,不靠人记住一个数。
+
+### 3 · (d) 变异复验:4/4 都有牙齿
+
+| 变异 | 结果 |
+|---|---|
+| 附五十二 引擎行改回 `"SL", sl_p` | **1 failed** ✓ |
+| 附六十 `iter_reverse` 的 T 改回 `252` | **2 failed** ✓ |
+| 附六十四 `walkforward_report` 的 T 改回 `max(len(df)*63, 100)` | **1 failed** ✓ |
+| 附七十二 回撤榜改回 `ascending=True` | **2 failed** ✓ |
+
+**为什么要重做这一遍**:这些双向验证当初是在**中间状态**做的,而后续提交动过同一批文件
+(例如附六十 的家族守卫在附六十六 被重写过)。这一遍是在**最终状态**上复验 —— 结论:
+后续改动没有把它们改钝。
+
+### 4 · (e) **抓到一条实的,而且是我自己造成的**
+
+`tests/test_iter_reverse_reports_penalty_metric.py::test_window_trading_days_matches_the_repo_convention`
+仍在断言"`WINDOW_TRADING_DAYS_PER_MONTH = 21` 必须存在且等于 21"—— 而我在**附六十六**
+把这个常量删掉了、改成取运行的 `n_daily_returns`。
+
+**它却一直是绿的。** 原因:我在同一次修改里写的**更正注释**恰好含这串字面量
+(「这里原有 `WINDOW_TRADING_DAYS_PER_MONTH = 21`」),而那条用例的判据是
+`re.search(...)` 找字符串 —— **守卫被注释满足了**。
+
+已按新契约重写,三条判据**全用 AST**(注释再也满足不了):
+(a) 该估计常量**没有赋值**;(b) 确有人**读取**运行产物的 `n_daily_returns`;
+(c) 取不到时**抛错**(不兜底)。**双向验证**:恢复常量 ⇒ 红;移除 fail-fast ⇒ 红;恢复 ⇒ 6 passed。
+
+> ### 这一条给出的可复用规则
+>
+> **我自己的修复是"新变陈旧守卫"的最大来源** —— 因为我写更正说明时**会引用旧文本**。
+> 于是任何"按文本判据"的守卫都可能被那段引用满足。
+> 处置不是"不写更正",而是:①更正里引用旧文本时**别用会被判据命中的整串**;
+> ②更要紧的是 —— **把判据从文本换成 AST/行为**。本轮修的三条(附六十 家族守卫、
+> 附七十六 描述行、本条)都是这么办的。
+
+### 5 · (f) 一个**不可用**的更粗扫描(如实记录,没有去追)
+
+我顺手扫了 `re.search(...)` 这一种拼写(我的普查工具只覆盖 `assert "tok" in src`),
+想找同类。结果 **153 个候选,全部是噪音**:
+
+* 多数是"正则里的片段出现在**别的**文件的注释里"(判据没有把"这条正则作用在哪个文件"对上);
+* 其余是我**在 docstring 里引用的旧断言文本**被当成了活断言 —— 包括附六十 那次重写时
+  我特意引用的旧表达式。
+
+**结论:这个扫描器不可用,不去追它。** 写成附录而不是丢掉,是因为下一个人可能会想到同一招;
+这里的结论是"需要把正则与目标文件对上才可用",而**真抓到的那条是靠人工读测试文件找到的**。
+
+### 6 · 这一条的产出
+
+不是修复(除 §2、§4 两处),而是**对自己这一轮工作的度量**:三类里一类全清(a)、
+一类各自有牙齿(d)、一类抓到一条实的不实守卫(e)。以及一条可复用规则(§4)。
+
+---
+
+## 附七十九 —— 收官台账(2026-10-19):全部 BLOCKER 族的处置状态、当前未结清单、该重算的数字
+
+(第三次也是最后一次收口。附五十九/六十七 那两份此后又落了 11 条附录,这一份是**当前唯一**
+应被当作未结清单来读的。)
+
+### 0 · 先给"读报告的人"一句话(已同时加在文档开头)
+
+§0–§8 的判定是**对 `main @ 94ca15d`(2026-10-14 快照)的**:不合规(NO-GO)。
+从那以后修复分支上落了 **78 条附录**,§0 列的 **11 个 BLOCKER 族全部已处置**(见 §1)。
+**不要把开头的 NO-GO 当成对今天代码的判定。**
+
+### 1 · 11 个 BLOCKER 族的最终处置
+
+| # | 族(§0 原文) | 处置 | 依据 |
+|---|---|---|---|
+| 1 | `chase_up` 权益/NAV 双计 | **已修** | `d43aee7`(审计期内) |
+| 2 | `chase_up` Phase-2 静默在复权域撮合 | **域那半已修**;⚠️ **事件源那半从未存在** —— Phase-2 至今**没有**公司行为路径 | 附五十四 §5(登记 + 守卫) |
+| 3 | 全库 ATR 滑点恒为 0 | **声明机制已修**(显式 + fail-fast);**取值仍是研究决策** | 附三十/§8#2 |
+| 4 | `short_reversal` 窗口边界从未下发策略 | **已修**(策略内显式边界门 + 生产入口下发);"窗口前开仓"这一后果**已被实证否定** | §0.4 更正 |
+| 5 | 入场费 lock 后全额退回 | **已修** | `d43aee7` |
+| 6 | 跳空穿越止损仍按 `sl_p` 成交 | **已修** —— 且这是**本轮最大的结果变更**:修前 **100%** 的 SL `net` 恒为 −0.0015 | 附五十二 |
+| 7 | 原始 close 与复权 MA60 混域比较 | **已修** | 附四十七/四十八 |
+| 8 | `cycle` 宇宙成员由窗口之后成交额决定 | **已修**(asof 因果上界) | 审计期内 + `data_feed.py` 注释 |
+| 9 | `cycle` 出场双记本金 | **已修** | `d43aee7` |
+| 10 | 四引擎无公司行为事件源 | **已修**(Phase-1 全部接入 `core.corporate_actions`);Phase-2 见 #2 | 附五十 |
+| 11 | `short_reversal` 无 golden 基线 | **已补**(2 个 preset,含两次重算一致性检查) | 附三十九 |
+
+**11/11 已处置。** 其中 #2 与 #3 属"另一半登记/待决策",不是未处理的遗漏。
+
+### 2 · 本段(附六十八 ~ 附七十八)修好的
+
+| 附录 | 缺陷 | 影响 |
+|---|---|---|
+| 六十八 | `sharpe_significance_pvalue` 单位混用 | **Bonferroni p 量级错 15 个数量级,印的是事实的反面** |
+| 六十九 | `kurtosis` 合同自相矛盾(docstring 说超额、实现按原始) | 实测影响 1e-3 量级、方向乐观 |
+| 七十 | `bonferroni_correct` 收 0/负数 ⇒ 校正被取消;`_norm_ppf` 精度声明夸大一个量级 | 坏输入会输出"更显著" |
+| 七十一 | 报告说"每行 `sharpe_kind` 已随数据发布",HTML **从不显示** | 读者无法判断跨引擎可比性 |
+| 七十二 | 回撤榜**标题与表相反**;TOP-5 混排旧快照且不标 | 报告层 |
+| 七十三 | (报告层通用自洽守卫;起因是我自己又犯了一次) | 新增 4 条不变量 |
+| 七十四 | `wfv_eval` 自称 §5 合规 WFV 却**无 OOS 划分**;三处引用不存在的机制 | `--window-role` 改为必需并落盘 |
+| 七十五 | WFV **跨窗口**语义无校验无提示(默认 test 窗重叠 50%) | 算出并告警 |
+| 七十六 | 共享层 `v_daily_dual` 错标为"前复权"(实测后复权);并钉住接线兼容性 | 文档 + 真数据守卫 |
+| 七十七 | (普查工具:机械化找"判词不判事"的守卫 —— 0 真缺陷) | 工具 + 牙齿测试 |
+| 七十八 | (自查:抓到**我自己造成**的一条陈旧守卫) | 已重写为 AST 判据 |
+
+### 3 · ⚠️ 该**重算**的数字清单(引用过就作废)
+
+| 来源 | 错法 | 方向 | 量级 |
+|---|---|---|---|
+| **`short_reversal` 的 SL 成交价(附五十二)** | 跳空止损按取不到的 `sl_p` 成交 | 偏**乐观** | `final_capital` −41.5%/−44.3%,sharpe 4.09→1.12 |
+| `uptrend_pullback/wfv_eval` 的 DSR(附六十四) | T 猜 1,449 vs 真实 ~42 | 偏乐观 | **0.995 → 0.072** |
+| 同上的 **Bonferroni p**(附六十八) | 年化当逐期 | 偏乐观 | 印 1e-7…0 vs 真值"不显著" |
+| `short_reversal` 的 14 个 wf 脚本 + `walkforward.py`(附六十) | 常数 126 vs ~42 | 偏乐观 | T 约 3 倍 |
+| `cycle/sweep_thresholds.py`(附六十) | 常数 126 vs 242 | 偏**悲观** | 1.92 倍 |
+| `uptrend/iter_reverse.py`(附六十六) | 21/月 vs 20.25 | 偏乐观 | ~4% |
+| `dna_stats/walkforward_report`(附六十四) | 同第一条 | 偏乐观 | 同上 |
+
+**这些脚本本体没有重跑**(小时级);验证做在**纯函数层**(真函数在两种取值下各算一次)。
+**引用过就先重算**。处置口径与附三十二 一致。
+
+### 4 · 待决策(需要你的判断或事实)—— 6 项
+
+| # | 事项 | 状态 |
+|---|---|---|
+| 1 | **ATR 滑点标定值**(100/100 preset 的 `atr_slip_scale` 全 0 ⇒ 已发布结果全部零滑点) | 需标定依据 |
+| 2 | **cycle 成交口径**(SL/TP 当根 bar,max_hold 次根开盘) | 全量结果变更 |
+| 3 | **涨跌停阈值 0.098(chase/uptrend)vs 0.095** | 参数口径 |
+| 4 | **lockfile / holdout 边界 / 各 preset 的 `n_comparisons`** | 只在你手上 |
+| 5 | **基准选择**;以及两支归因的**合并口径**(风格篮子 vs `attribute()`) | 需指数数据 |
+| 6 | **§3 契约措辞 "Forward-Adjusted"**(全仓实际用后复权,附七十六);**WFV 默认 `roll` 是否改成不重叠**(附七十五) | 契约/测试设计 |
+
+### 5 · 已登记(不是缺陷,是缺口;未改,理由见对应附录)
+
+> ⚠️ **对账更正(后补,见附一百零一)**:下列 11 项已逐条复核 —— **④**(`cycle` 无 `exit_reason`)
+> **已修**,该登记项已过期;其余 10 项仍成立。**登记表只应当变短。**
+>
+> ⚠️ **「Phase-2 无公司行为」的机制描述亦已更正(见附一百零五)**:不是"Phase-2 整个缺",而是
+> "Phase-1 有、Phase-2 没有,而 `verify=True` 时报告的正是 Phase-2 的那份盈亏"(单笔期望漏计 ≈0.029%,
+> 但跨除权日的 ~1.1% 交易每笔差 2.63% 持仓市值)。
+
+Phase-2 无公司行为(五十四)· 四引擎接 `dna_data`(**其"不改变附五十一 行为"已实证**,附七十六)·
+送股/配股真数据对账(五十)· `cycle` 成交记录无 `exit_reason`(五十六)· `is_limit_down` 不可达 fail-open(五十二)·
+`cycle` 影子账不因 SL/TP 减少(五十五)· phantom 工具用 qfq 校准(五十八/七十六 已找到根)·
+HTML 未 plumb 真实超额(六十二)· 更宽窗口重新定价(五十一/五十三)· OOS 划分未做进 `wfv_eval` 代码(七十四)·
+DSR 四条规则是语法/浅数据流而非证明(六十六)。
+
+### 6 · 这一轮(附五十二 ~ 七十九,28 条附录)的元统计
+
+* **会改变已发布数字的修复**:6 处(附五十二/六十/六十四/六十八/七十四/七十六 的语义与声明);
+* **守卫自身**:修 8 处,新增"牙齿"判据 4 类,新增普查工具 1 个;
+* **我自己写错并记账的**:8 次,全部属于同一句话 —— **用了一个比自己以为的更弱的检查,却把它当成了
+  结论**;固化成四条规矩(①两向验证须复现形状**且**确认工具看得见;②写守卫时问"把被测的东西删掉
+  它会不会红";③判渲染结果先提结构再判字面;④**文本判据要换成 AST/行为**);
+* 全量套件每批都跑:**1229 → 1311 passed / 26 skipped / 失败 0**;
+* 所有结果变更都**量化**了,所有基线按 §6 重算并把漂移理由写进**基线文件自身的** `drift_log`。
+
+### 7 · 想继续往下走的话,只剩下三类
+
+1. **给我搜索日志**:核实"角色声明是否与实际用法一致"、"`n_trials` 是否单调累加"(§5 唯一还剩的、
+   只能由运行记录回答的问题);
+2. **拍 §4 表里的 6 项口径**(尤其 #6 的两条:契约措辞、WFV 默认 roll);
+3. **给三项研究事实**(ATR 标定值、holdout 边界、`n_comparisons`)。
+
+除此之外,剩下的都是**边际收益递减的再扫**。
+
+---
+
+## 附八十 —— 把附六十四 的偏差从"纯函数层算出来"升级为"**实跑数据算出来**"
+
+附六十四 的偏差是在**合成输入**上算的(0.995 vs 0.072)。收官这一步真跑一次评估器,
+把同一件事放到**真实运行**上。
+
+### 1 · 怎么跑的
+
+```bash
+python3 -m uptrend_pullback.wfv_eval --preset v33_long_reverse_v21 \
+    --n-trials 121 --window-role iteration --label audit_tcheck --engine simulate
+```
+
+23 个 2 个月窗口,2024-09..2026-09(仓库默认)。**这次运行本身也顺带验证了附七十四 的改动
+在真实调用上生效**:摘要行打印 `role=iteration`、警示行打印"窗口为滚动**无划分**…**样本内**评估",
+且 `WFV_RECORD` 里带 `"window_role": "iteration"`。
+
+### 2 · 结果:同一次运行,两个口径
+
+| 口径 | DSR | Bonferroni p(Sharpe≠0) |
+|---|---|---|
+| **修后**(跨窗均值, 真实 T=40) | **0.0226** | **1.0000**(不显著) |
+| 只换 T(mean, 猜 T=1449) | 0.8468 | — |
+| **修前口径**(median + 猜 T) | **0.9405** | **0.0**(极其显著) |
+| 工具**实际打印** | **0.023** ✓ 与"修后"一致 | 1.0000 ✓ |
+
+* 真实 T(=各窗 `n_daily_returns` 均值)= **40**;旧猜法 `max(23×63,100)` = **1449**(36 倍);
+* **修复把 DSR 从 0.94 移到 0.023** —— 与附六十四 在合成输入上预告的方向与量级一致
+  (那里是 0.995 → 0.072),现在**是实跑数据**;
+* 工具打印值与我的独立复算**逐位对上**(0.023 vs 0.0226),说明"出厂代码做的正是我以为它做的事"。
+
+### 3 · 这条实跑的意义(对使用者的直接影响)
+
+`v33_long_reverse_v21` 这次评估的**头条 Sharpe 是 1.49**(跨窗均值,中位 1.71),
+按修前的口径会得到 **DSR = 0.94** —— 读作"selection bias 已充分校正,结论很硬"。
+而按修正后的口径 **DSR = 0.023**、Bonferroni p = **1.0**:
+**在 121 次试验的校正下,这个候选的优势**不**具备统计支持。**
+
+这正是 §5 存在的理由:**它本该能说出这句话,而修前那套数字把这句话盖住了。**
+
+### 4 · 与前面几条的关系
+
+* 附六十四 修的是 T 的来源与 `observed` 口径;附六十八 修的是它与它兄弟的**单位混用**;
+* 本条**不新增修复**,只把"偏差有多大"从推断升级为实测 —— 这是我在几次"再扫一遍收益递减"
+  之后,能想到的**唯一还能提高置信度**的方向:把量化过的偏差**真跑一遍**。
+* 复现命令写在 §1;数字全部可由那一条命令 + 本节的复算脚本再生。
+
+### 5 · 顺带记录的两点
+
+1. **我的取数脚本第一版又错了**:我按假定的列序去解析工具打印的窗口表,取到的是收益列而非
+   Sharpe(得到 mean_sharpe=0.108,而产物里明明是 1.486)。改用**产物 JSON 里的 stats** 取数后
+   一切对账。教训与前面一致:**判据要落在结构化的产物上,别按位置猜。**
+2. **这次运行没有改任何东西** —— 它一次也没写产物到仓库(输出只在 stdout),符合 §7
+   (运行产物不入库)。`--window-role iteration` 的声明按设计落进了那一行 `WFV_RECORD`。
+
+---
+
+## 附八十一 —— 三段"从未被执行"的代码里埋着 `NameError`;以及 8 处把**面板长度**当成**窗口期数**(含对我自己 附六十 的更正当更正)
+
+本附录两件事:
+
+* **(A)** 一个"重跑一遍"就崩的脚本 ⇒ 机械化普查 ⇒ 全库 **3 处**执行到必崩的代码(已修 + 永久门禁);
+* **(B)** 顺着 (A) 的第一处发现 `n_trading_days` 一直在读**整张面板**的日期数。顺着同一形状 grep,
+  又在 7 处找到同一个量被当成 DSR 的 `n_returns`。**全库 8 处,T 高估 2.10 倍。**
+  其中两处(附六十 的、`chase_up/sweep.py` 的)都是**为了"把猜的常数换成实测值"才这么写的**
+  —— 一次意在提高诚实度的修复,把指标推得**更乐观**。这是本附录最该被记住的一条。
+
+### 1 · 起因:一个"重跑一遍"就崩的脚本
+
+按 §6 对 `short_reversal/walkforward.py` 重跑一次验证结果变更,第 195 行立刻:
+
+```
+NameError: name 'get_preset' is not defined
+```
+
+`get_preset(...)` 是 **commit `4acfc2e` 引入的调用**,而**没有同时加 import**(同目录的
+`wf_v34..v46, v56_focused.py` 全都 import 了 —— 只有它漏了)。后果有三层:
+
+1. 该脚本 **§5 DSR 那一段一执行就崩**,脚本跑不完;
+2. 它崩在 **`--out` 落盘之前** ⇒ 输出 CSV **从来没有被写过**;
+3. **附六十 对这段代码做的 T 口径分析,分析的是死代码。**
+   (附六十 的结论本身没错 —— T 不该是常数 —— 但它描述的"现状"是纸面上的现状。)
+
+### 2 · 那就别再靠"读到一半觉得可疑":机械化普查
+
+一次人工重跑只暴露了**一处**。为回答"还有多少处",写了 `tests/_census_undefined_names.py`:
+AST 遍历每个模块级函数,找**完全没有任何绑定**的自由名字(导入名 / 模块级赋值 / 函数内赋值 /
+参数 / for·with·except 目标 / comprehension 目标 / builtins 都算已定义;属性名不算)。
+判据保守(宁少报不多报),已声明漏报:动态导入、`globals()[...]`、星号导入(本仓库没有)。
+
+对 `HEAD` 三处可疑文件跑,得 3 处 —— **全部为真缺陷**:
+
+| 位置 | 函数 | 未定义名 | 触发条件 | 后果 |
+|---|---|---|---|---|
+| `short_reversal/walkforward.py:195` | `main()` | `get_preset` | 无条件(DSR 段必过) | 脚本必崩,`--out` 永不可达 |
+| `cycle_price_action/replay_broker.py:101` | `_fee()` | `effective_slippage` | `atr_slip_scale > 0` | **第一笔成交**即崩 |
+| `short_reversal/wf_v56_focused.py:86` | `main()` | `n_trials` | 无条件(摘要必打印) | 摘要一打印即崩 |
+
+三处**已修**。修后全库普查 **0 命中**。**"before"是可复现的**:把 `HEAD` 版本导出到临时目录
+再跑同一工具,得 3 处、行号与上表**逐位吻合** —— 这是"修了"与"工具坏了"的区分手段
+(本会话已因后者栽过多次)。
+
+### 3 · 三处都不是理论风险,是**必然**(`NameError` 不是概率事件)
+
+Python 的局部作用域是**静态判定**的:函数体里 Load 的名字若在函数内和模块层都没有 Store/arg/import,
+那一行**一定**抛 `NameError`。据此逐条取证:
+
+**(a) `walkforward.py`** —— 实跑即崩(第 1 节),证据是运行记录本身。
+
+**(b) `replay_broker.py`** —— 真构造一个 broker 把 ATR 滑点打开(broker 按 §6 是 DB-free 的,不需要库):
+
+```
+b = ReplayBroker(DummyProvider(), atr_slip_scale=1.0)
+b._fee('buy', 100, 10.0, atr_pct=0.03, participation=0.1, static_slip=0.001)
+→ NameError: name 'effective_slippage' is not defined
+```
+
+它的**隐蔽性是结构性的**:`_fee` 里那段有守卫(`atr_slip_scale > 0 and atr_pct is not None`),
+只有真打开 ATR 滑点才走到;而全库 **100/100** 个 preset 的 `atr_slip_scale` 都是 **0**
+(这本身是已登记的待决策项,附七十九 §4 表 #1)。**"没人打开它"与"它坏了"互相掩盖了。**
+⇒ §4 表 #1 不只是**结果口径**问题,也是**覆盖率**问题。
+
+**(c) `wf_v56_focused.py`** —— AST 取证:
+
+```
+模块层 Store 出现: []      模块层 import: []
+main() 内 Store 出现: []
+main() 内 Load  出现: [86]
+```
+
+之所以骗过人工阅读:第 77 行有一句 `n_trials=int(_cfg["n_comparisons"])`,**看起来**这个变量在那里
+被赋值了 —— 但它出现在**函数调用的关键字实参位置**,Python **不产生绑定**。同目录其他 `wf_*`
+打印的是**表达式**(直接 `int(_cfg[...])`),只有这一个打印的是**裸名**。
+
+### 4 · ⚠️ 自我更正:附六十 把 T 从 126 改成 197,**方向是错的**
+
+查 (a) 时顺手核实"那些 T 到底从哪来",发现 `short_reversal/engine.py` 这一行:
+
+```python
+metrics = _metrics_from_holder(holder, start, end, cfg,
+                               n_trading_days=int(panel["date"].nunique()))
+```
+
+注释写的是「年化用**窗口内**的交易日数」,而 `panel` 是**带暖机缓冲**的、**两端都外扩**的
+(`WARMUP_DAYS = 400`)。实测:
+
+| 窗口 | 窗口内交易日 | `panel["date"].nunique()` |
+|---|---|---|
+| 2026-03-01..05-01 | **43** | **197** |
+| 2026-05-01..07-01 | **40** | **202** |
+| 2026-07-01..09-01 | **45** | **181** |
+
+它**同时**喂给两个地方:**CAGR 的年化分母**(⇒ 短窗口 CAGR 被系统性压低)与
+**DSR 的 `n_returns`**(⇒ T 高估 ⇒ DSR 偏乐观)。
+
+**这就是对我自己 附六十 的更正**:附六十 把常数 126 换成 `_observed_t`(实测均值),
+理由正当(不许猜),**但它读的正是这个 `panel.nunique()`**。于是:
+
+| T 的取值 | 来源 | `deflated_sharpe` |
+|---|---|---|
+| 126 | 附六十 **之前**的常数(猜的) | 0.451 |
+| **197** | 附六十 **之后**的"实测"—— 读的是**整张面板** | **0.605** |
+| **43** | **窗口内**真实交易日(附八十一 起) | **0.220** |
+
+**附六十 把 DSR 从 0.451 抬到 0.605 —— 更乐观 —— 而它当时宣称的是"把猜的换成实测"。**
+正确值 0.220。**一个意在"提高诚实度"的修复,可以把指标推得更宽松。判据必须落在
+"读的是不是那个量"上,而不是"是不是实测"。**
+
+### 5 · 同一个量,全库 **8 处**(grep 一次就能找到,这本身就是教训)
+
+顺着同一形状扫全库 —— 凡是以 `n_returns` / `n_trading_days` 传出去的量:
+
+| 位置(HEAD) | 关键字 | 传的表达式 |
+|---|---|---|
+| `chase_up/sweep.py:142` | `n_returns` | `panel["date"].nunique() - 1` |
+| `uptrend_pullback/sweep_v33_long.py:182` | `n_returns` | `panel["date"].nunique()` |
+| `uptrend_pullback/sweep_v33_long_v2.py:214` | `n_returns` | 同上 |
+| `uptrend_pullback/sweep_v33_long_v3.py:177` | `n_returns` | 同上 |
+| `uptrend_pullback/sweep_v33_long_v4.py:177` | `n_returns` | 同上 |
+| `uptrend_pullback/sweep_v33_long_v5.py:226` | `n_returns` | 同上 |
+| `uptrend_pullback/sweep_v33_long_v6.py:207` | `n_returns` | 同上 |
+| `short_reversal/engine.py:493` | `n_trading_days` | `panel["date"].nunique()`(附六十 改的) |
+
+不同引擎的 `load_panel()` 都往前推 400 天暖机(chase / uptrend / short_reversal 同构;
+`chase_up/data.py:43`、`uptrend_pullback/data.py:50` 都是 `load_start = start − 400 天`)。
+实测同一窗口:
+
+```
+窗口 2025-09-16..2026-09-16: 243 个交易日
+面板(含 400 天暖机 2024-08-12..2026-09-16): 510 个交易日
+⇒ T 高估 510/243 = 2.10 倍
+```
+
+DSR 因此**一律偏乐观**(纯函数层,只改 T):
+
+| observed SR | n_trials | T=509(错) | T=242(对) |
+|---|---|---|---|
+| 1.0 | 12 | 0.413 | 0.251 |
+| 1.0 | 500 | 0.054 | 0.020 |
+| 2.0 | 12 | 0.888 | 0.625 |
+| 2.0 | 500 | **0.431** | **0.143** |
+
+**而 `chase_up/sweep.py` 那一处格外扎眼**:它的注释**自己量对了**——
+
+> 「实测窗口 2025-09 起的同类 sweep 只有 242~243 个交易日 ⇒ 高估 T 约 4% …… panel 就在本函数作用域内」
+
+—— **下一行**传的是 `panel["date"].nunique() - 1` = 509。**注释里的正确数字和代码里的错误数字
+躺在同一个 hunk 里。** 与 附六十 是同一种错法:**为了"把猜的常数换成实测值"而写的一次修复,
+实测的是另一个量。**
+
+**8 处已修,口径收到单源** `core.walkforward.window_trading_days(panel, start, end)`
+(窗口内计数;窗口内一个交易日都没有时 fail-fast,不许退化成面板长度)。
+`chase_up` 那处保留它自己的 `− 1` 口径(只修**量**,不顺手改口径 —— 混进已登记决定是 §3 的忌讳)。
+`chase_up/sweep.py` 那句误导性的注释("……panel 就在本函数作用域内")也已就地改写:
+留下它,下一个人还会照它取面板。**注释不是守卫 ——** 8 处里没有一处是靠读注释发现的。
+
+### 6 · 逐窗实跑(不是纯函数层算的,是真跑出来的)
+
+同一批窗口、同一 preset(`v50_slope`),改前 / 改后:
+
+| 窗口 | 总收益 | CAGR(分母 197/202/181) | CAGR(分母 43/40/45) | 放大 |
+|---|---|---|---|---|
+| W1 2026-03..05 | +11.73% | 14.66% | **87.12%** | 5.9× |
+| W2 2026-05..07 | −0.70% | −0.85% | **−4.20%** | 4.9× |
+| W3 2026-07..09 | +45.32% | 65.16% | **652.45%** | 10.0× |
+
+脚本末的 DSR 打印:**0.597 → 0.220**。
+
+**注意方向**:亏损窗也被同样放大(W2 从 −0.85% 变成 −4.20%)。这不是"普遍变好看",是**分母终于对了**。
+
+**交易列表未变** —— `trades_count`(9/12/10)、`final_capital`(1.117255e+06 / 9.929664e+05 /
+1.453151e+06)、`win_rate`、`max_dd` 全部逐位相同。故:
+
+* ✅ **无需重钉 golden**(§6 的 golden 锁的是**交易列表**,而交易列表没动);
+* ⚠️ **但已发布的短窗口 CAGR / DSR 数字全部作废**,必须重算(并入附七十九 §3 的数字清单)。
+
+### 7 · 两条新守卫(都带牙齿,都做了两向验证)
+
+**(a) `tests/test_n_trading_days_is_the_window.py`** —— 真跑一次回测,断言发布出的
+`n_trading_days` **等于窗口内交易日数**。关键在于它**先**断言一个前提:
+
+```python
+assert panel_days > win_days, "面板没有比窗口长 —— 本用例失去判别力,请改夹具"
+```
+
+否则哪天有人把面板的 padding 去掉,`panel.nunique()` 与"窗口内交易日"就会**相等**,
+"断言两者一致"就变成**恒真**、测不出任何东西。两向验证:
+
+| 注入 | 结果 |
+|---|---|
+| 把 `engine.py` 那行还原成 `int(panel["date"].nunique())` | **红**(1 failed in 45.82s:`n_trading_days=197` vs 窗口 43) |
+| 恢复 | **绿**(1 passed in 42.26s) |
+
+**(b) `tests/test_dsr_t_comes_from_the_window.py` + `tests/_census_panel_length_as_window.py`**
+—— 8 处是"手工 grep 一次"的结果,不是"这一类不会再出现"的保证。判据放进门禁:凡是以
+`n_returns` / `n_trading_days` 为**关键字**传出去的实参,表达式子树里不许出现 `.nunique()`
+或 `len(表名)`。**牙齿测试**种 4 种真形状(必须认出来)+ 2 种合法形状(不得误报),并
+**如实钉住一条已知漏报**(`len(df.dropna())` —— 判据只看 `len(裸名字)`)写在用例里,
+免得以后有人把"没报"误读成"已覆盖"。
+
+**"before"数字**:同一工具对 `HEAD` 版本跑 = **8 处**,对当前树跑 = **0 处**。
+
+### 8 · 顺带的诚实记账
+
+* 本节 (A) 是在**已经有了结论之后**才去机械化的。顺序反了 —— 应该先花 20 分钟写普查,
+  再决定要不要人工重跑。**新规矩:重复的人工核对做第二遍之前,先问"这个判据能不能机械化"。**
+  (B) 是这条规矩的正收益:那 7 处是 grep 出来的,不是重跑出来的。
+* 我此前在 01:44 起的一次全量套件是**作废**的:两个新用例建于 01:54、`engine.py` 在 01:56
+  被两向验证换过一次文件 —— 收集窗口与运行窗口都被污染。已中止(不把它记作一次通过),
+  改完 8 处后只跑**一次**终局套件。
+* `chase_up/sweep.py` 那句注释的正确与否,和它下一行的代码,是同一个 hunk —— 这说明
+  **"注释写明了不变量"不算守卫**:§0 要的是可执行的判据。8 处里没有一处是靠读注释发现的。
+
+---
+
+## 附八十二 —— `n_trials` 数的是"**跑出了多少个结果**",不是"**试过多少**"(全库 10 处)
+
+> ⚠️ **计数更正(后补)**:实为 **11 处 / 6 种机制** —— 漏掉的是
+> `uptrend_pullback/iter_reverse.py`(它既不在 sweep 命名族里,也不符合本文的"赋值形式"
+> 之外任何形状)。原因与更正见 **附八十三**。本附录其余各行不变。
+
+(本附录是 附八十一 的**同族第二个量**。附八十一 修的是 DSR 的**分母** `n_returns`(T);
+本条修的是它的**另一个分母** `n_trials` —— 两者都是"分母偏了就偏乐观",而它一直没被查。)
+
+### 1 · 契约
+
+`dna_stats/deflated.py::deflated_sharpe_ratio` 的 docstring:
+
+> `n_trials`: Number of independent strategy configurations **tested**. This is the
+> "selection bias" correction — selecting the best Sharpe from k trials inflates the
+> apparent edge by E[max(Z₁…Z_k)]…
+
+CLAUDE.md §5 Iterative-Tuning Accounting 的原话:
+
+> **每一次迭代 —— 包括对评估窗口本身的改动 —— 都递增 `n_trials`**。
+
+**崩掉的那次、没产出信号的那次,也是一次迭代。** 搜索为它们花了预算,它们参与了"试过多少"
+这个事实。
+
+### 2 · 缺陷:**10 处,5 种机制,方向一致**
+
+| 机制 | 位置 | 被漏掉的"试过" |
+|---|---|---|
+| `if entries.empty: continue`(**不落行**) | `uptrend_pullback/sweep_v33_long{,_v2,_v3,_v4,_v5,_v6}.py` 的 `sweep()`(**6 处**) | **没产出信号的配置** |
+| 失败行落进 `df`,但被 `dropna()` 剔 | `chase_up/sweep.py:148` | **抛异常的配置** |
+| 失败 preset 进 `failed` 而**没进 `rows`** | `chase_up/sweep_all.py:120` | **抛异常的 preset** |
+| `mean_sharpe` 全 NaN 被 `dropna()` 剔 | `chase_up/wf_sweep_all.py:193` | 所有窗口都失败的 preset |
+| 显式 `r.get("error") is None` 过滤 | `short_reversal/grid_runner.py:167` | **抛异常的配置** |
+
+统一后果:**少计 ⇒ E[max] 偏小 ⇒ DSR 偏乐观** —— 而 §5 的惩罚指标恰恰要用在"看起来不错"的结果上。
+
+**注意哪些是对的:** `observed = max(...)` 取**成功者**的最大是**对的** —— 选择只在有数结果的
+配置之间发生。错的是把**同一批已经被筛过的集合**又拿去当 `n_trials`。这个区别很容易被"顺手
+统一"掉,所以两处都保留了各自的语义,只改了喂给 `n_trials` 的那一份。
+
+### 3 · 未能实测量级(如实说明)
+
+10 个脚本都是**小时级**的网格/多 window 回测,且 `uptrend_pullback/results/` 里**没有**
+`sweep_v33_long*.json` 产物 ⇒ 我**不知道**每个网格里"没信号 / 抛异常"的比例,因此
+**只报方向,不报幅度**(不像 附八十一 能给出 2.10 倍那样确切的数)。纯函数层的敏感性:
+
+| n_trials | `deflated_sharpe`(SR=2.0, T=242) |
+|---|---|
+| 500(被少计后) | 0.143 |
+| 650 | 0.126 |
+| 1000 | 0.102 |
+
+即:若被筛掉的是三分之一,DSR 从 0.143 掉到 0.126;若被筛掉一半,掉到 0.102。
+**方向恒定,幅度取决于各网格的信号稀疏程度** —— 而"二维 tp×sl 网格里有多少组合一根信号都
+不出",恰恰是长仓策略最可能大量出现的。**要拿到真数,只能把这 10 个脚本重跑一遍**(并入附七十九 §3 清单)。
+
+### 4 · ⚠️ 我自己的一次误判与一次更深的发现(过程记账)
+
+普查工具在 `HEAD` 上命中 **5 处**:3 处真缺陷,**加上** `sweep_v33_long_v5.py:227` /
+`v6:208`。
+
+我第一反应是"这两处是**误报**"—— 因为 `uptrend_pullback/backtest.py:80` 在 `std == 0` 时返回
+**`0.0`(不是 NaN)**,零成交路径(`:63`)也是 `0.0`,所以 `dropna()` 在那两个文件里是 **no-op**。
+按这个判断,"把它们放进白名单"是对的。
+
+**但我去读了 `sweep()` 而不是停在推理上** —— 发现真机制在别处:
+
+```python
+for combo in combos:
+    entries = select_entries_v33_long_mirror(...)
+    if entries.empty:
+        continue          # ← 这个 combo **根本不落行**
+```
+
+**一个没产出信号的配置,`df` 里连一行都没有。** 所以 `len(sharpes)` 少计的**不是 NaN 行**
+(那确实是 0),而是**"被 `continue` 掉的那些"** —— 工具标红是对的,它给的**理由**是错的,
+而真理由比它以为的更严重(它以为只漏了方差退化的一小撮;实际漏的是信号稀疏的组合,数量级更大)。
+
+**教训**(与 附八十一 §4 同一条):**审计工具的"报红"和"报红的理由"是两件事,都要验。**
+这已经是本会话第三次"检查器给我的理由不能直接采信"。
+
+另外**如实声明一条静态判据看不见的漏报**:`chase_up/sweep_all.py` 那种"失败项**根本不在**被数的集合里"
+(它进了 `failed` 列表)—— 没有任何表达式特征可抓,只能靠读。这条已写进普查工具的 docstring。
+
+### 5 · 改动与守卫
+
+**改动**:10 处一律改成"试过多少":
+* 6 个 uptrend sweep:`n_trials = len(list(itertools.product(*grid.values())))`(多个网格则求和)
+  —— 网格**枚举出 combo 就是在算它的信号**,枚举数就是"试过多少";
+* `chase_up/sweep.py`:`len(df)`(成功行 + `error` 行);
+* `chase_up/sweep_all.py`:`len(rows) + len(failed)`;
+* `chase_up/wf_sweep_all.py`:`len(summary)`;
+* `short_reversal/grid_runner.py`:`len(all_rows)`。
+
+每处都补一句:"其中 N 个配置没产出信号 / 抛异常 —— 它们同样计入 `n_trials`"(
+**把差异印出来**,而不是让读者以为 `n_trials` 就是结果行数)。
+
+**守卫**:新增 `tests/_census_n_trials_drops_failures.py` + 门禁
+`tests/test_n_trials_counts_failures.py`。判据:凡 `n_trials=` 的表达式,不得含
+`.dropna()` / `.isna()` / 与 `"error"` 的比较 / `.get("error")`,也不得是 `len(NAME)` 而
+NAME 在同一函数内被赋成上述形状(**浅数据流** —— 这是 附六十 那次守卫失效的直接教训:
+只看调用点表达式会漏掉"先算好、再传进去"的形状)。
+
+**牙齿测试**种三种真形状(直接 dropna / 浅数据流 / 显式 error 过滤)+ 三种合法形状
+(网格枚举数 / `len(df)` / 生成式求和)必须不被误报。
+**"before"可复现**:同一工具对 `HEAD` 跑 = 5 处,对当前树跑 = **0 处**。
+
+### 6 · 改了 附十七 的一条守卫(不是放宽它)
+
+全量套件立刻抓到一个:**`tests/test_chase_up_sweep_discloses_in_sample.py::test_max_and_n_trials_stay_paired` 红**。
+
+那条守卫是 附十七 写的,断的是**字面量**:
+
+```python
+assert "observed = max(sharpes)" in code
+assert "n_trials=len(sharpes)" in code          # ← 我这条把它删掉了
+```
+
+它的**意图**是对的(`observed` 与 `n_trials` 必须描述**同一次选择**,不能只改一半 ——
+正是 附十三 那种不匹配)。但它的**判据**把"只数成功的那批"写成了正确行为,于是现在
+**禁止了 §5 要求的行为**。
+
+这里有一个容易走错的分岔:**把守卫放宽到"不再检查"是错的**(那正是本会话反复栽的坑)。
+我改为断一条**更锋利**的不变量:
+
+* `observed = max(sharpes)`(选择只在有数的配置间发生);
+* `_n_tried` 必须来自**全部落盘行**(逐文件列出期望表达式);
+* `n_trials=_n_tried`,且 `_n_ok` 存在、`if _n_tried != _n_ok:` 的**披露打印**存在
+  —— 少计发生时必须被**印出来**,否则读者会以为 `n_trials` 就是结果行数。
+
+并补上**牙齿测试**:把 `n_trials` 退回 `len(sharpes)` → 必须红;把披露打印改成 `if False:`
+→ 必须红;合法形状 → 不得误报。
+
+(顺带:这一条也说明**全量套件是有用的** —— 它抓到的不是我预料中的地方。)
+
+### 7 · 全库三个普查的口径现状
+
+| 工具 | 抓什么 | HEAD | 现在 |
+|---|---|---|---|
+| `_census_undefined_names.py` | 执行到必 `NameError` 的自由名字 | 3 | **0** |
+| `_census_panel_length_as_window.py` | 拿**面板**长度当**窗口**期数(附八十一) | 8 | **0** |
+| `_census_n_trials_drops_failures.py` | 拿**筛过的集合**当**试过的次数**(本条) | 5(+1 静态看不见) | **0** |
+
+三个都是"分母/计数取错量"的同一家族 —— 它们的共同点是:**改完以后指标会变,而交易列表不变**,
+所以既进不了 golden,也不会被任何行为测试发现。
+
+---
+
+## 附八十三 —— `n_trials` 第 11 处(`iter_reverse`):一条**把缺陷写进了理由里**的注释;并更正 附八十二 的计数
+
+(附八十二 报的是"10 处"。查完 `n_trials` 的**全部**产生点之后是 **11 处** —— 第 11 处既没被
+手工 grep 抓到(它不在 sweep 命名族里),也没被普查抓到(工具第一版只看调用点)。两条路都漏了它,
+所以单开一条附录。)
+
+### 1 · 第 11 处:`uptrend_pullback/iter_reverse.py`
+
+```python
+for i in range(args.iter):
+    cfg = sample_preset(base, rng)
+    res = score_windows(cfg, windows, Path(args.db_path), args.engine)   # ← 真的被送去评分了
+    if "error" in res:
+        print(f"  [{i+1:>3}/{args.iter}] ... ERR: {res['error']}")
+        continue                       # ← 不落行
+    rows.append(row)
+...
+n_trials = len(rows)                   # ← 崩掉的迭代不算"试过"
+```
+
+**它比前面 10 处更值得记**:它不是疏漏,而是**把错误口径写成了理由**。
+
+```python
+#   n_trials = **实际评分的配置数**(§5 Iterative-Tuning Accounting 要的是累计
+#              试验数,不是窗口数)—— 用 len(rows) 而不是 args.iter,因为失败的
+#              迭代并没有被评分;
+```
+
+"因为失败的迭代并没有被评分" —— 这句话**只对了一半**:它确实没有**分数**,但它**被采样、
+被送进评分器**,是一次已经付出预算的尝试。§5 的原话是"**每一次**迭代 —— 包括对评估窗口本身
+的改动 —— 都递增 `n_trials`"。方向是**少计 ⇒ 偏乐观**,而 §5 的惩罚指标恰恰要用在
+"看起来不错"的结果上。
+
+**同时它也说明了 `--iter` 为什么仍然不是正确答案**:循环内的显式跳过与提前退出会让"枚举数"
+虚高。正确答案只有"**评出分的 + 崩掉的**",而且**两个数都要印出来**:
+
+```
+§5 DSR(rank-1 配置) | ... | n_trials=4(试过的配置数:评出分 3 + 崩掉 1) | ...
+```
+
+### 2 · ⚠️ 更正 附八十二 的计数:10 → **11**
+
+| | 附八十二 报的 | 实际 |
+|---|---|---|
+| 处数 | 10 | **11** |
+| 文件 | 10 | **11**(新增 `uptrend_pullback/iter_reverse.py`) |
+| 机制 | 5 种 | **6 种**(新增"评分返回 error → `continue` 不落行") |
+
+附八十二 那张表里的其余各行不变。**两条漏掉它的原因**(都值得记):
+
+1. 我手工 grep 的关键词是 `dropna` / `len(sharpes)` / `n_trials=`,而它是 `n_trials = len(rows)`
+   —— **赋值形式**,不带 `n_trials=` 那个等号的样子骗过了我的正则;
+2. 普查工具同样只看调用点的 `n_trials=` **关键字**。
+
+**这与 附六十 那次守卫失效是同一个坑:只看调用点表达式,漏掉"先算好、再传进去"的形状。**
+同一个坑我在本会话里踩了两次(一次写守卫、一次写工具),故这次把工具改成**同时收集**
+`f(..., n_trials=X)` 与 `n_trials = X` 两种写法。
+
+### 3 · 普查工具新增的第 4 条判据(以及它抓不到什么)
+
+```python
+# 同一函数里,某个 for/while 循环**既**有 continue(跳过) **又**有 NAME.append/extend(...),
+# 且 continue 在 append 之前  ⇒  NAME 只装"没被跳过"的那些 ⇒ len(NAME) 不是"试过多少"
+```
+
+实测:**修复前的 5 处全部命中**(4 处由旧判据、`iter_reverse` 由新判据);
+当前树 **0 处**。**如实声明它抓不到什么**:`uptrend_pullback/sweep_v33_long*.py` 那 6 处的
+`continue` 在 `sweep()` 里、而 `n_trials=len(sharpes)` 在 `main()` 里(**跨函数**),这条抓不到
+—— 它们是被"`sharpes` 来自 `dropna()`"那条判据抓住的。跨函数数据流**不打算做**:误报风险
+大于收益,已在工具 docstring 里写明。
+
+### 4 · 顺带核实的**阴性**结果(免得读者以为整族都被改了)
+
+`cycle_price_action/sweep_thresholds.py`:`n_trials=len(thresholds)` —— 它数的是**全部扫过的
+阈值**(包含抛异常被 `continue` 掉的那个),**本来就是正确的形状**,未改。
+
+### 5 · 第二条守卫把缺陷当成契约(与 附八十二 §6 同型)
+
+全量套件抓到:
+`tests/test_iter_reverse_reports_penalty_metric.py::test_search_reports_dsr_with_the_scored_config_count`
+红。它的判据是 `assert "n_trials=3" in out`,docstring 写着真正的理由:
+
+> 用 `--iter`(=4)会把没被评分的迭代也算进去
+
+—— **一句与 §5 相反的理由,被写进了守卫的文档里**。
+
+处置与 附八十二 §6 一致:**不放宽,改成断正确的量** ——现在断言 `n_trials=4`,并**额外**断言
+"崩掉 1"这个披露被打印出来(少计必须可见)。用例名也从 `..._the_scored_config_count` 改为
+`..._the_count_of_configs_tried`。
+
+**这两条守卫合起来是一个值得单独命名的形态**:
+
+> **守卫会把缺陷固化成契约。**
+> 两条都写得有理有据、都有 docstring 解释"为什么这样是对的",而两条的判据都是把**少计**
+> 当成了正确行为。它们的本体没错(都在测真东西、都是行为验证、都刻意做了"失败迭代"让两种口径
+> 可分),错的是**被固化的那个口径**。⇒ 修一个量的时候,要顺手搜**谁在断言这个量的旧值**,
+> 并且**逐条判断它是在保护契约还是在保护缺陷** —— 这次两条都是后者。
+
+### 6 · 沿革
+
+| | 处数 | 新增机制 |
+|---|---|---|
+| 附八十二 | 10 | `entries.empty → continue`(6)、失败行被 `dropna`(1)、失败项不进 `rows`(1)、`mean_sharpe` NaN 被 `dropna`(1)、显式 `error` 过滤(1) |
+| **附八十三** | **11** | 评分返回 `error → continue` 不落行(1)—— 且注释**为它辩护** |
+
+**未变的声明**:量级仍未实测(这些脚本小时级),只报方向;要拿到真数只能重跑。
+
+---
+
+## 附八十四 —— 把"只报方向"变成实测(两个分母重量差 ~500 倍);`grid_runner` 是一个**静默的零**;以及一条**不可复现**的用例
+
+(附八十二 / 八十三 结尾都写着"量级未实测,只报方向"。这一条把那句话兑现 —— 结果是
+**对我自己那两条附录的降权**。另外顺路撞见一个新缺陷:`grid_runner.py` **27/27 全失败、
+落空网格、退出 0**。)
+
+### 1 · 实测 `n_trials` 那一半:方向对,**量级 0.4%**
+
+脚本小时级?**不是** —— 实测每个 combo ≈ 1.5 秒。六份 uptrend 网格 + `chase_up/sweep.py`
+全部真跑了一遍(在线库,只读;产物按 §7 落 gitignore):
+
+| 脚本 | 网格 combo 数 | `n_trials`(修后) | **少计** | 比例 |
+|---|---|---|---|---|
+| `sweep_v33_long.py` | 106 | 106 | **0** | 0% |
+| `sweep_v33_long_v2.py` | 246 | 246 | **0** | 0% |
+| `sweep_v33_long_v3.py` | 281 | 281 | **4** | **1.42%** |
+| `sweep_v33_long_v4.py` | 436 | 436 | **0** | 0% |
+| `sweep_v33_long_v5.py` | 180 | 180 | **0** | 0% |
+| `sweep_v33_long_v6.py` | 25 | 25 | **0** | 0% |
+| `chase_up/sweep.py`(4 config 探针) | 4 | 4 | **0** | 0% |
+| `uptrend_pullback/iter_reverse.py`(`--iter 3`) | 3 | 3 | **0** | 0%(样本极小) |
+
+(每次运行现在都会自己印出少计行;上表的"0"= **那一行没有出现**,不是我推断的。)
+
+**换算成指标影响**(取唯一有少计的那次:v3,`observed_sharpe=2.837`,`T=243`):
+
+| | n_trials | `deflated_sharpe` |
+|---|---|---|
+| 修前 | 277 | 0.4752 |
+| 修后 | **281** | **0.4733** |
+| Δ | | **+0.0018(0.38%)** |
+
+### 2 · ⚠️ 与 附八十一(T 那一半)对照 —— 同一个量级问题,重量差 **~500 倍**
+
+同样是 `observed_sharpe=2.837`、同样是 `n_trials=281`,只改 **T**:
+
+| | T | `deflated_sharpe` |
+|---|---|---|
+| 窗口内真实交易日(正确) | 243 | **0.4733** |
+| 整张面板的日期数(修前) | 510 | **0.8844** |
+| 比值 | 2.10× | **1.87×** |
+
+**结论(对我自己 附八十二/八十三 的降权)**:11 处 `n_trials` 少计是**真契约违规**
+(形状会静默偏乐观,且修的成本近乎为零,守住它是对的),**但它在实测里只有 0.4%**;
+而 `T` 那一半是 **1.87 倍**。两者**不能并列陈述为"同一量级的发现"** ——
+附八十二/八十三 的措辞("方向一致 ⇒ DSR 偏乐观")没错,但**读者会高估它的份量**,
+这一条把它纠正过来。
+
+> 顺带一条方法论:**"只报方向、不报幅度"是会误导的**,哪怕方向说对了。而这次跑起来
+> 之所以便宜,是因为 附八十二 顺手加的**披露行**自己就会打印少计数量 —— 再加一句
+> "跑一遍"的成本从"小时级"变成"每个 combo 1.5 秒"。
+
+### 3 · 新缺陷:`short_reversal/grid_runner.py` 是一个**静默的零**
+
+真跑(在线库):
+
+```
+$ python3 short_reversal/grid_runner.py
+  [ERR] tp_pct=0.015: §0/§6: preset '_grid_cons_tp_pct_0_015' 未声明 'position_sizing' …   (×27)
+→ 落盘 short_reversal/results/grid/grid_v3_p3p5fix.csv
+$ echo $?
+0                       ← **27/27 全部失败,一个 DSR 都没打,退出码 0**
+```
+
+引擎的 preset 契约**做对了**(它拒绝未声明的 preset —— 那正是 §0/§6 要的 fail-fast);
+错的是**工具**:它把"我什么也没做成"落成了一张空网格 + 退出码 0。
+这正是 `core/cli_verdict`(附六十三)当初为另外四个工具建的场景,而它**不在这份名单里**
+—— 于是它是这条纪律里唯一还在静默的。
+
+**已修**(契约那半):`cli_verdict` 接入,`main()` 返回退出码,`sys.exit(main())`。现在:
+
+```
+[PARTIAL] grid_runner 的配置: 27/27 项失败 —— 本次产出**不完整**,退出码非零。下游不要把半成品当成品。
+$ echo $?
+1
+```
+
+### 4 · 顺带挖出的**第二个**缺陷:`DictWriter` 与行 schema 不一致
+
+接 `cli_verdict` 时写行为测试,一到"全部成功"的分支就抛:
+
+```
+ValueError: dict contains fields not in fieldnames: 'n_trading_days'
+```
+
+成功行带着 `n_trading_days`(附六十 起为取 T 而发布的字段),而
+`csv.DictWriter(fieldnames=[...])` **没有它**;`extrasaction` 默认 `raise`
+⇒ **只要有任何一个配置成功,写第一行就抛**。
+
+**它能"跑完"纯粹因为 27/27 都失败**(失败行只有 3 个键,没有多余字段)——
+**一个缺陷被另一个缺陷掩盖了**。已把 `n_trading_days` 加进 `fieldnames`。
+
+**两向验证**:把 `fieldnames` 还原 ⇒ "全部成功"那条用例**红**;恢复 ⇒ **绿**。
+
+### 5 · 登记(不是缺陷,是刻意的停手):`grid_runner` 的 base 配置**不完整**
+
+补上 `position_sizing` 之后,下一个缺字段是 `price_source_for_execution`(再下一个还不知道)
+—— 打地鼠。而**补全它需要选一个 §3 口径**(执行域取 raw 还是 adj);更要紧的是,这两个 base
+的作者意图所指的 preset(`tp2_sl05_dneg` / `tp6_sl005_mh5_realistic`)在 `presets.py` 里
+**已经不存在** ⇒ "这个网格应该建在哪个 preset 上"是**口径决策,不是缺陷**。
+
+故本条**只做契约那半**(不再静默),把根因登记在这里。
+`position_sizing: "all_in"` 我补了 —— 它**不是**自由选择(§2 强制 all-in sizing,
+且 short_reversal 的每一个 preset 都声明它),属契约。
+
+### 6 · 同一批里的**阴性**结果(如实记,免得读者以为整族都被改了)
+
+* `sweep_v33_long{,_v2,_v4,_v5,_v6}` 与 `chase_up/sweep.py`:实测少计 **0**;
+* `cycle_price_action/sweep_thresholds.py`:`n_trials=len(thresholds)` 数的是**全部扫过的
+  阈值**(含被 `continue` 掉的),本来就是正确形状;
+* `short_reversal` 的 `pct_chg_low/high` 确实读**顶层**(`engine.py:117`),
+  所以 `BASE_AGGRESSIVE` 把它们写在顶层是对的 —— 一度怀疑那两条轴"扫了但无效果",**查证后不成立**。
+
+### 7 · 顺带撞见的**第三条**(测试层):一条**不可复现**的用例
+
+全量套件报 `tests/test_metrics_output_conformance.py::test_no_engine_emits_per_trade_dicts_only`
+红,`AttributeError: 'list' object has no attribute 'get'`(我在别处也见过 `'str'` 的同款)。
+
+根因不是代码,是**我刚跑那些 sweep 产生的产物**:`_load_json()` 原样返回 `json.loads(...)`,
+而调用点写的是 `data.get(...)`。`sweep_v33_long_v5.json` / `v6.json` 的顶层是 **list**
+(逐配置的聚合记录),于是:
+
+* **新克隆**(没有 `results/`,它被 §7 gitignore)⇒ 这条用例**恒过**;
+* **跑过一次 sweep 的机器** ⇒ 这条用例**恒崩**。
+
+**同一条用例,取决于本机恰好存在哪些产物** —— 那**不可复现**,正是 §0 要禁的。
+§6 写的是"缺产物要 skip 不要 error";这里是它的**镜像**:产物在、但**形状不同,也不许 error**。
+
+**已修**:`_load_json` 只返回**顶层是 dict** 的产物(其余与"读不出来"同样处理),并在
+docstring 里写明为什么;前向防御**没有丢** —— 单开一条
+`test_list_shaped_artifacts_are_not_per_trade_dumps` 覆盖 list 形状(list 的每个 dict 项
+必须带聚合字段;只有逐笔字段即违规)。
+
+**两向验证**(两条都做了):
+
+| 注入 | 结果 |
+|---|---|
+| 把 `_load_json` 还原成不设防 | 原用例**红** |
+| 种一个逐笔裸列表 `[{"net_pnl":…, "exit_reason":…, "hold_days":…}]` | 新用例**红** |
+| 恢复 | 4 passed / 1 skipped |
+
+### 8 · 与 附八十二 的关系
+
+附八十二/八十三 的**修复与守卫全部保留**(形状确实错、成本近乎零、且守卫能防回归);
+本条只补充**份量**:它不是"又一个 附八十一",而是一个**已被量化、接近零影响的契约修正**。
+
+---
+
+## 附八十五 —— 修复与守卫共用**同一份不完整名单**,于是它们同时漏掉同一个文件(实跑:该脚本的 DSR 虚高 **5.9 倍**)
+
+(起因很小:查一处"族内不对称"。结论里最值钱的不是那个脚本,而是**它为什么能活下来**。)
+
+### 1 · 缺陷:`short_reversal/walkforward.py` 的 DSR 分子与分母不是同一次选择
+
+```python
+sharpes = sub["sharpe"].dropna().astype(float).tolist()   # 同一个 preset 跨**窗口**
+observed = max(sharpes)                                   # ← "最好的那一个窗口"
+...
+n_trials = int(_cfg["n_comparisons"])                     # ← "试过多少**配置**"
+```
+
+分子取的是**窗口**上的最大,分母数的是**配置** —— 两次不同的选择 ⇒ **窗口那一层完全没被折减**
+⇒ 显著性偏高。这与 `deflated_sharpe_ratio` 的契约直接冲突(docstring:`n_trials` 是
+"selecting the best Sharpe from **k trials**" 里的 k)。
+
+### 2 · 它为什么能活到今天:**修复与守卫用的是同一份名单,而名单本身漏了一个**
+
+这一族的口径**早就定死了** —— 附十三(提交 `5a413d8`)的标题就是"DSR 的输入与它的分母描述了
+**两次不同的选择**",修法写明"分子改跨窗口均值,n_trials 仍为配置数"。那次改了 **15 个文件**:
+
+```
+chase_up/wf_sweep_all.py + 14 个 short_reversal/wf_v34..v46,v56_focused.py
+```
+
+**没有 `walkforward.py`。** 而 附十三 同时立的守卫是:
+
+```python
+for f in sorted(glob.glob(str(REPO_ROOT / "short_reversal" / "wf_v*_focused.py"))):
+    if "observed = max(sharpes)" in code: offenders.append(f)
+```
+
+`walkforward.py` 是 **`wa`** 开头 —— `wf_v*` **匹配不到它**。
+
+> **修复漏了它,守卫也永远看不见它 —— 因为两者用的是同一份按文件名前缀划的名单。**
+> 这是本会话里"**判据的覆盖面本身没人验**"的又一次现身(附六十、附七十七、附八十一 各有一次),
+> 但这一次的形式最隐蔽:**不是判据写错了,是判据的适用范围写窄了**,而写窄的地方恰好就是
+> 漏掉的那一处。
+
+### 3 · 改法:显式名单 + **元断言**(名单不可能再悄悄变短)
+
+* `_WF_FAMILY` 改为**显式列出**(`walkforward.py` + 14 个 `wf_v*_focused.py`),
+  并在注释里写明"为什么不能按前缀 glob —— 它已经漏过一次";
+* 新增 `test_the_wf_family_list_is_the_whole_family`:把 `short_reversal/` 下**凡调用
+  `deflated_sharpe_ratio` 的脚本**与登记名单比对,两边不等即失败。新脚本落在名单外就报错,
+  **不依赖任何人记得去改前缀**;
+* 另加**数值验证**(与 附十三 给 chase 的标准一致,不再只判源码文本):把 `run_backtest_v3`
+  桩成 4 个窗口 Sharpe `[0.4, 1.9, 0.7, 0.6]`,断言 DSR 收到 **0.9**(均值)而不是 **1.9**(最大窗)。
+
+**两向验证**(三条):
+
+| 注入 | 结果 |
+|---|---|
+| 把 `walkforward.py` 还原成 `max(sharpes)` | 加宽后的守卫**红** + 数值用例**红**(打印 `mean_oos_sharpe=1.900` 当场露馅) |
+| 从 `_WF_FAMILY` 删掉 `walkforward.py` | 元断言**红** |
+| 恢复 | 19 passed |
+
+### 4 · 实跑量级:同一个 preset、同一批窗口,DSR 三级链条
+
+`v50_slope`,窗口 2026-03-01 → 2026-09-18(2 月/窗,3 窗,逐窗 Sharpe **0.66 / 0.00 / 2.16**):
+
+| 阶段 | T(观测数) | `observed_sharpe` | `deflated_sharpe` | p |
+|---|---|---|---|---|
+| 原始 | 202(整张面板) | 2.160(最大窗) | 0.597 | 0.4030 |
+| 附八十一 修 T 后 | 43(**窗口内**) | 2.160(最大窗) | 0.220 | 0.7797 |
+| **本条修分子后** | 43 | **0.940(跨窗均值)** | **0.101** | **0.8987** |
+
+**原始值虚高 5.9 倍。** 逐窗数值在上面已逐行打印,信息不丢失;最大值单独标注为
+`best_window=2.160(选中值,不作显著性输入)` —— 读者仍看得到"最好那个窗口",但它不再冒充显著性输入。
+
+### 5 · 顺带核实的**阴性**结果
+
+* 全库另外 6 处 `observed = max(sharpes)`(chase 3 处、uptrend sweep_v33_long_v5/v6、
+  `short_reversal/grid_runner.py`)的 `sharpes` 都是**逐配置**的,与各自的分母**同源**
+  ⇒ **正确,未动**(文档 §3 早就核过同一件事,本条重新逐处确认了一遍);
+* 另有一份同名名单 `tests/test_dsr_trial_basis.py:35` —— 它**是完整的**(显式
+  `+ walkforward.py`)。所以"共用不完整名单"**只此一处**,不是普遍形态。
+
+### 6 · 教训(写进 附八十一 §4 那条的同一族)
+
+> **修复和守卫必须由不同的东西推导出来。** 若两者都写成"照着同一份名单办事",
+> 名单里的缺口就是**双份**的:既没人修,也没人查。
+> 判据要落在**可枚举的全体**(这里 = "凡调用 DSR 的脚本")上,而不是落在**手抄的一份子集**上。
+
+---
+
+## 附八十六 —— 上一批的教训机械化之后:又有 **4 个脚本**对四条 §5 守卫完全不可见
+
+(附八十五 的结论是"修复与守卫共用同一份不完整名单"。那是一条**可机械化**的教训 ——
+把"手抄的名单 vs 实际集合"做一次全库对账,就有了这一条。)
+
+### 1 · 对账结果
+
+`tests/test_research_scripts_reference_live_presets.py` 里有一份 `SCRIPT_GLOBS`,按**文件名前缀**
+划出"研究脚本"这一族,供**四条**守卫共用:
+
+```python
+SCRIPT_GLOBS = {
+    "short_reversal": ("short_reversal/wf_*.py", "short_reversal/grid*.py", "short_reversal/sweep*.py"),
+    "chase_up": ("chase_up/sweep*.py", "chase_up/wf_*.py"),
+    "uptrend_pullback": ("uptrend_pullback/sweep*.py",),
+    "cycle_price_action": ("cycle_price_action/sweep*.py",),
+}
+```
+
+拿它与"实际调用 `deflated_sharpe_ratio` 的引擎脚本"对账:
+
+| | 个数 |
+|---|---|
+| `SCRIPT_GLOBS` 覆盖 | **25** |
+| 实际调用 DSR 的脚本 | **29** |
+| **对四条守卫完全不可见** | **4** |
+
+```
+short_reversal/walkforward.py        ← wf_*.py 匹配不到(wa 开头;附八十五 同一个前缀)
+uptrend_pullback/iter_reverse.py     ← 既不是 sweep* 也不是 wf_*
+cycle_price_action/walkforward.py    ← 同上
+cycle_price_action/main.py           ← 同上
+```
+
+**与 附八十五 是同一个根**:按前缀划的族,漏掉不按前缀命名的成员。区别只在**漏在哪一层** ——
+那里漏在守卫里,这里漏在**四条守卫共用的扫描面**里:**一处漏,四处瞎**。
+
+### 2 · 这四条守卫分别是什么(所以"不可见"意味着什么)
+
+| 守卫 | 本该查什么 | 这 4 个脚本曾免检 |
+|---|---|---|
+| `test_no_script_feeds_a_return_percentage_as_observed_sharpe` | 有没有把**收益率**当 Sharpe 传给 DSR | ✓ 免检 |
+| `test_dsr_max_and_n_trials_describe_the_same_collection` | max 取 N 项却按 T 项折减 | ✓ 免检 |
+| `test_no_new_dead_preset_references` | 引用了**已删除**的 preset(运行即 SystemExit) | ✓ 免检 |
+| `test_registered_debt_is_still_debt` | 登记表必须跟着现实走 | ✓ 免检 |
+
+第三条尤其要紧:`iter_reverse.py` 正是**会引用 preset 名**的那类脚本(它 `sample_preset`
+自 `v33_long_reverse_v19`),而"引用已死 preset"这条守卫从来没有看过它。
+
+### 3 · 自检为什么没拦住
+
+原来自检写的是:
+
+```python
+total = sum(len(glob.glob(...)) for pats in SCRIPT_GLOBS.values() for p in pats)
+assert total >= 20, "研究脚本扫描面异常小 —— 守卫可能已空转"
+```
+
+**"非空转"不等于"覆盖完整"**:25 ≥ 20,通过。而 25 ≠ 29。
+这与本会话反复出现的那条是同一句话 —— **判据的覆盖面本身没人验**;只是这次覆盖面的判据
+是"数量够大",一个**与完整性无关**的性质。
+
+### 4 · 改法
+
+* 新增 `SCRIPT_EXPLICIT`:前缀 glob 抓不到的 4 个 DSR 调用点,**显式列出**并注明为什么;
+* 新增 `research_scripts()`:族 = glob ∪ 显式名单;四条守卫全部改走它(不再各自 glob);
+* 新增**集合对账** `test_research_scripts_cover_every_dsr_caller`:
+  "凡调用 DSR 的引擎脚本 ⊆ 扫描面",不成立即失败 ⇒ 名单不可能再悄悄变短;
+* 新增 `test_the_explicit_scan_list_is_real_and_load_bearing`:显式名单每一项必须
+  ①文件存在 ②确实调用 DSR(防幽灵项 / 防虚胖白名单);
+* 自检里补一句:**非空转 ≠ 覆盖完整**,覆盖完整性由对账那条负责(免得下一个人再把
+  `total >= 20` 当成完整性证明)。
+
+### 5 · 两向验证(三条,全部当场做过)
+
+| 注入 | 结果 |
+|---|---|
+| 在**新纳入**的 `cycle_price_action/main.py` 的 DSR 调用行**之前**种一行 `_bait_return_pct = 0.0` | 该守卫**红**(加宽前它对这个文件不可见,种什么都不会红) |
+| 从 `SCRIPT_EXPLICIT` 删掉 `cycle_price_action/main.py` | 对账那条**红** |
+| 把某一项换成不存在的文件 | **6 failed**(对账 + 显式名单体检 + max/n_trials 一起红) |
+| 恢复 | 21 passed |
+
+⚠️ **种诱饵时我自己先错了一次**:第一版把 `_return_pct` 插在了 `deflated_sharpe_ratio(`
+那一行**之后**,而判据只看该行**之前** 20 行 ⇒ 守卫没红,我一度以为"加宽没生效"。
+**种诱饵必须落在判据的窗口内** —— 这与 附五十六 那次"两向验证做出了第三种行为"是同一类
+自欺:**验证动作本身没被验证**。第二次插在调用行之前,当场红。
+
+### 6 · 顺带:**阴性**结果
+
+把扫描面从 25 扩到 29 **没有在这 4 个脚本里查出新的违规** —— 三条内容性守卫对它们全绿。
+所以本条的收益是**预防性**的(它们此前免检,不是因为查过没问题,而是因为没人查)。
+这一点要说清楚:**别把"扩面后没红"读成"这 4 个脚本被验证过了"** —— 它们是被**开始**检查,
+而不是被**证明干净**。
+
+---
+
+## 附八十七 —— 一个网格可能**根本没有在扫**:v1 的 62% combo 是同一个结果,而它被印成敏感性表
+
+(这一条是从 附八十四 的一个**阴性**结果长出来的。那次我怀疑 `grid_runner` 的 `pct_chg_low` 轴
+"扫了但无效果",查证**不成立**;但同一形状在 uptrend 的 v1 里**成立**,而且是从**已经落盘的产物**
+里量出来的,不用重跑。)
+
+### 1 · 实测:两条轴 100% 失效
+
+证据是库里的 `uptrend_pullback/results/sweep_v33_long.json`(附八十四 那次真跑落的):
+
+| 网格 | combo 数 | 不同结果数 |
+|---|---|---|
+| `atr_tp_sl` | 30 | 16 |
+| `max_hold` | 5 | 5 |
+| `max_positions` | 5 | 5 |
+| **`fixed_tp_sl`** | **30** | **1** |
+| **`loosen_signals`** | **36** | **1** |
+
+**106 个 combo 里 66 个(62%)产出逐位相同的结果。** 而报表照样把它印成"每行一个参数取值"的
+敏感性表 —— 读者会据此写下"这两个参数不敏感"。
+
+**两条轴的失效原因不同:**
+
+1. **`fixed_tp_sl` 变的是被 base 盖住的参数。** 该脚本的 base 里
+   `atr_tp_mult=8.0` / `atr_sl_mult=2.5` 都有值,而引擎的规则是
+   `use_atr = atr_tp_mult is not None and atr_sl_mult is not None` ⇒ **按设计忽略**
+   `tp_pct`/`sl_pct`(base 自己都注释了「占位,当 atr 模式时不使用」)⇒ 30 个 combo 完全等价。
+2. **`loosen_signals` 的键路径漏了 `signal.` 前缀。** 它写的是 `min_above_ma60_ratio`
+   (顶层),而 `_set` 对不带点的键写 `cfg[key]`、`sweep()` 只把 `cfg["signal"]` 传给
+   `select_entries_v33_long_mirror` ⇒ **这三个键从来没被传进去**。同目录 v2~v5 用的都是
+   `signal.xxx` 拼法 ⇒ v1 是唯一的那个异类。
+
+### 2 · 处置:一条修、一条登记(理由不同)
+
+* **`loosen_signals` 已修**(补 `signal.` 前缀)。修法是唯一的:网格名叫"loosen signals",
+  三个键在 base 的 `signal` 字典里正好存在,姊妹文件的拼法一致 —— 属**实现写错**。
+  **实跑验证**(同一个 106-combo 网格重跑):
+
+  | | `loosen_signals` 去重后 | `observed_sharpe` | `deflated_sharpe` |
+  |---|---|---|---|
+  | 修前 | **1** / 36 | 0.905 | 0.050 |
+  | 修后 | **36** / 36 | **1.436** | **0.131** |
+
+  两条都变了 ⇒ 修复是**载重**的(网格从此真的在扫),不是装饰。
+  ⚠️ **这是又一次结果变更**:引用过 `sweep_v33_long.json` 的 `loosen_signals` 段或它的
+  `observed_sharpe=0.905` 的,须重算。
+
+* **`fixed_tp_sl` 登记未改**。"让它真的生效"要动 base(去掉 atr 倍数)或换一条轴 ——
+  那是**研究决策**(这个网格到底想测什么),不是我该单方面定的。**但我不能让它继续静默**,
+  于是有了下一节。
+
+### 3 · 让它**说穿**:一条通用的"网格塌了吗"报警(§0 单源)
+
+新增 `core/sweep_axes.py`:
+
+* `distinct_result_count(rows, metric_keys)` —— 按指标列去重后的结果数;
+* `collapsed_grid_warning(grids, metric_keys)` —— 把"所有 combo 结果逐位相同"的网格
+  点名打出来,并顺手给出两种常见原因。
+
+**判据为什么落在"结果是否相同"而不是"键有没有生效"**:后者要按引擎逐条推,而且会随引擎演进
+失效;前者是**观测**,不依赖任何关于引擎的知识。代价是**真正的平台期也会被报出来**
+(参数确实不敏感)⇒ 所以只**报警**,不判违规,报出来的网格需要人看一眼。
+
+接线:六个 uptrend sweep 全部接上(它们本来就把每个网格存成 `df` / `results` 字典)。
+重跑 v1 时报警**真的打出来了**:
+
+```
+  ⚠️ 以下网格的**所有 combo 结果逐位相同** —— 这条轴**没有生效**,不能当成敏感性表读:
+      fixed_tp_sl: 30 个 combo,1 个结果
+    常见两种原因:①该键被 base 里的别的键盖住(如 atr 模式下 tp_pct/sl_pct 无效);
+    ②键路径写错了(信号参数要写 `signal.xxx`,写成顶层就不会被传给信号函数)。
+```
+
+**修好 `loosen_signals` 之后再跑,报警只点 `fixed_tp_sl` 一个** —— 说明它既有牙齿,
+也不会把已经修好的那条继续冤枉。
+
+### 4 · 守卫,以及它**没**覆盖到什么
+
+`tests/test_sweep_axes_are_live.py`(12 条):
+
+* 判据语义(整格相同 → 报;真有差异 → 不报;单 combo → 不算塌);
+* **牙齿**:只差一个非指标列的整格相同必须被认出;真有差异不得误报;
+* 六个 uptrend sweep **确实接了**这条报警(AST —— 且多网格脚本必须把**全部**网格交进去,
+  不许只交一个 `df`);
+* **真数据正例**:构造一个含引擎不读的键(`universe`)的 2-combo 网格,报警必须打出来;
+  同时一个活网格不得误报(约 4 秒)。
+
+**没覆盖**:不需要 —— 上面那条真数据正例已经把"正例"补上了(这一节是本批相对 附八十六 的改进:
+那条反过来,只有预防性、没有正例)。
+
+### 5 · ⚠️ 第三次:这个形态这次是**我自己的新文件**踩的
+
+新增 `core/sweep_axes.py` 之后,全量套件立刻报红:
+
+```
+FAILED tests/test_sweep_scripts_dsr.py::TestSweepScriptsDsrContract::
+       test_sweep_references_dna_stats_deflated[core/sweep_axes.py]
+```
+
+那条守卫用仓库级 `REPO_ROOT.glob("**/sweep*.py")` 收集"所有 sweep 脚本",然后要求每个都
+引用 `dna_stats.deflated`。**`core/sweep_axes.py` 名字正好以 `sweep` 开头** ⇒ 它被当成
+"一个有 27 个 combo 却不报 DSR 的 sweep 脚本"。
+
+**按文件名前缀划族** —— 本会话第三次,而且这次是**被我这批新加的共享工具**触发的:
+
+| 次 | 谁划的 | 漏/多收 |
+|---|---|---|
+| 附八十五 | 附十三 的守卫 `glob("wf_v*_focused.py")` | **漏**了 `walkforward.py`(`wa` 开头) |
+| 附八十六 | `SCRIPT_GLOBS`(四条 §5 守卫共用) | **漏**了 4 个 DSR 调用点 |
+| **附八十七** | `test_sweep_scripts_dsr` 的 `**/sweep*.py` | **多收**了 `core/sweep_axes.py` |
+
+前两次是"漏",这次是"多" —— 同一个根:**用一个与语义无关的性质(文件叫什么)去划一个按语义
+定义的集合**。
+
+**改法**:扫描面**限制到四个引擎包**(那正是这条守卫 docstring 里早就写明的集合,
+是 glob 比 docstring 宽)。名单从 11 条变 10 条 —— 去掉的是**假成员**,不是放宽真成员。
+(顺带:这条也说明**新加一个文件就是一次覆盖面测试** —— 若没跑全量套件,这个误报不会被发现。)
+
+### 6 · 这一条与前面几条的关系
+
+* 它**不是** `n_trials` 口径问题:按 §5"每一次迭代都计入",106 次迭代确实发生过 ⇒
+  `n_trials=106` **是对的**(不要拿它去套 附八十二/八十三 的结论 ——
+  那份"少计"说的是"失败/无信号的迭代被剔出计数",与"迭代之间彼此相同"是两件事);
+* 它的危害在**产物语义**:一张平表被读成"这个参数不敏感";
+* 它和 §0 的"静默的零"同源:**不许把一个没有发生的效果,印成一张看起来发生了的表。**
+
+---
+
+## 附八十八 —— 又是在"本该抓这类缺陷"的守卫里:豁免名单手写,**5 项里错了 3 项**,于是两个真的缺口被它挡住
+
+(起因:我把 附八十七 的判据("这条轴有没有生效")往上推一层,问"**任何 preset 字段**有没有引擎从不读的"。
+**没有找到新的** —— 这一类是干净的。但在核对"那条已有的守卫为什么没抓到"时,发现它的
+**豁免名单本身是错的**。)
+
+### 1 · 已有的守卫做什么
+
+`tests/test_preset_to_engine_api_conformance.py` 逐引擎核对:preset 的每个**叶子键**,
+引擎源码里有没有引用它 —— 没引用就是"声明被静默丢弃"。它对每个引擎有一份 `ENGINE_SOURCES`,
+另有两份豁免:
+
+```python
+NESTED_KEYS = {"signal", "universe", "periods", "weights", "regime"}      # 嵌套配置块
+DECLARATION_ONLY_KEYS = {"MAX_POSITION_PCT", "price_source_for_signal", "n_comparisons"}
+```
+
+`NESTED_KEYS` 的注释说得很明白:这些是"在调用点被 `**p["regime"]` / `**p["signal"]` 展开"的
+**嵌套字典**,要求它们成为字面量是误报"。
+
+### 2 · 实测:这份名单的 5 项里,3 项不是嵌套字典
+
+| 键 | 在预设里的**实际类型** | 注释说它是 | |
+|---|---|---|---|
+| `signal` | `dict`(25 处) | 嵌套字典 | ✓ |
+| `regime` | `dict`(1 处) | 嵌套字典 | ✓ |
+| **`universe`** | **`str`(101 处)** | 嵌套字典 | ✗ |
+| **`periods`** | **`tuple`(1 处)** | 嵌套字典 | ✗ |
+| **`weights`** | **任何 preset 里都不存在** | 嵌套字典 | ✗ 死项 |
+
+⇒ **`universe` / `periods` / `weights` 这三个键在任何引擎里都从未被审计过**。
+豁免的理由("它是嵌套字典")对它们**不成立** —— 它们是标量。
+
+### 3 · 把它们放出来之后,守卫立刻点到两个**真的**缺口
+
+把 `NESTED_KEYS` 改成推导("在 ≥1 个 preset 里取值为 dict 的顶层键" ⇒ `{signal, regime}`)之后:
+
+```
+GAP CAPTURED: cycle_price_action has preset keys declared but NEVER referenced in engine source:
+    - preset='PRESET_V1' key='periods'
+    - preset='PRESET_V1' key='universe'
+```
+
+逐条核实:
+
+* `PRESET_V1["periods"] = (3,5,8,13,21)` 与 `cycle.py::DEFAULT_PERIODS` **逐位相同**,
+  而引擎只读后者 ⇒ **改 preset 不会有任何效果**;
+* `PRESET_V1["universe"] = "mainboard_only"` 与 `load_universe_data` 里**写死的**
+  `is_main_board` 过滤一致,但引擎从不读这个键 ⇒ **改成别的值不会有任何效果、也不报错**。
+
+(另三个引擎的 `universe` **没有**被点出来 —— 它们确实读了:chase 在 `walkforward.py`、
+uptrend 在 `grid.py`。所以这个 RED 是**特异性**的,不是把整类都报一遍。)
+
+### 4 · 处置:**登记为债**,而且与"按设计无运行时语义"分开放
+
+两处都不该由我单方面接线:
+
+* `periods` 接进 `signals.phase_score` 会**改变信号计算** ⇒ 研究改动;
+* `universe` 接上要给 `load_universe_data` **加参数并处理不支持的取值** ⇒ 加功能。
+
+所以新建一桶,与 `DECLARATION_ONLY_KEYS` **刻意分开**:
+
+```python
+UNCONSUMED_DECLARED_KEYS = {          # 债,不是豁免
+    ("cycle_price_action", "periods"):  "… 接上要把 periods 穿进 signals.phase_score …",
+    ("cycle_price_action", "universe"): "… 接上要给 load_universe_data 加 universe 参数 …",
+}
+```
+
+分开的理由:那一桶是"**按设计**没有运行时语义"(§2 政策常量),这一桶是"**有语义、接线没做**"
+—— 合并会让人读不出哪些是缺口。每一项都写清"现在是什么样 + 接上要做什么"。
+
+配套三条守卫:
+
+* 未登记的缺口仍然 **RED**(种一个 `_planted_unregistered_key_xyz` 进去 ⇒ 当场红,已两向验证);
+* **登记表不得陈旧**:接线做完却不同步删条目 ⇒ 红(与 `KNOWN_DEAD_REFERENCES` 同型,
+  登记表只应当变短);
+* **豁免名单不得再手写**:`NESTED_KEYS` 改为推导,并加元断言(还原成手写版 ⇒ 红,已两向验证)
+  + 牙齿(把 `universe/periods/weights` 塞回去必须被认出;`signal/regime` 不得误报)。
+
+### 5 · 顺带:我把 附八十七 的判据往上推一层,结果是**阴性**
+
+"任何 preset 字段有没有引擎从不读的" —— 用正确的消费方集合(引擎 + `core` + `dna_data` +
+`dna_stats` + `tools`)扫四个引擎,剩下的只有 `MAX_POSITION_PCT`(刻意声明,见
+`DECLARATION_ONLY_KEYS` 的注释)。**这一类是干净的** —— 因为 2026-10-15 那轮审计已经修过
+cycle 的六个"声明却无消费者"的键。
+
+**但我没有据此新建一条普查**:这条守卫已经在做这件事,再写一条就是重复。
+**如实说明它的判据是"键名以字面量/参数名形式出现过"** —— 这与
+`test_preset_declarations_are_load_bearing.py` 开头**明确警告过的**弱判据同型
+("往默认参数里加一个同值默认值就能让文本审计变绿")。强判据(改了声明行为必须跟着变)
+在同一目录的另一条守卫里,本条不声称覆盖它。
+
+### 6 · 形态统计
+
+"**手写名单 ≠ 实际集合**" 在本会话已是**第四次**,四次都在"守卫的覆盖面"这一层:
+
+| 次 | 谁 | 方向 |
+|---|---|---|
+| 附八十五 | 附十三 的守卫 `wf_v*_focused.py` | 漏 `walkforward.py` |
+| 附八十六 | `SCRIPT_GLOBS`(四条守卫共用) | 漏 4 个 DSR 调用点 |
+| 附八十七 | `**/sweep*.py` | 多收 `core/sweep_axes.py` |
+| **附八十八** | **`NESTED_KEYS`** | **多收 3 个非嵌套键,挡住 2 个真缺口** |
+
+**共同处方**(四次都有效):把名单**推导**出来,或至少加一条**元断言**让名单必须等于实际集合,
+并让它**只应当变短**。
+
+---
+
+## 附八十九 —— 把 §5 的"举证责任倒置"规则算成一张**表**:三个引擎的声明上界 **小于** 它自己 shipped 的 sweep
+
+(本轮换了个方向:不再查"守卫的覆盖面",而是把 §5 里一条**已经立好的规则**机械化。
+仓库自己写过:`若某 preset 的参数值出现在该引擎自己 shipped 的 sweep 脚本的默认候选里,`
+`那么"这个值不是 sweep 选出来的"就需要证据` —— 而目前只登记了 cycle 一条。)
+
+### 1 · 那张表
+
+| 引擎 | preset 数 | 声明的 `n_comparisons` | 该引擎 shipped 的**最大一次** sweep 枚举数 | |
+|---|---|---|---|---|
+| `chase_up` | 22 | **10**(全部) | **18**(`sweep.py`,3 个 CLI 轴的笛卡尔积) | ⚠️ 声明 < 枚举 |
+| `uptrend_pullback` | 3 | 19 / 100 / **121** | **436**(`sweep_v33_long_v4.py`) | ⚠️ 声明 < 枚举 |
+| `cycle_price_action` | 1 | **1** | **3**(`sweep_thresholds.py`) | ⚠️ 已登记 |
+| `short_reversal` | 75 | **45**(上界) | 14(`grid_runner.py`,逐轴) | ✅ **不成立** |
+
+**含义**(不是"这些数错了",而是"举证责任在声明方"):引擎自带能枚举 18–436 个配置的 sweep,
+而它的 preset 声明只试过 10–121 个 —— "那些 sweep 没参与选参"是个**需要证据**的断言。
+按 §5 Iterative-Tuning Accounting,在能证明之前应把那次 sweep 计入。
+
+`short_reversal` **不在**此列:它 75 个 preset 声明的上界是 45,而 `grid_runner` 最多枚举 14
+⇒ 上界 ≥ 枚举数,这条对它不成立。**如实留空** —— 不为了凑整齐而把 4 个引擎都写上。
+
+### 2 · ⚠️ 这一列数字我量错了**两次**(都记下来)
+
+"该引擎 shipped 的 sweep 枚举多少配置"看似机械,实则取决于脚本的**调用形态** ——
+**同样的字典形状,笛卡尔积与逐轴扫描差一个数量级**:
+
+| 次 | 我算的 | 真值 | 错在哪 |
+|---|---|---|---|
+| ① | `uptrend` **2,351,462,400** | 436 | 把它的**具名子网格**相乘;实际是"每个子网格各自展开再依次跑"⇒ 求和 |
+| ② | `uptrend_v5` **15** | 180 | 反过来:把**单个扁平网格**当成逐轴 ⇒ 求和;实际是 `itertools.product(*grid.values())` ⇒ 乘积 |
+| ③ | `chase` 3 | 18 | 只数了一个 CLI 轴;三个轴在**嵌套 for** 里 ⇒ 笛卡尔积 |
+
+①的 2.35e9 荒谬得当场露馅;②③则**无声无息**,是我去读调用点才发现的
+(`sweep_v33_long_v5.py` 的 `sweep(base, grid, ...)` vs `grid_runner.py` 的 `for ax, vals in axes.items()`)。
+
+**最终的定稿数字有一个独立校验:它们与实跑打印的 combo 数逐位吻合**
+(106 / 246 / 281 / 436 / 180 / 25;`grid_runner` 合计 27)。⇒ 这次不是"我以为对了"。
+
+### 3 · 处置:登记,不是改数
+
+**不据实改写 `n_comparisons`** —— 那需要**迭代记录**(哪些 sweep 真的跑过、跑了几次),
+是使用者手上的事实;凭空填一个"够大"的数就是**精确的伪装**(附十三 已立此规矩)。
+
+新建登记表 `SWEEP_ENUMERATES_MORE_THAN_DECLARED`(每项写清"枚举多少 vs 声明多少"),
+配套两条守卫 + 一条牙齿测试:
+
+* **未登记的缺口 RED**(摘掉 `chase_up` ⇒ 当场红,已两向验证);
+* **登记表不得陈旧**(加一条并不成立的 `short_reversal` ⇒ 红,已两向验证);
+* 牙齿:纯函数 `枚举 > 声明上界` 的判据,种"枚举 999 vs 声明 10"必须认出;
+  **边界相等不算**(声明正好覆盖枚举);**缺键视为上界 0**(不能因缺键而漏判)。
+
+`SWEEP_ENUMERATION` 里每条都**注明来源**(哪个脚本、哪种调用形态、以什么印证),
+而不是只写一个数 —— 因为这一列我刚量错过两次。
+
+### 4 · 顺带核实的一条**覆盖缺口**(未改,如实记)
+
+`tests/test_research_scripts_reference_live_presets.py` 的 `SWEEP_CANDIDATE_SOURCES` 是
+**手写的一条**(cycle 的 `--thresholds`),而仓库里带候选值的载体有**两类十来个**:
+
+| 载体 | 位置 | 是否在名单里 |
+|---|---|---|
+| CLI 数值列表默认值 | `chase_up/sweep.py`(3 个选项)、`cycle_price_action/sweep_thresholds.py`(1) | 只覆盖 1 个 |
+| 顶层候选网格字典 | `uptrend_pullback/sweep_v33_long*.py`(6 个)、`short_reversal/grid_runner.py`(2) | **0 个** |
+
+**手写名单 ≠ 实际集合** —— 这是本会话**第五次**(前四次见附八十五~八十八)。
+
+但本轮**没有改它**,理由是实测**加宽后不多抓任何东西**:现行规则是"`n_comparisons == 1`
+才检查"(`=1` 表示"自称没做过 sweep"),而 chase 的 22 个 preset 全是 10、uptrend 的 3 个是
+19/100/121、short_reversal 的最小是 11 —— **没有一个 `== 1`**,所以扩面在这些引擎上
+一条都不会触发。真正的缺口不在**面**,在**规则**:`== 1` 只抓"自称没 sweep"的自相矛盾,
+抓不到"声明了 10、而自家 sweep 枚举 18"这一类 —— 而那正是第 1 节那张表。
+
+⇒ 所以本轮把这个判断**交给了使用者**:规则该不该从 `n_comparisons == 1` 放宽到
+`n_comparisons < 该 sweep 的枚举数`,取决于"那些 sweep 到底跑没跑过"这个事实。
+
+### 5 · 这一条给使用者的,是一个**可核对的不等式**,不是一个形容词
+
+前面几轮要"各 preset 的 `n_comparisons`",收到的是"你给数";这一条给出的是:
+**哪三个引擎的声明上界小于自家 sweep 的枚举数,小多少,以及每一列数字是怎么量出来的。**
+
+---
+
+## 附九十 —— 注释里的行号引用必须名副其实:**16 处已修,其中 13 处是 `06904b1` 那次的漏网**
+
+(前面几轮都在查"守卫的覆盖面"。这一轮换到另一族已知缺陷上:git 日志里 `06904b1`
+就是修"注释引用了一个**不存在的行号**"。我把它机械化了 —— 然后发现那次**只改了一部分**。)
+
+### 1 · 缺陷(逐处核实过,不是靠 grep 猜的)
+
+| 位置 | 处数 | 假在哪 |
+|---|---|---|
+| `short_reversal/presets.py` | **11** | 写「Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0」—— 第 47 行是 `params` 上方一张 **enum 导入表**;而且该参数**已不再**是引擎硬编码:由 `engine.run_backtest_v3` 经 `core.preset_contract` 注入,并在 `__init__` 核对声明与实现是否一致 |
+| `chase_up/portfolio.py`、`uptrend_pullback/portfolio.py` | 2 | 写「与 `replay_strategy_v3.py:64 (min_cash_ratio=0.05)` 口径一致」—— 第 64 行讲的是**科创板涨跌停**;`min_cash_ratio` 在该文件里**已无此名**(实测 0 处) |
+| `cycle_price_action/portfolio.py` | 1 | 同族:`:156 (min_cash_ratio=0.05)` |
+| `cycle_price_action/presets.py` | 1 | 写「`portfolio.py:65` hardcodes MAX_POSITION_PCT=1.0」—— 第 65 行是 `class Portfolio:`,常量在 **:83** |
+| `uptrend_pullback/replay_strategy.py` | 1 | 写「`portfolio.py:474-476` 一致,共用 `core.dual_price.is_limit_up`」—— 那三行是 `intraday_tiebreak` 检查,`is_limit_up` 在 **:560/:564** |
+
+**13 处是 `06904b1` 的漏网**:同一句假声明,它在 `chase_up/portfolio.py` 与
+`uptrend_pullback/portfolio.py` **各改了一处,同一文件里的第二处原样留着** ——
+**按"出现处"改,而不是按"这个声明"改**。(这是"覆盖面"主题的第 7 次现身,
+但这次的形式最日常:同一个文件里、隔着几百行的两句一模一样的话。)
+
+处置与 `06904b1` 一致:**把行号换成语义**,并把旧引用的错法写进注释供下一个人核对,
+**不再引用行号**。
+
+### 2 · 判据:高精度换窄覆盖,并**如实标出有多窄**
+
+要判一条引用,须同时满足:①形如 `X.py:NNN`(支持区间 `NNN-MMM`)②同一行里它是**唯一**
+带行号的引用 ③该行出现了 **snake_case 标识符**(非路径分量、非引擎包名)。然后要求该标识符
+出现在被引行号 ±10 行内。
+
+> **全库 104 处 `py:NNN` 引用里,只有 6 处可判**(修完之后剩 3 处)。
+> **窄是"换零误报"的代价**,不是"全库只有 6 处引用"。
+
+第②条是踩出来的:一行里若有两条引用而只有一条带行号,行级分词会把标识符**错误归属**
+(实测 `cycle_price_action/portfolio.py:90` 就这么误报过一次)。
+
+### 3 · 非空转怎么保证(**这一条我第一版写错了**)
+
+我第一版写下限:可判引用数 `>= 5`。跑出来是 **3** —— **红线当场打脸**。
+
+而更该反省的是**这个下限本身就是脆的**:任何一处合法引用将来被移除,它都会误红。
+真正的非空转证明是**牙齿测试**(种一条名不副实的引用必须被认出、种一条名副其实的不得误报、
+越界行号必须被认出)。数值下限只用来兜"完全坏死",于是改成 `>= 1` 并写明实测值。
+
+**与 附八十六 的区别:** 那次自检写的是 `total >= 20`(量的是**文件数**),25 ≥ 20 通过而
+实际漏了 4 个 —— 那是"下限与**完整性**无关"。这次的下限只声称"判据没死",
+**不声称覆盖完整**;两者不能混为一谈。
+
+### 4 · 顺带一个正例:守卫惩罚了它自己的更正记录
+
+我把更正注释写成了**逐字引用旧引用**(「旧注释写"与 `replay_strategy_v3.py:64` …"」),
+于是它们自己成了新的"行号与内容不符"命中。改成"第 64 行"的写法(不产生 `py:NNN` 字面量)。
+
+**这是好事** —— 说明判据真的在看内容,而不是"只在别人写的注释上生效"。
+
+### 5 · 覆盖面:104 → 6
+
+| | 数 |
+|---|---|
+| 全库 `py:NNN` 引用 | 104 |
+| 其中满足判据(可判) | 6(修完后 3) |
+| 修掉的假引用 | **16** |
+| 判据看得见、但经核实**名副其实** | 3 |
+
+剩下那 98 处引用"看不见"的原因有两类:`NNN` 是**引用者的行号**写法而非目标内容的断言
+(如"见 `X.py:223`"),或该行没有 snake_case 标识符。**这两类没有机械判据** ——
+如实记下来,不用一个凑出来的数假装覆盖了它们。
+
+---
+
+## 附九十一 —— 跨引擎**契约矩阵**:同一规则四种拼法,而按名字搜**一处都搜不到**
+
+### 1 · 起因:一次差点写错结论的 grep
+
+审计文档自己写过这句:
+
+> **同一个模式已经出现三次**:一条规则在 3~4 个引擎里各写一份,于是修复永远只覆盖
+> "我这次看到的那一份"。这已不是巧合,而是一种**系统性的维护风险**。
+
+文档点了名,但**没有任何检查**为这个模式本身存在。于是我打算做一张矩阵。第一件事是给每条
+契约找一个"存在于四族"的判据 —— 从 CLAUDE.md §4 的第一条开始:
+
+```
+$ grep -rn "T+1\|t1" chase_up/ uptrend_pullback/ short_reversal/ cycle_price_action/
+(空)
+```
+
+**四个引擎里一处都搜不到。** §4 明文写着「**T+1**: 买入的股票在 T+1 之前不得卖出」。
+
+如果我停在这里,这一条就会写成"**全库 §4 违反:T+1 未实现**"。**但那是错的** ——
+逐处读码后:它**四族全都实现了**,只是**三种拼法**:
+
+| 引擎 | 写法 | 机制 |
+|---|---|---|
+| `chase_up` | `if bars_in_pos < 1:` | **跳过**该 bar 的退出判定 |
+| `uptrend_pullback` | `if bars_in_pos < 1:` | 同上 |
+| `short_reversal` | `if held < 1:` | 同上;**注释里管它叫 "CLAUDE.md P3"** |
+| `cycle_price_action` | `raise ValueError("P3 violation: same-day or earlier exit forbidden")` | **fail-fast 抛错**(比另外三族更严) |
+
+**规则在,名字不在。** 注释把它叫 **P3**,不叫 T+1;三个跳过式、一个抛错式;
+而**没有任何一处把这四个拼法连起来**。
+
+> **这正是"族内不对称"能反复发生的机制**:下一个人搜 `T+1`,搜不到,于是"顺手在某个引擎里
+> 加一条" —— 而那条规则其实已经在四个地方了。
+>
+> 也说明:**"按规则的名字搜不到"不等于"规则没实现"**。这一步如果偷懒,本附录就会变成一个
+> 假发现,而且是严重度很高的那种假发现。
+
+### 2 · 矩阵
+
+新建 `tests/test_cross_engine_contract_matrix.py`:每行一条契约、每列一个引擎,
+格子是 **(文件, 定位正则, 该族的拼法说明)**。
+
+| 契约 | chase_up | uptrend_pullback | short_reversal | cycle_price_action |
+|---|---|---|---|---|
+| **T+1 入场当日不得退出** | `bars_in_pos < 1` 跳过 | 同左 | `held < 1` 跳过(注释叫 P3) | **抛 `P3 violation`** |
+| **容量闸门**(§2) | `len(positions) >= max_positions` → `break` | 同左 | `len(self._holds) >= self.p.max_positions` → `break` | `self._pos is not None` 判空(容量恒 1) |
+| **涨停买入不成交**(§4) | 建仓前 `is_limit_up(` | 同左 | **回补**前判(做空:买=回补) | 建仓前判 |
+
+**"拼法"那一列是刻意留的**:矩阵的一半价值在把四种写法**并排摆出来** —— 没有它,
+矩阵会退化成"四个文件里各有一个正则",而 `T+1` 这一行恰恰说明**按名字搜是搜不到的**。
+
+### 3 · 门禁的三条
+
+1. **满格**:每条契约必须覆盖全部四个引擎 —— 少一个就是"这条规则在这族里没人管"。
+   这是文档那句抱怨的**机械版**。
+2. **命中**:每个格子的正则必须在文件里命中 —— 实现被删/改名/移动 ⇒ 红
+   (实测:把 `short_reversal` 的 `if held < 1:` 改名 ⇒ 当场红)。
+3. **拼法必填**:每格必须写清该族的写法(实测:删掉 `cycle` 那一格 ⇒ 满格检查红)。
+
+**没有"豁免"这一档** —— 本轮三条契约在四族里都找到了实现。若将来某条契约在某族里
+**按设计**不存在,应显式加一档**带理由**的豁免,而**不是把那一格删掉**:
+删掉与"没实现"在矩阵里长得一模一样 —— 这是本会话反复栽的那个坑。
+(讽刺的是,`cycle` 的容量闸门那一格本来最像"豁免",读码后发现它有,只是拼法不同。)
+
+### 4 · 只收三条:不为凑数把弱判据塞进来
+
+另两条确认在四族里都存在 —— `max_volume_participation`(§4)与 `nav_gate_ratio`(§2)——
+但**尚未**做出**代码级**的精确定位:目前能找到的落点是 `resolve_*` 的 **import 行**,
+`cycle` 那两条更是只找到**注释**。
+
+**它们没有进矩阵**,理由:用注释或 import 行当"实现",就会把矩阵变成**文本审计** ——
+而那正是仓库自己警告过的弱判据(`test_preset_declarations_are_load_bearing.py` 开头:
+"往默认参数里加一个同值默认值就能让文本审计变绿")。**宁可少一格,不塞弱判据。**
+
+### 5 · 与前面几轮的关系
+
+本会话已经五次修"守卫的覆盖面"(附八十五~八十八、九十),每次都是**被动地**发现某个名单漏了人。
+**这一条是第一次主动地**把"一条规则 × 四个引擎"摆成一张必须满格的表。
+如果它早点存在,附八十五(`walkforward.py` 落单)与文档记的那三次"族内不对称"
+大概都不会发生 —— 因为它们的共同形态就是**矩阵缺格**。
+
+---
+
+## 附九十二 —— ⚠️ 更正 附九十一:我把两条**做对了的**契约挡在矩阵外,理由是"找不到代码级落点"
+
+(附九十一 的矩阵只收了三条,并写明"另两条确认存在但**尚未**做出精确到行的定位,
+故不塞进矩阵 —— 宁可少一格,不塞弱判据"。**那个判断是错的,这一条更正它。**)
+
+### 1 · 我上一版写的理由,以及它错在哪
+
+附九十一 原文:
+
+> 另有两条(`max_volume_participation`、`nav_gate_ratio`)确认在四族里都存在,但**尚未**做出
+> 精确到行的定位(其中 cycle 那两条目前只找到**注释**级的落点,没有代码级落点)。
+
+实情:我只 grep 了**参数名**(`max_volume_participation`),命中的自然是 `resolve_*(...)` 的
+import 行与注释 —— 然后就把"没找到"当成了"找不到"。**再搜一轮就找到了**:
+
+| 契约 | 四族的**代码级**落点 | 拼法 |
+|---|---|---|
+| 成交量上限 | `max_fill = volume_cap_fill(...)` —— chase `portfolio.py:661` / uptrend `:595` / short_reversal `replay_strategy_v3.py:882` / cycle `portfolio.py:397` | **四族共用 `core.dual_price.volume_cap_fill` —— 真的单源** |
+| NAV 闸门 | chase `portfolio.py:567` 与 uptrend `:510` **逐字相同**的 `if nav_now < initial_capital * nav_gate_ratio:`;short_reversal `replay_strategy_v3.py:734` 的 `cash_gate_threshold = ...`;cycle `portfolio.py:353` 的 `if self.cash < self.initial_capital * self.NAV_GATE_RATIO:` | 三族各异:参数 / 改名成 `cash_gate_threshold` / **类常量** |
+
+**后果**:差一点把一条**四族都做对了**(§4 单源)的契约排除在矩阵外,还在附录里写下
+"它没有代码级落点"。**这正是本会话反复栽的同一个坑的变体** ——
+判据/结论落在"我搜到的东西"上,而不是"有没有这回事"上。
+
+### 2 · 更正的处置:两条都进矩阵,并把这次错法写进矩阵自身的文档
+
+`tests/test_cross_engine_contract_matrix.py` 现在有 **5 行 × 4 列 = 20 格**,
+每格都要求命中**真实代码**:
+
+| 契约 | chase_up | uptrend_pullback | short_reversal | cycle_price_action |
+|---|---|---|---|---|
+| T+1 入场当日不得退出 | `bars_in_pos < 1` | 同左 | `held < 1`(注释叫 P3) | **抛 `P3 violation`** |
+| 容量闸门 | `len(positions) >= max_positions` | 同左 | `len(self._holds) >= self.p.max_positions` | `self._pos is not None`(容量恒 1) |
+| 涨停买入不成交 | 建仓前 `is_limit_up(` | 同左 | **回补**前判 | 建仓前判 |
+| **成交量参与上限** | `volume_cap_fill(` | 同左(单源) | 同左(单源) | 同左(单源) |
+| **NAV 闸门** | `nav_now < initial_capital * nav_gate_ratio` | **逐字相同** | `cash_gate_threshold = ...` | `self.cash < initial_capital * NAV_GATE_RATIO` |
+
+**这一张表本身就是一个结论**:同一族五条契约里,**两条是"同一句话抄四遍"(T+1、容量闸门),
+一条是"四族单源"(成交量上限),两条是"同一语义三种写法"(涨停守卫、NAV 闸门)** ——
+而没有任何一处代码或文档把这五种状态说出来过。
+
+### 3 · 仍然坚持的那半(不是"放宽了")
+
+我**没有**因为"找不到"就把注释或 import 行当成"实现" —— 变的是**找到了真落点**,
+不是**降低了判据**。矩阵仍然拒绝文本级证据:仓库自己在
+`test_preset_declarations_are_load_bearing.py` 开头警告过这种弱判据
+("往默认参数里加一个同值默认值就能让文本审计变绿")。
+
+### 4 · 给这个错法起个名字,方便下次认出来
+
+> **"没找到" ≠ "找不到"。**
+> 上一句是我在 附九十一 里的实际推理路径:grep 一个名字 → 只命中 import/注释 →
+> 结论写成"没有代码级落点"。**正确的最小动作**是:换**至少一种**检索方式再试
+> (按行为描述、按被调用的**函数名**而不是**参数名**、按相邻概念的实现),
+> 试过之后再写"找不到",并**在句子里写明试过什么**。这一次换的是
+> "参数名 → 被调用函数名"(`volume_cap_fill`),一次就命中四族。
+
+---
+
+## 附九十三 —— 契约矩阵扩到 **8 行 × 4 列**;扩的过程中抓到一处**活的**假行号,而它是 附九十 那个守卫的盲区
+
+(附九十一 建矩阵、附九十二 更正并把两条契约补进去。这一条继续扩 ——
+扩的过程本身产出了一个新发现。)
+
+### 1 · 矩阵现在是 8 条契约 × 4 个引擎 = **32 格**,每格都命中真实代码
+
+| 契约 | chase_up | uptrend_pullback | short_reversal | cycle_price_action |
+|---|---|---|---|---|
+| T+1 入场当日不得退出 | `bars_in_pos < 1` | 同左 | `held < 1`(注释叫 P3) | **抛 `P3 violation`** |
+| 容量闸门 | `len(positions) >= max_positions` | 同左 | `len(self._holds) >= self.p.max_positions` | `self._pos is not None`(容量恒 1) |
+| 涨停买入不成交 | 建仓前 `is_limit_up(` | 同左 | **回补**前判 | 建仓前判 |
+| 成交量参与上限 | `volume_cap_fill(` | 同左 | 同左 | 同左(**四族单源**) |
+| NAV 闸门 | `nav_now < initial_capital * nav_gate_ratio` | **逐字相同** | `cash_gate_threshold = ...` | `self.cash < initial_capital * NAV_GATE_RATIO` |
+| **跌停卖出/回补不成交** | `if is_limit_down(` | 同左 | **回补**路径 + **板块/日期阈值** | `return is_limit_down(`(**包成方法**) |
+| **公司行为事件源**(§3 Phase-1) | `_out = apply_corporate_action(` | **逐字相同** | `self._apply_corporate_action(d)`(**包成方法**) | **由 Control Plane** 调 portfolio 的方法 |
+| **成本模型单源**(§2) | `max(notional * self.commission_rate, self.min_commission)` | **逐字相同** | `self.p.min_commission`(**params 字段**) | `max(self.MIN_COMMISSION, notional * self.COMMISSION_RATE)`(**类常量**) |
+
+**把 8 行的"拼法"列竖着读,得到一个此前没有任何一处说过的结论**:
+
+* **语义上**四族都做到了(这是好消息 —— CLAUDE.md §4 的契约确实落到了四个引擎);
+* **形式上**几乎没有两族是同一份实现:同一条规则,有的用**实例属性**、有的用 **params 字段**、
+  有的用**类常量**、有的**包成方法**、有的**内联 if**。
+* 只有三行是"逐字相同"(T+1 的 chase/uptrend、NAV 闸门的 chase/uptrend、成本模型的 chase/uptrend)
+  —— **而这三行恰好都是 chase 与 uptrend**,这两个引擎是同源演化出来的。
+
+⇒ **"四族各写一份"不是坏运气,是结构**:每族一套持仓/账本对象,于是同一条 §4 契约在四族里
+各有一份**拼法不同**的实现。这解释了文档记的三次"族内不对称",也解释了为什么修复总是
+只覆盖看到的那一份 —— **看到的那一份长得和别的不一样**。
+
+### 2 · 扩矩阵时抓到一处**活的**假行号(附九十 的盲区)
+
+`cycle_price_action/portfolio.py` 的注释里写着:
+
+```
+此前 cycle 全包**零处** `is_limit_down`,而 chase_up(:508) 与
+uptrend_pullback(:464) 都有这道门 —— 于是 cycle 的出场阶梯会在一个物理上取不到的价位上"卖出"。
+```
+
+实测那两处**早已漂到 510 / 466**(不是 508 / 464)。
+
+**附九十 的守卫为什么看不见它**:那条守卫的判据要求引用形如 **`X.py:NNN`**;
+而这里写的是 **`chase_up(:508)`** —— **不带 `.py`、也不带文件名**,解析不到目标文件。
+
+**处置**:
+* 修 —— 把那两处**换成语义**("`chase_up` 的出场路径" / "`uptrend_pullback` 同上"),与 `06904b1`
+  以来的处置一致;
+* **登记盲区** —— 写进 `tests/_census_stale_line_refs.py` 的 docstring。
+
+**没有为它加判据**,理由写在这里:**那种写法本质上无法无歧义解析** ——
+`chase_up(:508)` 指哪个文件?`portfolio.py`?`backtrader_engine.py`?能做的只有"禁止这种格式",
+而那**不解决真缺陷**(缺陷是**数字漂了**,不是格式);禁止它只会把注释逼成别的写法、风险照旧。
+⇒ **如实登记盲区 + 遇到时修掉**,而不是加一条看起来很负责、实际不解决风险的禁令。
+
+### 3 · 矩阵现在的用处(与前面几轮的关系)
+
+本会话有**五次**是"被动地发现某个名单漏了人"(附八十五~八十八、九十)。矩阵是**第一次主动**:
+它把"一条规则 × N 个实现"摆成一张**必须满格**的表,并强制每格**命中真实代码**。
+
+现在它有 8 行,而这一轮新加的三行里没有一格是空的 —— 也就是说,
+**这八条 §2/§3/§4 契约在四族里都实到位了**。这与 附九十一 那句"按名字搜一处都搜不到"
+形成对照:**"搜不到"与"没做到"是两件事,矩阵是把它们分开的工具。**
+
+---
+
+## 附九十四 —— 把**标准本身**对账:CLAUDE.md §1–§4 的 13 条 MUST/NEVER,谁在守它?
+
+(前面十几轮反复出现同一个形态:**某条规则的实现散在四个引擎里,而"谁在守它"从没被清点过**。
+附九十一 建的契约矩阵解决了"一条规则 × N 个实现"的**存在性**,但**矩阵的行是人挑的** ——
+没有任何东西保证"CLAUDE.md 里的规范句都被挑到了"。这一条把那份名单**从标准里抽出来**。)
+
+### 1 · 抽取与登记
+
+`tests/test_claudemd_rules_are_accounted_for.py` 从 CLAUDE.md 的 §1–§4 里抽出所有带
+`MUST / NEVER / ALWAYS / Banned` 的**加粗规则名**(实测 **13 条**),要求每条都登记成三者之一:
+
+* `("guard", <测试文件>)` —— 有具名机械守卫;或
+* `("matrix", <矩阵行名>)` —— 由跨引擎契约矩阵覆盖;或
+* `("registered", <为什么不能机械检查>)` / `("unguarded", <为什么没有守卫>)` —— 显式登记带理由。
+
+⇒ **新增一条 MUST 而没人管它 ⇒ 红;某条规则从标准里删掉而登记表还留着 ⇒ 红。**
+
+### 2 · 登记的结果(这份表本身就是结论)
+
+| | 条数 |
+|---|---|
+| §1–§4 的规范句 | **13** |
+| 有**具名守卫** | 4 |
+| 由**矩阵**覆盖 | 5 |
+| **有实现、但没有任何具名守卫** | **3** |
+| 显式登记为待决策口径 | 1 |
+
+**那 3 条"没有守卫"的**(本节**不改代码**,只如实登记):
+
+| 规则 | 现状 |
+|---|---|
+| **Partial Fill Tolerance**(未用现金即时回退 `Free_Cash`) | 实现见 `cycle_price_action/replay_broker.py` 的 IOC 不排队分支;`test_all_in_sizing_fraction_preservation.py` **间接**覆盖,不专门 |
+| **Exit Thresholds (TP/SL) 必须用相对百分比** | 四族都以相对值表达(各引擎 `tp_pct`/`sl_pct` + `if tp_pct <= 0: raise` fail-fast);但**没有一条守卫**钉"不许退回绝对价差" |
+| **Short-Side Feasibility**(做空必须声明借券假设) | 声明在 `short_reversal/presets.py` 的 `BORROW_ASSUMPTION`(含 `borrow_cost_model`/`borrow_cost_rate` 与 A 股券源稀缺的现实差距说明);但**没有任何测试**断言它还在、或断言缺它就不许跑 |
+
+第①条(AsOf)、②③(禁用函数/全局统计)、④(停牌)有具名守卫;
+第⑥(成本模型)、⑩(Intraday Blindness)、⑪(T+1)、⑫(涨跌停)由矩阵覆盖;
+第⑧(ATR 滑点)是**已知的待决策口径**(全库 `atr_slip_scale=0`)。
+
+### 3 · 顺带查实的两个"看起来像缺口"的**阴性**结果
+
+* **⑤ 单发子弹**:chase/uptrend 有 `sort_values(["date", "score"])`、short_reversal 有
+  `v68_conviction` 预设(`"并发信号按统计信心排序填充"`)。**cycle 按构造不适用** ——
+  它是**逐股独立账户**(`for code, slice in universe.items(): cerebro = ...`),
+  每账户容量恒 1 ⇒ **不存在"同一账户里并发信号抢容量"的时刻**。
+  (若只看"有没有 sort",cycle 会被误报成缺口 —— 与附九十一 的 `T+1` 同一种误报模式。)
+* **⑬ 借券假设**:`BORROW_ASSUMPTION` 声明齐全,连"回测数字是上界、不构成可执行预期"都写了。
+  它的问题**不是缺失,是没有守卫**(→ 登记进上面那张表)。
+
+### 4 · 判据的边界(如实声明)
+
+抽取靠**加粗规则名 + 关键词**的正则 —— 它抓的是 CLAUDE.md 的**书写格式**,不是语义。
+**若有人把某条 MUST 写成没有加粗标题的散文,抽取不到,本守卫也不会红。**
+这不是能用正则补的洞;能补的是**每次改 CLAUDE.md 时跑一遍**(这正是"登记表跟着现实走"的用法)。
+
+### 5 · 守卫当场抓到了写它的那个人
+
+第一版登记表里我把矩阵行名写成 `"容量闸门"`,而矩阵里的真名是
+`"容量闸门: 持仓已达上限则丢弃本 bar 剩余信号 (§2)"` —— `test_matrix_links_name_a_real_row`
+**当场红**。
+
+**这是"登记表指向的东西必须真实存在"这条判据的价值**:没有它,登记表可以写一个好听的名字,
+而矩阵里根本没有那一行 —— 那正是本会话反复栽的"名单 ≠ 实际集合",只不过这次是**登记表 vs 矩阵**。
+
+### 6 · 与前面几轮的关系
+
+* 附九十一 说"按名字搜 `T+1` 一处都搜不到,但四族都实现了" —— 本条把这件事**制度化**:
+  13 条规范句每条都要**指名**它的守卫,于是"实现了但没人守"与"守了但搜不到"都不会再落到沉默里;
+* 跨引擎契约矩阵(9 行 × 4 列 = **36 格**)与这张表**互相校验**:
+  矩阵的行必须真有其码,表里的 `matrix` 指向必须真是矩阵的行。
+
+---
+
+## 附九十五 —— §7 工件卫生:两条规矩都做到了,但**没有守卫**;顺带把标准对账补到全七节
+
+(附九十四 把 CLAUDE.md 的规范句对账,但**只覆盖 §1–§4** —— 那是它自己的一个缺口。
+这一条补全七节,并给其中此前完全没人守的 §7 建守卫。)
+
+### 1 · §7 两条机械不变量:**都做到了**
+
+§7 明文:
+
+> * **Results Stay Local**: `results/`、trades.csv、metrics JSON、生成的报告必须保持 gitignored
+>   —— "**a fresh clone must contain zero historical performance claims**";
+> * **No Numbers in Docs**:README 与设计文档**不得**嵌入历史指标(CAGR / Sharpe / 胜率表)。
+
+实测:
+
+| 检查 | 结果 |
+|---|---|
+| `git ls-files` 里的结果类产物 | **0**(唯一沾边的是 `cycle_price_action/results/.gitkeep` 占位,与 `short_reversal/docs/d_condition_explained.html` —— 后者是**文档**,`.gitignore` 的注释里点名说明过) |
+| `.gitignore` 的覆盖 | 有一整段专门讲这件事,含自陈"上面只忽略 `results/` **目录**,于是散落在别处的同名产物仍然可以被提交" |
+| 全库 5 个 markdown(含 `chase_up/README.md`)里"指标名 + 数值"同现的行 | **0** |
+
+⇒ **§7 是这一整轮审计里少见的一次"本来就做对了"** —— 而它**没有任何守卫**:
+明天一个新产物被 `git add`、或某份设计文档贴一张绩效表,都不会红。
+
+### 2 · 给它建守卫(三条不变量 + 两条防退化)
+
+`tests/test_artifact_hygiene_section7.py`:
+
+| 用例 | 钉什么 |
+|---|---|
+| `test_no_result_artifact_is_tracked_by_git` | 结果类产物不得被跟踪(占位与已登记文档例外) |
+| `test_the_artifact_patterns_are_actually_ignored` | §7 点名的每一类必须**真的**被 `.gitignore` 覆盖 —— 用 `git check-ignore` **探针**逐个试,而不只看"当前没人提交" |
+| `test_design_docs_embed_no_metric_values` | README / `docs/*.md` 里不得出现"指标名 + 数值"同现的行 |
+| `test_the_doc_scanner_is_not_vacuous` | 扫描面必须真扫到 ≥2 个文档(否则上一条恒真) |
+| `test_the_doc_scanner_has_teeth` | 种一行"Sharpe 1.42,年化 23.5%"必须被认出;只写指标名(无数值)不得误报 |
+
+**第二条是刻意用探针而不是"看现状"**:只测"当前没有被跟踪"是不够的 ——
+一个**新**产物明天就可能被提交;这一条钉的是"**规则还在**"。
+两向验证:把一个假产物 `git add -f` ⇒ 红;临时删掉 `.gitignore` 的 `trades.csv` ⇒ 红;
+往 `docs/*.md` 塞一行指标数值 ⇒ 红。
+
+### 3 · 一处**张力**,如实记下而不是绕过
+
+`docs/audits/strategy-discipline-audit.md`(这份审计报告,在 `audit/*` 分支上)**满是数字** ——
+那正是审计的证据(如 "CAGR 14.66% → 87.12%")。
+
+它与 §7 不冲突,依据是 §7 **自己**那句:**"Any number that cannot be regenerated from current
+code plus one command is treated as stale and deleted."** 报告里每个数都附了**复现方式**
+(哪条命令、哪个脚本)⇒ 它们是**可再生的证据**,不是"曾经观测到的成绩"。
+
+**但边界要靠人守**:若哪天把那份报告并进 `docs/`(或被本守卫当作"设计文档"的路径),
+守卫会红 —— 而那应该是**有意识的决定**,不是顺手带过来的。
+
+### 4 · 把标准对账补到全七节
+
+附九十四 只覆盖 §1–§4(13 条)。补齐 §5–§7 后:
+
+| | 条数 |
+|---|---|
+| CLAUDE.md §1–§7 的规范句 | **18** |
+| 有**具名守卫** | 8 |
+| 由**矩阵**覆盖 | 5 |
+| 显式登记为待决策口径 | 1 |
+| **有实现/有说法、但没有任何具名守卫** | **4** |
+
+新增的四条(§5–§7):
+
+| 规则 | 现状 |
+|---|---|
+| **Iterative-Tuning Accounting** | 守卫:`tests/test_dsr_trial_basis.py`(+ 附八十九 的枚举数登记表) |
+| **Attribution Mandate** | 守卫:`tests/test_attribution.py` |
+| **Results Stay Local** | 守卫:`tests/test_artifact_hygiene_section7.py`(本轮新建) |
+| **No Numbers in Docs** | 守卫:同上 |
+| **Banned In-Sample Grids** | **unguarded** —— 部分覆盖:chase 的两个单窗选优脚本被强制**声明** in-sample;但**没有守卫**禁止"写一个网格搜索直接报 max Sharpe"这类脚本出现(§5 的禁令是"**拒绝写**",不是"写了要标注") |
+
+那条 `Banned In-Sample Grids` 的登记值得单独看一眼:**它是 §5 里唯一一条"禁令式"的规则**
+(其余是"要做 X"),而"不许存在某种脚本"很难用守卫表达 ——
+**这本身就是这条登记的理由**。
+
+### 5 · 抽取范围的边界仍如实声明
+
+抽取靠**加粗规则名 + 关键词**的正则,抓的是 CLAUDE.md 的**书写格式**。
+把它从 §1–§4 扩到 **§1–§7** 时,`_SECTION_END` 从 `"## 5. ..."` 改成 `None`(抽到文末)—— 
+**边界仍是一个常量**,§7 之后若再加一节,要同步改它(否则新节的规范句会被静默漏掉)。
+这句已写进代码注释。
+
+---
+
+## 附九十六 —— 附十七 的修复只做了 **2/9**:另外 7 个单窗选优脚本从不声明"这是样本内选择"
+
+(本轮去补 附九十五 登记的"4 条无具名守卫"。挑的第一条是 §5 的 `Banned In-Sample Grids` ——
+结果它不是"缺守卫",而是**缺修复**。)
+
+### 1 · 缺陷
+
+附十七 修过一件事:`chase_up/sweep.py` 与 `sweep_all.py` 在**单一窗口**上给一批配置排序并报
+DSR,却**不声明这是样本内选择** —— 读者会把「挑出来的最好」当成「样本外验证过的最好」。
+处置:两个脚本各加一段声明,并**指名**滚动窗口版本。
+
+**那次只覆盖了看到的那两个。** 实测全库:
+
+| | 数 |
+|---|---|
+| 调用 `deflated_sharpe_ratio(` 的引擎脚本 | **28** |
+| 其中含窗口遍历(真 WFV)⇒ 本就不需要声明 | 19 |
+| **单窗选优 ⇒ 必须声明** | **9** |
+| 其中**当时没有声明**的 | **7** |
+
+那 7 个是 **6 个 `uptrend_pullback/sweep_v33_long*.py`** + **`short_reversal/grid_runner.py`**
+(两者都用模块级 `START, END = "2025-09-16", "2026-09-16"` 这类**单窗**)。
+
+⇒ 与 附八十五(`walkforward.py` 落单)、附九十(同一句假声明在 6 处原样留着)**同一个形态**:
+**修复只覆盖"我这次看到的那一份"**。这是本会话第 8 次。
+
+**已修**:7 个脚本各加声明(形状照抄 chase 那两个),并**指名**本族的 WFV 版本
+(uptrend → `wfv_eval.py`;grid_runner → `short_reversal/walkforward.py`)。
+
+### 2 · 判据:推导,不手抄名单
+
+* 家族 = 四个引擎包里**调用** `deflated_sharpe_ratio(` 的脚本
+  —— 注意是**调用**不是**导入**;
+* 其中**含窗口遍历**(`windows` / `WINDOWS`,不分大小写)的是真 WFV ⇒ 免声明;
+* 其余 = 单窗选优 ⇒ **必须**出现 `in-sample`(或`样本内`)字样,**且必须指名** WFV 兄弟。
+
+**为什么用"有没有窗口遍历"而不是"有没有模块级 `START/END`"**:
+`chase_up/sweep.py` 的窗口来自 **CLI 参数**(`args.start`),没有模块常量,但它同样是单窗选优 ——
+按"有没有窗"划更贴语义。这条判据本身也**钉了一个边界用例**
+(`test_known_single_window_scripts_are_in_the_family`):若哪天它退化成"看模块常量",
+`chase_up/sweep.py` 会**静默掉出家族**。
+
+### 3 · 过程中纠正的**两次**误判(都记下来)
+
+| 次 | 我算的 | 实情 | 错在哪 |
+|---|---|---|---|
+| ① | 家族里多算了一个 `cycle_price_action/walkforward.py` | 它是 **19 行的再导出 shim**(`# noqa: F401`,docstring 写明"强制外部 import 走 core")—— 只 **import** DSR,从不调用 | 判据把"**导入**"当成了"**调用**" |
+| ② | 家族里多算了 14 个 `wf_v*_focused.py` + `cycle/walkforward.py` | 它们**是** WFV | `\bwindows\b` 匹配不到 `WINDOWS`(大小写)与 `walkforward_windows`(`_` 是词字符,词边界不成立) |
+
+两次都是**先怀疑"家族多了一个"、去读那个文件**,才发现判据的边界错了 ——
+而不是反过来拿判据的输出当结论。
+
+### 4 · 守卫,以及它**没**覆盖的那半
+
+`tests/test_single_window_selection_is_disclosed.py`(7 条):
+
+* 单窗选优必须声明;声明必须**指名** WFV 兄弟;
+* **非空转**:必须至少找到 5 个"需要声明"的脚本;
+* **牙齿**:调 DSR + 无窗口遍历 ⇒ 需要声明;有窗口遍历 ⇒ 免检;只 import ⇒ 不适用(三种形状各判一次);
+* 边界钉:`chase_up/sweep.py` / `uptrend ...v6` / `grid_runner` 三个**已知**单窗脚本必须在家族里。
+
+两向验证:删掉 `grid_runner` 的声明 ⇒ 红;把声明里的 WFV 指向改掉 ⇒ 红。
+
+**没覆盖的那半**(已写进 §1–§7 的登记表):§5 的禁令本是「**拒绝写**一个直接报 max Sharpe 的
+网格搜索」——「不许存在某种脚本」很难用守卫表达,故只守住「**若存在则必须声明**」。
+登记表里 `Banned In-Sample Grids` 因此从 `unguarded` 改成 `guard`,并在理由里写明这一层。
+
+### 5 · 顺带:`§1–§7` 对账的分布更新
+
+| 归类 | 条数(附九十五 → 本轮) |
+|---|---|
+| 具名守卫 | 8 → **9** |
+| 矩阵覆盖 | 5 → 5 |
+| 待决策口径 | 1 → 1 |
+| **无任何具名守卫** | 4 → **3** |
+
+剩下的三条(`Partial Fill Tolerance`、`Exit Thresholds 相对百分比`、`Short-Side Feasibility`)
+仍在名单上。
+
+---
+
+## 附九十七 —— 一条守卫**守着已被标准删掉的那句话**:TP/SL 的 §4 条款被整句换过,而没人跟着改
+
+(本轮去补 附九十五 登记的"3 条无具名守卫"里的第二条:`Exit Thresholds (TP/SL)`。
+结果发现**不是没守卫,而是这个位置上杵着一条守错东西的守卫**。)
+
+### 1 · 病史(从 git 史查清,不是猜的)
+
+提交 `2260ba1`(2026-09-29)`docs(CLAUDE.md): codify Single-Bullet, IOC, and TP/SL target
+projection rules` **把 §4 这一条整句换掉了**:
+
+```
+- **Exit Thresholds (TP/SL):** … They MAY be either fixed … or ATR-based …
+-     Both are valid; **document the choice in the preset's compliance header**.
++ **Exit Thresholds (TP/SL) & Target Projection:** … TP/SL and slippage must **always** be
++     communicated from Strategy to Broker as **relative percentages (e.g., `sl_pct = 0.05`)**,
++     **NEVER** as absolute point differences derived from adjusted prices …
+```
+
+即**删掉了**「compliance header」那条要求(现行 CLAUDE.md 里
+`grep "compliance header"` **为空** —— 这个概念已经不存在),**换成了**「必须用相对百分比」。
+
+而仓库后来的动作全都建立在**旧文本**上:
+
+| 谁 | 做了什么 |
+|---|---|
+| `48fc309` | 「fix(§4): 45/81 个 preset 缺 compliance header」—— 为满足**旧条款的守卫**,给 45 个 preset 补加了注释 |
+| `tests/test_tp_sl_compliance_header_4engine.py` | 至今把旧文本当作 **"CLAUDE.md §4 (verbatim)"** 逐字引用,并**强制每个 preset 必须有 §4 退出阈值注释** |
+| `tests/test_tp_sl_compliance_header.py` | 同上(3 引擎的旧版,4engine 那份是它的超集) |
+| **标准新增的那半**(相对百分比 / NEVER 绝对价差) | **没有任何守卫** |
+
+**后果不是崩溃,而是把错误告诉下一个人**:那条守卫的失败信息(实测该文件第 224 行)
+会**逐字引用一句标准里不存在的话**,还标着"per CLAUDE.md §4"。而真正的要求无人守。
+
+> 与本会话反复出现的"修复漏了覆盖面"是同一个病的**另一面**:
+> 那边是**该修的没修到**,这边是**该退休的没退休**。判据都得落在"标准的**当前**文本"上。
+
+### 2 · 处置:退休旧守卫,按**现行**条款重写
+
+新增 `tests/test_tp_sl_are_relative_percentages.py`,对四个引擎的**每一个** preset 断言:
+
+1. **不得声明绝对价阈值** —— 键名形如 `tp_price` / `sl_price` / `stop_price` /
+   `target_price` / `exit_price` 一律拒绝(这正是 §4 说的 "NEVER absolute point differences");
+2. `tp_pct` / `sl_pct`(若声明)必须是**相对分数** `(0, 1]`;
+3. `atr_tp_mult` / `atr_sl_mult`(若声明)必须为正 —— 它们乘的是 **ATR%**,同为相对量。
+
+**上界为什么取 `1.0` 而不是 `< 1.0`**:`short_reversal/v73_nosl` 用 `sl_pct=1.0` 表达
+「不止损」—— 那**仍然是相对量**(100% 的入场价),不是绝对价差。我第一版写成 `< 1.0`,
+实测把它误判成违例。
+
+**实测**:101 个 preset 里,绝对价键 **0** 个、pct 越界 **0** 个 ⇒ **现行条款本来就成立**,
+只是此前没人守。
+
+**两个旧守卫已删除**(删除是 `git rm`,可回溯)。另加一条:`test_the_retired_clause_is_not_quoted_as_a_standard`
+—— 全库不得再把那句被删的话当作现行标准引用;**允许引用,但必须写明它被删于哪个提交**
+(一段"病史"要能贴出原话才有用)。这条判据**当场抓到了我自己**(我在本文件的病史里逐字引了它,
+于是必须同时写出 `2260ba1`)—— 与 附九十 那次"守卫惩罚它自己的更正记录"同型。
+
+**45 个 preset 上的旧注释保留为可选文档** —— 删 45 条注释是纯 churn,而它们并无害处;
+本附录记下"这条要求已不在标准里",由后人对是否清理自行决定。
+
+### 3 · §1–§7 对账分布更新
+
+| 归类 | 条数(附九十六 → 本轮) |
+|---|---|
+| 具名守卫 | 9 → **10** |
+| 矩阵覆盖 | 5 |
+| 待决策口径 | 1 |
+| **无任何具名守卫** | 3 → **2** |
+
+登记表里 `Exit Thresholds (TP/SL) & Target Projection` 从 `unguarded` 改为指向新守卫,
+并把"旧守卫守的是被删条款"一并写在理由里。
+
+### 4 · ⚠️ 本轮的环境事故(如实记)
+
+执行到"起终局套件"那一步时,`git status` 报 **not a git repository**。诊断结果:
+
+* `/tmp/hiagent-fix/.git`(worktree 的链接文件)**消失**;
+* worktree 里 **149 个文件被物理删除**(`README.md`、各引擎的 `__init__.py`/`data.py`/
+  `signals.py`、`tests/golden/*.json` 等);
+* **本批的 4 处改动恰好完好**(恰因为它们的状态是"已改/新增/已删",不是"未改")。
+
+处置:`git worktree repair` 修回链接;按 `git status` 的 ` D` 清单精确 `git checkout --` 恢复
+147 个文件(**没有**动我那 4 处);随后把本批改动**另存一份到 job 临时目录**再起套件。
+`git status` 恢复正常后**只剩本批的 4 处**。
+
+**已提交并推送的 `790af4a` 从未受影响**(远端可查)。事故原因未知(该 worktree 在 `/tmp` 下),
+**不猜**;但这次的教训是可操作的:**改动先落盘备份,再跑小时级的套件**。
+
+---
+
+## 附九十八 —— ⚠️ 更正 附九十七:`2260ba1` 换掉的**不止一条**,而是**四条**;九个文件仍在引用被删的旧条款
+
+(附九十七 修了 §4 的 TP/SL 一条,并写下"这条守卫守着已被标准删掉的那句话"。
+本轮去补登记表里剩下的两条无守卫规则时,顺手把那**同一个提交**的 diff 全看了一遍 ——
+**才发现附九十七 只修了四条里的一条。**)
+
+### 1 · 完整清单
+
+`2260ba1`(`docs(CLAUDE.md): codify Single-Bullet, IOC, and TP/SL target projection rules`)
+在 §2/§4 里**成句替换**了四条:
+
+| 被删的旧条款 | 现行替代 | 仍在引用的文件 |
+|---|---|---|
+| `**Atomic Cash Locks:** … lock cash sequentially … Order 2 based ONLY on the strictly remaining Free_Cash` | §2 **Single-Bullet Execution**:并发信号按信念排序,**其余 IMMEDIATELY DISCARDED**(**没有 Order 2**) | **4** |
+| `**All-In Sizing Policy (2026-09-21):** …` | §2 **Strict All-In Sizing Policy**(100% Free_Cash + Margin Gatekeeper) | **3** |
+| `**Volume Participation Limit:** … Unfilled quantities must be explicitly canceled **or queued**.` | §4 **… & IOC Handling**:**Do NOT queue** the remainder | **3** |
+| `**Exit Thresholds (TP/SL):** … document the choice in the preset's compliance header.` | §4 …**relative percentages, NEVER absolute** | 1(附九十七 已改成带出处) |
+
+**其中一条的方向是反的**:旧文本允许 "canceled **or queued**",新文本明令 "**Do NOT queue**"。
+把旧句当原文引用的测试,引用的是**现行要求的反面**。
+
+### 2 · 处置:把这一类做成**可推导的登记表**
+
+新建 `tests/test_retired_clauses_are_not_quoted_as_current.py`:
+
+```
+RETIRED_CLAUSES = {被删的原句片段: (删它的提交, 现行替代)}
+```
+
+三条断言:
+
+1. **该片段必须确实不在现行的 CLAUDE.md 里** —— 若标准把某条加回来了,这里会红(登记表过期);
+2. **该片段必须确实出现在那个提交的 diff 里** —— 出处不能是编的;
+3. **没有任何源码文件把退休片段当作现行标准引用** ——
+   判据是"同文件里出现该片段 **且** 带 `verbatim`/`(2026-09-21)` 之类的"当作原文"标记,
+   **且没有**写明它已被替换"。
+
+第 ③ 条**刻意允许带出处的引用**:一段"病史"必须能贴出原话才有用
+(附九十七 里那条同类判据当场抓到过我自己的病史引用)。
+
+### 3 · 修法:**只改引文,不动断言**(逐处读过才敢这么说)
+
+九个引用点逐处读过,过时的**只在文档字符串 / 注释**里;它们的**断言**至今有效:
+
+| 文件 | 断言实际测什么 |
+|---|---|
+| `test_volume_cap_{4engine,low_bar,short_reversal_volume_cap}.py` | `volume_cap_fill` 的取整、低 bar 不整除绕过、零/负 bar 返回 0 —— **容量计算**,与"队列还是取消"无关 |
+| `test_atomic_cash_locks_4engine.py` | 四个引擎的"扣现金有守卫" —— 现行条款下同样成立 |
+| `test_all_in_sizing_fraction_preservation.py` / `test_cost_cash_rejection_4engine.py` | 100% 全仓 sizing 的分数保持 —— 新条款的实质相同 |
+
+⇒ 修法是**在模块 docstring 之后插一条注明**("该条款已被 `2260ba1` 替换,此处引用旧句仅为对照;
+本文件的断言测的是现行行为,不是那条已退休的措辞"),**七个文件各一条,零断言改动**。
+
+**若某处断言的是被替换掉的**行为**(例如真的断言"剩余量排队到下一 bar"),那要单独立案 ——
+本轮逐处读过,**未发现**;这条留作后续检查口径。
+
+### 4 · 两向验证
+
+删掉 `test_volume_cap_4engine.py` 的出处注释 ⇒ **两条红**(通用判据 + 边界钉);
+恢复 ⇒ 10 passed。
+
+### 5 · 与 附九十七 的关系(自我更正)
+
+附九十七 的标题写"一条守卫守着已被标准删掉的那句话",正文把范围限定在 TP/SL ——
+**那是对的,但不完整**:同一提交删了四条,而其中三条当时**没查**。
+本条的教训是可操作的:**看到一个提交"整句替换"了标准里的某条,就把那次 diff 里被删的句子
+全部提出来**,而不是只处理撞见的那一条。(这与本会话"修复只覆盖看到的那一份"同源,
+只是舞台从"代码里的四个引擎"换到了"标准里的四条条款"。)
+
+---
+
+## 附九十九 —— 收口:§1–§7 的 18 条规范句,**全部**有了具名守卫或矩阵覆盖
+
+(本轮去补登记表里最后两条无守卫的规则。结果是:**两条都不是"缺守卫",而是"没测"** ——
+一条的规则本身早就做对了,另一条的实现方式与 §4 的字面措辞**不同但等价**。)
+
+### 1 · §4 Short-Side Feasibility(做空必须声明借券假设)
+
+§4 原文:
+
+> Any short strategy MUST explicitly declare its securities-lending assumption (availability,
+> borrow cost). **A short backtest without a declared borrow model is invalid by construction.**
+
+实测:本仓库唯一的做空引擎 `short_reversal` —— **这一条做对了**,而且是**载重的**:
+
+```
+core/dual_price.BORROW_RATE_ANNUAL = 0.086        # 单源
+  → short_reversal/engine.py:  MARGIN_RATE = BORROW_RATE_ANNUAL
+  → replay_strategy_v3.py:      margin_rate=BORROW_RATE_ANNUAL   # 每 bar 按 notional 计提融券费
+```
+
+`presets.py` 的 `BORROW_ASSUMPTION` 三键齐全,并**如实写出 A 股券源稀缺的现实差距**
+("回测数字是上界,不构成可执行预期")。
+
+**缺的只是没有任何测试钉住它。** 新建 `tests/test_short_side_borrow_model_is_declared.py`,
+钉四件事 —— 其中第 4 条是关键:
+
+1. 声明在(§4 的字面要求);
+2. 三键齐(`availability` / `borrow_cost_model` / `borrow_cost_rate`);
+3. 费率与 `core.dual_price` **单源一致**,不许就地写 `0.086`;
+4. **引擎真的消费它**(`margin_rate=BORROW_RATE_ANNUAL` 必须出现在计提点)——
+   本仓库反复吃过"声明了却无人读取 = 装饰"的亏,所以守卫不能只查"有没有那个字典";
+5. 另钉一条 §0:声明里必须写出 A 股券源稀缺的现实差距。
+
+**三条两向验证**:删一个必需键 ⇒ 红;把费率写死成 `0.086` ⇒ 红;去掉计提点 ⇒ 红。
+
+### 2 · §4 Partial Fill Tolerance(部分成交)
+
+§4 的措辞是「未用现金**即时退回** `Free_Cash`」—— 一个**先锁后退**的流程。
+而本仓库四个引擎的实现是 **先缩量、再扣钱**:
+
+| 引擎 | 定位 |
+|---|---|
+| `chase_up` / `uptrend_pullback` / `short_reversal` | `size = max_fill` |
+| `cycle_price_action` | **`shares = max_fill`**(变量名不同) |
+
+⇒ **现金从未离开 `Free_Cash`**,所以"退回"这一步在结构上不存在。
+**两者结果等价,但守卫只能钉后者**(钉"有没有退回一步"会永远红)。
+
+处置:把这条作为**契约矩阵的一行**(它是"一条规则 × N 个实现"的标准形态),
+而不是再写一个专用文件。矩阵现为 **10 行 × 4 列 = 40 格**。
+
+**仍如实登记未覆盖的那半**:§4 那条"先锁后退"的**字面流程**没有守卫 ——
+本仓库不锁,所以没有可钉的对象。这一层写在登记表的理由栏里。
+
+### 3 · 收口状态
+
+| 归类 | 条数 |
+|---|---|
+| 具名守卫 | **11** |
+| 矩阵覆盖 | **6** |
+| 显式登记为待决策口径 | 1 |
+| **没有任何具名守卫** | **0** |
+| 合计(§1–§7 的规范句) | **18** |
+
+### 4 · 顺带:一条元断言因**状态变好**而红了(如实记)
+
+登记文件里原有一条 `test_every_kind_is_used`,断言四种归类**都**出现(防"归类退化成单值")。
+本轮 `unguarded` 归零 ⇒ 它**正确地**红了。
+
+**处置不是删掉它,也不是放宽到不检查**,而是**改成断言它真正想防的东西**:
+"至少出现两种归类,且不出现未知归类"。并在 docstring 里写明这次改动的**原因**是
+"§1–§7 的 18 条全部有覆盖了,状态变了",免得下一个人以为是判据被削。
+—— 这与本会话里"守卫把缺陷固化成契约"是**相反**的情形:**守卫把"还有缺口"固化成常态**,
+也会在缺口补上之后拦人。
+
+---
+
+## 附一百 —— 把矩阵的一行从"**实现存在**"升级为"**四族算出来一样**"§2 成本模型差分
+
+(附九十一~九十九 把那 10 条契约在四族里的**落点**钉住了。但它们钉的是**存在性**。
+仓库自己早就写过那句警告 —— `test_preset_declarations_are_load_bearing.py` 开头:
+
+> 往 `params = dict(weight_kline=1.0, …)` 里加一个默认值就能让审计变绿,而声明依然被忽略。
+
+**四族各写一份"同一条契约"的实现,就是四次写错的机会。** 这一条把矩阵里最便宜可差分的那一行
+—— §2 成本模型 —— 从"存在"升级为"**数值一致**"。)
+
+### 1 · 实测:四族**逐值一致**,而且方向是对的
+
+| 引擎 | 卖出侧的费 | 买入侧的费 |
+|---|---|---|
+| `chase_up` / `uptrend_pullback` | `max(n·r, m) + n·stamp` | `max(n·r, m)` |
+| `cycle_price_action` | `max(MIN, n·R) + n·STAMP_TAX_SELL` | `max(MIN, n·R)` |
+| `short_reversal` | **entry**(做空开仓 = **卖出**)含印花税 | **exit**(买回平仓 = **买入**)不含 |
+
+**`short_reversal` 的 entry / exit 与多头引擎"名字相反"** —— 它的 **entry 是卖、exit 是买**。
+费用**跟着方向**走:卖出缴印花税、买入不缴。**跨过这层名字,四族完全一致。**
+
+数值证据(小额触发最低佣金 ¥5、大额触发费率,两档都测):
+
+```
+notional      chase buy  uptrend buy | chase sell  uptrend sell
+     1,000         5.00         5.00 |       5.50          5.50
+    50,000        12.50        12.50 |      37.50         37.50
+ 1,000,000       250.00       250.00 |     750.00        750.00
+```
+
+`cycle` 的接口是**现金差额**(`_buy_cost` 返回 `notional+comm`、`_sell_proceeds` 返回
+`notional−comm−tax`),用差额还原费用后**逐值相同**。
+
+### 2 · 三条断言
+
+1. **数值一致**:`chase` / `uptrend` 直接调 `buy_cost`/`sell_cost`;`cycle` 用差额还原;
+   三者都必须在**小额与大额两个区间**上与规范式逐值相等(参数化到 4 个 notional);
+2. **方向正确**:`short_reversal` 的 entry 费**必须**含印花税、exit 费**必须**不含 ——
+   判据用 **AST 取赋值右侧**,所以注释里写"印花税"不会干扰。
+   **这条会在有人"顺手把印花税从 entry 挪走"时红** —— 那看起来像是在修一个
+   "多头引擎买入不缴税,怎么它缴"的不一致,实际是把方向搞反了;
+3. **单源**:四族的费率常量都不许就地写数字;`cycle` 用自己的类常量名承载同一批值,
+   逐值核对等于 `core.dual_price`。
+
+### 3 · 两向验证
+
+| 注入 | 结果 |
+|---|---|
+| 去掉 `chase_up` 卖出侧的印花税项 | **5 条红**(规范式比对 ×4 + 两族一致性) |
+| 把印花税从 `short_reversal` 的 entry 挪到 exit | **2 条红**(方向判据 + 牙齿) |
+| 恢复 | 13 passed |
+
+### 4 · 两道我自己踩过的坎(过程记账)
+
+* **`_assigned_rhs` 取"第一个"赋值是错的**:该文件里 `entry_fee` 另有一处**读取**
+  (`float(pos.get('entry_fee', 0.0))`),取第一个会取到**不相干**的那处。
+  改成取**所有**右侧,再用"含 `commission_rate`"把**费用公式**那一条挑出来。
+* 判据一开始写成"两侧都应有佣金项",而那其实是**选择条件**保证的 —— 写成断言是冗余;
+  已在注释里说明它由 `_fee_formula` 的选择条件承担。
+
+### 5 · 覆盖面:为什么只差分了"成本模型"这一行
+
+矩阵另有 9 行,但**只有这一行能在纯函数层做差分**:
+
+* **容量闸门 / T+1 / 涨跌停 / 公司行为**:要真实账本与行情,属**行为级差分**,
+  需要可复现的产物或夹具 —— 不在本轮的"便宜"范围内;
+* **`short_reversal` 的费用是内联在 `next()` 里的**,不能直接调 ⇒ 第 1 条对它**不适用**,
+  改用第 2 条的结构判据(方向)。**这个覆盖差如实写进了模块 docstring**,
+  免得下一个人把"13 passed"读成"四族都做了行为差分"。
+
+> 这一条也标出下一层该往哪走:§1–§7 的**守卫覆盖面**已经收口(附九十九),
+> 再往下一层是**行为正确性**,而它的成本比覆盖面高一个量级 ——
+> 能便宜做的部分(纯函数可达的那些)已经做完,剩下的需要**可跑的产物或夹具**。
+
+---
+
+## 附一百零一 —— §3 真缺陷:**复权视图在因子表覆盖之外静默退回原始价**(实测 38,870 行);顺带对账 附七十九 §5 的登记表
+
+(本轮本来只打算对账 附七十九 §5 那份"已登记缺口"清单 —— 登记表会过期。
+对账途中去读了复权视图的定义,撞上一条**新的 §3 缺陷**。两部分都记在这里。)
+
+## 第一部分:§3 —— 复权视图**静默退回原始价**
+
+### 1 · 缺陷
+
+`v_daily_hfq` / `v_daily_qfq` 的定义(从 `duckdb_views()` 读出):
+
+```sql
+SELECT d.<ohlc> * COALESCE(f.backward_factor, 1)  ...
+FROM raw_kline_daily d
+LEFT JOIN calc_adjust_factor_daily f USING (thscode, date)
+```
+
+`LEFT JOIN … COALESCE(factor, 1)` 把「**这个日期没有因子行**」变成了「**因子 = 1**」,
+而 1 就是**原始价**。实测(在线库):
+
+| | |
+|---|---|
+| `calc_adjust_factor_daily` 覆盖 | 2016-09-02 … **2026-09-18**(周五) |
+| `v_daily` 覆盖 | 2016-09-02 … **2026-09-30** |
+| **退回原始价**的行 | **38,870 / 10,364,755 = 0.38%** |
+| 落在哪些日期 | **2026-09-21(周一)… 09-30,共 7 个交易日**(09-19/20 是周末,库里无 K 线行) |
+
+**量级**:以 `600000.SH` 为例,该处的后复权因子是 **1.876** ⇒ 那 7 个交易日的"复权价"
+比正确值**低约 46%**。这一段正是 §3 明令禁止的**跨价域混用**:序列在 09-18/09-21 之间**跳变**,
+任何跨过该边界的指标(MA / MACD / 波动率)都会把两个价域混在一起算。
+
+### 2 · 当前影响面:**已发布窗口一个都没踩到**(逐脚本实测)
+
+| 脚本 | 窗口终点 | 触及? |
+|---|---|---|
+| `uptrend_pullback/sweep_v33_long*.py` | 2026-09-16 | 否 |
+| `short_reversal/walkforward.py` | 2026-09-18(= 因子最后一日) | 否 |
+| `short_reversal/grid_runner.py` | 2026-09-12 | 否 |
+| `chase_up/sweep.py` | 2026-09-19(**周六** ⇒ 实际只到 09-18) | 否 |
+
+⇒ 这是**数据档期滞后**(K 线比因子表新),**不是窗口内部的空洞**。
+**但任何终点晚于 2026-09-18 的窗口都会中,而且不会有任何报错。**
+
+### 3 · 为什么不在本轮改它
+
+调整视图定义在**上游**,不在本仓库:仓库里的 `sql/migrate_v_daily_dual.sql` 只定义
+**建在它们之上**的 `v_daily_dual`。故本轮**不动数据**,只做两件事:
+
+1. **钉形状** —— 缺因子的行必须**严格晚于**因子表最大日期;**中间出现空洞 ⇒ 红**
+   (那才是灾难形态:一整段历史没有复权);
+2. **登记滞后上界** —— 因子表最后日期不得比 K 线表落后超过 `MAX_REGISTERED_LAG_DAYS = 21` 天
+   (当前 12 天);**超过 ⇒ 红**,提醒去刷新因子表;
+3. **阳性对照** —— 视图确实做了乘法(>1e6 行复权价 ≠ 原始价),否则上面两条"无缺口"会退化成空转。
+
+两向验证:把滞后上界压到 5 天 ⇒ 红;恢复 ⇒ 4 passed。
+
+**正确的修法(登记,不在本轮做)**:上游视图应改成**取该标的最后一个已知因子**
+(`LAST_VALUE(factor IGNORE NULLS) OVER (PARTITION BY thscode ORDER BY date)`),
+或者让消费者在窗口越过因子覆盖时 **fail-fast**(§0),而不是静默拿到原始价。
+两条都要动仓库之外的东西(上游视图 / 四个 loader)。
+
+### 4 · 顺带更正我自己的一次误读(如实记)
+
+第一次量的时候我看到「`v_daily_hfq` 的最新端 ratio 也 ≈ 1」,一度以为它的标注是错的
+(附七十六 论证过它确实是后复权)。**去读视图定义与因子表**之后才明白:
+那正是**本条的缺陷**造成的 —— 最新 7 天没有因子行 ⇒ factor=1 ⇒ 复权价 == 原始价。
+`600000.SH` 的因子序列其实是干净的单调上升(1.000 → 1.876,只在每年除权日跳一档)。
+**"两端 ratio 都 ≈1"这个现象,用"标注错"解释不了,用"尾部缺因子"解释得了** ——
+这也是当时决定继续挖而不是直接写成"视图标错"的原因。
+
+## 第二部分:对账 附七十九 §5 的"已登记缺口"清单(11 项)
+
+登记表会悄悄过期。逐条核过(实测,不是读注释):
+
+| # | 登记项 | 现状 |
+|---|---|---|
+| ① | Phase-2 无公司行为(chase/uptrend) | **仍成立** —— 两个 `backtrader_engine.py` 里都没有 `apply_corporate_action` |
+| ② | 四引擎接 `dna_data` | 仍成立(其"不改变行为"已实证) |
+| ③ | 送股/配股真数据对账 | 仍成立(未做) |
+| ④ | **`cycle` 成交记录无 `exit_reason`** | ⚠️ **已修** —— `cycle_price_action/portfolio.py:565` 有 `exit_reason=reason`,且 `test_cycle_exit_contract.py` 钉着 ⇒ **登记项过期** |
+| ⑤ | `is_limit_down` 不可达 fail-open | **仍成立** —— `core/dual_price.py`:`prev_close is None → return False`(放行)。**放行的方向是乐观的** |
+| ⑥ | `cycle` 影子账不因 SL/TP 减少 | **仍成立**(结构未变;危害已由附五十五 从"中止回测"降级为"告警") |
+| ⑦ | phantom 工具用 qfq 校准 | **仍成立**,而且本轮把它的性质说清了:`chase_up/audit_phantom.py` 以 **`v_daily_qfq`** 为参照,而引擎的**信号价域是 hfq**、**执行价域是 raw** ⇒ 该工具只能检出**旧的 qfq 形态**的 phantom |
+| ⑧ | HTML 未 plumb 真实超额 | **仍成立**(`tools/render_top5_presets_html.py` 里没有 `excess_return`) |
+| ⑨ | 更宽窗口重新定价 | 仍成立(需重跑) |
+| ⑩ | OOS 划分未做进 `wfv_eval` 代码 | **部分** —— `--window-role` 已是必需参数并写进产物(附七十四);但**划分本身**仍未强制(仍靠窗口声明) |
+| ⑪ | DSR 四条规则是语法/浅数据流而非证明 | **仍成立** —— 实测 `tests/test_dsr_inputs_single_source.py` 的判据仍是"不许硬编码字面量 / 不许模块级常量 / 不许烤进数字"这类**静态**规则 |
+
+**11 项里 1 项已过期**(④)。已在 附七十九 §5 标题下加一行更正指针,指向本条 ——
+登记表**只应当变短**,而"变短了却没人删"正是它的失效方式。
+
+---
+
+## 附一百零二 —— 我去追"qfq/hfq 分族"这条 §0 嫌疑,**假设基本被实测否掉**;但追的过程给上一条缺陷量出了一个更凶的数
+
+(上一批查复权视图时注意到:四族里 **`chase_up`/`uptrend_pullback` 加载 `v_daily_qfq`(前复权)**,
+而 `short_reversal`/`cycle_price_action` 用 **hfq**(后复权)。仓库自己的 SQL 注释写着
+"**前复权的历史价位会随之后每次分红而变** ⇒ 与 §0 可复现性冲突" —— 看起来像一条 §0 级嫌疑。
+这一条把它**量掉**,并如实报告:**假设基本不成立**,但顺手量出一个更要紧的事实。)
+
+### 1 · 假设与实测
+
+**假设**:两族用不同价域 ⇒ (a) 两域算出的日收益不同 ⇒ 信号不可比;(b) 前复权的历史值会随新分红变化
+⇒ chase/uptrend 的回测**跨数据档期不可复现**。
+
+**实测(a)**:逐日涨跌幅在两域下不同的行 **5,237 / 10,359,190 = 0.0506%** —— 而且**几乎全部**
+集中在 **2026-09-21**(上一批那个因子表尾部日期)。**去掉尾部之后,两域收益一致。**
+⇒ **假设(a)基本不成立**:qfq 与 hfq 在正常区间内给出**同样的日收益**。
+
+**实测(b)**:`qfq = hfq / B(T)`(B 为该标的的后复权因子在末日的取值)——
+对 `600000.SH` 实测 `qfq/hfq ≡ 0.533`(**常数**)。也就是说两域相差的是**每股一个常数**,
+而四族的信号判据**全是比例型**(`pct_chg_low/high`、`min_above_ma60_ratio`、`close_ma60_buffer`、
+`tp_pct`/`sl_pct` …)。**常数缩放不改变比例** ⇒ **判据不受影响**。
+⇒ 前复权的"历史值会变"确实为真,但**变的是一个每股常数**,而**没有任何引擎把绝对复权价当阈值**
+⇒ **我不主张这是 §0 违反**(§0 要的是"同输入同输出",而它在**可消费的输出**上成立)。
+
+**结论:分族是真的,但它的自有影响 ≈ 0。** 这条嫌疑**不立案** —— 立案的是下面这个。
+
+### 2 · 追它的路上,量出了一个更凶的数
+
+两域差异**全部集中在 2026-09-21**,原因就是上一批那条:因子表止于 09-18 ⇒ 09-21 起
+`COALESCE(factor, 1)` 把复权价乘 1(**即原始价**),而 09-18 那天的因子是 1.876
+⇒ 序列**跳跌**。上一批我量的是"那几根 bar 的复权价低约 46%";这一批量的是**它的实际形态**:
+
+| 量 | 数 |
+|---|---|
+| 复权域里**单日收益 < −50%** 的行(A 股涨跌幅上限 ±10%/±20%,**物理上不可能**) | **1,150** |
+| 两域同日收益差 >1% 的行 | 4,880,其中 **4,880 行在 2026-09-21** |
+| `abs(r_adj − r_raw) > 10%` 的行(= 伪影) | **7,979** |
+
+⇒ 它不是"某根 bar 的价格低了一点",而是**一根凭空造出来的巨幅日收益**,
+会**直接进入** `pct_chg` 类信号(阈值 0.03~0.09,−94% 会远远落在区间外)与**下一根 bar 的盯市**。
+
+### 3 · 新守卫:从"形状"升级为"**语义**"
+
+上一批的守卫钉的是**形状**(缺口只能是尾部)。这一批加一条**语义**判据,更贴物理:
+
+```
+复权序列的日收益 与 原始序列的日收益 之差  ≤ 10%
+```
+
+理由:两者在**除权日**本来就不同(原始价含分红跳空、复权价不含),但那只有**几个百分点**;
+超过一个数量级只可能是**因子缺失/跳变**。实测伪影 **7,979 行**。
+
+**它是红的 ⇒ 走登记债务**(`KNOWN_ADJUSTED_RETURN_ARTIFACT_ROWS = 7_979`),不假装绿:
+① 数量**不得超过**登记值(涨了说明伪影变多,立刻红);
+② 数量**掉到 0** 说明已修 ⇒ 登记条目必须删掉(**登记表只应当变短**)。
+另加一条非空转:同判据在 1% 阈值下必须找出 **>1000** 行(否则它恒真)。
+
+两向验证:把登记值压到 100 ⇒ 红(数量检查确实在比)。
+
+### 4 · 这条为什么比上一条更值得记
+
+上一批的结论"复权价低约 46%"听起来像一个**定价误差**;而本批量出的是**它在收益序列里的形态** ——
+**1,150 行物理上不可能的日收益**。同一个缺陷,第二种量法直接说明了它**会不会进策略**:
+会的,而且是以最刺眼的形式。
+
+**⇒ 记账方式的教训**:量一个数据缺陷时,除了"它偏离了多少",还要量**"它变成什么进入了消费端"**。
+前者是**幅度**,后者是**形态**;而**能不能伤人由形态决定**。
+
+---
+
+## 附一百零三 —— 那个尾部缺陷**今天就咬人**:`cycle` 的默认窗口是 `end = today`
+
+(附一百零一 量出复权视图在因子表末端之后静默退回原始价;附一百零二 量出它的**形态**是
+"1,150 行物理上不可能的日收益"。那两条都把影响面写成"已发布窗口一个都没踩到"。
+**这一条把它收窄成一个当下就成立的判断:`cycle_price_action` 的默认跑法本来就会中。**)
+
+### 1 · 缺陷(逐入口实测)
+
+四个入口的默认窗口:
+
+| 入口 | 默认终点 | 是否越界(因子表末 2026-09-18) |
+|---|---|---|
+| `tools/run_all_backtests_html.py` | `DEFAULT_END = "2026-09-08"` | 否 |
+| `tools/rerun_top_presets.py` | `DEFAULT_END = "2026-09-08"` | 否 |
+| `chase_up/main.py`(文档例) | `--end 2026-09-19`(周六 ⇒ 实际 09-18) | 否 |
+| **`cycle_price_action/main.py`** | **`end = date.today()`**(2026-10-20) | **是 —— 越界约一个月** |
+
+`cycle_price_action/main.py:29` 的 `_resolve_window`:
+
+```python
+Defaults: end = today, start = end - 365 days.
+e = date.fromisoformat(end) if end else date.today()
+```
+
+⇒ **不带参数的 `python3 -m cycle_price_action.main` 就会跑一个终点在今天、而最后一个月
+数据静默未复权的窗口**,产出一份**看起来正常**的报告。附一百零二 量过那一段的形态:
+复权域里出现**单日 < −50%** 的日收益(而 A 股上限 ±10%/±20%)。
+
+### 2 · 处置:在**消费者侧** fail-fast(§0)
+
+新增 `cycle_price_action/main.py::assert_adjusted_window_is_covered(db_path, end)`:
+
+* 读 `calc_adjust_factor_daily` 的最大日期;
+* **窗口终点越过它 ⇒ 抛错**,错误信息里点出"因子表末端"与"退回原始价"这两个事实,
+  并给出"把 `--end` 收到 X 或更早 / 先刷新因子表"两条出路。
+
+**三个设计取舍,写清楚:**
+
+1. **放在 `_run_backtest` 里,不放 `_resolve_window`** —— 后者是**纯**窗口解析,
+   而且 `test_cycle_main.py` 明确钉着"默认 end = today"这条行为。**"默认该不该是 today"
+   是另一个问题**(见下),不该混进这次修复;
+2. **抛错而不是静默截断窗口** —— 截断会悄悄回答一个用户没问的问题(§0 的 Fail-Fast 与
+   可复现性都指向"说出来");错误信息给出可执行的下一步;
+3. **只动 `cycle` 一个引擎** —— 其余三个入口的默认窗口实测**不越界**(上表),
+   没有需要 fail-fast 的默认路径。**这是"只改需要改的"**,不是"只改了看到的那个"。
+
+测试把 `_run_backtest` 桩掉了 ⇒ 这次改动**不影响既有 9 条用例**。
+
+### 3 · 守卫:两个方向都测(否则它会退化成"永远拒绝"或"从不拒绝")
+
+`tests/test_adjusted_views_do_not_silently_revert_to_raw.py` 新增一条:
+
+* **覆盖内**(正好落在因子表最后一天)⇒ **必须放行**;
+* **越界**(末日 +1 天)⇒ **必须抛错**,且信息里含因子表末端与"原始价";
+* 顺带钉住"当前默认跑法本来就会中"这个事实(因子表刷新到覆盖今天后,这段自动不再触发)。
+
+### 4 · 登记:**默认 `end = today` 该不该改**,留给口径
+
+本次**只做 fail-fast,没动默认值**。理由:`end = today` 是**行为契约**(有自己的测试),
+改它属于口径变更 —— 而且它本来是对的(**数据完整时**跑最近一年正是常见用法)。
+真正错的是**数据档期**,不是那个默认值。
+
+⇒ 如果要让默认跑法可用,正道是**刷新 `calc_adjust_factor_daily`**(或上游视图改前向填充),
+而不是把默认值收紧。**这一条留给使用者。**
+
+---
+
+## 附一百零四 —— 把上一批的"只改了一个引擎"补成对称:判据收到 `core/` 单源,**四个 loader 各接一行**
+
+(附一百零三 只给 `cycle` 的 CLI 加了因子覆盖 fail-fast,理由写的是"其余三个入口默认窗口不越界 ——
+这是**只改需要改的**,不是只改了看到的那个"。**那个理由对"默认窗口"成立,对"显式窗口"不成立**:
+chase/uptrend/short_reversal 收到 `--end 2026-10-20` 时同样会静默污染。
+这一条把处置补成对称的。)
+
+### 1 · 判据收单源:`core/data_coverage.py`
+
+```python
+def assert_adjusted_coverage(con, end, *, source) -> None:
+    """窗口终点越过复权因子表覆盖 ⇒ fail-fast。"""
+```
+
+**三个放置取舍,写清楚:**
+
+1. **放 `core/`,不放 `dna_data/`** —— `dna_data` 是数据访问层,但本仓库有一条**已登记缺口**:
+   "四引擎尚未接 `dna_data`"(附七十九 §5 ①)。为了这一行检查就让四个 loader 跨上那一层,
+   会**顺手改变那个已登记的事实**;
+2. **用调用方已打开的连接**(函数签名是 `(con, end)`),本模块**连 `duckdb` 都不用 import** ——
+   不新增 I/O 归属,也让"谁负责连接生命周期"这件事不变(各 loader 自己管);
+3. **`cycle/main.py` 那份改成薄包装、委托单源** —— 否则同一条判据会在两个地方各写一份、
+   日后各改各的(本会话已经吃过"同一句话抄多份、只改了一份"的亏)。
+
+### 2 · 接线:覆盖**全部路径**,不只 CLI
+
+判据接在**四个引擎各自的复权价入口**上(逐个实测确认过是哪个函数):
+
+| 引擎 | 复权价入口 | 为什么是它 |
+|---|---|---|
+| `chase_up` | `data.load_panel` | 唯一读 `v_daily_qfq` 的地方 |
+| `uptrend_pullback` | `data.load_panel` | 同上 |
+| `short_reversal` | `_panel_loader.load_panel_for_backtest` | 唯一读 `v_daily_hfq` 的地方 |
+| `cycle_price_action` | `data_feed.load_universe_data` | 它 `LEFT JOIN v_daily_hfq` 取 `adj_close`;同模块的 **`load_bars_by_code` 读的是 `v_daily` 原始价,不需要这道检查** |
+
+**接在 loader 上而不是 CLI 上,覆盖的路径严格更宽**:mains、sweeps、walk-forward、
+以及任何将来新写的调用方 —— 全部经过同一个入口。附一百零三 那种 CLI 级检查只能拦住手打的那条路径。
+
+导出为 `ADJUSTED_PRICE_ENTRY_POINTS` 并加一条**结构性守卫**:四格缺一格即红,
+且引擎集合必须等于四个(**非空转**,防我漏掉某个价域)。
+
+### 3 · 两向验证
+
+摘掉 `chase_up/data.py` 里那一行接线 ⇒ 结构性守卫红;恢复 ⇒ 10 passed。
+
+### 4 · 这一条与附一百零三 的关系(自我更正)
+
+上一批我写下的理由是"**只改需要改的**",而那一批**只改了一个引擎**。
+放在当时的语境里(isolate 到"默认窗口")它成立;但**缺陷类本身是对称的** ——
+显式窗口越界对四个引擎一视同仁。⇒ 这是我第二次在同一个缺陷上"只改了看到的那一个"
+(第一次是附一百零三 的前身 附一百零一/一百零二 的"已发布窗口一个都没踩到")。
+
+**固化成一句**:判断"要不要动其它同类对象"时,如果依据是**它们的当前默认值/当前用例**,
+那就要再问一句"**类本身对它们成立吗**" —— 前者决定"今天有没有事",后者决定"这一条要不要一起改"。
+
+### 5 · ⚠️ 这一批踩到的两个坑(都记下来)
+
+**(a) 我第一版判据是"过严"的,一次红掉 26 个用例。**
+
+第一版写成"`end` 是否晚于因子表末日",于是 `--end 2026-09-19`(**周六**)被判越界 ——
+而**那一天在 `v_daily` 里根本没有行**,窗口内**一个污染交易日都没有**。
+6 个用例的失败信息里赫然写着"窗口终点 2026-09-19 超出覆盖(末 2026-09-18)";
+
+⇒ 正解是问"**窗口内有没有"有行情却没因子"的交易日**",而不是"日子越界了没有"。
+**"日子越界"与"窗口里有未覆盖数据"是两回事** —— 前者是字面比较,后者才是会不会污染。
+改用两个 `DISTINCT date` 的小集合相减(`EXCEPT`),实测 9~148 ms(逐行 JOIN 得在千万行上跑)。
+
+**(b) 还有 20 个失败是"检查对测试自建的小库也执行查询"** —— 那些库里没有
+`calc_adjust_factor_daily` 表,于是抛 `CatalogException`,而不是我 docstring 里写的
+"表缺失 ⇒ 不拦"。**实现与文档不一致,而且我是被 20 个红点打醒的。**
+
+修法:显式 `except duckdb.CatalogException: return []`(并在注释里写明"我是怎么知道的")。
+**没有**改成"吞掉任何异常" —— 那会把真正的故障也吞掉。
+
+**(c) 最后一个失败是测试的 mock 不认识新查询**(`_Cur` 只有 `fetchdf`)。
+修法是**扩展 mock**(让它认识 `calc_adjust_factor_daily` 并返回空 = "没有未覆盖交易日"),
+**不是**让判据吞掉 `AttributeError` —— 后者是静默绕过,正是这一整轮在修的东西。
+
+### 6 · 我自己的一次操作失误(已修)
+
+替换那条用例时我用了"从某函数**切到文末**"的写法,而**两个接线用例是追加在它之后的**
+—— 于是被一起切掉了。**收集数从 1445 掉到 1443**(而不是我预期的 +2),这个数字暴露了它。
+两个用例已补回;教训:**切片替换到文末之前,先确认文末还有没有别的东西**。
+
+---
+
+## 附一百零五 —— Phase-2 的逐笔回放**不建模公司行为**,而它才是被报告的那份 PnL(量级 ≈ 0.029%/笔,但跨除权日的交易每笔差 2.63%)
+
+(本轮去核 附七十九 §5 ①/"Phase-2 无公司行为"这条登记项**到底成不成立**。
+**第一版读法是错的**,量过之后才看清机制与量级 —— 两者都记下来。)
+
+### 1 · ⚠️ 我第一版读错了
+
+我先 `grep -c "apply_corporate_action" backtrader_engine.py` ⇒ **0**,于是几乎写下
+"Phase-2 完全没有公司行为"。**但那个 grep 不能证明任何事** —— 公司行为代码在 `portfolio.py` 里。
+继续读才发现 `chase_up/backtrader_engine.py:217` 与 `uptrend_pullback/backtrader_engine.py:280`
+**都直接调 `simulate_portfolio(...)`**。
+
+⇒ **这一层的结构是"Phase-1 + Phase-2"**:
+
+| 层 | 职责 | 公司行为 |
+|---|---|---|
+| **Phase 1** `portfolio.py::simulate_portfolio` | 决定 slot / entry / exit 时机与价格、**现金记账** | **有**(`apply_corporate_action`:分红入 `Free_Cash`、送股调股数) |
+| **Phase 2** `_verify_trade_with_backtrader` | 对 Phase 1 的每一笔 trade **独立跑一次 backtrader**,复算退出价与净盈亏 | **没有**(它的实参里没有 `div_per_share` / `bonus_ratio`) |
+
+### 2 · 缺陷:被报告的是 **Phase-2** 那份
+
+`run_backtrader_backtest(..., verify: bool = True)` —— **`verify` 默认就是 True**;
+而跑的时候返回 `trades_p2 / equity_p2`(**不是** Phase 1 那份)。
+
+**调用面(实测)**:`chase_up/main.py:166`(`verify=not args.no_verify` ⇒ 默认开)、
+`uptrend_pullback/main.py:157`、`uptrend_pullback/bt_compare_presets.py:105`、
+`uptrend_pullback/verify_v33_long_reverse_v4.py:54`。
+
+⇒ **两个引擎的 main 入口默认跑 Phase-2,而报告的 `net_pnl` 是那次没有分红的回放算出来的。**
+§3 「Event-Sourced Corporate Actions」明文要求"现金分红必须显式触发 `Free_Cash` 入账" ——
+Phase 1 照做了,**Phase 2 没有,而报告用的是后者**。
+
+### 3 · 量级(用数据实测,不是估计)
+
+| 量 | 实测(窗口 2025-09-19..2026-09-19) |
+|---|---|
+| 交易日 / 标的 / 除权事件 | 242 / 5565 / **4960** |
+| 单只票单个交易日出除权的概率 | 3.68e-03 |
+| **持仓 3 天跨到除权日的概率** | **1.105%**(10 天 3.68%、20 天 7.37%) |
+| 平均每股分红 | 0.2630 元(以 10 元股价计 ≈ **2.63%** 持仓市值) |
+| ⇒ **单笔期望漏计** | **≈ 0.029%**(3 天) |
+
+⇒ **期望量级小**(短持仓策略下不影响结论);但**那 ~1.1% 跨到除权日的交易每笔差 2.63% 的持仓市值**
+—— 对单笔而言是**一个数量级于交易成本**的差异。**它足以改变个别交易的盈亏符号,不足以改变结论。**
+
+### 4 · 为什么不改,只登记
+
+两条修法**都会改结果**,而且**都要人定**:
+
+1. **把公司行为穿进 Phase-2 的回放**(改 backtrader feed + 记账)—— Phase-2 的职责本是
+   "价格/退出时点复核",让它承担现金记账是**扩大职责**;
+2. **`verify=True` 时改报 Phase-1 的 `net_pnl`**(Phase-1 才是现金权威路径)—— 但会改变
+   "Phase 2 复核过"这件事的语义(复核的是**价格**,不是盈亏)。
+
+### 5 · 守卫:钉住**机制**,并在它被修好时变红
+
+`tests/test_phase2_pnl_omits_corporate_actions.py`(5 条,全部**源码级、不需数据库、0.01s**):
+
+* 两个引擎的 `_verify_trade_with_backtrader` 形参集合里**不得**出现
+  `div_per_share` / `bonus_ratio` / `rights_ratio`(**用 AST 取签名**);
+* 两个引擎里必须仍有 `verify: bool = True` 与 `trades_p2, equity_p2` 的返回路径
+  —— 这条缺口"重要"正因为它报告的是 Phase-2;
+* 非空转:两个引擎都得有 Phase-1 调用与 Phase-2 复算入口(否则分层描述失效)。
+
+**这些断言红掉是好事**:它意味着有人把公司行为穿进了 Phase-2 —— 那时应把本登记更新
+(登记表只应当变短),而不是把断言删掉。
+
+两向验证:给回放加一个 `div_per_share` 形参 ⇒ 登记项红;恢复 ⇒ 5 passed。
+
+### 6 · 对 附七十九 §5 ① 的更正
+
+那条登记写的是"**Phase-2 无公司行为(五十四)**"。**机制描述不完整**:
+不是"Phase-2 整个缺公司行为",而是"**Phase-1 有、Phase-2 没有,而 `verify=True` 时报告的是 Phase-2**"。
+本条把机制与量级补齐 —— 这是 附一百零一 对账时**列为"仍成立"的一项**,现在它仍然成立,
+但**成立的方式与原来写的不一样**。
+
+---
+
+## 附一百零六 —— phantom 检测工具有**两处盲区**(实测),而它报的"0 个"因此不是证据
+
+(上一条把 附七十九 §5 ⑦"phantom 工具用 qfq 校准"**描述**了一遍;这一条把它的**后果量掉**,
+并修掉它 —— 只动**检测器**,不动任何回测语义。)
+
+### 1 · 工具的用途与旧判据
+
+`audit_phantom.py`:检出"出场价取自**某个复权域**、而执行域本应是**原始价**"的成交
+(§3 双价铁律被违反)。它读 `trades.csv`,逐笔去库里取当日 `qfq_open` / `raw_open` 比对:
+
+```python
+if abs(ep - qo) < 0.01 and abs(qo - ro) > 0.5:      # ← 旧判据
+```
+
+### 2 · 盲区一:只比对 **qfq** 一个复权域
+
+**实测(合成 trades + 真实行情,三个方向都跑了)**:
+
+| exit 取自 | 旧判据 | 应当 |
+|---|---|---|
+| `qfq_open`(历史 bug 所在的域) | **报** ✓ | 报 |
+| `hfq_open`(**今天的信号域**) | **不报** ✗ | **报** |
+| `raw_open`(正确的执行域) | 不报 ✓ | 不报 |
+
+今天的信号域是 **hfq**(附七十六 更正过标注、附一百零二 量过四族分用两个域)。
+"出场价落回信号域"这类错误**恰好落在 hfq 上**,而工具只看 qfq ⇒ **看不见**。
+
+### 3 · 盲区二:两个阈值都是**绝对元值**,与股价量级耦合
+
+`0.01 元` 与 `0.5 元`。按价格分档实测(全库 10,364,755 个(票,日)):
+
+| 股价档 | 有复权差异的行 | 其中 \|qfq−raw\| > 0.5 元 | ⇒ 工具**看不见** |
+|---|---|---|---|
+| [0, 5) 元 | 56.40% | **12.55%** | **≈ 77%** |
+| [5, 20) 元 | 80.67% | 41.48% | ≈ 49% |
+| [20, 100) 元 | 87.79% | 68.07% | ≈ 22% |
+| [100, ∞) 元 | 88.19% | 80.67% | ≈ 9% |
+
+⇒ **低价股上它几乎失明** —— 而那正是"复权价与原始价只差零点几元"、肉眼最容易放过的地方。
+
+**测试里钉住的具体样本**:`600795.SH 2025-09-26`,`qfq=4.7522 raw=4.9900`
+—— 绝对差 **0.2378 元**(< 0.5 ⇒ 旧判据漏),相对差 **4.77%**。
+
+### 4 · 修法(只动检测器)
+
+* 阈值改**相对**:`|exit/adj_open − 1| < 1e-4`、`|adj_open/raw_open − 1| > 5e-3`;
+* **两个复权域都查**(qfq 与 hfq),命中任一即报,并在示例里**注明命中哪个域**。
+
+**它不改变任何回测结果** —— 工具不在回测路径上;改的只是"检测器能不能看见"。
+
+### 5 · 守卫:三个方向 + "修法确有必要"
+
+`tests/test_phantom_tool_detects_both_domains.py`(3 条,slow + 需库):
+
+* **高价票**(`688256.SH`:qfq 与 raw 差 601 元,旧判据在这里能触发)—— 钉"**域**"那一半;
+* **低价票**(`600795.SH`:绝对差 0.238 元)—— 钉"**相对化**"那一半,
+  并**当场证明那个修法是必要的**:用例直接算旧判据的两个条件,断言它在这只票上**必然不成立**,
+  然后断言新判据照常命中。(若哪天数据变了、旧条件恰好成立,这条会红,提醒换样本。)
+* 两个方向都要:**exit = raw 不得被误报**。
+
+**两向验证**:把判据退回旧版(只查 qfq + 绝对阈值)⇒ **低价票那条红**;恢复 ⇒ 3 passed。
+
+### 6 · 这一条的意义
+
+工具的"0 个 phantom"**只有在工具看得见的时候才是证据**。这一条之前,它的可见范围是
+"qfq 域、且价格足够高";现在涵盖**两个复权域、且与价格量级无关**。
+—— 与本会话反复出现的那句同源:**先确认判据的覆盖面,再采信它的结论**。
+
+---
+
+## 附一百零七 —— 上一批的修法**只落在两个孪生工具里的一个**上;而新写的族守卫**第一版是弱的**
+
+(附一百零六 修了 `chase_up/audit_phantom.py` 的两处盲区。本批按规矩 13 追问"**类本身对其它同类成立吗**"
+—— 成立,而且这次是同构的孪生文件。)
+
+### 1 · `uptrend_pullback/audit_phantom.py`:同构、同盲、未修
+
+它自己的 docstring 就写着:
+
+> 与 `chase_up/audit_phantom.py` **同构** (Layout A, panel 同时含 raw_* 与 qfq 列)。
+
+实测确认:两者的检测逻辑逐字相同(差异只在文档字符串与 chase 版上我已加的相对阈值常量),
+⇒ **它带着一模一样的两个盲区**。
+
+顺带把族划清:`*/audit_phantom.py` 有**三个**,但只有**两种**:
+
+| 工具 | 种类 | 在不在本族 |
+|---|---|---|
+| `chase_up/audit_phantom.py` | 读 `trades.csv` 的**交易明细**检测器 | **在** |
+| `uptrend_pullback/audit_phantom.py` | 同上(自称与 chase 同构) | **在** |
+| `cycle_price_action/audit_phantom.py` | **源码级**审计(`checks[...]`,不读交易) | 不在 |
+
+**已按同款修法修掉 uptrend 版**(相对阈值 + 双复权域,并在示例里注明命中哪个域)。
+
+### 2 · ⚠️ 我写的族守卫**第一版太弱**(当场自证)
+
+为避免"第三个同类工具悄悄带旧判据进来",我加了一条族守卫,**第一版判据是**:
+
+```python
+if not re.search(r"_PRICE_MATCH_REL\s*=", src) or "hfq_open" not in src:
+```
+
+两向验证时把它暴露了:**把 uptrend 的判据退回旧版,这条守卫照样绿** —— 因为
+**常量仍然声明着**、**查询里仍然取着 `hfq_open`**,而"用不用"它没看。
+⇒ 它量的是"有没有那个**名字**",不是"有没有在**用**"。
+这与本会话反复记的那条一模一样(守卫要盯**行为**,不是**文本**);而这次我又犯了一次。
+
+**重写后的判据**(四条,全部落在**用法**上):
+
+1. 用了相对阈值:`<\s*_PRICE_MATCH_REL`;
+2. 用了 gap 门限:`<=\s*_MIN_ADJ_GAP_REL`;
+3. **两个复权域都在同一个 `for` 的元组里**求值:`for name, adj_open in (("qfq", …), ("hfq"…`;
+4. 价格匹配是**相对**式:`abs(ep\s*/\s*adj_open`。
+
+**两向验证(重做一遍)**:uptrend 版退回旧判据 ⇒ **2 条红**(参数化的低价票用例 + 族守卫);
+恢复 ⇒ 7 passed。
+
+### 3 · 这一条与前面几条的关系
+
+* **规矩 13**(判断要不要动同类对象:看"类本身")在这批直接省了一次遗漏 ——
+  两个孪生工具只修一个,正是它要防的;
+* **规矩 15**(工具报的 0 只有在它看得见时才是证据)先修了 chase;
+* 本批又追加一条**元教训**:我在写"防止复发"的守卫时,**自己写了个只看名字的弱判据** ——
+  **守卫也要按同一条标准验收**。
+
+### 4 · 测试覆盖
+
+`tests/test_phantom_tool_detects_both_domains.py` 由 3 条扩到 **7 条**:
+两个工具 × (高价票钉"域" / 低价票钉"相对化"并证明修法必要) + 1 条族守卫。
+两个工具**各自**都要通过三个方向(exit=qfq 报 / exit=hfq 报 / exit=raw 不报)。
+
+---
+
+## 附一百零八 —— 死 preset 守卫的**面**与**式**都漏:6 条真债,其中 4 条此前完全看不见(含**两个活工具的默认值已死**)
+
+(上一批我把这条守卫的扫描面从"按文件名"改成"按内容推导",它报"干净"。本批追问
+"**这个面本身是怎么划的、这个判据本身认得哪些写法**" —— 两层都不全,而且**第二次修完还是不全**。)
+
+### 1 · 第一层漏:面按**文件名**划 ⇒ 两个文件从来不在视野里
+
+守卫的扫描面原本是 `research_scripts()` = `wf_*` / `grid*` / `sweep*` 三组 glob + 显式 4 个,
+共 **29** 个文件。而**引用 preset 名**这件事与文件名无关:
+
+| 文件 | 引用的死 preset | 旧面 | 内容面 |
+|---|---|---|---|
+| `uptrend_pullback/bt_compare_presets.py` | `v33_long_reverse_v3` | ✗ | ✓ |
+| `run_sizing_comparison.py` | `v6` | ✗ | ✓ |
+
+两者都**引用了一个已不存在的 preset**,而守卫报"干净"。
+⇒ 改成**按内容推导**(凡出现 `PRESETS["…"]` / `get_preset("…")` / `run_one("…")` 的引擎脚本),
+面变成 33 个;**两并集 44 个**,15 个文件只被内容面抓到。
+
+这与 附八十五 / 附八十六 同族 —— 那两次是 **DSR 守卫**的扫描面按前缀划、漏了 `walkforward.py`;
+这次是 **preset 守卫**的面按文件名划。**同一根,长在两棵树上。**
+
+### 2 · 第二层漏:内容面的**识别式**只有四式 ⇒ 11 个文件走别的写法
+
+把面改成按内容推导之后我做了"扫描面自己是不是全的"这一问(没做的话本批就到此为止):
+
+* 内容面第一版只认 `run_one(` / `run_backtest_v3(` / `run_backtest(` / `get_preset(` 四种**调用式**;
+* 实测 **11 个**文件是用模块级**赋值式**把名字写进去的(`PRESET = "v35_agg_pctchg_04_09"`);
+* 其中 **2 个**(`chase_up/render_v3_trades_html.py`、`short_reversal/lookahead_trade_trace.py`)
+  **旧文件名面、新内容面都不在** —— 两个面都漏。
+
+这两个引用的名字**当时都还活着**,所以没爆出债务;但那是**运气**,不是覆盖。
+
+### 3 · 修的过程里我自己踩了两个坑(都实测暴露,都留下注释)
+
+**坑一:贪婪回退。** 把赋值式放宽时我写成 `=[^\n]*"([^"]+)"`。`[^\n]*` **贪婪**,
+会回退到行内**最后一个**引号(即闭引号),于是 `preset = "v35_agg_pctchg_04_09"` 捕获到的是
+**紧跟其后的下一行整段** —— 实测 **6 个 wf 脚本**全部捕获成了
+`'\n    if preset not in _p.PRESETS:\n        raise SystemExit(f'`。
+改为"**先匹配整行,再从行里抽引号 token**"才对。
+
+**坑二:"整行只有一个字符串"这一式不能裸用。** 它是用来抓**字面量集合的元素**的
+(`TOP2 = ["chase_v18…", …]`、`presets = args.preset or ["v33_mainboard…", …]`),
+但 SQL 续行、HTML 模板行、日志格式串、docstring 行**全都符合**它:
+
+| 口径 | 命中"死引用" | 其中真债 |
+|---|---|---|
+| 裸用 | **56** | **1** |
+| 加名字形态过滤 | **7**(全库不重复字面量) | **0 假** |
+
+⇒ 必须再套一层**名字形态**。形态不是拍的,是从**活名字**推出来的
+(`(词_)*v<数字>[字母]?(…)_…`,外加 cycle 的 `PRESET_V1`;`v` 后必须是**数字**,
+否则 `max_volume_participation` / `validate_price_source` 的 `v` 会被吞进来)。
+实测:**102 个活 preset 名,不符合该形态的 0 个**;过滤后全库只剩 7 个一律是 preset 名的字面量。
+
+### 4 · 把式扩到七式之后,**4 条新的真债**浮出来 —— 其中两条是**活工具**
+
+| 文件 | 死 preset | 引用写在哪 | 删除提交 |
+|---|---|---|---|
+| `short_reversal/main.py` | `v33_mainboard_tp6_sl005_mh5_realistic` | `--preset` 的 **default=** | `4b7eab0` |
+| `uptrend_pullback/render_trades_html.py` | `v6` | `--preset` 的 **default=** | `e3cd4f9` |
+| `short_reversal/scan_signals.py` | `v33_mainboard_tp6_sl005_mh5_realistic` + `v33_mainboard_tp2_sl05_dneg` | **字面量列表的两项** | `4b7eab0` |
+| `short_reversal/scan_signals_fast.py` | 同上两项 | **字面量列表的两项** | `4b7eab0` |
+
+**与 2026-10-15 那批的性质不同**,这一点值得单独记:
+
+* 那批是**冻结的研究脚本**(`wf_v*_focused.py`),存在的意义就是记录一个已被删除的 preset;
+* 这四条是**活工具** —— `python3 -m short_reversal.main`(不传 `--preset`)、
+  `scan_signals.py` / `scan_signals_fast.py`(不传参走兜底列表)、
+  `uptrend_pullback/render_trades_html.py`(不传 `--preset`)**四个入口当场就死**。
+  实测失败是**响亮**的:`get_preset()` / `run_backtest_v3()` 抛
+  `ValueError: Unknown preset: '…'. Available: [全部 75 个]`(连可用名都列出来了)。
+
+**处置同 附十三 §3:登记,不改名。** 要恢复成"裸跑可用"必须**替它们选一个 preset** ——
+而被删的那些没有可推断的重命名映射(实测 `e3cd4f9` 删的是 **`v6`** 这个 key,
+而它的提交标题写的是"drop **v2** preset";`4b7eab0` 删的是整个 `v33*` 家族)。
+**选一个"看起来像"的,就是编造实验记录。**
+
+⚠️ 顺带否掉一条我本来想用的修法:**给 `--preset` 加 `choices=` 让 argparse 自己拦**。
+实测 **Python 3.14 的 argparse 不校验 default 与 choices**
+(`parse_args([])` 对 `choices=['a','b']` + `default='dead'` **不报错**,直接把 `'dead'` 给你)——
+这条路不通。
+
+### 5 · 出处必须用 **git** 验,不能拿登记表验登记表
+
+上一批我给每条登记项加了"删除提交",并加了一条测试断言**脚本的失败信息里含这个提交号**。
+问题:那个提交号**也是登记表里的那个** —— **登记错了也全绿**。
+
+本批补 `test_each_registered_removal_commit_really_removed_it`:直接问 git ——
+**该提交的父版本里有这个名字、该提交里没有**。实测 10 条全部通过
+(`4b7eab0`×7、`e3cd4f9`×2、`03cb590`×1)。拿不到 git / 浅克隆时 **skip**,不假装通过(§6)。
+
+(这次核对是**必要的**:我一度以为 `v6` 的出处记错了 —— 因为 `e3cd4f9` 的标题写"drop v2"。
+按 key 集合逐版本 diff 才看清:该提交删掉的 key 里**就有 `v6`**,标题写漏了;
+而 `03cb590` 删的是 `v33_long_reverse_v3` 与 v7–v14。**标题不是证据,key 集合才是。**)
+
+### 6 · 顺带修掉的两处判据缺陷
+
+1. **`cycle_price_action` 的可寻址名是 `"v1"`,不是 `PRESET_V1`**。
+   `_preset_names` 此前返回 `{"PRESET_V1"} + dict 的**配置键**`,于是
+   `main.py` 的 `add_argument("--preset", default="v1", choices=["v1"])` 被判成**死引用**(假债)。
+   配置键**不是名字**,已从名字集合里移出。
+2. **"响亮失败"的判据从"源码里有没有 `SystemExit` 字样"改成"这个名字是否走了会校验它的解析路径"**。
+   旧判据**过宽**(任何 `raise SystemExit(main())` 都满足)又**会误杀**
+   (`render_trades_html.py` 没有 `SystemExit` 字样,却老老实实调 `get_preset`)。
+3. **"未登记死引用"的判据从"有没有未登记的文件"改成"逐文件集合相等"** ——
+   否则一个**已登记**的文件里**多出**一个死引用也照样绿。
+   (改完立刻见效:`scan_signals*.py` 各引用**两个**死名,而登记值原本只装得下一个 ⇒ 登记值
+   改成"名字元组 + 提交"。)
+
+### 7 · 测试覆盖与两向验证
+
+`tests/test_research_scripts_reference_live_presets.py`:**25 → 42 条**。新增/加强:
+
+* `test_preset_scan_surface_is_the_whole_set` —— **集合对账**,判据**换一套机制**
+  (「活着的 preset 名有没有以任意形态的引号字符串出现」),不关心引用写成长什么样;
+* `test_every_preset_name_matches_the_idiom` —— 惯用法**前提**守卫(102 个名字 0 例外);
+* `test_each_registered_removal_commit_really_removed_it` —— 出处由 **git** 核对;
+* `test_the_authored_message_set_is_a_subset_of_the_registry` —— 防幽灵项;
+* 另有三条判据被改写(见 §6)。
+
+**两向验证(全部当场做过,改一处红一处)**:
+
+| 改动 | 结果 |
+|---|---|
+| `_DEFAULT` 从判据里去掉 | **红**(`test_preset_scan_surface_is_the_whole_set` 等 3 条) |
+| `_BARE` 去掉名字形态过滤 | **红**(假债涌入) |
+| 把一个出处改错(`v6` 的 `e3cd4f9` → `4b7eab0`) | **红**(2 条:信息用例 + git 核验) |
+| 把一个名字拼错(`v6` → `v6_typo`) | **红**(4 条) |
+| 恢复 | **42 passed** |
+
+### 8 · 这一条的位置
+
+本会话里"**扫描面 ≠ 实际集合**"已经是**第三次**出现(附八十五、附八十六在 DSR 面上),
+而本批**一次之内出现了两次**(按文件名 → 按内容的**调用式** → 按内容的**全部式**),
+其中第二次是**我自己刚修完的那一版**。
+
+可复用的形状,三条:
+
+1. **面**要按"这件事的特征"(引用 preset 名)划,不能按文件名划;
+2. **认得出这件事的所有写法**才算认得出 —— 清单要能穷举并写下来(本批:七式);
+3. **改完之后要问"这一版自己全吗"** —— 第二次漏就是这么找出来的。
+   判据要挂在**用法**上(本会话反复记的那条),而**守卫自己也要按同一条标准验收**。
+
+---
+
+## 附一百零九 —— §5 那条"禁令式规则"背后:分派规则有 **11 份副本**,3 份漏了分派 ⇒ **两个 CLI 工具对全部 preset 当场崩**
+
+(本批从"§5 Banned In-Sample Grids 是唯一一条 unguarded 的规则"出发,去量它能不能量。
+**量到了一个更大的东西**:不是"少一个守卫",而是**一条分派规则被抄了 11 遍,其中 3 遍漏了半个**。)
+
+### 1 · 起点:那条"被注释满足"的覆盖面用例
+
+审计文档把 §5 `Banned In-Sample Grids` 登记为**唯一一条 unguarded 的规则**(禁令式,
+"不许存在某种脚本"难用守卫表达)。去量它的执行面时,先撞上一条**已被登记为 RED 却没红**的用例:
+
+`tests/test_wfv_rigor_gap.py::test_sweep_dsr_test_coverage_catches_grid_runner` 的判据是
+
+```python
+has_grid_glob = bool(re.search(r"\*\*?/grid\*?\.py", src))   # src = tests/test_sweep_scripts_dsr.py
+```
+
+而那个字符串在 `test_sweep_scripts_dsr.py` 里**只出现在一行注释**中 ——
+
+> `Note: 额外 glob **/grid*.py 由 test_sweep_dsr_test_coverage_catches_grid_runner 单独 verify`
+> `(避免与 uptrend_pullback/grid.py 共触发新 RED)。`
+
+⇒ **判据认的是"提到",不是"做到"**(本会话第 N 次),而那句"单独 verify"只钉了
+`short_reversal/grid_runner.py` **一个文件名**。那句注释还自陈了**为什么**没覆盖:
+"避免与 `uptrend_pullback/grid.py` 共触发新 RED" —— 即**知道有缺口,故意不覆盖**。
+
+### 2 · 追到根:`grid.py` 不是"缺 DSR",是**根本跑不起来**
+
+我一读 `uptrend_pullback/grid.py` 就发现它做了完整网格(`itertools.product`,
+`regime` 18 档 / `stops` 12 / `signal` 18 / `slots` 4),按"各年中位收益"排一张榜,
+**一项惩罚指标都不报** —— 看着正是 §5 Penalty Metrics 的标准违反。
+
+但**实跑**才看清:
+
+```
+$ python3 uptrend_pullback/grid.py --grid slots --first-year 2024 --last-year 2025
+TypeError: select_entries() got an unexpected keyword argument 'pct_chg_low'
+```
+
+**它在第一个 combo 上就崩。** 机制:`uptrend_pullback` 有**两个**选择函数,选哪个由
+`signal["entry_mode"]` 决定 —— `"v33_long_mirror"` 走 `select_entries_v33_long_mirror`,
+否则走 `select_entries`。而三个活 preset 的 `entry_mode` **全是** `"v33_long_mirror"`,
+它们的 `signal` 里带 `pct_chg_low` / `pct_chg_high` —— **只有镜像那个函数认这两个形参**。
+
+### 3 · 类:这条分派规则有 **11 份副本**,3 份漏了分派
+
+| 处 | 份数 | 形态 | 后果 |
+|---|---|---|---|
+| `backtest.py` / `backtrader_engine.py` | 2 | ✅ 按 `entry_mode` 分派 + 滤掉它 | 正确 |
+| **`grid.py`** / **`render_trades_html.py`(两处)** | **3** | ⛔ **无条件调 `select_entries(**cfg["signal"])`** | **对全部活 preset 当场 `TypeError`** |
+| `sweep_v33_long*.py` | 6 | ⚠️ 硬编码走镜像函数 + 自己过滤 `entry_mode` | 能跑,但**过滤式再抄 6 遍** |
+
+⇒ **`grid.py` 与 `render_trades_html.py` 两个 CLI 工具都没有产出**。它们对 §5/§6 的"执行"是**零**,
+而这件事**没有任何守卫看得见**:`test_sweep_scripts_dsr.py` 的面是 `sweep*.py`(不含 `grid.py`);
+`test_preset_to_engine_api_conformance.py` 查的是"preset 的键有没有在**引擎源码**里出现",
+而它的源文件清单里**没有 `signals.py`**、也不含非引擎脚本。
+
+**`render_trades_html.py` 是双重坏的**:它还有个已死默认值(`v6`,附一百零八 已登记)——
+那意味着**它此前两处都过不去**,只是没人跑它。
+
+### 4 · 修法:把判据收成**单源**,而不是再抄第 12 遍
+
+`signals.py` 新增 `select_entries_for_preset(panel_ind, *, signal, start_date, end_date, regime_df=None)`,
+行为与那两份**正确**实现逐字等价(镜像分支滤掉 `entry_mode`,else 分支原样转发)。
+**11 处调用点全部改走它**(含 6 处硬编码的 sweep)。
+
+**等价性实证(真数据,不是推理)**:窗口 `2024-09-08..2025-09-08`、preset `v33_long_reverse_v19`、
+2,512 条候选,两种形态(`regime_df=reg` 与 `regime_df=None`)下
+`old.equals(new)` **均为 True**。
+
+**零漂移实证**:`-k "uptrend or dispatch or grid or sweep or selector or preset"` 选中 **344** 条
+(**含 golden baseline**)= `340 passed / 3 skipped / 1 failed`,而**那一条失败正是 §8 里
+"上一批的守卫抓住这一批"** ⇒ 与回测结果无关,重构没动任何成交。
+
+### 5 · 顺带补上 §5 那条 Penalty Metrics(它现在**真的**报了)
+
+`grid.py` 现在与兄弟 `sweep_v33_long.py` **逐字同口径**:
+`observed` = 成功配置里的最大 Sharpe、`n_trials` = **枚举出**的配置数(附八十二)、
+`n_returns` = 评估过的交易日**并集**,并打印一句 in-sample 声明(附九十六)。实跑:
+
+```
+§5 DSR | observed_sharpe=1.874 | n_trials=4 | n_returns=484 | deflated_sharpe=0.943 | expected_max=1.052 | p_value=0.0569
+  ⚠️ in-sample selection:本榜是在 4 个配置 × 2 个**样本内年度窗**(2023-09-08 .. 2025-09-08)上、按「各年中位收益」排出的;目标年未参与。…
+```
+
+**一处刻意的不显然**:`n_returns` 取**并集**而不是"各窗之和" —— 窗口是
+`(y-09-08, y+1-09-08)` 首尾相接,**边界日被两个窗口同时包含**,直接相加会多算最多
+`len(windows)-1` 天;而 T 偏大 ⇒ DSR **偏乐观**(附八十一 量过同款)。逐窗仍以
+`core.walkforward.window_trading_days` 为准,并加了一行**一致性核对**防本文件长出第二套口径。
+⚠️ 那行核对我最初写成 `assert`,随即改成 `raise ValueError` —— 依据是本仓库**自己**那条
+`tests/test_assert_vs_raise_audit.py`:`python -O` 会剥掉 `assert` ⇒ 不变量在"生产
+(或任何 `-O` 运行)"下静默消失,方向正好是"DSR 偏乐观"。**没在同一批里制造一条同款缺陷。**
+
+⇒ §5 网格/sweep 类 **12 个脚本,现在 0 个缺惩罚指标**。
+
+### 6 · ⚠️ 我自己新写的两条守卫,**第一版都是被"文字"满足的**(当场抓到并修掉)
+
+这是本批最该记的一段。两条新守卫都做了突变检验,而**第一次做,两处都没红**:
+
+| 突变 | 第一版结果 | 原因 |
+|---|---|---|
+| 把分派器里的分支条件换成 `if False:` | **仍然绿** ❌ | 判据是 `'"v33_long_mirror"' in body`,而那个字面量在**该函数的 docstring** 里也有 ⇒ **注释满足了判据** |
+| 把 `grid.py` 的 DSR **调用**摘掉 | **仍然绿** ❌ | 判据是正则 `deflated_sharpe_ratio\s*\(|bonferroni`,而 `bonferroni` 分支命中了**我自己加的那句注释**("报 DSR 或 Bonferroni")⇒ **注释满足了判据** |
+
+**两条守卫各自复制了它们要去抓的那个病** —— 而其中一条正是"替换掉的那个被注释满足的判据"。
+改为走 **AST**(认可执行调用:`If.test` 里的比较、`Call.func` 的名字)后,两处突变**都红**。
+
+> ★ 本会话已经记过很多次"判据要盯**用法**,不是**文本**"。本批的新内容是:
+> **我是在写"防绕过"的守卫时又犯的,而且是在同一个文件里、为了修一个"被注释满足"的判据而写的。**
+> ⇒ 结论只有一条能防住它:**每条判据写完立刻做突变检验**,不红就重写 —— 这与本会话前面的记录一字不差。
+
+### 7 · 守卫(两个新文件 + 一条重写)
+
+`tests/test_preset_signal_dispatch_is_single_source.py`(6 条):
+
+1. 包内**除 `signals.py` 外,任何模块不得直接调那两个选择函数**(把"绕过分派"变成做不到);
+2. 调用分派器的模块集合 == **精确名单**(10 个模块)—— 多一个少一个都要人看一眼;
+3. 分派器**在可执行代码里**真的分派(AST:`If.test` 比那个字面量 + 分支里真的做了 `!= entry_mode` 过滤);
+4. **签名符合性(最强的一条)**:对**每个活 preset**,`signal` 里(除 `entry_mode` 外)的每个键
+   都必须被"会被选中的那个函数"接受 —— `inspect.signature` 判定,**不落库**。
+   这条**直接编码本批的缺陷**,且与实现无关。
+
+`tests/test_in_sample_grid_scripts_report_penalty_metric.py`(2 条):
+类(引擎包内 `grid*.py` / `sweep*.py` / `wf_sweep*.py`,**精确集合**)逐一对账 +
+每一个都必须**真的调用** DSR 或 Bonferroni。
+
+另**重写** `test_wfv_rigor_gap.py` 那条覆盖率用例:从"某文件里有没有那个字符串"
+改成"存在一个把 `*/grid*.py` **枚举出来**的守卫,且每个都在惩罚指标判据下"。
+
+**四向突变两向验证**(全部当场做过):
+
+| 突变 | 结果 |
+|---|---|
+| 任一调用点退回直调 `select_entries(...)` | **红**(2 条) |
+| 分派器分支换成 `if False:` | **红**(修好判据后) |
+| 从镜像选择函数签名里拿掉 `pct_chg_low`(**复现原缺陷**) | **红**(3 条) |
+| 摘掉 `grid.py` 的 DSR 调用 | **红**(修好判据后) |
+| 新种一个无 DSR 的 `grid_foo.py` | **红**(2 条) |
+
+### 8 · 一个漂亮的自我应用:上一批的守卫抓住了这一批的修
+
+给 `grid.py` 补上 DSR 之后,**附一百零八 那条守卫**
+(`test_research_scripts_cover_every_dsr_caller`)立刻报红 —— 因为 `grid.py` 成了**新的
+DSR 调用点**,而它的类 `uptrend_pullback/sweep*.py` **匹配不到 `grid.py`**。
+⇒ 把 `grid.py` 加进显式名单即可(它的职责正是这个)。
+**一条守卫在下一批里抓到了自己那一类的新成员 —— 这是它被写出来的原因。**
+
+### 9 · 口径与边界
+
+* 本批**不改任何回测语义**:`entries` 逐元素相同(§4 实证),golden baseline 未动;
+  全量 **1460 passed / 26 skipped**。⚠️ 一次**过程**上的如实记录:全量那次跑的是
+  `assert` 版 `grid.py`(改成 `raise` 发生在它启动之后)—— 两者在非 `-O` 下**逐字节等价**;
+  改完又单独复跑了受影响的 7 个文件(**71 passed**)并**实跑一次** `grid.py`,
+  DSR 输出与之前**逐位相同**(`1.874 / 4 / 484 / 0.943 / 1.052 / 0.0569`);
+* `render_trades_html.py` 我**只**修了 `select_entries` 那条路 —— 它还需要一份 trades CSV
+  (结果按 §7 不入库)才能真正端到端跑,所以**不声称"它现在能跑了"**;
+* `uptrend_pullback/grid.py` 现在能跑、且报了 DSR;但**"该不该用这张榜选参数"是 §5 的另一半
+  (WFV)** —— 那句 in-sample 声明就是为这件事写的,不改默认行为、不给参数建议。
+
+---
+
+## 附一百一十 —— 把批 109 的形态做成**全库机械普查**:同一机制**两个相反方向**,而仓库只守了一边
+
+(批 109 的缺陷是"把 preset 的键 `**` 展开给一个**不认识它们**的函数 ⇒ 工具当场死"。
+本批问的是:**这个形态能不能机械化?还有没有同类的?** 答案是"能"、"0 个新的",
+而顺带看清了一件更有用的事 —— 这个机制**两个方向都会坏,而只有一边有判据**。)
+
+### 1 · 为什么这个判据"不需要读懂语义"
+
+批 109 的 `grid.py` 崩在 `select_entries(**cfg["signal"])`,而三个活 preset 的 `signal` 里带
+`pct_chg_low` / `pct_chg_high` —— `select_entries()` **没有这两个形参**。判这件事只需要两步:
+
+1. 把 `**` 展开的那个字典的**键集合**取出来;
+2. 与被调函数的**形参集合**比一下。
+
+⇒ 它不依赖对策略、对指标、对任何语义的理解。**普查可行。**
+
+### 2 · ⚠️ 解析必须按**本文件的 import** 做(我第一版栽在这上面)
+
+第一版按**全局函数名**建索引(`setdefault(name, …)[0]`),于是
+`chase_up/backtrader_engine.py` 的 `select_entries` 被解析到了
+**`uptrend_pullback/signals.py`** 那一份 —— 两个包**各有一个同名函数**。
+
+**一个"看名字"的解析器,会把检查做在错的文件上** —— 而它的输出**看起来完全正常**
+(它列出形参、判定通过),所以这个错**不会自己暴露**。已改为只认"这个文件自己 import 进来的那个"。
+
+### 3 · 普查结果:9 个调用点,**0 个新缺陷**
+
+| 处 | 形态 | 结果 |
+|---|---|---|
+| `chase_up/backtrader_engine.py:207`、`chase_up/trade_report.py:513` | `select_entries(**p["signal"])` | ✓(chase 自己的那份 `select_entries`) |
+| `uptrend_pullback/{backtest,backtrader_engine,grid,walkforward}.py`、`render_trades_html.py`×2 | `compute_regime(**p["regime"])` | ✓ |
+| `render_trades_html.py:601` | `compute_regime(**preset["regime"] or {})` | ✓ |
+| `short_reversal/scan_signals.py:113` | `addstrategy(**strategy_kwargs(…))` | **不在覆盖内,且不该在** |
+
+最后那一个值得记:它不是"某个 preset 子字典",而是一个**单源构造器**的返回值
+(`short_reversal/engine.py:85`,docstring 明写 *「新增策略参数时**只改这里**」*) ——
+**正是本批给 uptrend 补上的那种形状**。
+⇒ 我没有为它建登记表:登记表是给"本该覆盖而暂时没覆盖"的东西用的,
+而它是**按设计不可静态展开**。**不假装覆盖,也不造一个装饰性的登记项。**
+
+### 4 · 牙齿:它对**真实发生过**的缺陷会响
+
+把修复前的 `grid.py` 装回工作区(`git show 2a2d58e:uptrend_pullback/grid.py`),同一判据报出:
+
+```
+uptrend_pullback/grid.py:134  select_entries(**cfg['signal'])
+  ← preset v33_long_reverse_v19 多出 ['pct_chg_high', 'pct_chg_low']
+  ← preset v33_long_reverse_v20 多出 ['pct_chg_high', 'pct_chg_low']
+  ← preset v33_long_reverse_v21 多出 ['pct_chg_high', 'pct_chg_low']
+```
+
+装回修复后的版本 ⇒ **0 条**。另加一处在**内存里**的牙齿检验(不依赖 `grid.py` 现在的写法),
+免得 future 的改动把这条判据变成空转。
+
+**两向验证**:①修复前 `grid.py` 放回 ⇒ 红;②**新种**一个坏调用点
+(`uptrend_pullback/_planted_splat.py`)⇒ 红(证明新调用点会被拾起,不是只认已知那几处)。
+
+### 5 · ★★ 最有用的一条:同一机制有**两个相反方向**,而仓库只守了一边
+
+`**X[subdict]` 这个机制会以两种方式坏,而它们**方向相反**:
+
+| 方向 | 形态 | 后果 | 判据 | 现状 |
+|---|---|---|---|---|
+| **(a) 传了,对方不认** | `f(**cfg["signal"])`,而 `f` 没有那些形参 | **当场 `TypeError`** —— 工具零产出(吵) | **静态**:键 ⊆ 形参 | 批 109 之前**没有任何判据**;本批补上 |
+| **(b) 写了,传不到** | 键写在**顶层**,而信号函数只收到 `**cfg["signal"]` | **静默**:网格是平的,报表照印(不吵) | **观测**:所有 combo 结果是否**逐位相同** | 早就有:`core/sweep_axes.py::collapsed_grid_warning` + `tests/test_sweep_axes_are_live.py` |
+
+(b) 的实例就在 `core/sweep_axes.py` 自己的 docstring 里(附八十七,对**已落盘的产物**实测):
+`fixed_tp_sl` **30 个 combo → 1 个不同结果**;`loosen_signals` **36 → 1**,
+后者正是因为三个键被写成了顶层(`min_above_ma60_ratio` 而非 `signal.min_above_ma60_ratio`)。
+
+**为什么 (b) 不能也用静态判据** —— 这是本批最值得带走的一句:
+"**这个键引擎认不认**"要按引擎逐条推,而且**会随引擎演进失效**;
+"**结果是否相同**"是**观测**,不依赖任何关于引擎的知识,也不会因为引擎改了而失效。
+⇒ **同一个机制的两个方向,一个能静态判、一个只能观测判;而 (b) 那份观测判据的代价是
+"真正的平台期也会被报出来" —— 所以它只报警、不判违规。**
+
+**两个方向合起来才是完整的**:只守 (b) 会漏掉"工具根本没跑";只守 (a) 会漏掉"工具跑了但旋钮是死的"。
+
+### 6 · 顺带核对:批 109 那条分派单源是**族特异的**,不需要推广
+
+`entry_mode` 在整个仓库里**只出现在 `uptrend_pullback`**(其余三族没有多路选择函数),
+⇒ 批 109 的"两个选择函数 + 分派"是 uptrend 独有的结构,不必也不需要做成四族通例。
+
+### 7 · 这一批的产出是"**排除**",而它与"发现"同价
+
+0 个新缺陷。但换到了两样东西:
+* **类被封闭**:`**子字典` 这个机制在四引擎里只有 **9** 个调用点(**8** 个可静态解析 + **1** 个构造器形态),
+  可解析的全部通过 —— 今后它可以被机械复查,且"少一个/多一个"都会让人看一眼;
+* **一条对真缺陷会响的判据**(牙齿已证)+ 一个**反向方向早已有判据**的确认。
+
+这与本册已经记过几次的那句同源(**§12.7 / §13.10 / §13.11**):
+> **在诊断里,"排除"与"发现"同样是产出** —— 而且"已确认只此一处"比"发现了一处"更有用,
+> 因为后者让人继续怀疑别处。
+
+### 8 · 口径与边界
+
+* 本批**只加测试**,不动任何生产代码 —— 故没有"零漂移"要证;
+* 覆盖的是 `**X["signal"|"regime"]` 这一形态(`X` ∈ `preset/cfg/p/base/params/profile`);
+  整块 preset 的展开(`**p`)**实测全库 0 处**,故未覆盖;
+* 函数在本文件内定义时,形参从 **AST** 取 —— **不 import 脚本**(import 会执行其模块级代码)。
+
+---
+
+## 附一百一十一 —— 那条"不得硬编码绝对路径"的判据**早就有**,而它的面是**一个文件**:另有 13 处,其中 2 处让工具**静默连到另一个库**
+
+(本批从 §6 的两个子句出发 —— "tests 在 DB/产物缺失时要 skip 而不是 error" 与
+"golden baseline 要为**每个引擎**锁住成交清单"。前半个查出了 **0 error / 20 条信息完整的 skip**;
+后半个查出**四引擎的基线都在且全绿**。两个都是"本来就做对了"。
+**而顺着那 20 条 skip 里唯一不说明"覆盖在哪"的那一条,挖到了这一批的真问题。**)
+
+### 1 · §6 的两半:先报好消息
+
+| 检查 | 实测 |
+|---|---|
+| golden baseline 覆盖四引擎? | **是**:`tests/golden/` 20 个 tracked 文件 = chase 13 + uptrend 3 + cycle 1 + short_reversal 2 |
+| 它们现在真的在验? | **是**:四个 `*sha256_baseline*` / `test_chase_up_no_lookahead` 合计 **41 passed,0 skip,0 fail** |
+| 无产物时是 skip 而非 error? | **是**:把 `uptrend_pullback/results/`(259 项)**挪开**模拟 fresh clone,那批测试 **107 passed / 20 skipped / 0 error** |
+
+§6 这两条**没有违反**。**但 20 条 skip 里有一条是哑的。**
+
+### 2 · 那一条哑的 skip:fixture 路径写成了**作者机器的绝对路径**
+
+20 条 skip 的文本几乎**全部**写明了"替代覆盖在哪"(`附三十七` 的产出型守卫、`附四十四` 的
+重算不变量、`审计 §8` 的登记)。唯一例外:
+
+```
+test_backtrader_engine_net_return_entry_commission.py:80:
+    fixture /Users/holeon/code/hiagent/uptrend_pullback/results/v33_long_reverse_v19_trades.csv not present
+```
+
+读进去才看清它为什么哑 —— **参数化里写死的是绝对路径**:
+
+```python
+@pytest.mark.parametrize("fixture_csv", [
+    "/Users/holeon/code/hiagent/uptrend_pullback/results/v33_long_reverse_v19_trades.csv",
+    "/Users/holeon/code/hiagent/uptrend_pullback/results/v33_long_reverse_v20_trades.csv",
+])
+```
+
+这有两层后果,而**第二层更坏**:
+
+1. 在**任何别的 checkout**(包括我当时所在的 worktree)里,`os.path.exists(...)` 检查的是
+   **另一个目录** ⇒ **永远 skip**;
+2. 若那个目录**碰巧存在**(比如同一台机器上有另一份 checkout),它会
+   **拿别人的产物来验本仓库的代码** —— 而且**看起来在跑**。
+
+### 3 · 类:13 处**可执行代码**里的家目录绝对路径(含**另一个用户**的)
+
+我把"绝对路径"做成 AST 级普查(**排除 docstring** —— 那里是散文引用),得到 13 处:
+
+| 处 | 形态 | 后果 |
+|---|---|---|
+| `chase_up/audit_phantom.py`、`uptrend_pullback/audit_phantom.py` | `DB_PATH = "/Users/holeon/Library/…/market.duckdb"` | **绕过 `hiagent_config`** |
+| `chase_up/render_v3_trades_html.py` | `OUT_HTML = Path("/Users/holeon/…")` | 产物写进**另一个 checkout** |
+| `chase_up/render_top2_trades_html.py` | `RESULTS_DIR = Path("/Users/holeon/…")` | 读**另一个 checkout** 的产物 |
+| `tests/test_backtrader_engine_net_return_entry_commission.py` | fixture ×2 | 见上 |
+| `tests/_capture_presets.py`、`_run_all_presets.py`、`golden/_capture_baseline.py` | `sys.path.insert(0, "/Users/holeon/…")` | 同上 |
+| `tests/_combine_preset_html.py` | `GOLDEN = Path("/Users/holeon/…")` | 同上 |
+| `tests/_run_all_presets_2yr.py`、`…_continue.py` | `REPO = Path("/Users/**zhl**/code/hiagent")` | **另一个用户**的家目录 |
+
+**两个 DB 路径那两行最值得单说**:它们不只是"换机器就废" —— 它们**忽略 `DNA_STRAT_DB`**
+(项目文档明写"环境变量优先,CLI/测试覆盖用")。也就是说:整个测试套件、以及我这十几批跑工具时
+一直用 `DNA_STRAT_DB` 指库,而**这两个工具会静默连到机器默认库上去**。
+它们报出来的"phantom 0 个"因此是**在另一个连接上**得到的 —— 数值上没问题(默认就是那个库),
+但**契约已经断了**:换库那天,它不会跟着换。
+
+### 4 · 为什么这一类能长期存在:**判据存在,面按文件划**
+
+`tests/test_run_all_backtests_html_renders.py:110` 已经有这条判据:
+
+```python
+def test_tool_derives_paths_from_file_not_hardcoded() -> None:
+    """§0 可复现性:不得出现硬编码绝对路径(审计在别的脚本里抓到过这一条)。"""
+    assert "/Users/" not in src            # src = TOOL_PATH —— **一个**文件
+```
+
+它的 docstring 甚至**自己写着**"审计在**别的**脚本里抓到过这一条" —— 却只对
+`TOOL_PATH` 一个文件生效。⇒ **这是本会话第五次同一形状**
+(附八十五/八十六 的 DSR 面、附一百零八 的 preset 面、附一百一十 的 `**` 面,加这次的路径面)。
+
+### 5 · 修法与验证
+
+* 12 处改为 **repo-relative**(`Path(__file__).resolve().parents[N]`)或
+  `from hiagent_config import DB_PATH`;另更正了 `_run_all_presets_2yr*.py` 的 docstring
+  (它写"本身也未列入 git",**而两个文件都在 git 里**);
+* 两个 `audit_phantom` 改用 `hiagent_config.DB_PATH` 后**实跑验证**:
+  仍能报出一百零六 那只低价票的 phantom(`600795.SH 2025-09-26`,相对差 4.77%)⇒ **修法未削弱判据**;
+* 新增守卫 `tests/test_no_absolute_home_paths.py` 两条判据:
+  1. **可执行代码里不得有家目录绝对路径**(AST 取字符串字面量;**docstring 里的散文引用不算**,
+     单独一个 `/Users/` 也不算 —— 那正是旧判据自己的搜索字面量);
+  2. **DB 文件名只准出现在 `hiagent_config.py`**(非测试代码;`tmp_path / "market.duckdb"`
+     这种临时夹具库借用同名属测试惯例,故层 2 不看 `tests/`)。
+* **四向验证**:回装修复前的 `audit_phantom.py` ⇒ **红**(两层都红);
+  种 `/Users/<名>/…` ⇒ 红;在非测试模块种 `…/market.duckdb` ⇒ 红;恢复 ⇒ 3 passed。
+
+### 6 · ⚠️ 本批我自己踩的坑(值得记,因为它是"我的修复被自己的验证流程冲掉")
+
+做 (a) 那一步"回装历史版本"时,我用了 `git checkout -- chase_up/audit_phantom.py` 来"恢复"。
+**但我的修复当时还没提交** ⇒ `git checkout` 把工作区**退回 HEAD**,也就是**修复前**的版本 ⇒
+**修复被冲掉了**。而我事先做的备份是**修复前**的快照(用于"回装历史版本"),自然还不回来。
+
+⇒ 两条落地:
+1. **破坏性验证之前先提交**(本批之后我就是这么做的:先 commit+push,再跑全量);
+2. `git checkout -- <file>` 只等于"回到 HEAD",**不等于"恢复我刚才的编辑"** ——
+   要备份**修复后**的状态,或者干脆先提交。

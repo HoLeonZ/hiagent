@@ -1,8 +1,24 @@
 """Dual-Price System 共享逻辑 (CLAUDE.md §3, 2026-09-22).
 
-数据加载请走 ``dna_data.dual_price_loader.load_dual_price_panel()``
-(独立 I/O 模块,避免本文件引入 duckdb/pandas 依赖)。本模块是领域层,
-纯函数 + 零外部依赖。
+本模块是领域层:纯函数 + **零外部依赖**(故不引入 duckdb/pandas)。
+
+**勘误(2026-10-17)**:此处原写「数据加载请走
+``dna_data.dual_price_loader.load_dual_price_panel()``」—— 那是一条**没人遵守的规定**:
+生产代码里**没有任何引擎**走它(只有 tests 引用)。实际情况是:
+
+- 四个引擎各有自己的面板加载器(`chase_up/data.py`、`uptrend_pullback/data.py`、
+  `short_reversal/_panel_loader.py`、`cycle_price_action/data_feed.py`),
+  外加扫描器的 `load_panel_for_signal`;
+- `dna_data/` 那套 loader + resolver(`signal_close` / `execution_close` /
+  `execution_open`)是**迁移目标**,不是现状 —— 其 resolver 的 docstring 也如实写着
+  「legacy panel / 允许逐个策略增量迁移」。
+
+这个「共享层存在但无人接线」的状态**有代价**,今天刚吃过一次:附四十七 ——
+扫描器的加载器漏了 `adj_*`,`adj_close != close` 的行占 **94%**,而它本该是
+「只改一处」就能避免的事。**修一处 ≠ 修一族;一个共享层只有被接线才算数。**
+
+接线本身是结果敏感的重构(各引擎 loader 还带 warmup 缓冲、公司行为事件列、universe
+切片等各自的东西),故**登记待评估**,而不是在审计里顺手改。
 
 Background
 ==========
@@ -41,6 +57,7 @@ TDD: tests/test_dual_price.py 是本模块的契约锁。
 """
 from __future__ import annotations
 
+import bisect
 from dataclasses import dataclass
 from typing import Mapping
 
@@ -291,6 +308,37 @@ def effective_slippage(
     return max(float(static_slip), atr * float(participation) * float(scale))
 
 
+class SlippagePolicyUndeclared(ValueError):
+    """preset 未显式声明滑点标定值(§4, audit P1-B2)。"""
+
+
+def resolve_atr_slip_scale(preset: dict, preset_name: str = "<preset>") -> float:
+    """§4 滑点标定值必须由 preset **显式声明**;缺声明 → fail-fast。
+
+    为什么不允许静默默认(审计 P1-B2, 2026-10-15):
+    `p.get("atr_slip_scale", 0.0)` 让"没有声明"与"声明为 0"完全无法区分,于是
+    §4 强制的 ATR×参与率滑点在**全部 100 个出厂 preset** 上都不生效,而这一点在
+    任何地方都看不出来 —— 没有报错、没有日志、没有断言。审计实测四引擎的成交价
+    恒等于 bar 开盘价,"已实现但不可达"。
+
+    现在:缺声明直接抛错。厂商 preset 一律显式写下 `SLIP_NONE_ACKNOWLEDGED`
+    (= 0.0,即"已知缺口"的确认值),使缺口**被枚举、可审计**,而不是靠沉默存在。
+    把标定值改成真实数值会改变成交价,属研究决策(§5 迭代计数),不在此替用户决定。
+    """
+    if "atr_slip_scale" not in preset:
+        raise SlippagePolicyUndeclared(
+            f"§4: preset {preset_name!r} 未显式声明滑点标定值 `atr_slip_scale`。"
+            "滑点策略必须单源且显式声明 —— 请写入 `SLIP_NONE_ACKNOWLEDGED`"
+            "(=0.0,确认已知缺口)或真实标定值。静默默认已移除。"
+        )
+    try:
+        return float(preset["atr_slip_scale"])
+    except (TypeError, ValueError) as exc:
+        raise SlippagePolicyUndeclared(
+            f"§4: preset {preset_name!r} 的 atr_slip_scale={preset['atr_slip_scale']!r} "
+            "无法解析为 float"
+        ) from exc
+
 # ----------------------------------------------------------- internals
 
 def _safe(v: float | None) -> float:
@@ -373,6 +421,12 @@ COMMISSION_RATE: float = 0.00025  # 万 2.5 (commission on both buy + sell)
 STAMP_DUTY_RATE: float = 0.0005   # 万 5 (sell-side only, post-Aug2023)
 MIN_COMMISSION: float = 5.0       # ¥5 floor per fill
 STAMP_DUTY_SIDE: str = "sell"     # stamp duty applies only on sell side
+# §4 (audit P2-11, 2026-10-15): 融券年化费率。此前只在
+# short_reversal/engine.py 本地定义为 MARGIN_RATE,而 presets.py 的
+# BORROW_ASSUMPTION.borrow_cost_rate 又独立写了同一个数值 —— 两处同值
+# 不同源,正是会静默漂移的形态。§4 要求做空策略显式声明借券模型,
+# 该数值必须是同一个源。
+BORROW_RATE_ANNUAL: float = 0.086   # 年化 8.6%(做空融券费)
 
 
 def calc_commission(
@@ -394,6 +448,84 @@ def calc_stamp_duty(notional: float, side: str) -> float:
     return notional * STAMP_DUTY_RATE if side == STAMP_DUTY_SIDE else 0.0
 
 
+def _is_missing(v: object) -> bool:
+    """NaN / None 判定(零依赖;`v != v` 对任何浮点类型都成立)。"""
+    return v is None or v != v
+
+
+def mark_price(
+    pi: dict,
+    day,
+    price_source_for_execution: str,
+) -> float:
+    """§1/§3 盯市价 —— `day` 当日或之前**最后一个可用收盘价**(raw-first)。
+
+    §1 Suspension semantics (audit HIGH, 2026-10-16): 停牌产生的是**缺 bar**,
+    既不是 0 价、也不是入场价。§1 原文:「positions in suspended names are
+    marked at the **last `raw_close`** and MUST NOT generate fills until
+    trading resumes」。
+
+    此前签名是 `(pi, j, fallback, price_source_for_execution)`,两个 DataFrame
+    引擎(chase_up / uptrend_pullback)在 `j is None`(当日无 bar)时返回
+    `fallback` = `pos["entry_price"]` —— 于是**停牌期间持仓按入场价盯市**:
+
+      - 停牌期内该仓位的浮盈浮亏**全部消失**(净值曲线被凭空拉平),复牌当日
+        再一次性跳回 —— 一段真实的行情在权益曲线上被抹掉又还回来;
+      - NAV 闸门(§2)用这个假净值判断是否已击穿,停牌股会让闸门看不见亏损;
+      - 窗口末日强平(下方 `t == last_t`)会按 `entry_price` **造出一笔现实中
+        不可能成交的"≈0 盈亏"交易**,并把 §1 明令禁止的 fill 写进成交列表。
+
+    实测暴露面(黄金窗口 2025-09-19→2026-09-19,3159 只票 / 242 个交易日):
+    299 只票有缺口、共 1348 个 (股票, 日) 缺口事件,其中 **10 只在窗口末日
+    仍无 bar** —— 只要窗口末持有其中之一,就会产生上述假成交。
+
+    现在盯市价不再有"调用方给的成本价"这一路输入:缺 bar 时**向前回退**到
+    最后一个真实收盘价(这正是 §1 的要求),故该函数只依赖股票自身的 bar 序列。
+
+    §3:`raw_close` = 原始域,`close` = 复权域;raw 列缺失(LEFT JOIN miss →
+    NaN)时回退该行复权价(baseline parity)。整段无可用价 → fail-fast。
+    本模块保持零外部依赖,故用 `bisect` 而非 numpy。
+    """
+    dates = pi["dates"]
+    k = bisect.bisect_right(dates, day) - 1
+    for idx in range(k, -1, -1):
+        if price_source_for_execution == PRICE_SOURCE_RAW and "raw_close" in pi:
+            raw_px = pi["raw_close"][idx]
+            if not _is_missing(raw_px):
+                return float(raw_px)
+        adj_px = pi["close"][idx]
+        if not _is_missing(adj_px):
+            return float(adj_px)
+    raise ValueError(
+        f"§1: {day} 及之前没有任何可用收盘价,无法盯市 —— "
+        "该股票在此窗口内没有任何 bar。持仓必然存在至少一根 bar,"
+        "因此这是调用方的 bug,不是可静默回退的情形。"
+    )
+
+
+def portfolio_nav(
+    free_cash: float,
+    settling_funds: float,
+    holdings_value: float,
+) -> float:
+    """Canonical NAV = Free_Cash + Settling_Funds + Σ 持仓市值.
+
+    §2 (audit P0-1, 2026-10-15) — 唯一净值口径。
+
+    `locked_margin` 保存的是持仓的**成本基础**,而 `holdings_value` 是同一
+    持仓的**市值**。把两者相加会把仓位计两次:持仓期间权益虚增约一个入场
+    成本,平仓后该虚增自动消失 —— 因此这个错误**只在持仓期间出现**,
+    在"平仓后对账"式的测试下极易漏检,四个引擎都曾这样写。
+
+    入场费在 reserve_for_entry 时即离开现金池(且 release_margin 不回补
+    free_cash),所以净值里不含 locked_margin 才是正确口径。
+
+    等价写法 `total_cash + Σ未实现盈亏` 在持仓期间会高估 Σ入场费,不作为
+    规范口径;需要单源 NAV 时一律调用本函数。
+    """
+    return free_cash + settling_funds + holdings_value
+
+
 __all__ = [
     "LIMIT_UP_THRESHOLD",
     "LAYOUT_CHASE_UPTREND",
@@ -412,6 +544,15 @@ __all__ = [
     "STAMP_DUTY_RATE",
     "MIN_COMMISSION",
     "STAMP_DUTY_SIDE",
+    "BORROW_RATE_ANNUAL",
     "calc_commission",
     "calc_stamp_duty",
+    # audit P0-1 (2026-10-15): canonical NAV single-source
+    "portfolio_nav",
+    # audit P0-1b (2026-10-15): canonical raw-first mark price
+    "mark_price",
+    # audit P1-B (2026-10-15): canonical slippage policy single-source
+    "effective_slippage",
+    "resolve_atr_slip_scale",
+    "SlippagePolicyUndeclared",
 ]

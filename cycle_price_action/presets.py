@@ -13,6 +13,34 @@ Compliance declaration (CLAUDE.md audit 2026-09-22):
 """
 from __future__ import annotations
 
+from core.preset_contract import PresetDeclarationMissing
+
+# §4 (audit P1-B2, 2026-10-15): 滑点标定值必须由 preset 显式声明;缺声明
+# fail-fast(core.dual_price.resolve_atr_slip_scale)。
+# SLIP_NONE_ACKNOWLEDGED=0.0 是「已知 §4 缺口」的显式确认值。
+SLIP_NONE_ACKNOWLEDGED = 0.0
+
+#: `fuse_scores` 的三个维度名,与 resolve_score_weights 的返回顺序一一对应。
+SCORE_WEIGHT_KEYS = ("weight_kline", "weight_cycle", "weight_calendar")
+
+
+def resolve_score_weights(preset: dict, preset_name: str) -> tuple[float, float, float]:
+    """§0: 把 preset 声明的三个维度权重映射成 `fuse_scores` 的 `weights`。
+
+    审计 (2026-10-15) 把这里点名为**装饰性声明**:`signals.fuse_scores` 曾把
+    `(1.0, 0.7, 0.5)` 写成**默认参数**,与 PRESET_V1 声明值恰好相同 —— 于是
+    预设与代码看起来一致,而**改预设什么都不会发生**(缺口靠沉默存在)。
+    现在权重只能来自声明,融合分数的三个系数由这一个函数单点映射。
+    """
+    missing = [k for k in SCORE_WEIGHT_KEYS if k not in preset]
+    if missing:
+        raise PresetDeclarationMissing(
+            f"§0: preset {preset_name!r} 未声明评分权重 {missing} —— "
+            "融合分数必须由声明驱动,不得退回硬编码默认值。"
+        )
+    return tuple(float(preset[k]) for k in SCORE_WEIGHT_KEYS)  # type: ignore[return-value]
+
+
 # §4 TP/SL: **固定百分比** —— 出场完全由 `tp_pct` / `sl_pct` 决定
 # (exit 路径见 cycle_price_action/portfolio.py:377-378: tp_p = entry×(1+tp_pct),
 #  sl_p = entry×(1−sl_pct); intraday tiebreak 走 sl_first)。
@@ -25,6 +53,7 @@ from __future__ import annotations
 # §13.75: 这一行此前缺失, 而守卫查不到它 —— 因为该族的 preset 是**调用形态**,
 # 而旧扫描器只遍历字面量 dict ⇒ 那条守卫结构上不可能失败。
 PRESET_V1 = dict(
+    atr_slip_scale=SLIP_NONE_ACKNOWLEDGED,
     threshold=2.0,
     min_dim=1.0,
     max_hold=5,
@@ -53,14 +82,27 @@ PRESET_V1 = dict(
     price_source_for_signal="adj_close",
     price_source_for_execution="raw_close",
     # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor 声明。
-    # cycle 单一 preset, 无 sweep; n_comparisons=1 (DSR→PSR)。
+    #
+    # ⚠️ 2026-10-15 更正:n_comparisons=1 的理由此前写作「cycle 单一 preset,
+    # **无 sweep**」—— 这句话与仓库自身矛盾。`cycle_price_action/sweep_thresholds.py`
+    # 就是为**本 preset 的 `threshold`** 建的 sweep,而它的默认候选列表
+    # `--thresholds 1.5,2.0,2.5` **恰好包含出厂的 threshold=2.0**(正中间那个)。
+    #
+    # 若 2.0 确由该 sweep 选出,则 §5 Iterative-Tuning Accounting 要求把它计入
+    # n_trials,`n_comparisons=1` 即为**低估** —— 报出来的是 PSR 而不是 DSR,
+    # 也就是"不做折减"。**真实的累计试验数只能来自迭代记录**,不是从代码能推出来的量:
+    # 故此处**不改数值**(写成 3 之类的"看起来合理"的数字是伪精确,而且大概率仍低估),
+    # 而是把矛盾显式记在案上,并把本 preset 登记进
+    # `tests/test_research_scripts_reference_live_presets.py::
+    # KNOWN_UNRECORDED_TRIAL_COUNTS`,直到迭代记录补齐。
     # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats。
     # ⚠️ §13.83: 此处原写 "walkforward 输出走 … 自动套 DSR + Bonferroni 校正" —— **那是假的**:
     # 全仓**只有** uptrend_pullback/wfv_eval.py 调用它, 本族 walkforward.py **0 处引用**。
     # 本族真正的 §5 惩罚在 sweep_thresholds.py / main.py 的 deflated_sharpe_ratio 调用里。
     n_comparisons=1,
     # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
-    # Engine `portfolio.py:65` hardcodes MAX_POSITION_PCT=1.0; 显式声明如下。
+    # Engine 里确有类常量 `MAX_POSITION_PCT = 1.0`(§2 政策常量);显式声明如下。
+# ⚠️ 附九十: 旧注释引的是 portfolio.py 第 65 行, 该处是 `class Portfolio:` —— 常量实际在 :83。
     position_sizing="all_in",
     max_positions=1,
     position_fraction=1.0,

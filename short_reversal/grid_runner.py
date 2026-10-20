@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT))
 from short_reversal.engine import run_backtest_v3  # noqa: E402
 from hiagent_config import DB_PATH as DEFAULT_DB  # noqa: E402
 from dna_stats.deflated import deflated_sharpe_ratio  # noqa: E402
+from core.cli_verdict import cli_verdict  # §0 结论落退出码 (附八十四)
 
 START = "2025-09-12"
 END = "2026-09-12"
@@ -76,6 +77,9 @@ def grid(axis: str, base: dict, values: list, base_name: str) -> list[dict]:
             "value": v,
             "name": name,
             "n": m["trades_count"],
+            # §5 (audit 2026-10-16): 随产物发布观测数 T —— 下面算 DSR 需要它,
+            # 而它此前从不出现在落盘的 CSV 里(于是只能硬编码,见 DSR 调用处)。
+            "n_trading_days": m["n_trading_days"],
             "win%": m["win_rate"] * 100,
             "CAGR%": m["cagr"] * 100,
             "Sharpe": m["sharpe"],
@@ -90,14 +94,28 @@ def grid(axis: str, base: dict, values: list, base_name: str) -> list[dict]:
     return rows
 
 
+# §0/§2/§6 (附八十四): 两个 base 都**缺 `position_sizing`**,而这是引擎 preset 契约的
+# **必填**字段(「没有声明」与「声明为合法值」必须可区分)⇒ 实测 **27/27 个配置全部被拒**,
+# 脚本落一张空网格、退出 0(静默的零)。
+# 取值 `"all_in"` 不是自由选择:CLAUDE.md §2 强制 strict all-in sizing
+# (`position_fraction = 1.0`),且 short_reversal 的**每一个** preset 都声明 `"all_in"`。
+#
+# ⚠️ **仍未跑通,且这次是刻意停手的**:补上它之后下一个缺字段是
+# `price_source_for_execution`(再下一个还不知道)—— 打地鼠。而补全它需要选一个
+# **§3 口径**(执行域取 raw 还是 adj),且这两个 base 的作者意图所指的 preset
+# (`tp2_sl05_dneg` / `tp6_sl005_mh5_realistic`)在 `presets.py` 里**已不存在**
+# ⇒ "这个网格应该建在哪个 preset 上"是**口径决策,不是缺陷**,已登记(见附八十四 §4)。
+# 本节只做**契约那半**:脚本不再假装成功 —— 0/27 会以退出码 1 与 `[PARTIAL]` 结论收尾。
 BASE_CONSERVATIVE = {
     "universe": "mainboard_only",
+    "position_sizing": "all_in",
     "tp_pct": 0.02,
     "sl_pct": 0.005,
     "max_hold": 3,
 }
 BASE_AGGRESSIVE = {
     "universe": "mainboard_only",
+    "position_sizing": "all_in",
     "tp_pct": 0.06,
     "sl_pct": 0.0005,
     "max_hold": 5,
@@ -136,8 +154,14 @@ def main():
 
     csv_path = out_dir / "grid_v3_p3p5fix.csv"
     with open(csv_path, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=["axis", "value", "name", "n", "win%",
-                                          "CAGR%", "Sharpe", "DD%", "TP/SL/T", "error"])
+        # §0 (附八十四): `fieldnames` 里**漏了 `n_trading_days`**,而成功行带着它
+        # (上面 `grid()` 落的行、以及附六十 起为取 T 而发布的字段)。
+        # `csv.DictWriter` 默认 `extrasaction="raise"` ⇒ **只要有任何一个配置成功,
+        # 写第一行就抛 ValueError**。它能"跑完"纯粹因为 27/27 都失败(失败行只有 3 个键)
+        # —— 一个缺陷被另一个缺陷掩盖了。行 schema 与写出器必须一致。
+        w = csv.DictWriter(f, fieldnames=["axis", "value", "name", "n", "n_trading_days",
+                                          "win%", "CAGR%", "Sharpe", "DD%", "TP/SL/T",
+                                          "error"])
         w.writeheader()
         for r in all_rows:
             w.writerow(r)
@@ -148,17 +172,62 @@ def main():
                if "Sharpe" in r and r.get("error") is None]
     if sharpes:
         observed = max(sharpes)
+        # §5 (audit 2026-10-16): `n_returns` 是"Sharpe 用了多少个收益观测"(T),
+        # 此前硬编码 252。本窗口实际只有 242 个交易日 ⇒ T 被高估 4.1%,
+        # 标准误被低估约 2%,DSR 系统性偏乐观 —— 而 §5 的惩罚指标恰恰要用在
+        # "看起来不错"的结果上。改为取本次运行的真实交易日数(引擎随 metrics 发布);
+        # **缺它就 fail-fast**,不再用 252 兜底(兜底值正是这个缺陷的形态)。
+        n_obs = max((int(r["n_trading_days"]) for r in all_rows if "n_trading_days" in r),
+                    default=0)
+        if n_obs < 2:
+            raise ValueError(
+                "§5: 无法取得观测数 T(metrics 缺 n_trading_days)—— "
+                "不许用常数兜底,那正是本项要修的缺陷"
+            )
+        # §5 (附八十二): `n_trials` 是"**试过多少个配置**",不是"有多少个配置跑成功了"。
+        # `grid()` 对每个取值都 append 一行(失败的那行只有 `error`)⇒ 上面用
+        # `r.get("error") is None` 过滤掉失败行 ⇒ **n_trials 少计、DSR 偏乐观**。
+        # §5 Iterative-Tuning Accounting:"每一次迭代都计入" —— 崩掉的那次也是迭代。
+        _n_tried = int(len(all_rows))
+        _n_ok = int(len(sharpes))
         dsr = deflated_sharpe_ratio(
-            observed_sharpe=observed, n_trials=len(sharpes), n_returns=252,
+            observed_sharpe=observed, n_trials=_n_tried, n_returns=n_obs,
         )
         print(
             f"\n§5 DSR | observed_sharpe={observed:.3f} | "
-            f"n_trials={len(sharpes)} | "
+            f"n_trials={_n_tried} | "
             f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
             f"expected_max={dsr['expected_max_sharpe']:.3f} | "
             f"p_value={dsr['dsr_p_value']:.4f}"
         )
+        # §5 (附九十六): 单一窗口选优**必须自己说清楚** ——
+        # 与 附十七 给 chase 两个脚本加的那条同形;那回只覆盖了看到的两处,
+        # 本族六个脚本一直没声明(实测:全库 11 个网格脚本里 8 个无声明)。
+        print(
+            f"  ⚠️ in-sample selection:本榜是在单一窗口 {START} → {END} 上\n"
+            f"     从 {_n_ok} 个配置里选出的。DSR 不能替代样本外验证 ——\n"
+            f"     要把某个 config 当结论,请用滚动窗口的 short_reversal/walkforward.py,\n"
+            f"     或在本榜**未参与选择**的窗口上复跑(§5 WFV)。"
+        )
+        if _n_tried != _n_ok:
+            print(
+                f"  ⚠️ 其中 {_n_tried - _n_ok} 个配置**抛异常**(见 CSV 的 `error` 列)"
+                f"—— 它们同样计入 n_trials(§5:每次迭代都算)"
+            )
+
+    # §0 (附八十四): 结论必须落在**退出码**上。
+    # 实测:本脚本的 base 配置缺 `position_sizing` ⇒ **27/27 个配置全部被引擎的
+    # preset 契约 fail-fast 拒绝** ⇒ 落一张空网格、一个 DSR 都不打、**退出码 0**。
+    # 这是"静默的零",正是 `core.cli_verdict` 当初为另外四个工具建的场景。
+    _failures = sum(1 for r in all_rows if r.get("error") is not None)
+    _attempted = len(all_rows)
+    _code, _msg = cli_verdict(
+        failures=_failures, attempted=_attempted,
+        succeeded=_attempted - _failures, what="grid_runner 的配置",
+    )
+    print(f"\n{_msg}")
+    return _code
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

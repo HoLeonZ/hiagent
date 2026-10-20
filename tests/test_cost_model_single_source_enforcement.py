@@ -329,6 +329,49 @@ def test_cost_model_constants_duplicated_across_engines() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_chase_up_uptrend_cost_constants_are_single_sourced() -> None:
+    """§6 单源不变量: chase_up / uptrend_pullback 必须**导入**费率常量。
+
+    audit P2-11 (2026-10-15): 原用例断言源码里出现字面量
+    `"commission_rate: float = 0.00025"` —— 那是**子串守卫**,而且它锁的是
+    "重复定义"这一事实本身:引擎各写一份、数值恰好相同就算通过。重复定义正是
+    会静默漂移的形态(历史上 short_reversal 0.0006+0.001、cycle 0.001 都是
+    "各写一份"的直接后果)。单源之后数值在构造上不可能漂移,故改为断言:
+    必须从 core.dual_price 导入,且不得用字面量重新声明。
+    """
+    needed = {"COMMISSION_RATE", "STAMP_DUTY_RATE", "MIN_COMMISSION"}
+    files = {
+        "chase_up": REPO_ROOT / "chase_up" / "portfolio.py",
+        "uptrend_pullback": REPO_ROOT / "uptrend_pullback" / "portfolio.py",
+    }
+    violations: list[str] = []
+    for name, path in files.items():
+        if not path.exists():
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+
+        imported: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "core.dual_price":
+                imported |= {a.name for a in node.names}
+        missing = needed - imported
+        if missing:
+            violations.append(f"{name}: 未从 core.dual_price 导入 {sorted(missing)}")
+
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                tgts = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for t in tgts:
+                    if isinstance(t, ast.Name) and t.id in needed and isinstance(node.value, ast.Constant):
+                        violations.append(
+                            f"{name}: line {node.lineno} 用字面量重新声明 {t.id}"
+                        )
+
+    assert not violations, (
+        "§6 VIOLATION: 费率常量未单源:\n" + "\n".join(f"  {v}" for v in violations)
+    )
+
+
 def test_chase_up_uptrend_have_correct_commission_rate_values() -> None:
     """§0/§3 PASS baseline: chase_up + uptrend 的**生效**默认值必须是规范佣金率。
 
@@ -342,6 +385,10 @@ def test_chase_up_uptrend_have_correct_commission_rate_values() -> None:
     改为读**函数签名里解析后的默认值**, 直接与规范值比:
     无论写成字面量、还是绑定到 core, 都得到正确判定;
     而**只有真的改了值**才会红。
+
+    与上一条 `..._are_single_sourced` 是**两条互补**的断言, 故意不合并:
+    上一条问"常量是不是只有一个来源"(结构), 本条问"生效的费率是不是那个数"
+    (取值)。合并会让"值被改"和"常量被复制"两种故障共用一条消息, 无法分诊。
     """
     import inspect
 
@@ -355,10 +402,15 @@ def test_chase_up_uptrend_have_correct_commission_rate_values() -> None:
     )
     violations: list[str] = []
     for label, fn in targets:
-        default = inspect.signature(fn).parameters["commission_rate"].default
-        if default != COMMISSION_RATE:
+        # params.get 而非下标: 引擎侧若重命名/移除该参数, 应是**可读的 FAIL**
+        # 而不是 KeyError —— 后者读起来像"测试自己坏了"。
+        param = inspect.signature(fn).parameters.get("commission_rate")
+        if param is None:
+            violations.append(f"{label}: simulate_portfolio 已无 commission_rate 参数")
+            continue
+        if param.default != COMMISSION_RATE:
             violations.append(
-                f"{label}: 生效默认 commission_rate={default!r} != canonical {COMMISSION_RATE!r}"
+                f"{label}: 生效默认 commission_rate={param.default!r} != canonical {COMMISSION_RATE!r}"
             )
 
     assert not violations, (

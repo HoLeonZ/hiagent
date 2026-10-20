@@ -111,8 +111,14 @@ def _body_is_silent(stmt: ast.stmt) -> str | None:
         return "pass"
     if isinstance(stmt, ast.Continue):
         return "continue"
-    # Bare return (returns None)
-    if isinstance(stmt, ast.Return) and stmt.value is None:
+    # Bare return 或显式 `return None`
+    # audit P3 (2026-10-15): 原判据是 `stmt.value is None`,而 **写出来的**
+    # `return None` 在 AST 里是 Constant(None) —— 于是显式 return None 逃过检测,
+    # 而裸 `return` 被抓住。两者是同一形态,漏掉一个等于漏掉一半。
+    if isinstance(stmt, ast.Return) and (
+        stmt.value is None
+        or (isinstance(stmt.value, ast.Constant) and stmt.value.value is None)
+    ):
         return "return"
     # If first statement is a bare continue/pass/return (handles if/with/etc)
     if isinstance(stmt, ast.If):
@@ -165,6 +171,35 @@ def _has_rows_append(stmts: list[ast.stmt]) -> bool:
     return False
 
 
+
+def _handler_reports_failure(node: ast.ExceptHandler) -> bool:
+    """处理器是否**可观测地**报告了失败(log 或把异常写进结果)。
+
+    §0 (audit P3, 2026-10-15): "静默绕过" 的定义是既不记录、也不把异常交给
+    调用方。原扫描器把任何不含 `raise` 的处理器一律判为 silent,于是
+    `logger.warning(...); continue`(窄化捕获 + 有注释 + 故意跳过单个窗口/网格
+    单元)也被计入违规 —— 那是有记录地跳过,不是静默绕过。真正的违约是裸的
+    `continue` / `pass` / `return None`,以及把异常变成对外不可见的状态。
+    """
+    exc = node.name
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Call):
+            f = sub.func
+            label = ""
+            if isinstance(f, ast.Attribute):
+                label = f.attr
+                if isinstance(f.value, ast.Name):
+                    label = f.value.id + "." + label
+            elif isinstance(f, ast.Name):
+                label = f.id
+            if label.startswith(("logger.", "logging.")) or label == "print":
+                return True
+            # rows.append({... "error": str(e) ...}) → 异常进入可观测结果
+            if label.endswith(".append") or label.endswith(".setdefault") or label.endswith(".add"):
+                if exc and any(isinstance(n, ast.Name) and n.id == exc for n in ast.walk(sub)):
+                    return True
+    return False
+
 def _scan_silent_except_sites() -> list[tuple[str, int, str, str]]:
     """Scan all production .py files for silent except patterns.
 
@@ -188,6 +223,9 @@ def _scan_silent_except_sites() -> list[tuple[str, int, str, str]]:
                 continue
             # Skip if handler has raise (re-raise preserves fail-fast)
             if _has_raise(node.body):
+                continue
+            # §0 (audit P3, 2026-10-15): 有记录地跳过 ≠ 静默绕过
+            if _handler_reports_failure(node):
                 continue
             # Skip if try block contains import (acceptable for optional deps)
             if _is_around_import(tree, node):
@@ -279,7 +317,7 @@ def _scan_target_violations() -> list[tuple[str, int, str, str]]:
 
 
 def test_silent_except_sites_beyond_tick44() -> None:
-    """§0 RED: ≥8 NEW silent except sites beyond Tick 44's 4.
+    """§0: §0 真正针对的那一类 —— **静默吞掉宽/裸异常** —— 必须**严格为零**。
 
     Tick 44 verified 4 production hot-path silent except sites:
     - short_reversal/scan_signals.py:127
@@ -287,27 +325,28 @@ def test_silent_except_sites_beyond_tick44() -> None:
     - uptrend_pullback/grid.py:106
     - short_reversal/grid_runner.py:59
 
-    This test scans ALL production .py files (not just those 4) for
-    silent except patterns:
-      - except + pass (silent swallow)
-      - except + continue (silent iteration skip)
-      - except + bare return (silent None return)
-      - except + rows.append (dressing failure as data)
+    判据 (2026-10-19, §13.48): 二段式。
+      1. `_scan_silent_except_sites()` —— 过宽的原始检测器(`continue` / `pass` /
+         裸或显式 `return None` / `rows.append`),它**不看异常类型、不看文件角色**。
+      2. `_scan_target_violations()` —— 在原始命中上再筛「宽/裸类型 ∧ 非扫描脚本」。
+         扫描/网格/回测脚本的逐项容错由 §0 明文允许 ("Scan/grid loops allow
+         warn-log + continue");**有记录地跳过**(logger / 把异常写进结果)不算静默
+         绕过(见 `_handler_reports_failure`)。
 
-    Exempt:
-      - handlers with `raise` (re-raise)
-      - handlers around `import` (optional deps)
+    本用例断言第 2 类为**零** —— 比原来的 `>= 12` 计数阈值更强(计数阈值实测是在
+    噪声上红: 计数里一个目标类样本都没有)。反空转由正控制提供,见
+    `test_scanner_detects_planted_silent_handlers`。
     """
-    raw = _scan_silent_except_sites()
     targets = _scan_target_violations()
 
-    # ---- 反空转下限: 原始检测器必须**确实在工作** ----
-    # 若它坏了(返回空), 下面的"零"就毫无意义。所以先钉住"它还能看见东西"。
-    # 17 是 2026-10-19 的实测值; 下限设 10, 留正常增减余地。
-    assert len(raw) >= 10, (
-        f"原始静默检测器只命中 {len(raw)} 处 (<10) —— 检测器可能坏了, "
-        f"此时『目标类为零』不构成任何证据。"
-    )
+    # ---- 反空转控制: 见 test_scanner_detects_planted_silent_handlers ----
+    # 2026-10-20 (合并): 这里原本钉 `len(raw) >= 10` —— 一个**计数阈值**。实测
+    # (当前树) `_scan_silent_except_sites()` 只命中 7 处 (<10), 且 7 处全是真实的、
+    # 尚未修的死角 ⇒ **检测器没坏, 是计数本身随修复漂移**。计数型下限既会因"修好
+    # 一处"假红, 也不构成"判据有分辨力"的证据 (它只证明列表非空)。
+    # ⇒ 反空转换成正控制: 往 AST 里**植入**已知的裸 continue / pass / return None,
+    #   要求扫描器必须命中, 并同时钉住"有记录地跳过"**不得**命中。正控制与活体
+    #   计数无关, 不会被修复漂移打红。
 
     # ---- 真判据 (2026-10-19, §13.48): §0 针对的那一类必须**严格为零** ----
     assert not targets, (
@@ -346,35 +385,61 @@ def test_exempt_silent_exempt_pattern_recognized() -> None:
     assert isinstance(sites, list), "Scanner must return a list"
 
 
-def test_tick44_known_sites_are_in_silent_list() -> None:
-    """§0 PASS baseline: Tick 44's 4 known sites ARE in the scanner output.
+def test_scanner_detects_planted_silent_handlers() -> None:
+    """§0 扫描器**灵敏度**:植入已知的静默处理器必须被抓到。
 
-    The scanner should find all 4 of Tick 44's sites (as well as new ones).
-    If it doesn't, the scanner has a bug.
+    audit P3 (2026-10-15): 原用例断言扫描器必须仍把 Tick 44 的 4 个站点列为 silent
+    —— 而那 4 处实际都是 `logger.warning(...) + continue`(窄化捕获 + 注释 + 故意
+    跳过单个窗口/网格单元),按修正后的判据**本就不该算静默**。用一份历史清单当回归
+    基准,会把"分类被改进"误报成"扫描器坏了"。
+
+    改为直接测灵敏度:裸 `continue` / `pass` / `return None` 必须命中;而
+    `logger.warning + continue` 与 `rows.append({"error": str(e)})` **不得**命中。
     """
-    sites = _scan_silent_except_sites()
-    files_found = {file for file, _, _, _ in sites}
-
-    # ⚠️ 2026-10-19 (§13.48): 原名单有 **4** 个文件, 其中
-    #   `short_reversal/scan_signals.py` **已被修好** —— 它现在收窄到具体类型
-    #   (`except (ValueError, KeyError, OSError) as e:`) **并 `raise RuntimeError(...) from e`**
-    #   (见该文件 :124-134 的注释 "Round 11 / Tick 40")。
-    #   ⇒ 它**正确地不再出现**在静默列表里。**原断言钉的是一个已经过时的状态 ⇒ 假红。**
-    # ⇒ 改成两面: 剩下这 3 个必须仍在 (证明扫描器没坏); 那一个必须**不在** (钉住它保持修好)。
-    expected_still_silent = {
-        "chase_up/sweep.py",
-        "uptrend_pullback/grid.py",
-        "short_reversal/grid_runner.py",
-    }
-
-    missing = expected_still_silent - files_found
-    assert not missing, (
-        f"Scanner regression: Tick 44's known silent except sites not "
-        f"detected by new scanner. Missing: {sorted(missing)}\n"
-        f"This means the scanner is missing some patterns that Tick 44 "
-        f"caught. Investigate scanner AST logic."
+    bad = (
+        "try:\n    x()\n"
+        "except ValueError:\n    continue\n"
+        "except KeyError:\n    pass\n"
+        "except TypeError:\n    return None\n"
     )
-    assert "short_reversal/scan_signals.py" not in files_found, (
-        "回归: `short_reversal/scan_signals.py` 又出现了**静默** except —— "
-        "它曾在 Round 11 / Tick 40 被修成『收窄到具体类型 + re-raise』(见该文件 :124-134 的注释)。"
+    tree = ast.parse(bad)
+    handlers = [n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler)]
+    assert len(handlers) == 3
+    hits = [p for h in handlers for st in h.body if (p := _body_is_silent(st))]
+    assert len(hits) >= 3, f"扫描器对本应命中的裸处理器漏检: {hits}"
+
+    good = (
+        "try:\n    x()\n"
+        "except ValueError as e:\n    logger.warning('skip %s', e)\n    continue\n"
+        "except KeyError as e:\n    rows.append({'error': str(e)})\n"
     )
+    t2 = ast.parse(good)
+    h2 = [n for n in ast.walk(t2) if isinstance(n, ast.ExceptHandler)]
+    assert all(_handler_reports_failure(h) for h in h2), (
+        "有记录地跳过(log / 把异常写入结果)被误判为静默绕过 —— "
+        "§0 指的是既不记录也不抛出"
+    )
+
+
+def test_historical_sites_are_reported_not_silent() -> None:
+    """钉住重新分类:Tick 44 的 4 个站点是**有记录地跳过**,不是静默。
+
+    它们的处理器都调用 logger,Uptrend 那处还带注释说明"单个窗口缺失不应中止整个
+    扫描"。若将来有人把这些日志删掉,本用例会失败 —— 那才是该报警的变化。
+    """
+    for rel in ("chase_up/sweep.py",
+                "uptrend_pullback/grid.py",
+                "short_reversal/grid_runner.py",
+                "short_reversal/scan_signals.py"):
+        path = REPO_ROOT / rel
+        if not path.exists():
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        assert any(
+            isinstance(n, ast.ExceptHandler)
+            and (_handler_reports_failure(n) or _has_raise(n.body))
+            for n in ast.walk(tree)
+        ), (
+            f"{rel}: 未发现任何「有记录或重新抛出」的 except 处理器 —— "
+            "要么日志被删,要么改成了静默吞掉"
+        )

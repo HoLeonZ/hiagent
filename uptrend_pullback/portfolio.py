@@ -22,6 +22,7 @@ import logging
 import numpy as np
 import pandas as pd
 
+from core.corporate_actions import apply_corporate_action
 from core.dual_price import (
     COMMISSION_RATE,  # §2: canonical 万2.5
     LAYOUT_CHASE_UPTREND,
@@ -32,10 +33,13 @@ from core.dual_price import (
     extract_execution_bar,
     is_limit_down,
     is_limit_up,
+    mark_price,
+    portfolio_nav,
     validate_price_source,
     volume_cap_fill,
 )
-from core.trade_schema import TRADE_COLS
+from core.trade_schema import EQUITY_COLS, TRADE_COLS
+
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +148,9 @@ __all__ = [
 
 # A 股主板涨跌停 10%；开盘涨幅超过该阈值视为无法买入
 LIMIT_UP_THRESHOLD = 0.098
+# §4 (audit P1-9, 2026-10-15): 跌停侧对称阈值。长仓出场是 SELL,
+# 跌停封板时物理上卖不出去。
+LIMIT_DOWN_THRESHOLD = 0.098
 
 # 防穿仓 (R8, 2026-09-21): Volume Participation Limit (CLAUDE.md §4)。
 # 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION。超出部分丢弃(不挂单)。
@@ -152,9 +159,10 @@ MAX_VOL_PARTICIPATION = 0.10
 # 防穿仓 (R1, 2026-09-21): NAV-floor cash gate 阈值。
 # Round 14 (2026-09-28, CLAUDE.md §2): 从 module-level 常量改为 simulate_portfolio
 # 参数 (默认 0.05), preset 可通过 `nav_gate_ratio` key 覆盖。
-# ⚠️ §13.63: 本族默认 **0.05**; short_reversal 的同类参数 (`min_cash_ratio`) 默认
-# **None**(故意的 fail-fast 哨兵)。一致的是**闸门语义**, 不是默认值 —— 旧注释
-# "与 replay_strategy_v3.py:64 (min_cash_ratio=0.05) 口径一致" 的行号与值都已不存在。
+# ⚠️ §13.63 / 附九十: 一致的是**闸门语义**, 不是默认值或成员名 —— 本族默认 **0.05**,
+# short_reversal 的同类参数 (`min_cash_ratio`) 默认 **None**(故意的 fail-fast 哨兵)。
+# 旧注释 "与 short_reversal/replay_strategy_v3.py 第 64 行 (min_cash_ratio=0.05) 口径一致"
+# 的行号与值都已不存在(`min_cash_ratio` 在该文件里已无此名)。
 
 # 同一天内 NAV gate 触发只打一次 warning
 _nav_gate_logged_dates: set = set()
@@ -189,13 +197,32 @@ def _build_index(panel: pd.DataFrame) -> dict[str, dict]:
             "prev_close": prev_closes,
             # R8 (2026-09-21): Volume Participation Limit 需要每根 bar 的成交量
             "volume": sub["volume"].to_numpy(dtype=float) if "volume" in sub.columns else np.full(len(sub), np.nan),
+            # §3 (audit P2-10): 事件列(loader LEFT JOIN raw_adjustment_events)
+            "div_per_share": sub["div_per_share"].to_numpy(dtype=float) if "div_per_share" in sub.columns else np.zeros(len(sub)),
+            "bonus_ratio": sub["bonus_ratio"].to_numpy(dtype=float) if "bonus_ratio" in sub.columns else np.zeros(len(sub)),
+            "rights_ratio": sub["rights_ratio"].to_numpy(dtype=float) if "rights_ratio" in sub.columns else np.zeros(len(sub)),
         }
         if has_raw:
             entry["raw_open"] = sub["raw_open"].to_numpy(dtype=float) if "raw_open" in sub.columns else np.full(len(sub), np.nan)
             entry["raw_high"] = sub["raw_high"].to_numpy(dtype=float) if "raw_high" in sub.columns else np.full(len(sub), np.nan)
             entry["raw_low"] = sub["raw_low"].to_numpy(dtype=float) if "raw_low" in sub.columns else np.full(len(sub), np.nan)
             entry["raw_close"] = sub["raw_close"].to_numpy(dtype=float) if "raw_close" in sub.columns else np.full(len(sub), np.nan)
-            entry["raw_prev_close"] = sub["raw_prev_close"].to_numpy(dtype=float) if "raw_prev_close" in sub.columns else np.full(len(sub), np.nan)
+            # §3/§4 (audit 2026-10-17): `raw_prev_close` **由 raw_close 序列自己算**。
+            # 面板里那一列在活库上是 **100% NULL**(实测 0 / 10,364,755 非空)⇒ 入场
+            # 涨停守卫取 `_pc` 时会回退到 **adj prev_close**,再拿它去比 **raw open**
+            # —— 跨域比较。两个域在这一库里**系统性不同**(后复权普遍低于原始价),
+            # 比值因此被调整因子放大,守卫**过度触发**。实测同一批候选 bar:
+            #     跨域判定「涨停开盘」102,641 次(6.409%)
+            #   vs 同域判定「涨停开盘」  8,200 次(0.512%)
+            # 多出来的 ~94,000 次是**被误拒的合法入场** —— §4 的涨停规则反而成了
+            # 少交易的来源。按 raw_close 的 shift 自己算之后,守卫=同域比较。
+            # (顺带:遇停牌缺口时 shift 给的是上一根**实际存在**的 bar 的收盘,
+            #  这正是涨跌停比较该用的"前收"。)
+            _rc = entry["raw_close"]
+            _raw_prev = np.empty_like(_rc)
+            _raw_prev[0] = np.nan
+            _raw_prev[1:] = _rc[:-1]
+            entry["raw_prev_close"] = _raw_prev
         idx[code] = entry
     return idx
 
@@ -299,7 +326,7 @@ def simulate_portfolio(
         ].unique()
     )
     if len(cal) == 0:
-        return _empty_trades(), pd.DataFrame(columns=["date", "cash", "holdings", "equity"])
+        return _empty_trades(), pd.DataFrame(columns=EQUITY_COLS)
 
     # 按信号日分组的候选（已按 score 降序）
     sigs_by_day: dict[np.datetime64, list[str]] = {}
@@ -339,6 +366,7 @@ def simulate_portfolio(
     positions: dict[str, dict] = {}
     trades: list[dict] = []
     equity_rows: list[dict] = []
+    dividends_cum = 0.0
 
     # Round 16 (2026-09-28, CLAUDE.md §2): Settlement Isolation — wrap state in
     # 3-pool Portfolio class. Mirror of chase_up/portfolio.py Round 16.
@@ -381,9 +409,16 @@ def simulate_portfolio(
             return float(raw_px)
         bv = pi["volume"][j]
         part = min(1.0, size / float(bv)) if (not np.isnan(bv) and bv > 0) else 0.0
-        slip = effective_slippage(
-            slippage, atr_by_bar.get((cal[t], code)), part, atr_slip_scale
-        )
+        # ATR 缺值 (面板无 atr_pct 列 / 该 bar 无值) ⇒ 该腿**只吃静态滑点**。
+        # 显式归零而不是把 None/NaN 交给 helper:我方的 §13.95 版
+        # `effective_slippage` 接受 `atr_pct=None`(退回 static),但 main 侧
+        # 同名函数是**位置参数严格版**,None 会在 `atr_slippage` 里 TypeError。
+        # 归零后两者的结果逐位相同 (`max(static, 0) = static`, static ≥ 0),
+        # 故本文件的出场腿**不依赖** core 里哪一版生效。
+        atr_now = atr_by_bar.get((cal[t], code))
+        if atr_now is None or np.isnan(atr_now):
+            atr_now = 0.0
+        slip = effective_slippage(slippage, atr_now, part, atr_slip_scale)
         if slip >= 1.0:
             raise ValueError(
                 f"§4/§0: 出场腿冲击系数 {slip} ≥ 1.0 ({code} @ {day}) —— §0 要求"
@@ -422,6 +457,8 @@ def simulate_portfolio(
         })
 
     last_t = len(cal) - 1
+    # §1 (audit HIGH, 2026-10-16): 末日仍停牌(当日无 bar)因而**不得**强平的持仓。
+    _unclosed_at_window_end: list[str] = []
 
     for t, day in enumerate(cal):
         # Round 16 (CLAUDE.md §2): T+1 settlement at start of each bar.
@@ -438,6 +475,27 @@ def simulate_portfolio(
                 continue  # 停牌，无法交易
             pos["bars"] = t - pos["entry_t"]
 
+            # §3 (audit P2-10): 除权日先应用公司行为(分红入账 / 送股调量),
+            # 再做出场判定与盯市 —— 否则除权日的净值会出现物理上不存在的跳空。
+            _div = pi["div_per_share"][j] if "div_per_share" in pi else 0.0
+            _bonus = pi["bonus_ratio"][j] if "bonus_ratio" in pi else 0.0
+            _rights = pi["rights_ratio"][j] if "rights_ratio" in pi else 0.0
+            if (not np.isnan(_div) and _div > 0) or (not np.isnan(_bonus) and _bonus > 0) \
+                    or (not np.isnan(_rights) and _rights > 0):
+                _out = apply_corporate_action(
+                    size=int(pos["size"]),
+                    entry_price=float(pos["entry_price"]),
+                    dividend_per_share=0.0 if np.isnan(_div) else float(_div),
+                    bonus_ratio=0.0 if np.isnan(_bonus) else float(_bonus),
+                    rights_ratio=0.0 if np.isnan(_rights) else float(_rights),
+                )
+                for _w in _out.warnings:
+                    logger.warning("[corporate-action] %s @ %s: %s", code, day, _w)
+                pf.free_cash += _out.cash_delta
+                dividends_cum += _out.cash_delta
+                pos = {**pos, "size": _out.size, "entry_price": _out.entry_price}
+                positions[code] = pos
+
             o = pi["open"][j]
             h = pi["high"][j]
             lo = pi["low"][j]
@@ -453,7 +511,30 @@ def simulate_portfolio(
                 r_c = pi["raw_close"][j]
                 if not np.isnan(r_o) and not np.isnan(r_h) and not np.isnan(r_lo) and not np.isnan(r_c):
                     o, h, lo, c = r_o, r_h, r_lo, r_c
-            tp_p, sl_p = pos["tp"], pos["sl"]
+            # §4 (audit 2026-10-17, 附五十四): TP/SL 每根 bar 由 entry_price ×
+            # 百分比现算,不存绝对价 —— CLAUDE.md §4 明文要求
+            # "NEVER as absolute point differences derived from adjusted prices"。
+            # 存绝对价的后果:除权日 `apply_corporate_action` 重定 entry_price 而
+            # 阈值不动 ⇒ 送股日必然穿越陈旧止损,造成与真实行情无关的强制出场。
+            tp_p = pos["entry_price"] * (1 + pos["tp_pct"])
+            sl_p = pos["entry_price"] * (1 - pos["sl_pct"])
+
+            # §4 (audit P1-9, 2026-10-15): 跌停封板**禁止卖出**(与 chase_up
+            # 同口径)。长仓出场是 SELL,封板时物理上卖不出去 → 本 bar 不成交,
+            # 持仓顺延到下一根可成交 bar(time/max_hold 一并顺延)。
+            # 方向保守:跳过 SL 出场意味着亏损可能继续扩大(§0)。
+            _pc = pi["prev_close"][j] if "prev_close" in pi else np.nan
+            if price_source_for_execution == "raw_close" and "raw_prev_close" in pi:
+                _rpc = pi["raw_prev_close"][j]
+                if not np.isnan(_rpc) and _rpc > 0:
+                    _pc = _rpc
+            if is_limit_down(
+                None if np.isnan(_pc) else float(_pc),
+                float(o),
+                threshold=LIMIT_DOWN_THRESHOLD,
+            ):
+                continue
+
             # V8 (2026-09-22, CLAUDE.md §4): 验证 intraday_tiebreak 声明。
             if intraday_tiebreak != "sl_first":
                 raise ValueError(
@@ -461,34 +542,12 @@ def simulate_portfolio(
                     f"got {intraday_tiebreak!r}"
                 )
 
-            # ----- §4/§13.106 (2026-10-19): 跌停**封板**时卖单无法成交 -----
-            # §4 明文: "Limit-Up / Limit-Down No-Fill: ... a **sell/cover on a
-            # limit-down-sealed bar MUST be rejected (no fill)**"。
-            # ⚠️ 本族此前**只有买入侧的 `is_limit_up`**, 完全没有卖出侧 ——
-            #    而 §4 那句话的另一半正是卖出侧。
-            # **"封板"的无歧义判据**: 本 bar 的 o/h/lo **三者相等** (单一价 ⇒ 全天没有
-            # 成交区间) 且该价在跌停之下 ⇒ 物理上卖不出去, 不是"价格不好"。
-            # ⚠️ **只守这一种**。「开盘跌停、但盘中成交过」**不在其中** —— 那种该不该拒单
-            #    是一个**建模选择** (拒单可能因随后的反弹而变好), **方向不单一** ⇒
-            #    已登记、未改 (§13.106(d))。
-            # ⚠️ 一律用 **raw** 价判 (§3: 涨跌停是**未复权**世界的制度约束)。
-            # ⚠️⚠️ 2026-10-19 (§13.121): 这段守卫**第一版无条件读 `pi["raw_open"]`**
-            # ⇒ 面板**没有 raw 列**时 (合成测试面板 / legacy panel) 直接 `KeyError`
-            # —— 而本文件其它 raw 访问**全都**先判成员存在 (见 `raw_close" in pi`)。
-            # **它是我引入的一个回归**, 由全量回归的分拣抓到;
-            # 受害者是 `tests/test_uptrend_pullback_equity_curve_integrity.py` 的两条
-            # (**本该**是 §13.114 那个缺陷的守卫, 却因为这一行**根本没跑起来**)。
-            _raw_ok = all(k in pi for k in ("raw_open", "raw_high", "raw_low", "raw_prev_close"))
-            if _raw_ok:
-                _r_o, _r_h, _r_lo = pi["raw_open"][j], pi["raw_high"][j], pi["raw_low"][j]
-                _r_pc = pi["raw_prev_close"][j]
-                if (
-                    not np.isnan(_r_o) and not np.isnan(_r_h) and not np.isnan(_r_lo)
-                    and not np.isnan(_r_pc) and _r_pc > 0
-                    and _r_o == _r_h == _r_lo
-                    and is_limit_down(float(_r_pc), float(_r_o))
-                ):
-                    continue  # 封死跌停 ⇒ 本 bar 不成交, 持仓顺延到下一根
+            # §4/§13.106 (2026-10-19): 本处原有「封板」**窄**守卫 (本 bar o==h==lo
+            # 且该价在跌停 ⇒ 卖不出)。main 侧的同位守卫已扩为「**任意**跌停开盘即
+            # 拒单」(见上 `is_limit_down(_pc, o, LIMIT_DOWN_THRESHOLD)`) ——
+            # 窄守卫是它的**严格子集** ⇒ 删除后不可达性消失, 不再重复判断。
+            # 「开盘跌停、但盘中成交过」那一档由上面的宽口径一并接管:
+            # §13.106(d) 原按窄口径登记为「已登记、未改」, 现随口径变更**重新登记**。
 
             if o <= sl_p:
                 px, reason = o, "SL"
@@ -517,10 +576,11 @@ def simulate_portfolio(
                 # are broker-side assets, just not T+0 available for new entries).
                 holdings_val_for_gate = 0.0
                 for code, pos in positions.items():
-                    j = _row_at(pidx[code], day)
-                    px = pidx[code]["close"][j] if j is not None else pos["entry_price"]
+                    px = mark_price(pidx[code], day, price_source_for_execution)
                     holdings_val_for_gate += pos["size"] * px
-                nav_now = pf.total_cash + holdings_val_for_gate
+                nav_now = portfolio_nav(
+                    pf.free_cash, pf.settling_funds, holdings_val_for_gate
+                )
                 if nav_now < initial_capital * nav_gate_ratio:
                     if day not in _nav_gate_logged_dates:
                         logger.warning(
@@ -572,8 +632,16 @@ def simulate_portfolio(
                         r_pc_entry = pi["raw_prev_close"][j]
                         if not np.isnan(r_pc_entry) and r_pc_entry > 0:
                             pc = r_pc_entry
-                    # 涨停开盘视为无法买入
-                    if not np.isnan(pc) and pc > 0 and (o / pc - 1) >= LIMIT_UP_THRESHOLD:
+                    # 涨停开盘视为无法买入 (§4)。
+                    # §6 (audit P1-9, 2026-10-15): 改走 core.dual_price.is_limit_up
+                    # 单源 —— 此前本引擎在 Phase-1 内联重算了同一谓词,与 Phase-2
+                    # (replay_strategy.py)调用的 core 版本构成重复。threshold 沿用
+                    # 本地历史 override,保持零行为漂移。
+                    if is_limit_up(
+                        None if np.isnan(pc) else float(pc),
+                        float(o),
+                        threshold=LIMIT_UP_THRESHOLD,
+                    ):
                         continue
 
                     entry_px = float(o) * (1 + slippage)
@@ -591,11 +659,19 @@ def simulate_portfolio(
                     # V8 (2026-09-22): 改为参数化 (从 preset 显式传入, 默认 0.10)。
                     bar_vol = pi["volume"][j]
                     size_pre_cap = size
-                    if not np.isnan(bar_vol) and bar_vol > 0:
+                    # §4/§0 (audit 2026-10-15): 量比约束**无条件调用**。
+                    # `volume_cap_fill` 对 `bar_vol <= 0` 返回 0(= §4 的
+                    # `MIN(Target, Bar_Volume × pct)`),而此前 `if bar_vol > 0`
+                    # 把整段跳过 —— 零成交 bar 上订单**不限量**,与 §0 悲观默认相反。
+                    # NaN 仍按"面板无 volume 列"跳过(夹具兼容),且 helper 不可吃 NaN
+                    # (`int(nan)` 会抛 ValueError)。
+                    if not np.isnan(bar_vol):
                         max_fill = volume_cap_fill(
                             float(bar_vol), max_volume_participation, lot_size=100
                         )
-                        if max_fill > 0 and size > max_fill:
+                        if max_fill <= 0:
+                            continue  # 该 bar 物理上无法成交 → 放弃这个候选
+                        if size > max_fill:
                             size = max_fill
                     # R5 (2026-09-21): ATR-aware slippage (CLAUDE.md §4)。
                     # participation = size_pre_cap / bar_vol, slip = atr × part × scale。
@@ -605,19 +681,31 @@ def simulate_portfolio(
                     # 且不报错 (§0 silent bypass; §13.95 查明的根因)。
                     if atr_slip_scale > 0:
                         atr_slip_lookup = atr_by_bar.get((cal[t - 1], code))
-                        participation = (
-                            min(1.0, size_pre_cap / bar_vol)
-                            if (not np.isnan(bar_vol) and bar_vol > 0)
-                            else 0.0
-                        )
-                        entry_px = float(o) * (
-                            1
-                            + effective_slippage(
-                                slippage, atr_slip_lookup, participation, atr_slip_scale
+                        if atr_slip_lookup is not None and not np.isnan(atr_slip_lookup):
+                            # §4/§0 (audit 2026-10-16): 成交量**未知**时参与率取
+                            # 模型定义域的上界 1.0,而不是 0.0。
+                            # `slip_eff = max(static, atr × participation × scale)`
+                            # —— 取 0.0 会退化成 static(本仓库多为 0),即
+                            # **恰好在流动性未知处把滑点归零**,方向与 §0
+                            # 「对执行价取最坏情形」相反。
+                            # 触发条件:面板无 volume 列(LEFT JOIN miss ⇒ NaN);
+                            # `bar_vol <= 0` 已在上面量比闸门被拒单,到不了这里。
+                            if not np.isnan(bar_vol) and bar_vol > 0:
+                                participation = min(1.0, size_pre_cap / bar_vol)
+                            else:
+                                participation = 1.0
+                            # §4 (audit P1-B, 2026-10-15): 滑点策略单源。
+                            # 两遍定价(static 估 size → pre-cap size 算
+                            # participation)保持不变,只把 max(static, atr)
+                            # 的口径收敛到 core.effective_slippage。
+                            slip_eff = effective_slippage(
+                                slippage, float(atr_slip_lookup), participation,
+                                atr_slip_scale,
                             )
-                        )
-                        if entry_px <= 0:
-                            continue
+                            if slip_eff > slippage:
+                                entry_px = float(o) * (1 + slip_eff)
+                                if entry_px <= 0:
+                                    continue
                     if size < 100:
                         continue
                     notional = size * entry_px
@@ -650,66 +738,79 @@ def simulate_portfolio(
                         "entry_price": entry_px,
                         "size": size,
                         "entry_fee": fee_in,
-                        "tp": entry_px * (1 + tp_eff),
-                        "sl": entry_px * (1 - sl_eff),
+                        # §4 (附五十四): 存**百分比**,绝对价在出场判定处现算。
+                        "tp_pct": tp_eff,
+                        "sl_pct": sl_eff,
                         "bars": 0,
                         "atr_pct": atr_used,
                     }
 
         # ---------- 3) 末日强制平仓 ----------
+        # §1 (audit HIGH, 2026-10-16): 停牌股**不得**在末日被强平 —— 强平是一笔
+        # fill,而 §1 明令「MUST NOT generate fills until trading resumes」。
+        # 此前按 `entry_price` 成交:既造出假成交,又把真实存在的浮亏/浮盈抹成 0。
+        # 改为当日无 bar ⇒ 保留在持仓里、不入成交列表;净值仍按 last raw_close
+        # 计入(`holdings` 末行即该未平仓市值,§2 现金恒等式照常对账)。
         if t == last_t:
             for code in list(positions.keys()):
                 pos = positions[code]
                 pi = pidx[code]
                 j = _row_at(pi, day)
-                px = float(pi["close"][j]) if j is not None else pos["entry_price"]
+                if j is None:
+                    _unclosed_at_window_end.append(code)
+                    continue
+                px = mark_price(pi, day, price_source_for_execution)
                 pos["bars"] = t - pos["entry_t"]
                 # §13.96: 末日强平**也是**一笔卖出 execution ⇒ 同样计冲击。
+                # ⚠️ `j` 必须是**本 code 当日**的行号 (上面刚算的那个): 不可复用
+                # 出场判定循环里遗留的 `j` —— 那是**上一只票**的行号,
+                # `_exit_fill_px` 会据此读错 `volume` ⇒ 参与率算错。
                 _close_position(
                     code, pos, _exit_fill_px(px, code, pos["size"], day, t, j, pi), day, "eod"
                 )
                 del positions[code]
+            if _unclosed_at_window_end:
+                logger.warning(
+                    "§1: 窗口末日 %s 仍停牌(无 bar)的持仓未强平,按 last "
+                    "raw_close 保留在净值中、不计入成交列表: %s",
+                    pd.Timestamp(day).date(), _unclosed_at_window_end,
+                )
 
         # ---------- 4) 记录净值 ----------
         holdings_val = 0.0
-        unrealized = 0.0
         for code, pos in positions.items():
-            j = _row_at(pidx[code], day)
-            # ⚠️⚠️ §3/§13.114 (2026-10-19): **市值必须用 raw 价** —— 与 entry_price 同价源。
-            # §3 明文: "ALWAYS use **Raw Prices** (`raw_close`) for evaluating limit order
-            # triggers, stop-losses, and **portfolio physical cash mark-to-market**"。
-            # 旧写法用 `pidx[code]["close"]`(前复权 adj) 去减 `pos["entry_price"]`(**raw**)
-            # ⇒ **两个价源相减**。持仓跨除权日时 adj 价按复权因子**阶梯跳变**而 raw 价不动
-            # ⇒ 权益曲线出现**物理上不可能**的单日跳变 (实测 uptrend 最高 **+252.78%**,
-            # 14/244 天超 ±10%; chase 最高 +103%, **48/244** 天)。
-            # ⇒ 回退顺序与执行价一致: raw 优先, 缺失 (NaN) 时回退 adj。
-            px = pos["entry_price"]
-            if j is not None:
-                _rc = pidx[code].get("raw_close")
-                if _rc is not None and not np.isnan(_rc[j]):
-                    px = float(_rc[j])
-                else:
-                    px = pidx[code]["close"][j]
+            # §3/§13.114: 市值**必须**与 entry_price 同价源(raw-first),
+            # 否则跨除权日会出现「adj 价格阶梯跳变 - raw 成本」的物理不可能跳变。
+            # §1: 缺 bar(停牌)时**向前回退**到最后一个真实收盘价,不用入场价。
+            px = mark_price(pidx[code], day, price_source_for_execution)
             holdings_val += pos["size"] * px
-            # total_cash 是「已实现盈亏账本」, 建仓时并不扣减现金 (只有平仓时把
-            # net_pnl 计入)。因此持仓期内 NAV 只能加**未实现盈亏**; 若加持仓市值
-            # (size × px), 建仓名义金额就被计入两次 —— equity 会在建仓那根 bar 凭空
-            # 跳增约一个名义金额、平仓时再跳回, 单日权益收益出现 ±50%~+110% 这种
-            # 物理上不可能的跳变 (长仓 + max_positions=1 + A 股 ±10% 涨跌停 ⇒ 单日
-            # 对权益影响上限约 ±10%)。compute_metrics 的 sharpe/max_dd/exposure 全部
-            # 由这条曲线算出, 于是 §5 依赖的 DSR 输入不可信。
-            unrealized += (px - pos["entry_price"]) * pos["size"]
-        # Round 16 (CLAUDE.md §2): equity row uses total_cash.
+        # §2 (audit P0-1, 2026-10-15): 统一走 canonical NAV 单源。
+        #
+        # 本函数原先有两套互相矛盾的口径:权益行用 `total_cash + 未实现盈亏`,
+        # 而 NAV 闸门(`nav_now` 处)用 `total_cash + 持仓市值` —— 后者把
+        # locked_margin(持仓成本基础)与市值同时计入,持仓期间虚增约一个名义
+        # 金额,使防穿仓闸门形同虚设。同一变量在同一函数里两种算法本身就是
+        # 缺陷,现一律改为 core.dual_price.portfolio_nav。
+        #
+        # 为什么用「市值」形式而非「未实现盈亏」形式:入场费在
+        # reserve_for_entry 时已离开现金池且 release_margin 不回补 free_cash,
+        # 故 `total_cash + 未实现盈亏` 在持仓期间会高估 Σ 未平仓入场费。
         equity_rows.append({
             "date": pd.Timestamp(day),
             "cash": pf.total_cash,
             "holdings": holdings_val,
-            "equity": pf.total_cash + unrealized,
+            "equity": portfolio_nav(pf.free_cash, pf.settling_funds, holdings_val),
+            "free_cash": pf.free_cash,
+            "locked_margin": pf.locked_margin,
+            "settling_funds": pf.settling_funds,
+            # §3 (audit P2-10): 累计已入账现金分红(独立于逐笔 P&L 的现金流)。
+            # 缺此列会被 pd.DataFrame(columns=EQUITY_COLS) 静默填成 NaN。
+            "cum_dividends": dividends_cum,
         })
 
     trades_df = (
         pd.DataFrame(trades, columns=TRADE_COLS) if trades else _empty_trades()
     )
-    equity_df = pd.DataFrame(equity_rows, columns=["date", "cash", "holdings", "equity"])
+    equity_df = pd.DataFrame(equity_rows, columns=EQUITY_COLS)
     logger.info("simulate_portfolio: %d 笔交易", len(trades_df))
     return trades_df, equity_df

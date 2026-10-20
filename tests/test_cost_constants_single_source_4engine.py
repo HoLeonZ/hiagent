@@ -100,79 +100,72 @@ PRODUCTION_FILES = {
 
 # Cost constant patterns to detect (literal values that SHOULD come from
 # core/dual_price.py, not be hardcoded)
-COST_LITERAL_PATTERNS = {
-    0.00025: "commission (万2.5)",
-    0.0005: "stamp_duty (万5)",
-    0.001: "stamp_duty_alt (万10 — wrong)",
-    0.0006: "commission_alt (万6 — wrong)",
-    0.0003: "commission_alt2 (万3 — wrong)",
-}
+#: 成本相关的**名字**记号。判定看名字(赋值目标 / 关键字实参),不看数值本身 ——
+#: 见 `_scan_hardcoded_costs` 的说明。
+COST_NAME_TOKENS = ("commission", "stamp", "duty", "fee", "cost", "tax", "borrow")
 
 
-def _scan_hardcoded_costs() -> dict[str, list[tuple[str, int, float, str]]]:
-    """Scan production files for hardcoded cost literals.
+def _scan_hardcoded_costs() -> dict[str, list[tuple[str, int, str, float]]]:
+    """扫描生产文件里「**成本名 + 非零数值字面量**」的定义。
 
-    Returns dict[engine → list of (file, line, value, description)]
+    Returns dict[engine → list of (file, line, name, value)]
+
+    ### 2026-10-17 重写(旧版是"扫描器本身才是问题"的又一例)
+
+    旧版只按"数值命中费率表(0.00025 / 0.0005 / 0.0006 …)"判定,**不看上下文**:
+    源码里算出了一个 `cost_context` 变量,却**从未使用** —— 紧跟着就是无条件
+    `violations.append(...)`,注释还写着 *"Always flag ... (even without context)"*。
+    后果是实测把 `short_reversal/replay_strategy_v3.py:185` 的 **`sl_pct=0.0005`**
+    (止损百分比,一个策略参数)误报成"印花税重复定义"。
+
+    假阳性在这里特别毒:它让**真正的**费率重复可以藏在这类噪声后面(附五 的教训:
+    扫描器的假阳性比假阴性更毒)。新规则改按**名字**判定 —— 赋值目标或关键字实参的
+    名字里含成本词 —— 且要求值**非零**:零值有合法用途
+    (`cerebro.broker.setcommission(commission=0.0)`,成本由策略内部扣),
+    而"重复定义费率常量"这个缺陷形态本身要求一个非零费率。
     """
-    results: dict[str, list[tuple[str, int, float, str]]] = {}
+    results: dict[str, list[tuple[str, int, str, float]]] = {}
 
     for engine, paths in PRODUCTION_FILES.items():
-        violations: list[tuple[str, int, float, str]] = []
-
+        violations: list[tuple[str, int, str, float]] = []
         for path in paths:
             if not path.exists():
                 continue
-
             try:
-                source = path.read_text(encoding="utf-8")
-                tree = ast.parse(source)
-                source_lines = source.splitlines()
+                tree = ast.parse(path.read_text(encoding="utf-8"))
             except (SyntaxError, OSError, UnicodeDecodeError):
                 continue
 
-            for node in ast.walk(tree):
-                if not hasattr(node, "lineno"):
-                    continue
-                line = node.lineno
+            def _is_cost_name(name: str | None) -> bool:
+                return bool(name) and any(t in name.lower() for t in COST_NAME_TOKENS)
 
-                # Detect numeric literals matching cost patterns
-                # ast.Constant handles float + int
-                if isinstance(node, ast.Constant) and isinstance(
-                    node.value, (int, float)
-                ):
-                    value = float(node.value)
-                    if value in COST_LITERAL_PATTERNS:
-                        # Look at surrounding context (line snippet)
-                        snippet = (
-                            source_lines[line - 1].strip()
-                            if line <= len(source_lines)
-                            else ""
-                        )
-                        # Heuristic: skip if line is clearly a comment
-                        # or if the value is used in non-cost context
-                        # (e.g., as part of a percentage > 1)
-                        snippet_lower = snippet.lower()
-                        cost_context = any(
-                            keyword in snippet_lower
-                            for keyword in (
-                                "commission",
-                                "stamp",
-                                "duty",
-                                "fee",
-                                "cost",
-                                "tax",
+            def _is_nonzero_number(node: ast.AST) -> bool:
+                return (
+                    isinstance(node, ast.Constant)
+                    and isinstance(node.value, (int, float))
+                    and not isinstance(node.value, bool)
+                    and float(node.value) != 0.0
+                )
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        if (
+                            isinstance(target, ast.Name)
+                            and _is_cost_name(target.id)
+                            and _is_nonzero_number(node.value)
+                        ):
+                            violations.append(
+                                (str(path.relative_to(REPO_ROOT)), node.lineno,
+                                 target.id, float(node.value.value))
                             )
-                        )
-                        # Always flag if it's a small float that
-                        # matches a cost pattern (even without context)
-                        violations.append(
-                            (
-                                str(path.relative_to(REPO_ROOT)),
-                                line,
-                                value,
-                                COST_LITERAL_PATTERNS[value],
+                elif isinstance(node, ast.Call):
+                    for kw in node.keywords:
+                        if _is_cost_name(kw.arg) and _is_nonzero_number(kw.value):
+                            violations.append(
+                                (str(path.relative_to(REPO_ROOT)), node.lineno,
+                                 kw.arg, float(kw.value.value))
                             )
-                        )
 
         results[engine] = violations
 
@@ -248,102 +241,49 @@ def test_canonical_cost_source_exists_in_core() -> None:
     )
 
 
-def test_chase_up_no_hardcoded_cost_literals() -> None:
-    """§4 PASS baseline: chase_up production has no cost hardcodes.
+_COST_HINT = (
+    "§2/§4:费率常量必须**单源** —— 四引擎一律从 `core.dual_price` import"
+    "(COMMISSION_RATE / STAMP_DUTY_RATE / MIN_COMMISSION),不得在引擎内重复写数值;"
+    "同值不同源就是下一次漂移的起点(审计 §3.3「费率常量重复定义」族)。"
+)
 
-    Per Tick 53: chase_up uses CORRECT rates (0.00025 + 0.0005) but
-    DUPLICATED in 4 files. After refactor, should import from core.
-    This test catches NEW hardcodes introduced after refactor.
-    """
-    results = _scan_hardcoded_costs()
-    chase = results["chase_up"]
-
-    # ⚠️ §13.74: 这里原为 `if chase: pass` —— **整个测试体没有任何断言**,
-    # 注释自己写着 "Just log if found (not assert)", 而它连 log 都没有。
-    # **注入实证**: 往 chase_up/portfolio.py 植入 `_INJ = 0.00025`, 扫描器**当场报出**
-    # (chase_up/portfolio.py:640) —— 而本测试**仍然 5 passed**。
-    # 且原注释 "has known duplicated cost constants per Tick 53" **已过期**:
-    # 实测基线 chase_up/uptrend 各 **0 处** (§13.20/§13.22 已把成本常量上收 core)。
-    # ⇒ 改成**真断言** (基线为 0 ⇒ 零漂移)。
-    assert not chase, (
-        f"§2 Canonical Cost Model: chase_up 的生产文件里出现硬编码成本字面量 {len(chase)} 处 —— "
-        f"成本常量必须**只在 core/ 定义一次**并由各引擎 import。命中: {chase[:5]}"
+#: 这几个用例此前是**无可失败路径**的:
+#:   · chase_up / uptrend_pullback:`if <engine>: pass` —— 扫完不看,永不失败
+#:     (而 docstring 却写着"catches NEW hardcodes");
+#:   · short_reversal / cycle_price_action:只比对**特定错值**(0.0006 / 0.001),
+#:     于是"值抄对了但重复定义"这类漂移起点照样漏过。
+#: 2026-10-17 统一为:**任何非零成本字面量即违规**(值对错与否都不该出现在引擎里)。
+def _assert_no_cost_literals(engine: str) -> None:
+    hits = _scan_hardcoded_costs()[engine]
+    assert not hits, (
+        f"§2/§4 VIOLATION: {engine} 生产文件里有 {len(hits)} 处硬编码费率:\n  "
+        + "\n  ".join(f"{f}:{ln} {name}={val}" for f, ln, name, val in hits)
+        + "\n" + _COST_HINT
     )
+
+
+def test_chase_up_no_hardcoded_cost_literals() -> None:
+    """§2/§4:chase_up 生产文件不得有硬编码费率(必须 import 自 core)。"""
+    _assert_no_cost_literals("chase_up")
 
 
 def test_uptrend_pullback_no_hardcoded_cost_literals() -> None:
-    """§4 PASS baseline: uptrend_pullback production has no cost hardcodes."""
-    results = _scan_hardcoded_costs()
-    uptrend = results["uptrend_pullback"]
-
-    # ⚠️ §13.74: 这里原为 `if uptrend: pass` —— **整个测试体没有任何断言**,
-    # 注释自己写着 "Just log if found (not assert)", 而它连 log 都没有。
-    # **注入实证**: 往 chase_up/portfolio.py 植入 `_INJ = 0.00025`, 扫描器**当场报出**
-    # (chase_up/portfolio.py:640) —— 而本测试**仍然 5 passed**。
-    # 且原注释 "has known duplicated cost constants per Tick 53" **已过期**:
-    # 实测基线 chase_up/uptrend 各 **0 处** (§13.20/§13.22 已把成本常量上收 core)。
-    # ⇒ 改成**真断言** (基线为 0 ⇒ 零漂移)。
-    assert not uptrend, (
-        f"§2 Canonical Cost Model: uptrend_pullback 的生产文件里出现硬编码成本字面量 {len(uptrend)} 处 —— "
-        f"成本常量必须**只在 core/ 定义一次**并由各引擎 import。命中: {uptrend[:5]}"
-    )
+    """§2/§4:uptrend_pullback 生产文件不得有硬编码费率。"""
+    _assert_no_cost_literals("uptrend_pullback")
 
 
 def test_short_reversal_no_wrong_cost_literals() -> None:
-    """§4 RED forward-defense: short_reversal must NOT have wrong rates.
+    """§2/§4:short_reversal 生产文件不得有硬编码费率。
 
-    Per Tick 53: short_reversal has WRONG rates (0.0006 + 0.001).
-    These are 2x and 2x the canonical rates → RED forward-defense.
-
-    This test catches:
-    - New code adding wrong rates (e.g., 0.0006 commission)
-    - Regression to wrong rates after a fix
+    (Tick 53 记过它当时用的是**错值** 0.0006/0.001;现已单源。本用例不再只盯那两个
+    数值 —— 值"抄对"但重复定义同样是违规。)
     """
-    results = _scan_hardcoded_costs()
-    short = results["short_reversal"]
-
-    # Tick 53 documented short_reversal as WRONG (0.0006+0.001)
-    # Forward-defense: if those specific wrong rates appear, RED
-    wrong_rate_violations = [
-        v for v in short
-        if v[2] in (0.0006, 0.001)
-    ]
-
-    if wrong_rate_violations:
-        raise AssertionError(
-            f"§4 WRONG COST RATE: short_reversal has "
-            f"{len(wrong_rate_violations)} hardcoded WRONG rates "
-            f"(0.0006 commission or 0.001 stamp duty).\n"
-            f"Per CLAUDE.md §0/§3: correct rates are 0.00025 + 0.0005.\n"
-            f"Per Tick 53: short_reversal has documented wrong rates; "
-            f"this RED forward-defends against regression.\n"
-            f"Violations: {wrong_rate_violations}"
-        )
+    _assert_no_cost_literals("short_reversal")
 
 
 def test_cycle_price_action_no_wrong_cost_literals() -> None:
-    """§4 RED forward-defense: cycle_price_action must NOT have wrong stamp.
+    """§2/§4:cycle_price_action 生产文件不得有硬编码费率。
 
-    Per Tick 53: cycle has WRONG stamp (0.001 instead of 0.0005).
-    This test catches regression to wrong stamp rate.
+    (Tick 53 记过它当时的印花税是 0.001;现已单源。)
     """
-    results = _scan_hardcoded_costs()
-    cycle = results["cycle_price_action"]
-
-    # Tick 53 documented cycle as WRONG (0.001 stamp)
-    # Forward-defense: if 0.001 appears as stamp rate, RED
-    wrong_stamp_violations = [
-        v for v in cycle if v[2] == 0.001
-    ]
-
-    if wrong_stamp_violations:
-        raise AssertionError(
-            f"§4 WRONG STAMP RATE: cycle_price_action has "
-            f"{len(wrong_stamp_violations)} hardcoded 0.001 stamp "
-            f"duty literals.\n"
-            f"Per CLAUDE.md §0/§3: correct stamp rate is 0.0005 (万5, "
-            f"post-Aug2023).\n"
-            f"Per Tick 53: cycle has documented wrong stamp; "
-            f"this RED forward-defends against regression.\n"
-            f"Violations: {wrong_stamp_violations}"
-        )
+    _assert_no_cost_literals("cycle_price_action")

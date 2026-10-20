@@ -39,6 +39,8 @@ def _run_strategy(
     holder: dict = {"cash": initial_capital, "trades": [], "max_dd": 0.0}
     cerebro.addstrategy(
         Phase3V3Strategy,
+        nav_gate_ratio=0.05,  # §2 (audit 2026-10-15): 单元夹具直接构造策略,
+                              #   故须显式给出(生产路径由 preset 声明注入)
         tp_pct=tp_pct,
         sl_pct=sl_pct,
         max_hold=max_hold,
@@ -49,9 +51,6 @@ def _run_strategy(
         margin_rate=0.086,
         commission_rate=0.0006,
         stamp_duty_rate=0.001,
-        # 2026-10-19 (§13.52): 补上 —— 默认 None 是**刻意的 fail-fast 设计**
-        # (见 replay_strategy_v3.py:176-178), 漏传就该报 TypeError, 不该靠默认值兜。
-        min_cash_ratio=0.05,
         initial_capital=initial_capital,
         lot_size=100,
         result_holder=holder,

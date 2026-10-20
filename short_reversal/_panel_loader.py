@@ -28,6 +28,7 @@ import logging
 from pathlib import Path
 
 import duckdb
+from core.data_coverage import assert_adjusted_coverage  # §3/§0 因子覆盖单源 (附一百零四)
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -56,13 +57,53 @@ def load_panel_for_signal(
     ).strftime("%Y-%m-%d")
     con = duckdb.connect(str(db_path), read_only=True)
     try:
-        df = con.execute(
-            "SELECT thscode, date, open, high, low, close, amount, volume "
-            "FROM v_daily "
-            "WHERE date BETWEEN ? AND ? "
-            "ORDER BY thscode, date",
-            [start, signal_date],
-        ).fetchdf()
+        # §3 (audit 2026-10-17): **信号扫描也必须带 adj_* 列**。
+        # 此前这里只 SELECT v_daily(raw),于是 `scan_signals` / `scan_signals_fast`
+        # 的 5 条件(A/B/C/D/E)以及 F–K 全部在**原始价**上评估,而回测引擎
+        # (`load_panel_for_backtest` 有 LEFT JOIN v_daily_hfq)用的是**复权价**
+        # —— V5 在引擎侧修好的"原始 close 与复权 MA60 混域"问题,在扫描侧被漏下。
+        # 实测暴露面:近 250 个交易日内有公司行为的标的有 **3775 只 / 5143 个事件**
+        # (几乎所有 A 股都有分红/送股)⇒ 扫描器给出的名单与回测实际会进场的名单
+        # 在**大半个市场**上不同。
+        # 与 `load_panel_for_backtest` 同一 JOIN 口径(v_daily = raw, v_daily_hfq = adj)。
+        # 复权视图存在才 JOIN —— 合成夹具(只建 v_daily)里没有它。
+        # 缺它时给出 **NULL 的 adj_*** 而不是报错:列形状保持一致,而策略侧
+        # ("adj_close 全 NaN ⇒ 回退 d.close")与扫描器侧("逐行回退 close")
+        # 都已定义好这条回退,所以"没有复权数据"是一个**已声明**的状态,不是崩溃。
+        has_hfq = bool(
+            con.execute(
+                "SELECT COUNT(*) FROM information_schema.tables "
+                "WHERE table_name = 'v_daily_hfq'"
+            ).fetchone()[0]
+        )
+        if has_hfq:
+            df = con.execute(
+                "SELECT v.thscode, v.date, "
+                "       v.open, v.high, v.low, v.close, v.amount, v.volume, "
+                "       h.open  AS adj_open, "
+                "       h.high  AS adj_high, "
+                "       h.low   AS adj_low, "
+                "       h.close AS adj_close "
+                "FROM v_daily v "
+                "LEFT JOIN v_daily_hfq h "
+                "  ON v.thscode = h.thscode AND v.date = h.date "
+                "WHERE v.date BETWEEN ? AND ? "
+                "ORDER BY v.thscode, v.date",
+                [start, signal_date],
+            ).fetchdf()
+        else:
+            df = con.execute(
+                "SELECT v.thscode, v.date, "
+                "       v.open, v.high, v.low, v.close, v.amount, v.volume, "
+                "       CAST(NULL AS DOUBLE) AS adj_open, "
+                "       CAST(NULL AS DOUBLE) AS adj_high, "
+                "       CAST(NULL AS DOUBLE) AS adj_low, "
+                "       CAST(NULL AS DOUBLE) AS adj_close "
+                "FROM v_daily v "
+                "WHERE v.date BETWEEN ? AND ? "
+                "ORDER BY v.thscode, v.date",
+                [start, signal_date],
+            ).fetchdf()
     finally:
         con.close()
     if not df.empty:
@@ -84,7 +125,8 @@ def load_panel_for_backtest(
     Strategy reads adj_close for indicator math, raw close for execution.
 
     Returns: pd.DataFrame with cols thscode, date, open, high, low, close,
-    amount, volume, adj_open, adj_high, adj_low, adj_close.
+    amount, volume, adj_open, adj_high, adj_low, adj_close,
+    div_per_share, bonus_ratio, rights_ratio.
     """
     panel_start = (
         pd.Timestamp(start) - pd.Timedelta(days=PANEL_FORWARD_BUFFER_DAYS)
@@ -94,6 +136,7 @@ def load_panel_for_backtest(
     ).strftime("%Y-%m-%d")
     con = duckdb.connect(str(db_path), read_only=True)
     try:
+        assert_adjusted_coverage(con, start, end, source="short_reversal/_panel_loader.load_panel_for_backtest")
         df = con.execute(
             """
             SELECT v.thscode, v.date,
@@ -101,8 +144,22 @@ def load_panel_for_backtest(
                    h.open  AS adj_open,
                    h.high  AS adj_high,
                    h.low   AS adj_low,
-                   h.close AS adj_close
+                   h.close AS adj_close,
+                   -- §3 (audit P2-10, 2026-10-15): 事件化公司行为(与 chase_up 同口径)。
+                   -- 做空方向:现金分红是**付出**,由引擎在除权日从该仓位的
+                   -- locked_margin 扣出(见 _apply_corporate_action)。
+                   COALESCE(ev.dividend_per_share, 0.0) AS div_per_share,
+                   COALESCE(ev.per_share_bonus, 0.0)    AS bonus_ratio,
+                   COALESCE(ev.rights_ratio, 0.0)       AS rights_ratio
             FROM v_daily v
+            LEFT JOIN (
+                SELECT thscode, ex_date,
+                       SUM(dividend_per_share) AS dividend_per_share,
+                       SUM(per_share_bonus)    AS per_share_bonus,
+                       SUM(rights_ratio)       AS rights_ratio
+                FROM raw_adjustment_events
+                GROUP BY thscode, ex_date
+            ) ev ON v.thscode = ev.thscode AND v.date = ev.ex_date
             LEFT JOIN v_daily_hfq h
               ON v.thscode = h.thscode AND v.date = h.date
             WHERE v.date BETWEEN ? AND ? AND v.thscode = ANY(?)

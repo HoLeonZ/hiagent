@@ -12,18 +12,26 @@ import numpy as np
 
 
 class PctChg(bt.Indicator):
-    """单日涨跌幅：(close[0] - close[-1]) / close[-1]。"""
+    """单日涨跌幅：(close[0] - close[-1]) / close[-1]。
+
+    v81 (2026-10-14, CLAUDE.md §3): price_source 注入。信号域 MUST use adj_close,
+    否则除权日跳空被误判为「下跌日」。默认 (None) 沿用 data.close (raw, 兼容)。
+    """
 
     lines = ("pct_chg",)
 
+    def __init__(self):
+        self.price_source = None  # 由 strategy __init__ 注入 adj_close line
+
     def next(self):
+        src = self.price_source if self.price_source is not None else self.data
         # backtrader 的 data 在 __init__ 时已 preload，bar=0 时 close[-1] 不为 NaN
         # 用 len(self) 判定"第 1 根 bar" → 输出 NaN
         if len(self) == 1:
             self.lines.pct_chg[0] = float("nan")
             return
-        prev = float(self.data.close[-1])
-        cur = float(self.data.close[0])
+        prev = float(src[-1])
+        cur = float(src[0])
         if np.isnan(prev) or prev == 0 or np.isnan(cur):
             self.lines.pct_chg[0] = float("nan")
         else:
@@ -58,17 +66,24 @@ class Am60(bt.Indicator):
 
 
 class UpStreak(bt.Indicator):
-    """per-stock 连续上涨天数计数器。down_day 或 NaN 重置为 0。"""
+    """per-stock 连续上涨天数计数器。down_day 或 NaN 重置为 0。
+
+    v81 (2026-10-14, CLAUDE.md §3): price_source 注入 (同 PctChg)。默认 raw 兼容。
+    """
 
     lines = ("up_streak",)
 
+    def __init__(self):
+        self.price_source = None  # 由 strategy __init__ 注入 adj_close line
+
     def next(self):
+        src = self.price_source if self.price_source is not None else self.data
         # 第 1 根 bar → 无 prev → 0
         if len(self) == 1:
             self.lines.up_streak[0] = 0
             return
-        prev_close = float(self.data.close[-1])
-        cur_close = float(self.data.close[0])
+        prev_close = float(src[-1])
+        cur_close = float(src[0])
         if np.isnan(prev_close) or np.isnan(cur_close):
             self.lines.up_streak[0] = 0
         elif cur_close > prev_close:
@@ -97,9 +112,13 @@ class BelowMa60Ratio60(bt.Indicator):
         self._buf_close: list[float] = []
         self._buf_ma60: list[float] = []
         self.ma60_source = None  # 由调用方在 __init__ 后赋值
+        self.price_source = None  # v81 (§3): 注入 adj_close line; 默认 raw 兼容
 
     def next(self):
-        c = float(self.data.close[0])
+        # v81 (2026-10-14, CLAUDE.md §3): close 侧也走 price_source, 与 ma60
+        # (adj_close 域) 同域 —— 否则 raw close vs adj ma60 错配, ratio 恒 ~1.0。
+        csrc = self.price_source if self.price_source is not None else self.data
+        c = float(csrc[0])
         m = float("nan")
         if self.ma60_source is not None:
             # 用 data feed 的 bar idx 直接读 array —— LineBuffer.idx 在
@@ -278,3 +297,125 @@ class Ma20SlopeN(bt.Indicator):
         # numpy.polyfit 在 N=5 时数值稳定, 无未来函数 (只用 [0] 当期 + 过去)
         coef = np.polyfit(x, y, 1)
         self.lines.slope[0] = float(coef[0])
+
+
+# ---------------------------------------------------------------------------
+# §6 单源(2026-10-17):上面各 bt.Indicator 的 **pandas 对偶**。
+#
+# 为什么在这里而不是在扫描器里:快速扫描器(`scan_signals_fast`)要用 pandas 路径,
+# 于是这些定义**必然**出现两次。把两份放在**同一个文件**里,至少满足"一个指标一处
+# 定义可查",并由 `tests/test_indicator_equivalence_pandas_vs_backtrader.py`
+# 在真实数据上**逐值对拍**(同一天、同一批代码,两路取值必须一致)。
+# 对拍之前,这些"等价"只是假设 —— 扫描器诞生起就如此。
+#
+# 每个函数都在 docstring 里点名它的 backtrader 孪生体与对拍测试。
+# ---------------------------------------------------------------------------
+import pandas as _pd
+
+
+def sma_pandas(values: _pd.Series, period: int) -> _pd.Series:
+    """SMA 的 pandas 对偶 —— 对应 `bt.indicators.SMA(..., period)`。
+
+    不足 period 根 bar ⇒ NaN(`min_periods=period`),与 backtrader 的
+    "未预热即 NaN"一致。
+    """
+    return values.rolling(period, min_periods=period).mean()
+
+
+def pct_chg_pandas(values: _pd.Series) -> _pd.Series:
+    """单日涨跌幅 —— 对应 `PctChg`:`(close[0] - close[-1]) / close[-1]`。"""
+    return values.pct_change()
+
+
+def am60_pandas(amount: _pd.Series, period: int = 60) -> _pd.Series:
+    """成交额 N 日均值 —— 对应 `Am60`。
+
+    注意 backtrader 那版在 NaN 时**先 return、不入 buffer**,即 buffer 里全是非 NaN;
+    `rolling(period, min_periods=period)` 同样按非 NaN 计数 ⇒ 等价。
+    """
+    return amount.rolling(period, min_periods=period).mean()
+
+
+def up_streak_pandas(values: _pd.Series) -> _pd.Series:
+    """连续上涨天数 —— 对应 `UpStreak`(严格 `>`;下行或 NaN 归零)。"""
+    up = values.diff() > 0
+    out: list[int] = []
+    streak = 0
+    for is_up in up.to_numpy():
+        streak = streak + 1 if bool(is_up) else 0
+        out.append(streak)
+    return _pd.Series(out, index=values.index, dtype=float)
+
+
+def below_ma60_ratio_pandas(values: _pd.Series, ma60: _pd.Series, period: int = 60) -> _pd.Series:
+    """过去 period 日 `close < ma60` 的比例 —— 对应 `BelowMa60Ratio60`。"""
+    return (values < ma60).astype(float).rolling(period, min_periods=period).mean()
+
+
+def return_n_pandas(values: _pd.Series, period: int) -> _pd.Series:
+    """N 日累计回报 —— 对应 `ReturnN`:`(src[0] - src[-N]) / src[-N]`。"""
+    return values / values.shift(period) - 1.0
+
+
+def amount_ratio_pandas(amount: _pd.Series, short_period: int = 5, long_period: int = 20) -> _pd.Series:
+    """5d/20d 成交金额比率 —— 对应 `AmountRatio`。
+
+    backtrader 那版维护"最近 long_period 个**非 NaN** amount"的 buffer ⇒
+    短均 = buffer 末 short_period 个的均值,长均 = 整个 buffer 的均值。
+    两个 rolling 相除即等价(都按非 NaN 计数)。
+    """
+    short_avg = amount.rolling(short_period, min_periods=short_period).mean()
+    long_avg = amount.rolling(long_period, min_periods=long_period).mean()
+    return short_avg / long_avg.where(long_avg > 0)
+
+
+def ma20_slope_pandas(ma20: _pd.Series, period: int = 5) -> _pd.Series:
+    """MA20 最近 N 值的**线性回归斜率** —— 对应 `Ma20SlopeN`。
+
+    x 取 0..period-1 等距,y 为该窗口内的 ma20 值;`np.polyfit(deg=1)` 的斜率。
+    窗口内任一点为 NaN ⇒ NaN(与那版 `len(valid) < period` 的判定一致)。
+    """
+
+    def _slope(y: "object") -> float:
+        arr = np.asarray(y, dtype=float)
+        if np.isnan(arr).any():
+            return float("nan")
+        return float(np.polyfit(np.arange(arr.size, dtype=float), arr, 1)[0])
+
+    return ma20.rolling(period, min_periods=period).apply(_slope, raw=True)
+
+
+def rsi_pandas(values: _pd.Series, period: int = 14) -> _pd.Series:
+    """RSI(period) —— 对应 `bt.indicators.RSI`(经典 **Wilder 平滑**)。
+
+    逐值对拍(`tests/test_indicator_equivalence_pandas_vs_backtrader.py`)发现:
+    直接用 `ewm(alpha=1/period, adjust=False)` 会留下 ~1e-6 的**系统性残差** ——
+    因为 backtrader 的 `SmoothedMovingAverage` 用**前 period 个增量的简单均值**作种子,
+    而 `ewm(adjust=False)` 用**第一个观测**作种子。种子不同,递归再长也消不掉
+    (误差按 (1-1/p) 衰减但永不为零)⇒ 必须显式实现『种子 + 递归』才能逐值一致。
+
+    下标约定:`delta[0]` 是 NaN;第 1 个有效增量在 i=1 ⇒ 种子用 `delta[1..period]`,
+    从 `i = period+1` 起递归。与 backtrader 对同一根 bar 给出同一个值。
+    """
+    delta = values.diff()
+    gain = delta.clip(lower=0.0).to_numpy(dtype=float)
+    loss = (-delta).clip(lower=0.0).to_numpy(dtype=float)
+    n = gain.size
+    out = np.full(n, np.nan, dtype=float)
+    if n <= period:
+        return _pd.Series(out, index=values.index)
+
+    avg_gain = float(np.mean(gain[1:period + 1]))
+    avg_loss = float(np.mean(loss[1:period + 1]))
+    for i in range(period, n):
+        if i > period:
+            avg_gain = (avg_gain * (period - 1) + gain[i]) / period
+            avg_loss = (avg_loss * (period - 1) + loss[i]) / period
+        if avg_loss == 0.0:
+            # backtrader 在此处内部除零**抛错**(引擎因此把 RSI 构建做成 opt-in:
+            # 见 replay_strategy_v3 的 Round 17 注释);pandas 侧给 NaN ——
+            # 这是**有意**的差异,对拍只在引擎能算出值的样本上比较。
+            out[i] = float("nan") if avg_gain == 0.0 else 100.0
+        else:
+            out[i] = 100.0 - 100.0 / (1.0 + avg_gain / avg_loss)
+    return _pd.Series(out, index=values.index)

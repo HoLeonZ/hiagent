@@ -113,3 +113,20 @@ def test_renderer_no_db_import():
     """§6: core 渲染层禁止 DB 依赖（源码断言）。"""
     src = Path(tr.__file__).read_text(encoding="utf-8")
     assert "duckdb" not in src
+
+
+def test_report_labels_returns_as_unattributed(tmp_path):
+    """§5: 无基准时,报告必须**显式**标注「未归因」。
+
+    CLAUDE.md §5 verbatim: 头条收益必须附基准相对超额;纯 beta 复制不得当作 alpha。
+    本地库无指数序列 → 归因不可计算。此时把裸收益直接呈现给读者,正是 §5 要防的
+    "把 beta 当 alpha";故渲染器必须自己说清楚,而不是指望读者会怀疑。
+
+    注:该标注随**每一份报告**一起走 —— 它不能只活在某个测试的 skip 文本或审计
+    文档里(那种"没人提起所以不存在"的状态正是本仓库反复吃亏的地方)。
+    """
+    out = _render(tmp_path, _trades_df([_trade()]), {"000001.SZ": _bars()})
+    text = out.read_text(encoding="utf-8")
+    assert "未归因" in text, "§5 VIOLATION: 报告未标注归因状态。"
+    # 单源:标注文本取自规范常量,而不是渲染函数里另写一遍。
+    assert tr.UNATTRIBUTED_NOTICE in text

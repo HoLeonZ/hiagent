@@ -270,90 +270,66 @@ def _engine_red_message(
 # ---------------------------------------------------------------------------
 
 
-def test_chase_up_cost_model_canonical() -> None:
-    """§0/§3 PASS: chase_up uses canonical 0.00025 + 0.0005.
 
-    Per portfolio.py:144-145: `commission_rate: float = 0.00025,
-    stamp_duty_rate: float = 0.0005`.
+# ---------------------------------------------------------------------------
+# §6 单源不变量（audit P2-11, 2026-10-15）
+# ---------------------------------------------------------------------------
+
+
+def _assert_cost_constants_single_sourced(engine: str) -> None:
+    """引擎**不得自行声明**费率常量，必须从 core.dual_price 导入。
+
+    本文件原先只比对**数值**是否等于 canonical —— 那允许"重复定义、数值相同"，
+    而重复定义正是会静默漂移的形态：历史上 short_reversal 写成 0.0006+0.001、
+    cycle 写成 0.001，都是"每个引擎各写一份"的直接后果。单源之后数值在构造上
+    不可能漂移，所以断言改为更强的性质。
     """
-    commission, stamp_duty, lines = _scan_cost_constants(
-        COST_MODEL_FILES["chase_up"]
+    path = COST_MODEL_FILES[engine]
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "core.dual_price":
+            imported |= {a.name for a in node.names}
+    needed = {"COMMISSION_RATE", "STAMP_DUTY_RATE", "MIN_COMMISSION"}
+    missing = needed - imported
+    assert not missing, (
+        f"§6 VIOLATION: {engine} 未从 core.dual_price 导入 {sorted(missing)}"
+        " —— 费率常量必须单源"
     )
 
-    if commission != CANONICAL_COMMISSION:
-        raise AssertionError(
-            _engine_red_message(
-                "chase_up",
-                commission,
-                stamp_duty,
-                f"commission must be {CANONICAL_COMMISSION}",
-            )
-        )
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            tgts = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for t in tgts:
+                if isinstance(t, ast.Name) and t.id in needed:
+                    assert not isinstance(node.value, ast.Constant), (
+                        f"§6 VIOLATION: {engine} 在 line {node.lineno} 用字面量"
+                        f"重新声明 {t.id} —— 必须引用 core 单源"
+                    )
 
-    if stamp_duty not in VALID_STAMP_DUTY:
-        raise AssertionError(
-            _engine_red_message(
-                "chase_up",
-                commission,
-                stamp_duty,
-                f"stamp_duty must be one of {sorted(VALID_STAMP_DUTY)}",
-            )
-        )
+def test_chase_up_cost_model_canonical() -> None:
+    """§6 单源不变量: chase_up 必须从 core.dual_price 导入费率常量。
+
+    audit P2-11 (2026-10-15): 原用例比对数值 == canonical —— 允许重复定义。
+    """
+    _assert_cost_constants_single_sourced("chase_up")
 
 
 def test_uptrend_pullback_cost_model_canonical() -> None:
-    """§0/§3 PASS: uptrend_pullback uses canonical 0.00025 + 0.0005.
+    """§6 单源不变量: uptrend_pullback 必须从 core.dual_price 导入费率常量。
 
-    Per portfolio.py:128-129: `commission_rate: float = 0.00025,
-    stamp_duty_rate: float = 0.0005`.
+    audit P2-11 (2026-10-15): 原用例比对数值 == canonical —— 允许重复定义。
     """
-    commission, stamp_duty, lines = _scan_cost_constants(
-        COST_MODEL_FILES["uptrend_pullback"]
-    )
-
-    if commission != CANONICAL_COMMISSION:
-        raise AssertionError(
-            _engine_red_message(
-                "uptrend_pullback",
-                commission,
-                stamp_duty,
-                f"commission must be {CANONICAL_COMMISSION}",
-            )
-        )
-
-    if stamp_duty not in VALID_STAMP_DUTY:
-        raise AssertionError(
-            _engine_red_message(
-                "uptrend_pullback",
-                commission,
-                stamp_duty,
-                f"stamp_duty must be one of {sorted(VALID_STAMP_DUTY)}",
-            )
-        )
+    _assert_cost_constants_single_sourced("uptrend_pullback")
 
 
 def test_short_reversal_cost_model_canonical() -> None:
-    """§0/§3 RED: short_reversal uses WRONG 0.0006 commission.
+    """§6 单源不变量: short_reversal 必须从 core.dual_price 导入费率常量。
 
-    Per replay_strategy_v3.py:69-70:
-    `commission_rate=0.0006, stamp_duty_rate=0.001`.
-    Commission 0.0006 has NO HISTORICAL BASIS — must be 0.00025.
+    audit P2-11 (2026-10-15): 原用例比对数值 == canonical —— 允许重复定义。
     """
-    commission, stamp_duty, lines = _scan_cost_constants(
-        COST_MODEL_FILES["short_reversal"]
-    )
-
-    if commission != CANONICAL_COMMISSION:
-        raise AssertionError(
-            _engine_red_message(
-                "short_reversal",
-                commission,
-                stamp_duty,
-                f"commission 0.0006 has no historical basis (line "
-                f"{lines.get('commission', '?')}); canonical is "
-                f"{CANONICAL_COMMISSION}",
-            )
-        )
+    _assert_cost_constants_single_sourced("short_reversal")
 
     # ⚠️ §13.76: 这一条此前**只断言 commission, 从不看 stamp_duty** ——
     # 而它把 stamp_duty 收进来、还传给了错误信息, 制造了"已经检查过"的印象。
@@ -373,50 +349,9 @@ def test_short_reversal_cost_model_canonical() -> None:
 
 
 def test_cycle_price_action_cost_model_canonical() -> None:
-    """§0/§3 RED: cycle_price_action uses 0.001 stamp duty (pre-Aug2023).
+    """§6 单源不变量: cycle_price_action 必须从 core.dual_price 导入费率常量。
 
-    Per portfolio.py:60-62:
-    `COMMISSION_RATE = 0.00025, MIN_COMMISSION = 5.0,
-    STAMP_TAX_SELL = 0.001`.
-    Commission is canonical, but stamp duty is PRE-Aug2023 rate
-    (0.001) without a date guard. For post-Aug2023 backtests, must
-    be 0.0005.
+    audit P2-11 (2026-10-15): 原用例比对数值 == canonical —— 允许重复定义。
     """
-    commission, stamp_duty, lines = _scan_cost_constants(
-        COST_MODEL_FILES["cycle_price_action"]
-    )
+    _assert_cost_constants_single_sourced("cycle_price_action")
 
-    if commission != CANONICAL_COMMISSION:
-        raise AssertionError(
-            _engine_red_message(
-                "cycle_price_action",
-                commission,
-                stamp_duty,
-                f"commission must be {CANONICAL_COMMISSION}",
-            )
-        )
-
-    # Stamp duty 0.001 is valid (pre-Aug2023) but needs date guard
-    # for post-Aug2023 backtests. For now, accept both values; flag
-    # as PASS for 0.0005, RED for 0.001 with note.
-    if stamp_duty == 0.001:
-        raise AssertionError(
-            _engine_red_message(
-                "cycle_price_action",
-                commission,
-                stamp_duty,
-                f"stamp_duty 0.001 (pre-Aug2023) used without date "
-                f"guard (line {lines.get('stamp_duty', '?')}); "
-                f"post-Aug2023 backtests must use 0.0005",
-            )
-        )
-
-    if stamp_duty not in VALID_STAMP_DUTY:
-        raise AssertionError(
-            _engine_red_message(
-                "cycle_price_action",
-                commission,
-                stamp_duty,
-                f"stamp_duty must be one of {sorted(VALID_STAMP_DUTY)}",
-            )
-        )

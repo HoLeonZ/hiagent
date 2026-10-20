@@ -9,7 +9,7 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, "/Users/holeon/code/hiagent")
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # §0/§6 (附一百一十一)
 
 from short_reversal.engine import run_backtest_v3
 from hiagent_config import get_db_path
@@ -31,20 +31,7 @@ def main():
         "preset": m["preset"],
         "start": m["start"],
         "end": m["end"],
-        "metrics": {
-            "trades_count": m["trades_count"],
-            "win_rate": m["win_rate"],
-            "final_capital": m["final_capital"],
-            "total_yield": m["total_yield"],
-            "cagr": m["cagr"],
-            "sharpe": m["sharpe"],
-            "max_dd": m["max_dd"],
-            "avg_pnl": m["avg_pnl"],
-            "avg_hold_days": m["avg_hold_days"],
-            "tp_count": m["tp_count"],
-            "sl_count": m["sl_count"],
-            "time_count": m["time_count"],
-        },
+        # §7 (audit P3): golden 不内嵌绩效指标(见 _regen_chase_baselines.py)
         "trades": m["trades"],
     }
     OUT.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")

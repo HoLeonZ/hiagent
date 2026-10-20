@@ -11,7 +11,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-GOLDEN = Path("/Users/holeon/code/hiagent/tests/golden")
+GOLDEN = Path(__file__).resolve().parents[1] / "golden"  # §0/§6 (附一百一十一)
 PRESETS = [
     "v33_mainboard_tp2_sl05_dneg",
     "v33_mainboard_tp6_sl005_mh5_realistic",

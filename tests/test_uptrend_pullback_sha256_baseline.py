@@ -65,9 +65,8 @@ def _check_one(preset: str) -> None:
     if not baseline_path.exists():
         pytest.skip(f"baseline not pinned yet: {baseline_path.name}")
 
-    from hiagent_config import DB_PATH as _DB
-    if not Path(_DB).exists():
-        pytest.skip(f"§6 baseline check 需要本机 DuckDB: {_DB}")
+    from tests.conftest import require_market_db  # §6: 存在**且非空**
+    require_market_db()
 
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
     start, end = baseline["window"]

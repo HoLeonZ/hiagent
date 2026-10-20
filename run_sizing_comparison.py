@@ -12,14 +12,23 @@ Kelly 系数从 v6 79 笔实测计算：
 """
 from __future__ import annotations
 
+import sys
 import time
+from pathlib import Path
 
 import pandas as pd
+
+# 附一百零八: 让本脚本能作为**脚本**直接跑(此前缺 sys.path 前导)。
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
 
 from uptrend_pullback.backtest import compute_metrics
 from uptrend_pullback.data import load_panel
 from uptrend_pullback.portfolio import simulate_portfolio
+from uptrend_pullback.presets import PRESETS as _UP_PRESETS
 from uptrend_pullback.presets import get_preset
+
+_PRESETS_NAMES = set(_UP_PRESETS)
 from uptrend_pullback.regime import compute_regime
 from uptrend_pullback.signals import compute_indicators, select_entries
 from uptrend_pullback.universe import load_universe
@@ -42,6 +51,14 @@ MODES = [
 
 def main() -> None:
     t0 = time.time()
+    # §5 (附一百零八): 同上 —— 给出由来而不是抛裸异常。
+    if "v6" not in _PRESETS_NAMES:
+        raise SystemExit(
+            "v6 不在 PRESETS —— 它在提交 e3cd4f9(「drop v2 preset」)中被裁剪(删除而非重命名),没有可推断的替代名;"
+            "本脚本属**已登记债务**"
+            "(见 tests/test_research_scripts_reference_live_presets.py::KNOWN_DEAD_REFERENCES)。"
+            f"现存 preset 例:{sorted(_PRESETS_NAMES)[:3]}…"
+        )
     p = get_preset("v6")
 
     # ---------- 一次性加载 + 计算 entries ----------

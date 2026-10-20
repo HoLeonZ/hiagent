@@ -32,6 +32,7 @@ import backtrader as bt
 import numpy as np
 import pandas as pd
 
+from core.preset_contract import resolve_nav_gate_ratio  # §2 (audit 2026-10-15)
 from short_reversal.engine import (
     COMMISSION_RATE,
     INITIAL_CAPITAL,
@@ -65,6 +66,22 @@ class TraceStrategy(Phase3V3Strategy):
         self.traces: list[dict] = []
         self._entry_meta: dict[str, dict] = {}
 
+    # §6 (audit, 2026-10-15): 两个 override 改为**薄包装**，委托生产实现，
+    # 只做观测。
+    #
+    # 原实现是生产入场/出场逻辑的**分叉副本**：自建 size 公式（基于
+    # `self.cash` 而非 free_cash）、`self.cash -= entry_fee` 的单池模型、
+    # **不调用 `reserve_for_entry`**、建仓字典只写 3 个键。Round 16 把生产
+    # 代码迁到 3-pool settlement isolation 后这里没跟着改，后果是：
+    #   - `locked_margin` 恒为 0 → 下一根 bar 被融券日费的 fail-fast 打死，
+    #     于是三个「无前视」不变量用例常年是 ERROR 而不是断言失败 ——
+    #     **等于从未被有效覆盖**；
+    #   - `short_reversal/feed_bt.py` 的注释却引用 "LAHEAD-001 实证
+    #     pre_window_entry_count == 0" 作为窗口边界安全的依据，而那个测试
+    #     在当前代码栈上根本跑不起来。
+    # 即：harness 测的不是生产行为，任何由它得出的窗口结论都不成立。
+    # 现在改为委托，harness 与生产同源。
+
     def _fill_pending_entries(self) -> None:
         """**包装**父类: 先让它做真正的工作 (含结算/保证金状态机), 再记录新开的仓。
 
@@ -78,10 +95,10 @@ class TraceStrategy(Phase3V3Strategy):
         for code in set(self._holds) - before:
             pos = self._holds[code]
             self._entry_meta[code] = {
-                "entry_bar": pos["entry_bar"],
+                "entry_bar": pos.get("entry_bar"),
                 "entry_date": pos.get("entry_date"),
-                "entry_price": pos["entry_price"],
-                "size": pos["size"],
+                "entry_price": pos.get("entry_price"),
+                "size": pos.get("size"),
             }
 
     def _close(self, d, price: float, reason: str) -> None:
@@ -148,17 +165,12 @@ def run() -> dict:
         sl_pct=cfg["sl_pct"],
         max_hold=cfg["max_hold"],
         position_fraction=1.0,
+        # §2 (audit 2026-10-15): 经规范契约解析(缺声明 fail-fast),与引擎同口径。
+        nav_gate_ratio=resolve_nav_gate_ratio(cfg, cfg.get("_name", "short_reversal")),
         pct_chg_low=cfg.get("pct_chg_low", 0.02),
         pct_chg_high=cfg.get("pct_chg_high", 0.06),
         a_condition=cfg.get("a_condition", "default"),
         margin_rate=MARGIN_RATE,
-        # 2026-10-19 (§13.51): `min_cash_ratio` 的默认值是 **None**, 而那是**刻意的 fail-fast
-        # 设计**(见 replay_strategy_v3.py:176-178: "默认 None, engine 必须显式从 preset 传入
-        # —— 忘传时 cash_gate_threshold 计算报 TypeError 而非 silently 0.05")。
-        # ⇒ **坏的是这个调用者, 不是那个默认值。** 本工具是 `Phase3V3Strategy` 的子类,
-        #   却从未注入它 ⇒ `run_trace()` 直接抛 TypeError ⇒ 依赖它的 LAHEAD-001 三条测试
-        #   只能 ERROR。这里按 engine.py:170 的同一写法补上。
-        min_cash_ratio=cfg.get("min_cash_ratio", 0.05),
         commission_rate=COMMISSION_RATE,
         stamp_duty_rate=STAMP_DUTY_RATE,
         initial_capital=INITIAL_CAPITAL,

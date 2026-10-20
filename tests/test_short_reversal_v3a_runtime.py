@@ -116,33 +116,47 @@ def test_engine_left_join_query_shape(monkeypatch):
 
     captured = {"sql": None, "params": None}
 
+    #: 附一百零四:`load_panel_for_backtest` 现在**先**跑一次"窗口内有没有未覆盖的交易日"
+    #: (`core/data_coverage`,读 `calc_adjust_factor_daily`)。假连接必须认识这条查询 ——
+    #: 否则它会把 `captured["sql"]` 抢走,让本用例想钉的 LEFT JOIN 形状失去意义。
+    #: **返回空结果 = "没有未覆盖的交易日" ⇒ 放行**,不是"跳过检查"。
     class FakeCon:
         def execute(self, sql, params=None):
+            class _Cur:
+                def __init__(self_inner, frame):
+                    self_inner._frame = frame
+
+                def fetchdf(self_inner):
+                    return self_inner._frame
+
+                def fetchall(self_inner):
+                    return []          # 覆盖检查:空 = 没有未覆盖的交易日
+
+            if "calc_adjust_factor_daily" in sql:
+                return _Cur(pd.DataFrame())
             captured["sql"] = sql
             captured["params"] = params
-            class _Cur:
-                def fetchdf(self_inner):
-                    return pd.DataFrame({
-                        "thscode": ["TEST.SH"] * 2,
-                        "date": pd.to_datetime(["2024-06-01", "2024-06-02"]),
-                        "open": [10.0, 10.1], "high": [10.5, 10.6],
-                        "low": [9.5, 9.6], "close": [10.0, 10.1],
-                        "amount": [1e7, 1.1e7], "volume": [1e6, 1.1e6],
-                        "adj_open": [10.0, 10.1], "adj_high": [10.5, 10.6],
-                        "adj_low": [9.5, 9.6], "adj_close": [10.0, 10.1],
-                    })
-            return _Cur()
+            return _Cur(pd.DataFrame({
+                "thscode": ["TEST.SH"] * 2,
+                "date": pd.to_datetime(["2024-06-01", "2024-06-02"]),
+                "open": [10.0, 10.1], "high": [10.5, 10.6],
+                "low": [9.5, 9.6], "close": [10.0, 10.1],
+                "amount": [1e7, 1.1e7], "volume": [1e6, 1.1e6],
+                "adj_open": [10.0, 10.1], "adj_high": [10.5, 10.6],
+                "adj_low": [9.5, 9.6], "adj_close": [10.0, 10.1],
+            }))
         def close(self_inner):
             pass
 
     def fake_connect(*args, **kwargs):
         return FakeCon()
 
-    # 2026-10-19 (§13.28/§13.29): `duckdb.connect` 的调用点已从 `engine` 挪到
-    # `short_reversal._panel_loader` (engine 里只留一层薄包装 `_load_panel`)。
-    # 旧写法 `monkeypatch.setattr(eng.duckdb, ...)` 因此报
+    # 2026-10-15 (§6) / 2026-10-19 (§13.28-§13.29): duckdb 的生命周期已按 §6 从
+    # strategy 层收到数据层 —— `short_reversal.engine` 不再 import duckdb(它只留一个
+    # 转发给 `_panel_loader` 的 `_load_panel` 薄包装),故旧的 `eng.duckdb.connect`
+    # 补丁目标已不存在。旧写法会报
     # `AttributeError: module 'short_reversal.engine' has no attribute 'duckdb'`
-    # —— **测试自己崩了**, 不是缺陷。改打到真正的宿主模块。
+    # —— **测试自己崩了**, 不是缺陷。改为补丁真正的连接点。
     from short_reversal import _panel_loader
 
     monkeypatch.setattr(_panel_loader.duckdb, "connect", fake_connect)

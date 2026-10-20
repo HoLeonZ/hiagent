@@ -28,6 +28,16 @@ from __future__ import annotations
 
 import math
 
+# §2/§5 (audit 2026-10-16): 年化常量**单源** —— 与四个引擎同源。
+# 此前本层默认 252(美股惯例),而 chase_up/uptrend_pullback/short_reversal 的
+# `sharpe` 都是 `mean/std × sqrt(243)`(A 股交易日/年)。DSR 会把 observed_sharpe
+# **除回逐期**(`sr = observed_sharpe / sqrt(trading_days_per_year)`)再与逐期阈值比,
+# 于是生产者的 243 与消费者的 252 不匹配 ⇒ 逐期 Sharpe 被系统性缩放
+# `sqrt(243/252) ≈ 0.982`(1.8%),DRS 随之偏离。同一层里的 `annualized_sharpe()`
+# 也是 252 —— 即"同一量两处定义",而真正的边界(引擎→DSR)恰恰跨在这两份定义之间。
+from core.trade_schema import TRADING_DAYS_PER_YEAR
+
+
 import numpy as np
 import pandas as pd
 
@@ -38,8 +48,17 @@ def _norm_cdf(x: float) -> float:
 
 
 def _norm_ppf(p: float) -> float:
-    """Standard normal inverse CDF (Beasley-Springer-Moro approximation).
-    Avoids scipy.stats dependency. Accurate to ~1e-9.
+    """Standard normal inverse CDF(Beasley-Springer-Moro 近似,避开 scipy 依赖)。
+
+    **实测精度(附七十)**:与 stdlib `statistics.NormalDist().inv_cdf` 逐点比对,
+    最大绝对误差 **≈ 7.9e-9**(出现在 E[max] 会用到的远端,如 k=1e12 时的
+    `p = 1−1/(k·e)`),`p∈(0,1)` 中心区 ≈ **2.9e-9**。
+
+    原 docstring 写"Accurate to ~1e-9" —— 比实测**小了一个量级**。改动只是为了**把声明
+    写成事实**(影响可忽略:E[max] 上 8e-9 的误差传到 DSR 也是 8e-9),但声明与实测
+    不一致本身就是本审计反复记录的那类问题;而且现在这个声明**由
+    `tests/test_deflated_sharpe_units.py::test_norm_ppf_accuracy_is_enforced` 守着** ——
+    谁把它换成更差的近似(例如三段有理式,误差 ~1e-3),守卫会红。
     """
     if not (0.0 < p < 1.0):
         raise ValueError(f"p must be in (0, 1), got {p}")
@@ -81,7 +100,7 @@ def _norm_ppf(p: float) -> float:
 
 def annualized_sharpe(
     daily_returns: pd.Series | np.ndarray,
-    trading_days_per_year: int = 252,
+    trading_days_per_year: int = TRADING_DAYS_PER_YEAR,
 ) -> float:
     """Compute annualized Sharpe (no risk-free rate assumed = 0).
 
@@ -100,6 +119,20 @@ def annualized_sharpe(
     return mean / std * math.sqrt(trading_days_per_year)
 
 
+#: 原始峰度与超额峰度的换算偏移 —— 只在这里定义一次,免得调用方各写一个 "+3"。
+_EXCESS_TO_RAW_KURTOSIS_OFFSET = 3.0
+
+
+def raw_kurtosis_from_excess(excess_kurtosis: float) -> float:
+    """超额峰度(Fisher,正态 = 0)→ 原始峰度(正态 = 3)。
+
+    存在的理由:这两种口径在 Python 生态里都常见(scipy.stats 默认 Fisher),而
+    `deflated_sharpe_ratio` 的 `kurtosis` 参数要的是**原始**值。少写一个 +3 就会静默
+    算错 DSR —— 给个有名字的换算,比在 docstring 里写一句"记得加 3"可靠。
+    """
+    return float(excess_kurtosis) + _EXCESS_TO_RAW_KURTOSIS_OFFSET
+
+
 def deflated_sharpe_ratio(
     observed_sharpe: float,
     n_trials: int,
@@ -108,35 +141,30 @@ def deflated_sharpe_ratio(
     kurtosis: float = 3.0,
     autocorr_lag1: float = 0.0,
     n_returns: int | None = None,
-    trading_days_per_year: int = 252,
+    trading_days_per_year: int = TRADING_DAYS_PER_YEAR,
 ) -> dict:
     """V7 (CLAUDE.md §5): Deflated Sharpe Ratio.
 
     Args:
-        observed_sharpe:  Annualized Sharpe from backtest (mean/std × sqrt(252)).
+        observed_sharpe:  Annualized Sharpe from backtest (mean/std × sqrt(TRADING_DAYS_PER_YEAR)).
         n_trials:         Number of independent strategy configurations tested.
                           This is the "selection bias" correction — selecting
                           the best Sharpe from k trials inflates the apparent
                           edge by E[max(Z_1, ..., Z_k)] ≈ (1 - γ)Φ⁻¹(1-1/k) +
                           γΦ⁻¹(1-1/(ke)) where γ ≈ 0.5772 (Euler-Mascheroni).
         skewness:         Return distribution skewness (default 0 = normal).
-        kurtosis:         **原始 (raw / 全) 峰度** —— 正态 = **3** (默认 3.0)。
-                          ⚠️ §13.103 (2026-10-19): 此处原文自称是 **excess** 口径,
-                          并声明本函数**接受 excess** ——
-                          **那两句话互相矛盾, 而且与代码相反**: excess(正态)=0, raw(正态)=3,
-                          而下面的 σ̂ 用的是 Bailey 的 `(γ4 − 1)/4`, 其中 γ4 是 **raw**。
-                          ⇒ 若照旧措辞传 excess, `(γ4−1)/4` 会小 3/4 ⇒ 方差被低估 ⇒
-                          **DSR 偏高 (乐观方向)** —— 那正是文档**主动邀请**调用方做的事。
-                          (实测影响**很小**: 在逐期 `sr ≈ 0.04` 时该差约 **+0.1%**,
-                           因为 `(γ4−1)/4 · sr²` 是二阶项。**但它仍是个反向的陷阱。**)
-                          换算: `raw = excess + 3`; `scipy.stats.kurtosis(fisher=False)`
-                          给 raw, `pandas.Series.kurt()` 给 excess。
+        kurtosis:         Return distribution **raw (非超额) kurtosis** —— 正态分布取 3.0
+                          (即默认值)。Bailey & López de Prado 的 eq.(5) 用的是**原始峰度**:
+                          `((γ4 − 1)/4)·SR²`,γ4=3 时给 0.5 ✓。
+                          若手上是**超额峰度**(scipy / pandas 的 Fisher 口径,正态 = 0),
+                          先过 `raw_kurtosis_from_excess()` 换成原始值,别直接传进来。
+                          `kurtosis < 1` 在数学上不可能是原始峰度 ⇒ fail-fast(见下)。
         autocorr_lag1:    Lag-1 autocorrelation of returns (default 0).
                           Positive autocorrelation inflates Sharpe; correction
                           deflates it.
         n_returns:        Number of return observations used to compute Sharpe.
                           Used for SE adjustment.
-        trading_days_per_year: 252 for daily bars.
+        trading_days_per_year: A 股交易日/年(规范值见 core.trade_schema)。
 
     Returns:
         dict with:
@@ -148,6 +176,19 @@ def deflated_sharpe_ratio(
     """
     if n_trials < 1:
         raise ValueError(f"n_trials must be >= 1, got {n_trials}")
+
+    # §0 fail-fast(附六十九): `kurtosis` 要的是**原始**峰度。原始峰度按定义恒 ≥ 1
+    # (E[X⁴] ≥ E[X²]²,Cauchy–Schwarz),故 < 1 的值**不可能是**原始峰度 ——
+    # 最常见的误用正是把**超额峰度**(正态 = 0)直接传进来。
+    # 与其静默算出一个错的 DSR(docstring 此前恰恰写着"We accept excess here",
+    # 与实现相反),不如在这里拦下并指出该怎么办。
+    if kurtosis < 1.0:
+        raise ValueError(
+            f"kurtosis={kurtosis} 不可能是**原始**峰度(原始峰度恒 ≥ 1,正态为 3)—— "
+            f"看起来是把**超额峰度**传进来了(正态 = 0)。"
+            f"请用 raw_kurtosis_from_excess({kurtosis}) = "
+            f"{raw_kurtosis_from_excess(kurtosis)}。"
+        )
 
     # 1) Expected maximum Sharpe under H0 (all true Sharpe = 0) for k trials.
     #    E[max(Z_1..Z_k)] ≈ (1 - γ) Φ⁻¹(1 - 1/k) + γ Φ⁻¹(1 - 1/(ke))
@@ -164,7 +205,7 @@ def deflated_sharpe_ratio(
             expected_max = float("nan")
 
     # 2026-10-13 (§5 单位一致性修复): observed_sharpe 按本函数约定是**年化**值
-    # (见 docstring: mean/std × sqrt(252)), 而下面的 σ̂ 与 expected_max 都是
+    # (见 docstring: mean/std × sqrt(TRADING_DAYS_PER_YEAR)), 而下面的 σ̂ 与 expected_max 都是
     # **逐期**量。两者必须换算到同一频率, 否则相当于拿年化 Sharpe 去比逐期阈值,
     # 对中等 Sharpe 会系统性过度折减 (实测: 年化 Sharpe=0.84 / k=19 / T=1071 被
     # 判成 DSR=0.000, 而正确值约 0.44 —— 把「有边际优势」误读成「毫无优势」;
@@ -226,6 +267,17 @@ def bonferroni_correct(
     Returns:
         np.ndarray of corrected p-values, same shape as input.
     """
+    # §0 fail-fast(附七十): `n_comparisons` 是"这一族里测了多少个假设"。
+    # 0 或负数在语义上不存在,而它的后果**方向最坏**:
+    #   实测 n_comparisons=0  ⇒ 所有 p 变成 **0.0**(读作"极其显著");
+    #        n_comparisons=-1 ⇒ 所有 p 变成**负数**(任何 `p < 0.05` 都通过)。
+    # 即"用一个不可能的输入把多重比较校正整个取消掉"。与其静默给出这种结果,不如报错。
+    if int(n_comparisons) < 1:
+        raise ValueError(
+            f"n_comparisons must be >= 1(这一族里测了多少个假设), "
+            f"got {n_comparisons} —— 0/负数会把校正后的 p 变成 0 或负数,"
+            f"即'极其显著',等于取消掉校正。"
+        )
     arr = np.asarray(p_values, dtype=float)
     corrected = np.minimum(arr * n_comparisons, 1.0)
     return corrected
@@ -235,32 +287,41 @@ def sharpe_significance_pvalue(
     observed_sharpe: float,
     n_returns: int,
     *,
-    trading_days_per_year: int = 252,
+    trading_days_per_year: int = TRADING_DAYS_PER_YEAR,
 ) -> float:
-    """V7: one-sided p-value for Sharpe ≠ 0 under normality assumption.
+    """V7: one-sided p-value for Sharpe > 0 under normality.
 
-    H0: true Sharpe = 0. H1: true Sharpe > 0. Tests observed / SE where
-    SE = 1/sqrt(T-1) for daily returns. Returns one-sided p-value.
+    ## ⚠️ 2026-10-18 修复(附六十八):**单位混用,量级错约 15 个数量级**
 
-    ⚠️⚠️ **2026-10-19 (§13.99) 单位口径修正 —— 本函数此前与本模块的兄弟函数不一致。**
-    约定与 `deflated_sharpe_ratio` **对齐**: `observed_sharpe` 是**年化**值
-    (mean/std × √252), 故先换算回**逐期**再比逐期标准误 `1/√(T−1)`。
-    旧实现**直接拿年化值除逐期标准误** ⇒ `z` 被放大 √252 ≈ **15.9 倍**
-    ⇒ p 恒 ≈ 0 ⇒ `format_walkforward_stats` 里
-    `bonferroni_p = min(sharpe_p × n_comparisons, 1.0)` **恒 ≈ 0**
-    ⇒ **§5 的族级校正实际上是空的 (它永远不会拒绝任何东西)。**
+    本函数此前的实现是
 
-    **判据 (为什么这是 bug 而不是"另一种口径")**: `deflated_sharpe_ratio` 在
-    `n_trials=1` 时退化成一个纯 PSR 单侧 p 值, **必须**等于本函数的结果。
-    实测 (年化 Sharpe 0.6208, T=1386): 前者 **0.0729**, 后者 **0.0000**
-    (差约 118 个数量级)。**两个相邻函数、同一个入参、同一个模块 —— 必须相等而差了 118 个数量级。**
-    这正与 `deflated_sharpe_ratio` 注释里记的**同一次**单位事故同类
-    ("年化 Sharpe=0.84 / k=19 / T=1071 被判成 DSR=0.000, 而正确值约 0.44") ——
-    那一次修了它自己, **漏了本函数** (族内不对称, 在 `dna_stats/` 内部)。
+        se = 1/sqrt(T-1);  z = observed_sharpe / se
+
+    而 `observed_sharpe` 按本模块的**约定是年化值**(见 `deflated_sharpe_ratio` 的
+    docstring 与 `annualized_sharpe()`),`se = 1/sqrt(T-1)` 却是**逐期**标准误。
+    两者频率不一致 ⇒ z 被放大约 `sqrt(trading_days_per_year) ≈ 15.6` 倍 ⇒
+    p 被压到 ~0。实测:
+
+    | 年化 SR | T | 本函数(修前) | 逐期正确值 |
+    |---|---|---|---|
+    | 0.84 | 1071 | **0.0** | 0.039 |
+    | 0.50 | 250 | 1.6e-15 | **0.306** |
+    | 0.30 | 243 | 1.5e-06 | **0.382** |
+    | 2.00 | 252 | 0.0 | **0.023** |
+
+    即"任何非零 Sharpe 都显著",而 `walkforward_report` 印出来的 Bonferroni p
+    正是由它算的 —— §5 的多重比较惩罚在这一行上等于不存在。
+
+    **同一个文件里的 `deflated_sharpe_ratio` 在 2026-10-13 已经修过这处单位混用**
+    (那一版的注释写明了症状:"年化 Sharpe=0.84 / k=19 / T=1071 被判成 DSR=0.000"),
+    但这个兄弟函数没一起修 —— 修一处 ≠ 修一族。
+    (当时没被发现,是因为 `tests/test_dna_stats_deflated.py::test_sharpe_significance_basic`
+    **把 bug 写成了期望**:它断言年化 SR=2.0 时 `p < 0.001`,而正确值是 ~0.023。
+    那条断言本身就是这个单位错误的另一种写法。)
     """
     if n_returns < 2:
         return float("nan")
-    sr = observed_sharpe / math.sqrt(trading_days_per_year)   # 年化 → 逐期 (§13.99)
-    se = 1.0 / math.sqrt(n_returns - 1)
-    z = sr / se
+    # 年化 → 逐期(与 `deflated_sharpe_ratio` 同一换算,单一约定)。
+    sr_per_period = observed_sharpe / math.sqrt(trading_days_per_year)
+    z = sr_per_period * math.sqrt(n_returns - 1)
     return 1.0 - _norm_cdf(z)

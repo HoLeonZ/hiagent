@@ -21,6 +21,7 @@ from chase_up.data import load_panel
 from chase_up.signals import compute_indicators
 from chase_up.universe import load_universe
 from dna_stats.deflated import deflated_sharpe_ratio
+from core.walkforward import window_trading_days  # §5 窗口交易日数单源 (附八十一)
 
 from hiagent_config import DB_PATH
 
@@ -133,15 +134,48 @@ def main() -> None:
         sharpes = df["sharpe"].dropna().tolist()
         if sharpes:
             observed = max(sharpes)
+            # §5 (audit 2026-10-16): T 来自**本次窗口**,不是常数 —— 此前写死 252,
+            # 而 chase 的 sharpe 是 `mean/std × sqrt(243)`(T = 日收益数);
+            # 实测窗口 2025-09 起的同类 sweep 只有 242~243 个交易日 ⇒ 高估 T 约 4%。
+            #
+            # §5 (附八十一): 但那次修复**取错了量** —— 它写的是 `panel["date"].nunique()`,
+            # 而 `load_panel` 的起点是 `args.start − 400 天`(暖机缓冲)⇒ 面板有 510 个交易日,
+            # 不是 243。于是 T 从「252 高估 4%」变成「509 高估 **2.10 倍**」,**比修之前更乐观**
+            # —— 而上面这句注释里量的 242~243 是对的,**正确的数字和错误的代码躺在同一个 hunk 里**。
+            # 现改走 `core.walkforward.window_trading_days`(单源,按窗口区间计数,空窗口 fail-fast);
+            # 保留 chase 自己的 `− 1`(期数→收益数)口径。
+            # §5 (附八十二): `n_trials` 是"**试过多少个配置**",不是"有多少个配置算出了
+            # 有限的 Sharpe"。上面的 except 分支会给失败配置落一行(只有 `error`、没有
+            # `sharpe`)⇒ 它被 `dropna()` 剔除 ⇒ **n_trials 少计、分母偏小、DSR 偏乐观**。
+            # §5 Iterative-Tuning Accounting 的原话是"每一次迭代都计入" —— 崩掉的那次也是
+            # 一次迭代(搜索确实为它花了预算)。故取**全部落盘行数**。
+            _n_tried = int(len(df))
+            _n_ok = int(len(sharpes))
             dsr = deflated_sharpe_ratio(
-                observed_sharpe=observed, n_trials=len(sharpes), n_returns=252
+                observed_sharpe=observed, n_trials=_n_tried,
+                n_returns=window_trading_days(panel, args.start, args.end) - 1,
             )
             print(
                 f"\n§5 DSR | observed_sharpe={observed:.3f} | "
-                f"n_trials={len(sharpes)} | "
+                f"n_trials={_n_tried} | "
                 f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
                 f"expected_max={dsr['expected_max_sharpe']:.3f} | "
-                f"p_value={dsr['p_value']:.4f}"
+                f"p_value={dsr['dsr_p_value']:.4f}"
+            )
+            if _n_tried != _n_ok:
+                print(
+                    f"  ⚠️ 其中 {_n_tried - _n_ok} 个配置**抛异常**(见 `error` 列)—— "
+                    f"它们同样计入 n_trials(§5:每次迭代都算)"
+                )
+            # §5 (audit 2026-10-15): 本脚本在**单一窗口**上选优,必须自己说清楚。
+            # DSR 量化的正是「从 k 个配置里挑最好」带来的虚高,但**它不能替代**
+            # 样本外验证 —— 而本仓库**已经有**滚动窗口版本(`chase_up/wf_sweep_all.py`),
+            # 所以读者没有任何理由把这个榜当成 OOS 结论。
+            print(
+                f"  ⚠️ in-sample selection:本榜是在单一窗口 {args.start} → {args.end} 上\n"
+                f"     从 {len(sharpes)} 个配置里选出的。DSR 不能替代样本外验证 ——\n"
+                f"     要把某个 config 当结论,请用滚动窗口的 chase_up/wf_sweep_all.py,\n"
+                f"     或在本榜**未参与选择**的窗口上复跑(§5 WFV)。"
             )
 
 

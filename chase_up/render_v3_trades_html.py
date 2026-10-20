@@ -26,7 +26,10 @@ START = "2025-09-19"
 END = "2026-09-19"
 WINDOW_BEFORE = 30   # bars before entry
 WINDOW_AFTER = 10    # bars after exit
-OUT_HTML = Path("/Users/holeon/code/hiagent/chase_up/results/v3_trades.html")
+# §0/§6 (附一百一十一): 此前是**绝对路径** ⇒ 从别的 checkout 运行时,产物被写进
+# **那一份**仓库里(而不是正在跑的这一份)。改为相对本文件。
+ROOT = Path(__file__).resolve().parent.parent
+OUT_HTML = ROOT / "chase_up" / "results" / "v3_trades.html"
 OUT_HTML.parent.mkdir(parents=True, exist_ok=True)
 
 

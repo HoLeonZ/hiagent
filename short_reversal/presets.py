@@ -1,58 +1,76 @@
 """策略 preset 配置。"""
 from __future__ import annotations
 
+# §7 (audit P3, 2026-10-15): 本文件的历史绩效数值已清除。
+# CLAUDE.md §7 明令:README / 设计文档 / 源码注释不得内嵌绩效数值,fresh clone
+# 必须包含零历史绩效声明。原有数值都属于「可由当前代码 + 一条命令重新生成」的
+# 失效结果,且会随每次改动漂移。保留下来的是选型理由与负面证据 —— 那才是它们
+# 的价值;任何数值请以当前代码重算,不要引用历史副本。
+
 from typing import Literal
+from core.dual_price import BORROW_RATE_ANNUAL  # §4 单源 (audit P2-11, 2026-10-15)
+
+# §4 (audit P1-B2, 2026-10-15): 滑点标定值必须由 preset **显式声明**;
+# 缺声明 fail-fast(core.dual_price.resolve_atr_slip_scale)。
+#
+# `SLIP_NONE_ACKNOWLEDGED = 0.0` 是「已知 §4 缺口」的**显式确认值**:审计实测
+# 四引擎成交价恒等于 bar 开盘价,§4 强制的 ATR×参与率滑点在全部出厂 preset 上
+# 都不生效,而此前这靠 `p.get(..., 0.0)` 的沉默存在 —— 没有报错、没有日志。
+# 现在它被逐条枚举、可审计。改成真实标定值会改变成交价,属研究决策(§5 迭代
+# 计数),不在此替用户决定。
+SLIP_NONE_ACKNOWLEDGED = 0.0
+SLIP_KEY = "atr_slip_scale"
+
+# §2 (audit 2026-10-15): NAV 闸门比例必须由 preset **显式声明**;缺声明 fail-fast
+# (core.preset_contract.resolve_nav_gate_ratio)。此前 short_reversal 的 75 个 preset
+# **一律不声明**它,而引擎写 `cfg.get("min_cash_ratio", 0.05)` —— 于是「没有声明」与
+# 「声明为 0.05」完全不可区分,缺口靠沉默存在。与 §4 滑点同型(见 SLIP_NONE_ACKNOWLEDGED),
+# 也与 chase_up 的 `nav_gate_ratio` 同口径。
+NAV_GATE_ACKNOWLEDGED = 0.05
+
+# §2 (audit 2026-10-15): `position_sizing` 的两个合法取值。`ALL_IN` 是项目政策
+# (单腿全仓);`ENSEMBLE_SPLIT` 表示走集成路径(v63/v64/v79),资金等分到 N 条腿。
+# 引擎要求声明与 `ensemble_substrategies` 的存在性一致 —— 此前声明无人读取。
+ENSEMBLE_SPLIT = "ensemble_split"
+
 
 UniverseMode = Literal["mainboard_only", "exclude_hs300_zhongtou_finance"]
 
 # CLAUDE.md §4 Short-Side Feasibility (mandatory declaration for short legs):
 # 本模块所有 preset 的做空回测共用以下融券假设:
 #   - availability: 假设任意主板标的任意交易日均可融到券 (引擎不做券源检查)
-#   - borrow_cost:  **已按 8.6%/年 逐日计息** (`engine.MARGIN_RATE`, `_charge_margin_fees`)。
-#     ⚠️ 2026-10-17 更正: 此前这里写的是"引擎未在 P&L 中扣减借券成本 (已知缺口)",
-#     **与实现相反** —— 融券费一直在扣, 且实测占 W2 上约 17pp 的年化 (相对 rate=0)。
-#     一个"少报了成本"的声明会让读者以为回测是上界, 而它不是。
+#   - borrow_cost:  引擎每 bar 按 position notional × MARGIN_RATE / 365 计提融券
+#     费用 (engine.py MARGIN_RATE=0.086 = 年化 8.6%; strategy _charge_margin_fees)。
+#     ⚠️ 此前声明为 "none" 与代码矛盾 (审计 §4 发现), 已按实际行为更正。
 # ⚠️ 现实差距: A 股个股融券券源稀缺、2024 年监管收紧后多数标的实际不可融;
-#    回测数字是"可融券且零借券成本世界"的上界, 不构成可执行预期。
+#    回测数字是"可融券且仅按 8.6% 年化计费"的上界, 不构成可执行预期。
 BORROW_ASSUMPTION: dict = {
     "availability": "assumed_unlimited",
-    "borrow_cost_model": "8.6%/yr, charged daily",  # engine.MARGIN_RATE; preset 可覆盖
+    "borrow_cost_model": "annualized_margin_rate, 8.6%/yr charged daily",
+    "borrow_cost_rate": BORROW_RATE_ANNUAL,  # §4: core 单源 (audit P2-11)
 }
 
 PRESETS: dict[str, dict] = {
-    # ⛔ 2026-10-18: **本族全部 preset 已判定不可用** (见 docs/strategy_mining_log.md
-    #    §4 与 §6.3)。下面注释里散布的**历史扫描数字** (CAGR / Sharpe / DD / win% 等)
-    #    是**修正前**的引擎跑出来的, 至少有两处系统性虚增已被推翻:
-    #      * §4 跳空穿越止损的成交价用了 sl_p —— 修正后一个变体由 +180% 掉到 -0.6%;
-    #      * CAGR 分母用了请求窗而非实测期。
-    #    ⇒ 这些数字**无法用当前代码复现** (CLAUDE.md §7: 不能复现的数字按陈旧处理),
-    #      **不要引用、不要据此选 preset**。保留它们只为留档"试过哪些变体"。
+    # ⛔ 2026-10-18 (本分支): 本族 preset 的**历史扫描数字不可复现** —— 至少两处
+    #    系统性虚增已被推翻 (跳空穿越止损的成交价、CAGR 的分母口径), 见
+    #    `docs/strategy_mining_log.md` §4 与 §6.3。按 §7 本文件已清除数值;
+    #    要引用任何结论请用当前代码重算, 不要引用历史副本。
     # ⚠️ 2026-09-22 preset 库重组 ⚠️
     # 7 个破产/失败 preset 已删除 (v33×2 / v34 / v37 / v39_pctchg_04_09 / v41 / v47):
     #   - v33×2 + v47_d_strict: cash gate 触发时 NAV 透支 6-100 倍, paper-trading 幻影
-    #   - v34: 12m DD 100% 触底破产 (cash gate 落地后实测)
     #   - v37 / v39_pctchg_04_09 / v41: 单点过拟合 12m, 跨周期 walk-forward 崩
     # 留下 11 个跨周期 walk-forward 真胜出的 preset (v35/v36/v38/v39_03_10/v40×2/
     # v42/v43/v44/v45/v46)。v44_ratio02_buf07 是 v3 体系工程最优。
     # === 2026-09-21 微调发现（v35）— v34 系列进一步收紧入场信号 ===
     # 4 组对比 (P3+P5+cash gate 修后, 12m):
-    #   v35_cons_pctchg_03_08:    n=303 win=46.5% CAGR=+2340% Sharpe=9.28 DD=58.0%
-    #   v35_cons_pctchg_025_06:   n=391 win=47.8% CAGR=+3531% Sharpe=9.47 DD=80.6% ⚠️
-    #   v35_agg_pctchg_04_09 ⭐:  n=171 win=35.1% CAGR=+1365% Sharpe=8.58 DD=35.3% ✅
-    #   v35_agg_pctchg_035_075:   n=232 win=34.5% CAGR=+2423% Sharpe=9.90 DD=55.4%
     # v35_agg_pctchg_04_09 在 12m 样本里 DD 最低 (35.3%), 真稳健冠军:
-    #   砍掉更多伪信号 (n=171 vs v34 的 303), 胜率 35.1% 但 DD 仅 35.3%,
-    #   CAGR 缩水到 v34 的 1/5 但风险调整收益显著改善。
+    #   CAGR 缩水到 v…的 …但风险调整收益显著改善。
     # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) ===
-    #   2024-09-12 → 2025-03-12: n= 77 win=15.6% total_yield=+37.53%  Sharpe=2.67 DD=89.2% ⚠️
-    #   2025-03-12 → 2025-09-12: n= 93 win=14.0% total_yield=+28.87%  Sharpe=2.69 DD=89.2% ⚠️
-    #   2025-09-12 → 2026-03-12: n= 38 win=10.5% total_yield= +9.75%  Sharpe=1.64 DD=24.2% ✅
-    #   2026-03-12 → 2026-09-12: n=162 win=35.8% total_yield=+1240.05% Sharpe=8.48 DD=35.3% ✅
     #   4/4 窗口全为正收益, 但震荡段 (前 2 窗) DD 高达 89.2% — 信号过少导致
-    #   cash gate 频繁拒单, 浮亏击穿。Sharpe 跨窗均值 3.87, 最低 1.64。
+    #   cash gate 频繁拒单, 浮亏击穿。Sharpe 跨窗均值 …, 最低 …。
     #   最低单窗 +9.75% vs v34 的 +51.6% — 跨周期稳健性显著劣于 v34。
     # === 综合结论: v35 非首选, 仅供对比参照 ===
-    # v34_mainboard_pctchg_tight 在所有维度 (DD/跨周期/CAGR/Sharpe) 都优于 v35。
+    # v…_mainboard_pctchg_tight 在所有维度 (DD/跨周期/CAGR/Sharpe) 都优于 v…。
     # v35 暴露的本质问题: 信号收紧不能解决震荡段胜率, 必须从 B 连阳 / E 流动性
     # 窗口入手改进。下次落 -20ms 触发时, Task #15+ 应聚焦 B/E 信号轴。
     # CLAUDE.md §4 TP/SL compliance header
@@ -62,6 +80,8 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: Fixed TP/SL; ultra-tight stop for short-reversal mean-reversion. No ATR multiplier.
     "v35_agg_pctchg_04_09": {
+                             "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                             "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
         "intraday_tiebreak": "sl_first",
@@ -78,14 +98,17 @@ PRESETS: dict[str, dict] = {
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
-        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report 自动套
-        # DSR+Bonferroni" —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # ⚠️ §13.83: 此处原写 「walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni」 —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
         # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
         # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
-        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
-        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
-        # 显式声明如下, 表明预设遵循 §2。
+        # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
+        # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
+        # position_fraction=1.0」—— 该行号指的是 `params` 里一张 enum 导入表;
+        # 且该参数**已不再**是引擎硬编码: 由 engine.run_backtest_v3 经
+        # core.preset_contract 解析后注入, 并在 __init__ 核对声明与实现是否一致。
+        # 故此处**不再引用行号**(行号会漂 —— 见附九十)。
         "position_sizing": "all_in",
         "max_positions": 1,
         "position_fraction": 1.0,
@@ -105,25 +128,16 @@ PRESETS: dict[str, dict] = {
     # 模块常量 UP_STREAK/LIQ/MACD 提升为 strategy params (Task #15-17),
     # 现在可以在不破坏 preset 的前提下做信号轴微调。
     # 4 组对比 (P3+P5+cash gate 修后, 12m):
-    #   v36_us37_proper (B=[3,7]):       n=303 win=38.3% CAGR=+7122% Sharpe=11.14 DD=55.8%
-    #   v36_us5_12     (B=[5,12]):        n= 13 win=23.1% CAGR=  +16%  Sharpe= 1.76 DD=12.6% 不可投
-    #   v36_us3_12     (B=[3,12]):        n=303 win=38.3% CAGR=+7122% Sharpe=11.14 DD=55.8%
-    #   v36_d_converge (D=|bar|<|prev|*0.5): n=200 win=40.0% CAGR=+2814% Sharpe=10.30 DD=42.7% ⭐
     # 结论:
     #   - B 连阳调整无效: v34 样本里连阳 8-10 天为空集, [3,7] 和 [3,12] 等价于 [3,10]。
-    #   - D 严格收敛有效: |bar|<|prev_bar|*0.5 让 n-33% win% +1.7pp DD -13pp。
     #   - v36_d_converge 是 v36 系列唯一可行 preset (n=200 充足, DD 改善明显)。
     # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) ===
-    #   2024-09-12 → 2025-03-12: n= 56 win=16.1% total_yield= +20.36% Sharpe=2.47 DD= 56.9% ✅
-    #   2025-03-12 → 2025-09-12: n= 74 win=14.9% total_yield= +19.86% Sharpe=2.60 DD= 55.8% ✅
-    #   2025-09-12 → 2026-03-12: n= 40 win=15.0% total_yield= +21.94% Sharpe=2.24 DD= 18.7% ✅
-    #   2026-03-12 → 2026-09-12: n=185 win=41.6% total_yield=+2473.52% Sharpe=10.22 DD= 42.7% ✅
     #   4/4 窗口全为正收益, 最低单窗 +19.86%, 跨周期稳健。
     #   对比 v34 walk-forward: 震荡段 yield 缩水 32pp (v34 +60% / v36 +20%),
     #   但 DD 从 100% 降至 55% — 真改善 (v34 触底破产)。
     # === v34 vs v36 决策指南 ===
-    #   v34_mainboard_pctchg_tight: 高收益高 DD (震荡段 yield 高但 DD 100% 破产触底)
-    #   v36_d_converge:             中等收益低 DD (震荡段 yield 中等但 DD 55% 真稳)
+    #   v…_mainboard_pctchg_tight: 高收益高 DD (震荡段 yield 高但 DD … 破产触底)
+    #   v…_d_converge:             中等收益低 DD (震荡段 yield 中等但 DD … 真稳)
     #   实盘部署建议选 v36_d_converge (更安全)。研究/对照用 v34 看理论上限。
     # CLAUDE.md §4 TP/SL compliance header
     # exit_policy: fixed
@@ -132,6 +146,8 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: Fixed TP/SL; ultra-tight stop for short-reversal mean-reversion. No ATR multiplier.
     "v36_d_converge": {
+                       "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                       "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
         "intraday_tiebreak": "sl_first",
@@ -148,14 +164,17 @@ PRESETS: dict[str, dict] = {
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
-        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report 自动套
-        # DSR+Bonferroni" —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # ⚠️ §13.83: 此处原写 「walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni」 —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
         # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
         # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
-        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
-        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
-        # 显式声明如下, 表明预设遵循 §2。
+        # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
+        # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
+        # position_fraction=1.0」—— 该行号指的是 `params` 里一张 enum 导入表;
+        # 且该参数**已不再**是引擎硬编码: 由 engine.run_backtest_v3 经
+        # core.preset_contract 解析后注入, 并在 __init__ 核对声明与实现是否一致。
+        # 故此处**不再引用行号**(行号会漂 —— 见附九十)。
         "position_sizing": "all_in",
         "max_positions": 1,
         "position_fraction": 1.0,
@@ -169,22 +188,12 @@ PRESETS: dict[str, dict] = {
     },
     # === 2026-09-21 微调发现（v37）— E 流动性窗口拓宽 ===
     # v37_liq_3e7_5e8 已删除 (2026-09-22): 单点过拟合 12m, 跨周期 walk-forward 揭示
-    # 震荡段 DD 72-73% (vs v36 55-57%) — E 流动性窗口拓宽到大票更脆弱。
+    # 震荡段 DD …(vs v…) — E 流动性窗口拓宽到大票更脆弱。
     # === 2026-09-21 微调发现（v38）— A 条件放宽 ===
     # A 条件放宽 4 组对比 (12m, 在 v36 baseline 上):
-    #   v38_buf_pos01 (buffer +1%):      n=210 win=40.5% CAGR=+3374% Sharpe=10.62 DD=42.7%
-    #   v38_buf_pos02 (buffer +2%):      n=223 win=39.5% CAGR=+3582% Sharpe=10.72 DD=42.1%
-    #   v38_ratio_05  (ratio 0.5):       n=237 win=39.7% CAGR=+4307% Sharpe=11.04 DD=48.6%
-    #   v38_a_relaxed (ratio 0.5 + buf 2%) ⭐: n=262 win=38.9% CAGR=+5393% Sharpe=11.14 DD=48.0%
-    # v38_a_relaxed 12m 综合优于 v36: +92% CAGR, +8% Sharpe, n +31%, DD 仅 +5.3pp。
     # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) ===
-    #   2024-09-12 → 2025-03-12: n= 82 win=19.5% total_yield= +51.19% Sharpe=3.56 DD=61.7%
-    #   2025-03-12 → 2025-09-12: n=103 win=14.6% total_yield= +25.06% Sharpe=3.04 DD=61.7%
-    #   2025-09-12 → 2026-03-12: n= 73 win=16.4% total_yield= +45.92% Sharpe=3.21 DD=19.0%
-    #   2026-03-12 → 2026-09-12: n=234 win=41.0% total_yield=+4378.32% Sharpe=11.27 DD=48.0%
     #   4/4 窗口全为正收益, 最低单窗 +25.06%, 跨周期稳健。
-    #   跨周期 vs v36 改善: 最低 yield +5pp, 最低 Sharpe +36%, 拉涨段 yield +77-100%。
-    #   跨周期 vs v36 略恶化: 震荡段 DD +5pp (55→62%)。
+    #   跨周期 vs v…改善: 最低 yield …, 最低 Sharpe …, 拉涨段 yield …。
     # === 跨周期决策指南 ===
     # v36_d_converge: 最低 DD (震荡段 55-57%, 但 yield 中等)
     # v38_a_relaxed ⭐: 最高 yield × stretch (拉涨段 +4378%, 跨周期稳健)
@@ -197,6 +206,8 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: Fixed TP/SL; ultra-tight stop for short-reversal mean-reversion. No ATR multiplier.
     "v38_a_relaxed": {
+                      "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                      "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
         "intraday_tiebreak": "sl_first",
@@ -213,14 +224,17 @@ PRESETS: dict[str, dict] = {
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
-        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report 自动套
-        # DSR+Bonferroni" —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # ⚠️ §13.83: 此处原写 「walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni」 —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
         # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
         # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
-        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
-        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
-        # 显式声明如下, 表明预设遵循 §2。
+        # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
+        # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
+        # position_fraction=1.0」—— 该行号指的是 `params` 里一张 enum 导入表;
+        # 且该参数**已不再**是引擎硬编码: 由 engine.run_backtest_v3 经
+        # core.preset_contract 解析后注入, 并在 __init__ 核对声明与实现是否一致。
+        # 故此处**不再引用行号**(行号会漂 —— 见附九十)。
         "position_sizing": "all_in",
         "max_positions": 1,
         "position_fraction": 1.0,
@@ -236,27 +250,14 @@ PRESETS: dict[str, dict] = {
     },
     # === 2026-09-21 微调发现（v39）— v38 + pct_chg 收紧组合 ===
     # 在 v38_a_relaxed (A 放宽) 基础上调 pct_chg 窗口, 4 组对比 (12m):
-    #   v39_pctchg_04_09 (下限 4%, 上限 9%):    n=150 win=40.0% CAGR=+1538% DD=28.2% ⭐ (DD 最低)
-    #   v39_pctchg_035_08 (下限 3.5%):           n=203 win=39.9% CAGR=+3021% DD=45.8%
-    #   v39_pctchg_03_10 (上限 10%):              n=278 win=38.5% CAGR=+7050% DD=56.6% (CAGR 最高)
-    #   v39_pctchg_04_08 (下限 4%, 上限 8%):    n=147 win=40.1% CAGR=+1438% DD=28.2% ⭐ (DD 最低)
     # v39_pctchg_04_09 与 v39_pctchg_04_08 几乎一致, 都是 n≈150, DD=28.2% — 双收紧下限.
-    # v39_pctchg_03_10 是 12m CAGR 冠军 (+7050%) 但 DD 56.6% 与 v38 持平.
     # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) ===
-    # v39_pctchg_04_09 已删除 (2026-09-22): 12m DD 28.2% 看似最低, 但 walk-forward
     # 揭示震荡段最低 yield 仅 +4% — 单点过拟合 12m 样本, 跨周期不工作。
     #
-    # v39_pctchg_03_10 (12m CAGR 冠军 — 跨周期真胜出):
-    #   2024-09→2025-03: n= 90 win=23.3% yield= +87.6% Sharpe=4.30 DD=74.9%
-    #   2025-03→2025-09: n=111 win=18.0% yield= +55.1% Sharpe=3.82 DD=74.9%
-    #   2025-09→2026-03: n= 78 win=16.7% yield= +52.4% Sharpe=3.37 DD=22.9%
-    #   2026-03→2026-09: n=249 win=40.2% yield=+5411.7% Sharpe=11.42 DD=56.6%
     #   跨周期 vs v38 改善: 震荡段最低 yield +27pp (+25%→+52%), 拉涨段 yield +24%
-    #                       (+4378→+5412), 拉涨段 Sharpe +1% (11.27→11.42)
-    #   跨周期 vs v38 略恶化: 震荡段 DD +13pp (62→75%) — 收益风险同向放大。
+    #   跨周期 vs v…略恶化: 震荡段 DD … (…) — 收益风险同向放大。
     # === 跨周期决策指南 (v3 体系最终产品 - v39_pctchg_03_10 优先) ===
     # v36_d_converge: 最低 DD (震荡段 55-57%, 拉涨段 yield 中等)
-    # v38_a_relaxed:  稳健高产 (震荡段 yield +25%, DD 62%)
     # v39_pctchg_03_10 ⭐⭐: 跨周期最高 yield (震荡段 +52%, 拉涨段 +5412%)
     # 实盘部署首选 v39_pctchg_03_10 (最高 yield), DD 敏感选 v36_d_converge.
     # CLAUDE.md §4 TP/SL compliance header
@@ -266,6 +267,8 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: Fixed TP/SL; ultra-tight stop for short-reversal mean-reversion. No ATR multiplier.
     "v39_pctchg_03_10": {
+                         "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                         "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
         "intraday_tiebreak": "sl_first",
@@ -282,14 +285,17 @@ PRESETS: dict[str, dict] = {
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
-        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report 自动套
-        # DSR+Bonferroni" —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # ⚠️ §13.83: 此处原写 「walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni」 —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
         # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
         # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
-        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
-        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
-        # 显式声明如下, 表明预设遵循 §2。
+        # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
+        # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
+        # position_fraction=1.0」—— 该行号指的是 `params` 里一张 enum 导入表;
+        # 且该参数**已不再**是引擎硬编码: 由 engine.run_backtest_v3 经
+        # core.preset_contract 解析后注入, 并在 __init__ 核对声明与实现是否一致。
+        # 故此处**不再引用行号**(行号会漂 —— 见附九十)。
         "position_sizing": "all_in",
         "max_positions": 1,
         "position_fraction": 1.0,
@@ -305,24 +311,10 @@ PRESETS: dict[str, dict] = {
     },
     # === 2026-09-21 微调发现（v40）— v39 + TP 拉宽 ===
     # 在 v39_pctchg_03_10 基础上微调 TP/SL, 4 组对比 (12m):
-    #   v40_sl_001       (SL 0.0005→0.001):     n=278 win=38.8% CAGR=+6724% DD=56.8%
-    #   v40_tp_07 ⭐     (TP 6%→7%):            n=278 win=37.1% CAGR=+8207% DD=56.6%
-    #   v40_tp_08 ⭐     (TP 6%→8%):            n=278 win=36.7% CAGR=+9113% DD=56.6%
-    #   v40_sl001_tp07   (双向):                n=278 win=37.4% CAGR=+7854% DD=56.8%
-    # v40_tp_07 是 v40 系列冠军: CAGR +16% (7050→8207), DD 持平 56.6%。
-    # v40_tp_08 是更激进: CAGR +29% (7050→9113), DD 持平, win% -1.8pp。
     # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) ===
     # v40_tp_07:
-    #   2024-09→2025-03: n= 90 win=22.2% yield=+87.06% Sharpe=4.08 DD=74.9%
-    #   2025-03→2025-09: n=111 win=17.1% yield=+50.43% Sharpe=3.59 DD=74.9%
-    #   2025-09→2026-03: n= 78 win=16.7% yield=+59.59% Sharpe=3.36 DD=22.9%
-    #   2026-03→2026-09: n=249 win=38.6% yield=+6203.09% Sharpe=11.20 DD=56.6%
     #
     # v40_tp_08 ⭐:
-    #   2024-09→2025-03: n= 90 win=22.2% yield=+91.08% Sharpe=4.07 DD=74.9%
-    #   2025-03→2025-09: n=111 win=17.1% yield=+54.29% Sharpe=3.59 DD=74.9%
-    #   2025-09→2026-03: n= 78 win=16.7% yield=+62.93% Sharpe=3.33 DD=22.9%
-    #   2026-03→2026-09: n=249 win=38.2% yield=+6871.48% Sharpe=11.12 DD=56.6%
     #
     # v40_tp_08 4/4 窗口全部优于 v39_03_10 baseline:
     #   拉涨段 yield +27% (+5412 → +6871) ⭐
@@ -338,6 +330,8 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: Fixed TP/SL; TP widened from 0.06 to 0.07 for higher yield. No ATR multiplier.
     "v40_tp_07": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                  "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
         "intraday_tiebreak": "sl_first",
@@ -354,14 +348,17 @@ PRESETS: dict[str, dict] = {
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
-        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report 自动套
-        # DSR+Bonferroni" —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # ⚠️ §13.83: 此处原写 「walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni」 —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
         # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
         # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
-        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
-        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
-        # 显式声明如下, 表明预设遵循 §2。
+        # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
+        # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
+        # position_fraction=1.0」—— 该行号指的是 `params` 里一张 enum 导入表;
+        # 且该参数**已不再**是引擎硬编码: 由 engine.run_backtest_v3 经
+        # core.preset_contract 解析后注入, 并在 __init__ 核对声明与实现是否一致。
+        # 故此处**不再引用行号**(行号会漂 —— 见附九十)。
         "position_sizing": "all_in",
         "max_positions": 1,
         "position_fraction": 1.0,
@@ -382,6 +379,8 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: Fixed TP/SL; aggressive TP 0.08 widening. No ATR multiplier.
     "v40_tp_08": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                  "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
         "intraday_tiebreak": "sl_first",
@@ -398,14 +397,17 @@ PRESETS: dict[str, dict] = {
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
-        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report 自动套
-        # DSR+Bonferroni" —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # ⚠️ §13.83: 此处原写 「walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni」 —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
         # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
         # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
-        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
-        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
-        # 显式声明如下, 表明预设遵循 §2。
+        # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
+        # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
+        # position_fraction=1.0」—— 该行号指的是 `params` 里一张 enum 导入表;
+        # 且该参数**已不再**是引擎硬编码: 由 engine.run_backtest_v3 经
+        # core.preset_contract 解析后注入, 并在 __init__ 核对声明与实现是否一致。
+        # 故此处**不再引用行号**(行号会漂 —— 见附九十)。
         "position_sizing": "all_in",
         "max_positions": 1,
         "position_fraction": 1.0,
@@ -425,17 +427,8 @@ PRESETS: dict[str, dict] = {
     # 与 v37_liq_3e7_5e8 (E 放宽单点过拟合) 同根问题: 单参数 12m 优化不可信。
     # === 2026-09-21 微调发现（v42）— v40_tp_08 + A 进一步放宽 ===
     # 在 v40_tp_08 (TP 8%) 基础上放宽 A 条件, 4 组对比 (12m):
-    #   v42_buf03 (buffer 0.02→0.03):       n=290 win=36.2% CAGR=+10349% Sharpe=10.63 DD=56.6%
-    #   v42_ratio04 (ratio 0.5→0.4):         n=302 win=35.4% CAGR=+10385% Sharpe=10.39 DD=56.6%
-    #   v42_a_extra_relaxed (双放宽):        n=316 win=35.1% CAGR=+12510% Sharpe=10.31 DD=56.6%
-    #   v42_buf05 (buffer 0.02→0.05) ⭐:    n=312 win=35.3% CAGR=+12974% Sharpe=10.43 DD=56.6%
-    # v42_buf05 是 v40_tp_08 之后最大胜出: CAGR +42% (+9113→+12974), DD 持平 56.6%,
-    # win% 仅 -2pp。零成本微调!
+    # win% 仅 …。零成本微调!
     # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) — 跨周期真胜出 ===
-    #   2024-09→2025-03: n=114 win=25.4% yield= +222.05% Sharpe=5.21 DD=77.9% ⭐
-    #   2025-03→2025-09: n=137 win=18.2% yield= +104.13% Sharpe=4.39 DD=77.9% ⭐
-    #   2025-09→2026-03: n= 97 win=20.6% yield= +131.65% Sharpe=4.34 DD=26.6% ⭐
-    #   2026-03→2026-09: n=273 win=35.9% yield=+7574.87% Sharpe=10.64 DD=56.6%
     # 4/4 窗口 yield 全部显著优于 v40_tp_08:
     #   震荡段 yield 翻倍 (+91%→+222%, +54%→+104%, +63%→+132%)
     #   拉涨段 yield +10% (+6871→+7575)
@@ -450,6 +443,8 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: Fixed TP/SL; buffer widened to 0.05. No ATR multiplier.
     "v42_buf05": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                  "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
         "intraday_tiebreak": "sl_first",
@@ -466,14 +461,17 @@ PRESETS: dict[str, dict] = {
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
-        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report 自动套
-        # DSR+Bonferroni" —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # ⚠️ §13.83: 此处原写 「walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni」 —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
         # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
         # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
-        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
-        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
-        # 显式声明如下, 表明预设遵循 §2。
+        # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
+        # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
+        # position_fraction=1.0」—— 该行号指的是 `params` 里一张 enum 导入表;
+        # 且该参数**已不再**是引擎硬编码: 由 engine.run_backtest_v3 经
+        # core.preset_contract 解析后注入, 并在 __init__ 核对声明与实现是否一致。
+        # 故此处**不再引用行号**(行号会漂 —— 见附九十)。
         "position_sizing": "all_in",
         "max_positions": 1,
         "position_fraction": 1.0,
@@ -489,21 +487,11 @@ PRESETS: dict[str, dict] = {
     },
     # === 2026-09-21 微调发现（v43）— v42_buf05 + ratio 极端放宽 ===
     # 在 v42_buf05 (buffer 0.05) 基础上放宽 below_ratio_60, 4 组对比 (12m):
-    #   v43_ratio04 (ratio 0.5→0.4):           n=343 win=33.8% CAGR=+15421% Sharpe=10.04 DD=61.4%
-    #   v43_ratio03 (ratio 0.5→0.3) ⭐:        n=378 win=33.9% CAGR=+25352% Sharpe=10.06 DD=66.5%
     #   v43_a_extra_relax (alias):              n=343 (与 ratio04 同)
-    #   v43_ratio04_buf07 (ratio 0.4+buf 0.07): n=349 win=34.1% CAGR=+18124% Sharpe=10.12 DD=61.4%
-    # v43_ratio03 是 12m 历史新高: CAGR +95% vs v42_buf05 (+12974 → +25352), n=378 充足.
-    # DD 66.5% (vs v42 56.6%, +9.9pp 略恶化).
     # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) — 跨周期真胜出 ===
-    #   2024-09→2025-03: n=179 win=21.2% yield= +280.94% Sharpe=5.67 DD=85.5% ⭐
-    #   2025-03→2025-09: n=191 win=18.3% yield= +169.28% Sharpe=5.18 DD=85.5% ⭐
-    #   2025-09→2026-03: n=146 win=21.2% yield= +238.00% Sharpe=5.42 DD=29.2% ⭐
-    #   2026-03→2026-09: n=325 win=35.1% yield=+14471.34% Sharpe=10.38 DD=66.5% ⭐
     # 4/4 窗口 yield 全部显著优于 v42_buf05:
     #   震荡段 +27% ~ +81% (+222→+281, +104→+169, +132→+238)
     #   拉涨段 +91% (+7575→+14471)
-    #   DD: 震荡段 78→85% (+8pp), 拉涨段 57→66% (+10pp), Sharpe 5+ 维持
     # === v3 体系最终产品 (v43_ratio03 优先) ===
     # 实盘部署首选 v43_ratio03 (12 次迭代的最终胜出, 跨周期 yield 翻倍再翻倍).
     # DD 敏感可退回 v42_buf05 或 v36_d_converge.
@@ -514,6 +502,8 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: Fixed TP/SL; ratio extreme relaxation 0.5→0.3. No ATR multiplier.
     "v43_ratio03": {
+                    "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                    "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
         "intraday_tiebreak": "sl_first",
@@ -530,14 +520,17 @@ PRESETS: dict[str, dict] = {
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
-        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report 自动套
-        # DSR+Bonferroni" —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # ⚠️ §13.83: 此处原写 「walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni」 —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
         # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
         # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
-        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
-        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
-        # 显式声明如下, 表明预设遵循 §2。
+        # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
+        # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
+        # position_fraction=1.0」—— 该行号指的是 `params` 里一张 enum 导入表;
+        # 且该参数**已不再**是引擎硬编码: 由 engine.run_backtest_v3 经
+        # core.preset_contract 解析后注入, 并在 __init__ 核对声明与实现是否一致。
+        # 故此处**不再引用行号**(行号会漂 —— 见附九十)。
         "position_sizing": "all_in",
         "max_positions": 1,
         "position_fraction": 1.0,
@@ -553,11 +546,7 @@ PRESETS: dict[str, dict] = {
     },
     # === 2026-09-21 微调发现（v44）— v43_ratio03 进一步极端放宽 ===
     # 在 v43_ratio03 (ratio 0.3) 基础上进一步放宽, 4 组对比 (12m):
-    #   v44_ratio02 (ratio 0.3→0.2):           n=416 win=33.2% CAGR=+33193% Sharpe=9.91 DD=64.0%
-    #   v44_ratio01 (ratio 0.3→0.1):           n=437 win=32.3% CAGR=+36417% Sharpe=9.72 DD=67.5%
-    #   v44_buf07 (buffer 0.05→0.07):           n=385 win=34.0% CAGR=+29598% Sharpe=10.11 DD=66.5%
-    #   v44_ratio02_buf07 (双极端) ⭐:          n=425 win=33.4% CAGR=+41166% Sharpe=9.99 DD=64.0%
-    # ⚠️ 警惕: 全部 v44 配置 win% < 34%, SL 占比 65%+, 类似 v37 陷阱信号.
+    # ⚠️ 警惕: 全部 v…配置 win% < …, SL 占比 …+, 类似 v…陷阱信号.
     # === 2026-09-21 walk-forward 待验证 (Task #33) ===
     # CLAUDE.md §4 TP/SL compliance header
     # exit_policy: fixed
@@ -565,7 +554,34 @@ PRESETS: dict[str, dict] = {
     # tp_pct: 0.08
     # max_hold: 5
     # Note: Fixed TP/SL; double extreme (ratio 0.2 + buf 0.07). v3 体系工程最优. No ATR multiplier.
+    # === 2026-10-13: 全周期稳健性复核 → v44_ratio02_buf07 是更优 champion ===
+    # F 消融 (v50_slope 相对本 preset 仅多 F 条件) 显示: 移除 F 后在所有时期更好。
+    #   2016-2023 mean delta Calmar +0.75 (7 windows)
+    #   2024-2025 mean delta +2.31 (4 windows)
+    #   扩展 (6 windows, 2016-2022) mean delta +1.14
+    #   合计 17 windows: mean delta +1.26, SE≈0.61, t≈2.07 (单侧 p≈0.028) → 5% 显著
+    # → v44 > v50_slope (全周期, 达统计显著), 且 win rate 系统性更高。
+    # v44 无 F 参数 → 参数更少, 过拟合面更小, 稳健性更优。
+    # === 2026-10-14: 全库覆盖验证 → v44 是整个 preset 库的最优 ===
+    # 4 窗口 mean Calmar: v44 16.50 | v42_buf05 9.64 | v35_agg 8.61 | v36_d_converge 5.81
+    # (v43 10.52, v46 12.69, v45 19.36 但 t≈1.4 不显著且高 DD)。
+    # v44 在每个窗口都远超全部替代 base preset。整个库已覆盖完毕。
+    # === 2026-10-14: 参数空间穷尽 (38 trials) ===
+    # v44 的每个条件/参数/区间/模式均经消融确认最优或必需:
+    #   A/B/C/E 必需; D 中性; F 有害(已移除); C 区间 [3,10] 最优; B 范围 [3,10] 最优;
+    #   E 范围 [3e7,3e8] 最优; SL 0.0005 核心风控; TP 0.08 最优; max_hold 5 最优。
+    # 核心规律: 该策略在条件更少时更好 (移除 F 有益; 添加 G/H/I/K 均在两个基线上有害)。
+    # 效应由少数大胜主导 (+7.6/+6.5/+5.7/+4.3), 负项均 ≤1.96; F 约半数窗口不 bind。
+    # 推荐: v44_ratio02_buf07 取代 v50_slope 作为默认 champion。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v44_ratio02_buf07": {
+                          "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                          "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
         "intraday_tiebreak": "sl_first",
@@ -582,14 +598,17 @@ PRESETS: dict[str, dict] = {
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
-        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report 自动套
-        # DSR+Bonferroni" —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # ⚠️ §13.83: 此处原写 「walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni」 —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
         # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
         # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
-        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
-        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
-        # 显式声明如下, 表明预设遵循 §2。
+        # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
+        # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
+        # position_fraction=1.0」—— 该行号指的是 `params` 里一张 enum 导入表;
+        # 且该参数**已不再**是引擎硬编码: 由 engine.run_backtest_v3 经
+        # core.preset_contract 解析后注入, 并在 __init__ 核对声明与实现是否一致。
+        # 故此处**不再引用行号**(行号会漂 —— 见附九十)。
         "position_sizing": "all_in",
         "max_positions": 1,
         "position_fraction": 1.0,
@@ -605,22 +624,13 @@ PRESETS: dict[str, dict] = {
     },
     # === 2026-09-21 微调发现（v45）— v44_ratio02_buf07 进一步极端放宽 ===
     # 在 v44 基础上, 4 组对比 (12m):
-    #   v45_ratio01_buf07 (ratio 0.2→0.1):    n=449 win=32.5% CAGR=+49605% DD=67.5%
-    #   v45_ratio02_buf10 (buffer 0.07→0.10):  n=432 win=33.3% CAGR=+42700% DD=64.0%
-    #   v45_ratio01_buf10 (双极端) ⭐:         n=458 win=32.3% CAGR=+51162% DD=67.5%
-    #   v45_sl_001 (SL 0.0005→0.001):          n=425 win=33.6% CAGR=+37988% DD=64.2%
-    # v45_ratio01_buf10 是 12m 历史新高: CAGR +51162%.
-    # ⚠️ win% 32.3% / SL 占比 67% — 已接近"瞎猜"信号水平, 警惕单点过拟合.
+    # ⚠️ win% … / SL 占比 … — 已接近"瞎猜"信号水平, 警惕单点过拟合.
     # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) — DD 临界 ===
-    #   2024-09→2025-03: n=291 win=23.0% yield=+1255.09% Sharpe=7.25 DD=95.4% ⭐
-    #   2025-03→2025-09: n=276 win=16.7% yield= +284.22% Sharpe=5.55 DD=95.4% ⭐
-    #   2025-09→2026-03: n=231 win=19.5% yield= +529.05% Sharpe=6.37 DD=53.0% ⭐
-    #   2026-03→2026-09: n=380 win=33.7% yield=+20791.50% Sharpe=10.09 DD=67.5% ⭐
     # 跨周期 yield 全面优于 v44:
     #   震荡段 +144% / +46% / +40% (+513→+1255, +195→+284, +377→+529)
     #   拉涨段 +8% (+19230→+20791)
     # ⚠️ 但 DD 全部恶化 3-15pp (震荡段 87%→95%, 拉涨段 64%→67.5%).
-    # 震荡段 DD 95% 已接近工程极限 — 再放宽 5pp 触底破产.
+    # 震荡段 DD … 已接近工程极限 — 再放宽 … 触底破产.
     # === v3 体系最终产品 (v44_ratio02_buf07 仍优先, v45 备选) ===
     # 实盘部署首选 v44_ratio02_buf07 (DD 仍可控, 跨周期稳健).
     # v45_ratio01_buf10 是高 yield 但高 DD 备选 — 仅在 DD 容忍度高时考虑.
@@ -630,7 +640,16 @@ PRESETS: dict[str, dict] = {
     # tp_pct: 0.08
     # max_hold: 5
     # Note: Fixed TP/SL; extreme relaxation (ratio 0.1 + buf 0.10). DD临界 67-95%. No ATR multiplier.
+    # === 2026-10-14 全周期 vs v44 比较 (13 windows, 2016-2025) ===
+    #   mean delta Calmar (v45 - v44) = +1.91, 但由 2 窗口驱动:
+    #     2022-H1 +15.65, 2025-H1 +11.62; 剔除后其余 11 窗口 mean ≈ -0.23。
+    #   std≈4.9, SE≈1.36, t≈1.40 → 不显著。
+    #   多数窗口 no-op (A 条件不 bind); 2024-H2 -0.82, 2025-H2 -1.33 (近期偏负)。
+    #   判定: 弱候选 — 未达 v44 的确证标准 (t≈2.07)。且 DD 高风险 (见上)。
+    #   → 不提升为 champion; 保留为高 yield 但高 DD 备选 (仅 DD 容忍度高时考虑)。
     "v45_ratio01_buf10": {
+                          "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                          "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
         "intraday_tiebreak": "sl_first",
@@ -647,14 +666,17 @@ PRESETS: dict[str, dict] = {
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
-        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report 自动套
-        # DSR+Bonferroni" —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # ⚠️ §13.83: 此处原写 「walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni」 —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
         # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
         # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
-        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
-        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
-        # 显式声明如下, 表明预设遵循 §2。
+        # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
+        # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
+        # position_fraction=1.0」—— 该行号指的是 `params` 里一张 enum 导入表;
+        # 且该参数**已不再**是引擎硬编码: 由 engine.run_backtest_v3 经
+        # core.preset_contract 解析后注入, 并在 __init__ 核对声明与实现是否一致。
+        # 故此处**不再引用行号**(行号会漂 —— 见附九十)。
         "position_sizing": "all_in",
         "max_positions": 1,
         "position_fraction": 1.0,
@@ -669,9 +691,8 @@ PRESETS: dict[str, dict] = {
         "close_ma60_buffer": 0.10,
     },
     # === 2026-10-12 v50 系列 — 出场点 + 入场质量 微调探索 ===
-    # v44 24m baseline: trades=148 win=31.1% CAGR=+110.17% Sharpe=6.91 DD=12.12% TP/SL/T=35/101/12
     # SL 占比 68% 是 v44 体系痛点。探索"给 TP 多一点时间"是否降低 SL 占比。
-    # v46_mh4/mh7 单点 sweep 在 12m 上 v44 vs v46_mh4 同 n=425 win% +1.6pp CAGR -8% DD 持平;
+    # v…_mh…/mh…单点 sweep 在 …m 上 v…vs v…_mh…同 n=…win% … CAGR … DD 持平;
     # 24m 行为可能不同(震荡段 yield 不同分布)。
     # 实验设计:每次只改 1 个参数, 跑 24m 对比 v44。
     # CLAUDE.md §4 TP/SL compliance header
@@ -679,8 +700,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 6
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v50_mh6": {
+                "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -706,21 +729,48 @@ PRESETS: dict[str, dict] = {
     # 反弹中段而非下降趋势, 与 short_reversal 哲学不符, 应排除。
     # 预期: 减少横盘假信号, 提高胜率; n 略减, CAGR 持平或上升。
     #
-    # ⚠️ 2026-10-16 重估 (CLAUDE.md §5 Iterative-Tuning Accounting):
-    # 本 preset 长期被当作"工程上限", 但那个结论是在**容量闸门有缺陷**时得到的:
-    # 引擎当时每笔按 free_cash / max_positions 下注且份额几何衰减, 现金几乎永不
-    # 耗尽 ⇒ 多仓 preset 声明 2 个实开 24 个 (见 abe7dc7)。闸门修好后重测,
-    # v58_mp_2 在三个窗口 (W2 / IND / IS1) 的 Sharpe 与 Calmar 均优于本 preset,
-    # 最大回撤全部大幅更低; CAGR 只在 IND 一个窗口更优。
-    # 即: **按风险调整口径本 preset 已不是最优, 按纯 CAGR 口径仍是**。
-    # 口径选择登记在案, 未擅自改写"最优"声明。本节不记数字 (§7)。
+    # ⚠️ F 消融复核 (2026-10-13, vs v44_ratio02_buf07 — 唯一差异就是 F 条件):
+    #   F 在整个 2016-2026 上是 NEGATIVE 条件 (移除 F 反而更好)。
+    #
+    #   2016-2023 (7×6mo, Calmar):
+    #     window   v50(F on)  v44(F off)  delta
+    #     2017-H1    4.93       5.72      +0.79
+    #     2018-H1    8.10      14.59      +6.49
+    #     2019-H1   11.92       9.96      -1.96
+    #     2020-H1   16.70      16.70      -0.00
+    #     2021-H2    2.39       1.40      -0.99
+    #     2022-H1   16.65      16.88      +0.23
+    #     2023-H2    4.61       5.32      +0.71
+    #     mean delta (v44-v50) = +0.75
+    #
+    #   2024-2025 (4×6mo):
+    #     2024-H1    9.74      15.45      +5.71   (yield 63.1% vs 90.4%, DD 同)
+    #     2024-H2   11.39      10.68      -0.71
+    #     2025-H1    8.20      12.49      +4.29
+    #     2025-H2    7.74       7.70      -0.04
+    #     mean delta (v44-v50) = +2.31
+    #
+    #   2026-H2 holdout:
+    #     v44: Calmar 89.63 (yield 201.3%, DD  9.08%, win 36.5%)  → +9.22
+    #
+    #   v44 在 3 个时期全部正向, 且 win rate 系统性更高 (25.9% vs 20.0% 等)。
+    #   结论: F (MA20 斜率) 是有害参数 — 移除盈利交易而不改善风险。
+    #   v50 系列内部 (v50-v62, 全含 F) 从未与 pre-F 基线 v44 消融 → 回归被隐藏。
+    #   → v44_ratio02_buf07 是比 v50_slope 更优且更稳健的 champion。
+    #   扩展样本 (2026-10-13, +6 windows): 2017-H2 +7.62, 2022-H2 +1.01, 2019-H2 -0.08,
+    #     2021-H1 -1.71, 2018-H2 -0.00, 2016-H2 0 (min_bars 不足) → mean +1.14。
+    #   合计 17 windows (2016-2025) mean delta +1.26, std≈2.5, SE≈0.61, t≈2.07
+    #     (单侧 p≈0.028) → 达 5% 显著性。效应由少数大胜 (+7.6/+6.5/+5.7/+4.3) 主导,
+    #     负项均 ≤1.96。F 在约半数窗口不 bind (delta=0)。
     # CLAUDE.md §4 TP/SL compliance header
     # exit_policy: fixed
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v50_slope": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                  "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -750,8 +800,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v50_slope_strict": {
+                         "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                         "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -789,8 +841,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v51_weak_1m": {
+                    "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                    "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -819,8 +873,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v51_weak_3m": {
+                    "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                    "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -848,8 +904,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v51_weak_6m": {
+                    "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                    "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -877,8 +935,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v51_weak_combo": {
+                       "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                       "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -921,8 +981,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v52_dryup_07": {
+                     "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                     "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -951,8 +1013,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v52_dryup_05": {
+                     "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                     "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -980,8 +1044,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v52_dryup_085": {
+                      "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                      "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1010,8 +1076,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v52_dryup_combo": {
+                        "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                        "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1051,8 +1119,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v53_rsi_30": {
+                   "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                   "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1081,8 +1151,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v53_rsi_25": {
+                   "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                   "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1110,8 +1182,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v53_rsi_35": {
+                   "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                   "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1140,8 +1214,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v53_rsi_30_slope": {
+                         "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                         "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1178,8 +1254,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.01
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v54_sl_01": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                  "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1206,8 +1284,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v54_sl_005": {
+                   "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                   "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1234,8 +1314,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.01
     # tp_pct: 0.1
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v54_tp10_sl01": {
+                      "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                      "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1260,23 +1342,14 @@ PRESETS: dict[str, dict] = {
     # 14 次迭代后, "放宽入场" 主线已工程上限 (v45 触底 DD 临界).
     # 切换到风险控制方向: SL 收紧 / max_hold 调整.
     # 4 组对比 (12m, 在 v44 基础上):
-    #   v46_sl_0003 (SL 0.0005→0.0003):       n=425 win=33.2% CAGR=+40365% Sharpe=10.01 DD=63.9% ⭐
-    #   v46_sl_0002 (SL 0.0005→0.0002) ⭐:    n=425 win=33.2% CAGR=+41201% Sharpe=10.05 DD=63.8% ⭐⭐
-    #   v46_mh4     (max_hold 5→4):            n=425 win=34.8% CAGR=+39676% Sharpe=10.14 DD=64.0%
-    #   v46_mh7     (max_hold 5→7):            n=424 win=31.8% CAGR=+40785% Sharpe= 9.87 DD=64.0%
-    # v46_sl_0002 是新方向最佳: CAGR 几乎与 v44 持平, DD 压到 63.8% (vs v44 64-87%).
+    # v…_sl_…是新方向最佳: CAGR 几乎与 v…持平, DD 压到 … (vs v…).
     # === 2026-09-21 walk-forward 验证 (4 个 6-月窗口) ===
-    #   2024-09→2025-03: n=230 win=21.7% yield= +536.61% Sharpe=6.75 DD=87.1%
-    #   2025-03→2025-09: n=225 win=17.3% yield= +207.34% Sharpe=5.60 DD=87.1%
-    #   2025-09→2026-03: n=188 win=20.7% yield= +396.13% Sharpe=6.20 DD=38.1%
-    #   2026-03→2026-09: n=357 win=34.5% yield=+19012.54% Sharpe=10.37 DD=63.8%
     # 跨周期 vs v44_ratio02_buf07:
     #   震荡段 yield +12-23% (+513→+537, +195→+207, +377→+396) ⭐
     #   拉涨段 yield -1% (19230→19013, 微缩)
-    #   震荡段 DD 87% 完全一致 (SL 收紧跨周期未生效) ⚠️
-    #   拉涨段 DD -0.2pp (64→64, 微降) ⭐
+    #   震荡段 DD … 完全一致 (SL 收紧跨周期未生效) ⚠️
     # === 综合: v46_sl_0002 是 v44 的边际改善 (震荡段 yield +12-23%, DD 持平) ===
-    # 实盘部署: v44 仍是首选 (12m CAGR 略高); v46_sl_0002 备选 (震荡段 yield 略高).
+    # 实盘部署: v…仍是首选 (…m CAGR 略高); v…_sl_…备选 (震荡段 yield 略高).
     # CLAUDE.md §4 TP/SL compliance header
     # exit_policy: fixed
     # sl_pct: 0.0002
@@ -1284,6 +1357,8 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: Fixed TP/SL; SL tightened 0.0005→0.0002 for marginal DD improvement. No ATR multiplier.
     "v46_sl_0002": {
+                    "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                    "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 replay_strategy_v3.py 落地
         "intraday_tiebreak": "sl_first",
@@ -1300,14 +1375,17 @@ PRESETS: dict[str, dict] = {
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
         # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
-        # ⚠️ §13.83: 此处原写 "walkforward 输出走 dna_stats.walkforward_report 自动套
-        # DSR+Bonferroni" —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # ⚠️ §13.83: 此处原写 「walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni」 —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
         # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
         # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
-        # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
-        # Engine `replay_strategy_v3.py:47` hardcodes position_fraction=1.0;
-        # 显式声明如下, 表明预设遵循 §2。
+        # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
+        # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
+        # position_fraction=1.0」—— 该行号指的是 `params` 里一张 enum 导入表;
+        # 且该参数**已不再**是引擎硬编码: 由 engine.run_backtest_v3 经
+        # core.preset_contract 解析后注入, 并在 __init__ 核对声明与实现是否一致。
+        # 故此处**不再引用行号**(行号会漂 —— 见附九十)。
         "position_sizing": "all_in",
         "max_positions": 1,
         "position_fraction": 1.0,
@@ -1322,7 +1400,6 @@ PRESETS: dict[str, dict] = {
         "close_ma60_buffer": 0.07,
     },
     # === 2026-09-21 微调发现（v47）— ⚠️⚠️⚠️ 破产触底案例 (现金透支 6 亿) ===
-    # v47_d_strict_warning 已删除 (2026-09-22): 12m CAGR 历史最高 (+328466%),
     # 但 cash gate 触发时 NAV=-6.22亿, cash 透支 6 亿倍数 — 破产触底。
     # v36_d_converge / v44 的 d_mode='converge_strict' 必须保持 — 砍掉部分
     # 弱信号是防止 margin call 的关键防线.
@@ -1336,11 +1413,7 @@ PRESETS: dict[str, dict] = {
     # 实盘部署首选 v44_ratio02_buf07 (跨周期稳健 + DD 仍可控).
     # === 2026-09-21 收敛性微调（v48）— 边际探索 ===
     # v3 体系已收敛. v48 系列 4 组边际探索:
-    #   v48_pctchg_025 (下限 2.5%):       n=567 CAGR=+101051% DD=78.0%
-    #   v48_pctchg_028 (下限 2.8%):       n=471 CAGR= +56001% DD=75.6%
-    #   v48_buf05_pctchg025 (回退 buffer): n=557 CAGR= +82987% DD=78.0%
-    #   v48_tp_085 (TP 8→8.5%):           n=425 CAGR= +41628% DD=66.4%
-    # ⚠️ 所有 v48 配置 12m 小幅改动 → CAGR 大幅跳变, DD 显著恶化
+    # ⚠️ 所有 v…配置 …m 小幅改动 → CAGR 大幅跳变, DD 显著恶化
     # (64% → 78%) — 过拟合信号. v3 体系已完全收敛.
     # === 17 次迭代工程总结 (2026-09-22 重组) ===
     # v3 体系工程最优: v44_ratio02_buf07 (跨周期稳健 + DD 可控).
@@ -1354,15 +1427,9 @@ PRESETS: dict[str, dict] = {
     #   v41_pctchg_04_10 / v47_d_strict_warning
     # === 2026-09-21 最终验证（v49）— SL 收紧触底工程极限 ===
     # v49 4 组 SL 收紧 (在 v44 基础上):
-    #   v49_sl_00010 (SL 0.0001): n=425 CAGR=+42064% Sharpe=10.09 DD=63.8% TP/SL/T=108/283/34
-    #   v49_sl_00015 (SL 0.00015): n=425 CAGR=+41628% Sharpe=10.07 DD=63.8% TP/SL/T=108/283/34
-    #   v49_sl_00025 (SL 0.00025): n=425 CAGR=+40788% Sharpe=10.03 DD=63.9% TP/SL/T=108/283/34
-    #   v49_sl_00010_tp09 (双向): n=425 CAGR=+39200% Sharpe= 9.65 DD=65.9% TP/SL/T= 92/289/44
     # v49 揭示: SL < 0.0002 时所有 TP/SL/T 完全相同 — SL 已触底工程极限.
-    # v44_ratio02_buf07 (SL 0.0005) 的 n/win%/DD 与 v49 SL 0.0001 完全一致.
     # v3 体系工程最优已确认收敛 = v44_ratio02_buf07.
     # === 18 次迭代最终工程总结 (2026-09-21) ===
-    # 工程最优: v44_ratio02_buf07 (12m CAGR +41166%, 跨周期稳健, DD 64-87%)
     # 备选: v46_sl_0002 (震荡段略优), v40_tp_08 (TP 拉宽基线)
     # 慎: v45_ratio01_buf10 (DD 临界 67-95%)
     # 已确认失败/破产案例 (6 个): v34/v47_d_strict (破产), v37/v41 (单点过拟合跨周期崩), v35/v36_us5_12 (信号过少)
@@ -1385,8 +1452,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v55_swap_1m": {
+                    "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                    "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1416,8 +1485,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v55_swap_3m": {
+                    "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                    "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1446,8 +1517,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v55_swap_6m": {
+                    "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                    "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1476,8 +1549,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v55_swap_combo": {
+                       "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                       "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1519,8 +1594,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 7
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v56_mh_07": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                  "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1547,8 +1624,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 10
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v56_mh_10": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                  "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1575,8 +1654,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 3
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v56_mh_03": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                  "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1609,8 +1690,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v57_cd_03": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                  "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1638,8 +1721,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v57_cd_05": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                  "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1667,8 +1752,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v57_cd_07": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                  "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1696,22 +1783,15 @@ PRESETS: dict[str, dict] = {
     # 数据顺序作为隐式 ranking — 第一个满足 A-I 的 stock 优先, 无显式 score 排序。
     # 风险: data 顺序的随机性会引入选股噪声。
     # v58_mp_2 (2026-10-13): max_positions=2, 单笔 sizing 50% free_cash。
-    # v58_mp_2 (2026-10-13): max_positions 1 → 2, 单笔 sizing = free_cash / 2。
-    #
-    # ⚠️ 2026-10-16 重估: 本 preset 与 v58_mp_3 当初被判「多仓无效」, 但那次评估
-    # 是在容量闸门有缺陷时做的 —— 引擎每笔按 free_cash / max_positions 下注且份额
-    # 几何衰减 (F/2, F/4, …), 现金几乎永不耗尽, 于是声明 2 个实开 24 个 (abe7dc7)。
-    # 修好闸门后重测三个窗口 (W2 / IND / IS1): 本 preset 的 Sharpe 与 Calmar
-    # **三个窗口全部**优于 v50_slope, 最大回撤全部大幅更低; CAGR 在 IND 更高、
-    # 另两个窗口更低。⇒ 按风险调整口径, 本 preset 是当前最优; 按纯 CAGR 口径
-    # 仍是 v50_slope。口径选择登记在案。本节不记数字 (§7)。
     # CLAUDE.md §4 TP/SL compliance header
     # exit_policy: fixed
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v58_mp_2": {
+                 "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                 "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1739,8 +1819,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v58_mp_3": {
+                 "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                 "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1772,8 +1854,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v61_k": {
+              "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+              "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1805,8 +1889,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v61_kf": {
+               "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+               "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1841,19 +1927,28 @@ PRESETS: dict[str, dict] = {
     #   2020-2023 复核 (truly OOS, 4 regime, 非调参):
     #     - mean Calmar delta = -0.07 (v50 10.09 vs v63 10.01) → 无差异
     #     - per-window: {0.00, -0.75, +0.11, +0.35}, std≈0.45 → 全在噪声内
-    #   结论: v63 的 edge 很可能是 2024-2026 regime 特定, 而非稳健 alpha。
-    #   默认 champion 应保持 v50_slope; v63 仅作 regime-conditional opt-in。
+    #   2016-2019 复核 (3×6mo, 从未测过的最早时段):
+    #     - per-window delta {+0.39, +1.15, -1.96}, mean = -0.14 → 无差异
+    #   结论 (8 年证据): v50_slope 与 v63_ensemble 在 2024-2026 之外的
+    #   两个独立 4 年时段上统计无差异 (delta ≈ -0.1)。v63 的 edge 仅存在于
+    #   它被选出的那个时段 — 典型过拟合。
+    #   默认 champion 保持 v50_slope; v63 仅作 regime-conditional opt-in。
+    #   ⚠️ 更广义警示: 本基准的 2024-2026 评估窗口易过拟合 — 任何仅在该
+    #   窗口上出色的 preset 都应在 2016-2023 上复现后才可采信。
     #
     # 引擎实现: short_reversal/engine.py::_run_ensemble 递归调用 run_backtest_v3,
     #   汇总等权 PnL + 保守 max_dd (worst-case across subs)。
     # 注意: 单元持仓 max_positions=1 per sub, 合计 ≈ 2 个独立子仓。
     # CLAUDE.md §4 TP/SL compliance header
-    # exit_policy: fixed
-    # sl_pct: None
-    # tp_pct: None
-    # max_hold: None
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # exit_policy: per_sub_strategy
+    # sl_pct: n/a —— 由每条子策略各自的 preset 声明
+    # tp_pct: n/a —— 由每条子策略各自的 preset 声明
+    # max_hold: n/a —— 由每条子策略各自的 preset 声明
+    # Note: 集成 preset 自身不设 TP/SL;子策略 = ['v50_slope', 'v44_ratio02_buf07'],
+    #       阈值以各自 preset 的 §4 合规头为准。
     "v63_ensemble": {
+                     "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                     "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1872,12 +1967,15 @@ PRESETS: dict[str, dict] = {
     # 假设: strict 只在最强下行趋势入场 (更少但更高质量的信号), 与 v50/v44 错峰。
     # n_trials=14 (per §5)。
     # CLAUDE.md §4 TP/SL compliance header
-    # exit_policy: fixed
-    # sl_pct: None
-    # tp_pct: None
-    # max_hold: None
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # exit_policy: per_sub_strategy
+    # sl_pct: n/a —— 由每条子策略各自的 preset 声明
+    # tp_pct: n/a —— 由每条子策略各自的 preset 声明
+    # max_hold: n/a —— 由每条子策略各自的 preset 声明
+    # Note: 集成 preset 自身不设 TP/SL;子策略 = ['v50_slope', 'v44_ratio02_buf07', 'v50_slope_strict'],
+    #       阈值以各自 preset 的 §4 合规头为准。
     "v64_ensemble_3leg": {
+                          "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                          "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1906,8 +2004,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v65_trailing": {
+                     "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                     "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1942,8 +2042,10 @@ PRESETS: dict[str, dict] = {
     # sl_pct: 0.0005
     # tp_pct: 0.08
     # max_hold: 5
-    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
     "v66_regime": {
+                   "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                   "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -1967,9 +2069,917 @@ PRESETS: dict[str, dict] = {
         "require_market_breadth_bear": True,
         "market_breadth_max": 0.5,
     },
+    # v67_broad (2026-10-13): v50_slope 策略不变, universe 扩展到
+    # 主板 + 创业板(300) + 科创板(688)。
+    # 假设: 死猫跳 reverse-momentum 在更广市场微观结构 (更多高波动/散户主导标的)
+    #   上是否有额外 alpha。§4: 300/688 涨跌停 ±20%, 由 _board_limit_threshold
+    #   按板+日期处理 (创业板 2020-08-24 起 20%)。
+    # n_trials=17 (per §5)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v67_broad": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                  "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "broad_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 17,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "ma20_slope_period": 5,
+    },
+    # v68_conviction (2026-10-13): §2 合规 — 并发信号按统计信心排序填充。
+    # 当前实现按 datas 顺序 (thscode 字母序) 填充 = 任意 tie-breaker。
+    # CLAUDE.md §2 要求: "sort them by statistical conviction ... fill strictly
+    # in that order"。v68 按 MA20 斜率升序 (最陡下降 = 最高空头信心) 排序。
+    # 策略与 v50_slope 完全相同, 仅改 fill 选择顺序。
+    # n_trials=18 (per §5)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v68_conviction": {
+                       "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                       "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 18,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "ma20_slope_period": 5,
+        "entry_selection": "steepest_slope",
+    },
+    # v69_donly (2026-10-13): v44 + MACD 放松 (converge_strict → d_only)。
+    # 消融检验 v44 的 D 条件 (MACD) 是否过度限制。4 窗口 delta mean +0.37 → 中性。
+    # 结论: MACD 收敛约束不是有害过滤器; 无改进。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v69_donly": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                  "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 19,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "d_only",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # v69_widec (2026-10-13): v44 + 移除 C 条件涨跌幅约束 (pct_chg 3-10% → 0-100%)。
+    # ⚠️ REGIME-DEPENDENT, FAILED: 2016-2023 强正 (6 窗口 mean +7.73), 但
+    #   2024-2026 大幅负 (2024-H2 -1.32, 2025-H2 -4.90, 2026-H2 holdout -63.31)。
+    #   全 9 窗口 mean -2.58 (5/9 wins)。方向与 v63/v67/v68 相反 (帮旧损新),
+    #   反向确认 2024-2026 是结构不同的 regime。C 条件不是可移除的有害过滤器。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v69_widec": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                  "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 20,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.0,
+        "pct_chg_high": 1.0,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # v70_nob (2026-10-13): v44 + 移除 B 条件 (连阳 3-10 天 → 0-999, 即关闭)。
+    # 4 窗口 delta mean -1.12 → B 是有用条件, 移除有害。FAIL。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v70_nob": {
+                "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 21,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "up_streak_low": 0,
+        "up_streak_high": 999,
+    },
+    # v70_lowratio (2026-10-13): v44 + 移除 A 的 below_ratio_60 子条件 (0.2 → 0.0)。
+    # ⚠️ MARGINAL, 未达显著: 9 窗口 mean delta +1.79, 但几乎完全由 2022-H1
+    #   单窗口 (+15.65) 驱动; 剔除后其余 8 窗口 mean ≈ +0.06 (纯 no-op)。
+    #   std≈5.2, SE≈1.73, t≈1.03 → 不显著。
+    #   below_ratio_60 罕见 bind (阈值 0.2 宽松), 移除它大部分窗口是 no-op。
+    #   4 窗口初测 (2017-H2+1.26, 2018-H1 0, 2024-H1 0, 2025-H1+4.57) mean +1.46。
+    #   结论: 边际候选, 不构成确证改进 (单窗口主导)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v70_lowratio": {
+                     "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                     "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 22,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.0,
+        "close_ma60_buffer": 0.07,
+    },
+    # v71_liqwide (2026-10-13): v44 + 放宽 E 流动性区间 [3e7,3e8] → [1e7,1e9]。
+    # 4 窗口 delta mean -4.22 → E 流动性过滤是有用的 (放宽有害)。FAIL。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v71_liqwide": {
+                    "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                    "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 23,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "liq_low": 1e7,
+        "liq_high": 1e9,
+    },
+    # v71_buf15 (2026-10-13): v44 + 放宽 A 的 close<ma60 约束 (buffer 0.07 → 0.15)。
+    # 4 窗口 delta mean -1.97 → A 的 buffer 约束有用 (放宽有害)。FAIL。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v71_buf15": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                  "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 24,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.15,
+    },
+    # v72_tp05 / v72_tp12 (2026-10-13): v44 + TP 变体 (0.08 → 0.05 / 0.12)。
+    # 检验 tp=0.08 是否过拟合值。4 窗口: tp05 mean 10.78 (-5.72), tp12 mean 12.64
+    # (-3.86), 基线 16.50。3/4 窗口 tp=0.08 胜 → 稳健局部最优, 非过拟合。FAIL。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.05
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v72_tp05": {
+                 "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                 "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 25,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.05,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.12
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v72_tp12": {
+                 "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                 "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 26,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.12,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # v73_nosl (2026-10-14): v44 + SL 消融 (sl_pct 0.0005 → 1.0, 实质无止损)。
+    # 4 窗口 mean Calmar 0.81 vs v44 16.50 (-15.69) → 0.05% 极紧 SL 是策略核心
+    # 风控, 移除灾难性。SL 不可或缺。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 1.0
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v73_nosl": {
+                 "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                 "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 28,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 1.0,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # v73_mh10 (2026-10-14): v44 + max_hold 5 → 10。
+    # 4 窗口 mean Calmar 14.14 vs v44 16.50 (-2.36) → max_hold=5 正确。FAIL。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 10
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v73_mh10": {
+                 "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                 "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 29,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 10,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # v74_pc_hi / v74_pc_lo (2026-10-14): v44 + C 涨跌幅区间平移。
+    # 4 窗口: hi[0.05,0.12] mean 10.42 (-6.08), lo[0.02,0.08] mean 13.90 (-2.60),
+    # 基线 16.50 → 两者均更差。C 区间 [3%,10%] 是最优位置。FAIL。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v74_pc_hi": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                  "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 30,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.05,
+        "pct_chg_high": 0.12,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v74_pc_lo": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                  "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 31,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.02,
+        "pct_chg_high": 0.08,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # v75_broad (2026-10-14): v44 + universe=broad_only (组合两个独立发现)。
+    # 5 窗口 mean delta -4.45 (1/5 wins); holdout 2026-H2 -28.47。FAIL —
+    # F 移除与 universe 扩展的效应不能叠加, v44+broad 比 v44 更差。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v75_broad": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                  "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "broad_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 32,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # v76_cascade (2026-10-14): v44 + A 条件切换为 cascade_price 模式
+    # (MA5<MA10<MA20<MA60 级联 + close<MA20)。4 窗口 mean 4.16 vs 16.50 (-12.34)
+    # → 替代 A 模式大幅有害; default 模式 (close<MA60 + below_ratio) 是必需的。FAIL。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v76_cascade": {
+                    "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                    "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 33,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "a_condition": "cascade_price",
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # v76_dstrict (2026-10-14): v44 + D 条件 converge_strict → strict (更宽松)。
+    # 4 窗口 mean 17.42 vs 16.50 (+0.92), 2 胜 2 负, 由 2025-H1 +5.09 驱动 →
+    # 边际, 未达确证标准。FAIL。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v76_dstrict": {
+                    "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                    "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 34,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+    },
+    # v77_b_narrow / v77_e_narrow (2026-10-14): v44 + B/E 区间收窄。
+    # 4 窗口: b_narrow[4,8] mean 13.41 (-3.09), e_narrow[5e7,2e8] mean 11.38 (-5.12),
+    # 基线 16.50。两者均更差 → v44 的 B 连阳范围 [3,10] 与 E 流动性范围
+    # [3e7,3e8] 均为最优。FAIL。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v77_b_narrow": {
+                     "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                     "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 35,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "up_streak_low": 4,
+        "up_streak_high": 8,
+    },
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v77_e_narrow": {
+                     "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                     "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 36,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "liq_low": 5e7,
+        "liq_high": 2e8,
+    },
+    # v78_weak / v78_dryup (2026-10-14): v44 + G/H 条件 (此前只在含 F 的 v50 上测过)。
+    # 4 窗口: +weak_1m mean 12.89 (-3.61, 高方差: -16.6/+20.6/-12.0),
+    # +dryup mean 6.06 (-10.44, 持续更差)。两者均失败。
+    # → 印证: 在 F-free 基线上加条件同样有害 (策略在条件更少时更好)。
+    # 注: +RSI (I 条件) 无法测 — 触发 backtrader pre-existing ZeroDivisionError
+    # (avg_loss==0, 见 replay_strategy_v3.py RSI opt-in 注释)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v78_weak": {
+                 "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                 "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 37,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_weak_1m": True,
+        "weak_1m_threshold": -0.05,
+    },
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v78_dryup": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                  "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 38,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_amount_dryup": True,
+        "amount_dryup_threshold": 0.70,
+    },
+    # v79_ens44 (2026-10-14): ensemble(v44, v45) — v44 族内 2-leg 集成 (50/50)。
+    # 5 窗口 mean delta +0.40 (2 胜 2 负 1 平) → 边际, 未达确证标准。FAIL。
+    # v44/v45 高度相关 (v45 = v44 + 微 A 宽松), 集成无 diversification 收益。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: per_sub_strategy
+    # sl_pct: n/a —— 由每条子策略各自的 preset 声明
+    # tp_pct: n/a —— 由每条子策略各自的 preset 声明
+    # max_hold: n/a —— 由每条子策略各自的 preset 声明
+    # Note: 集成 preset 自身不设 TP/SL;子策略 = ['v44_ratio02_buf07', 'v45_ratio01_buf10'],
+    #       阈值以各自 preset 的 §4 合规头为准。
+    "v79_ens44": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                  "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 39,
+        "position_sizing": "ensemble_split",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "ensemble_substrategies": ["v44_ratio02_buf07", "v45_ratio01_buf10"],
+        "ensemble_weight": 0.5,
+    },
+    # v80_conv (2026-10-14): v44 + §2 conviction 选择 (steepest_slope)。
+    # 此前只在 v50 (含 F) 上测过; 测其在 F-free 基线 (v44) 上。
+    # 6 窗口 mean delta -11.92 (1/6 wins); holdout 2026-H2 -61.94。
+    # → conviction 选择在 v44 基线上同样有害。FAIL。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v80_conv": {
+                 "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                 "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 40,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "entry_selection": "steepest_slope",
+    },
+    # v81_adj (2026-10-14): v44 + §3 signal_price_domain='adj' (修复 A/B/C 原始价错配)。
+    # ⚠️ §3 合规修复: v44 的信号条件 A/B/C 用 d.close (v_daily 原始价), 但 MA/MACD
+    # 用 adj_close (v_daily_hfq 复权价)。数据检查: raw 与 adj 平均偏差 55% (5277 只
+    # 中仅 349 只相同)。A 条件 (raw close < adj MA60) 因 raw 系统性更低而几乎恒真 →
+    # A 的 close<ma60 过滤实际是 no-op。v81 把 A/B/C 切到 adj_close, 与 MA 同域。
+    # 验证 (4 窗口):
+    #   v44_raw  mean Calmar 16.50 (A 失效)
+    #   v81_adj  mean 13.81 (-2.69) → §3 修复降低绝对表现 (当前表现部分依赖 bug)
+    #   v50_adj  mean 10.06 → v44_adj > v50_adj (+3.75), F 移除的有益性在 §3 语义下稳健
+    # 结论: v44 > v50 的 finding 不依赖 bug; 但绝对表现需以 v81_adj 为准 (§3 强制)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v81_adj": {
+                "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 41,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "signal_price_domain": "adj",
+    },
+    # v82_ratio05 (2026-10-14): v81_adj + below_ratio_60 0.2 → 0.5 (§3-adj 语义)。
+    # A 条件在 §3 语义下真正生效后, below_ratio 阈值变得有意义。
+    # 4 窗口 mean 16.54 vs v81_adj 13.81 (+2.73), 但 3/4 窗口为负, 由 2025-H1
+    # (+18.23) 单窗口驱动 → 不确证。FAIL (regime-dependent)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v82_ratio05": {
+                    "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                    "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 42,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.5,
+        "close_ma60_buffer": 0.07,
+        "signal_price_domain": "adj",
+    },
+    # v82_buf12 (2026-10-14): v81_adj + close_ma60_buffer 0.07 → 0.12 (§3-adj 语义)。
+    # 4 窗口 mean 13.99 vs 13.81 (+0.18) → 中性。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v82_buf12": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                  "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 43,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.12,
+        "signal_price_domain": "adj",
+    },
+    # v83_widec (2026-10-14): v81_adj + 移除 C 涨跌幅约束 (§3-adj 语义)。
+    # A 条件在 §3 语义下真正生效后, 重测 C 消融。4 窗口初测 mean 24.30 vs 13.81
+    # (+10.49, 3/4 胜) 看似大幅改进。但 6 窗口验证 (含 holdout) 揭示高波动:
+    #   delta 范围 -20.88 (2019-H1) 到 +37.61 (2018-H1), std≈16, t≈1.06 不显著;
+    #   2026-H2 holdout -12.65。合并 10 窗口 mean +5.38 但不可信。
+    # → FAIL: 移除 C 条件后波动极大, 不 robust。§3 语义下亦无稳健改进。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v83_widec": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                  "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 44,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.0,
+        "pct_chg_high": 1.0,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "signal_price_domain": "adj",
+    },
+    # v83_donly (2026-10-14): v81_adj + d_mode='d_only' (§3-adj 语义)。
+    # 4 窗口 mean 18.71 vs 13.81 (+4.90, 3/4 胜)。未做 6 窗口验证。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 固定 TP/SL(见上方声明值);max_hold 封顶持有期。
+    "v83_donly": {
+                  "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+                  "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 45,
+        "position_sizing": "all_in",
+        "max_positions": 1,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "d_only",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "signal_price_domain": "adj",
+    },
+    # ⚠️ 2026-10-20 合并注记 (§5 版本号冲突, 待 owner 裁决): v67–v73 这一段编号在本仓库的
+    #    两条研究线上**各被用过一次** —— 本分支用 v67_mp2_bounce1 / v68_liq_wide /
+    #    v69_liq_wide_n4 / v70_pct_wide / v71_dmode_strict / v72_tp_default / v73_trailing,
+    #    main 线用 v67_broad / v68_conviction / v69_donly / v69_widec / v70_lowratio /
+    #    v70_nob / v71_buf15 / v71_liqwide / v72_tp05 / v72_tp12 / v73_mh10 / v73_nosl。
+    #  **字典键不冲突**(上面那些名字两两不同), 所以合并是机械可行的; 但「v67」这个编号
+    #    现在指两套参数, §5 的 n_comparisons / DSR 试验计数会把同一个版本号拌到两个实验上。
+    #  重编号是**研究记录**决定(要同步扫描日志), 故此处保留原名, 由 owner 裁决。
+    #  另注: 下面 8 个 preset 的支持性测量取自**另一套引擎状态**(容量闸门修复之前/之后混合),
+    #    在当前合并后的引擎上**不会复现**注释里的结论 —— 仅作"试过哪些轴"的留档。
+
     # v58_mp_4 (2026-10-16): 容量维度外推 —— max_positions 1/2/3/4/5/6 六点扫描。
     #
-    # 由来: v58_mp_2 / v58_mp_3 的"多仓无效"是在容量闸门有缺陷时测的 (声明 N 实开
+    # 由来: v58_mp_2 / v58_mp_3 的「多仓无效」是在容量闸门有缺陷时测的 (声明 N 实开
     # 24/33, 见 abe7dc7); 修好后它们反超 v50_slope ⇒ 这条维度其实**从未被真正开采**,
     # 只试过 1/2/3。本 preset 把扫描补到 6 点。
     #
@@ -1988,6 +2998,8 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v58_mp_4": {
+        "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+        "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -2014,21 +3026,17 @@ PRESETS: dict[str, dict] = {
     # 由来: 本轮做了一次**参数使用审计** —— 枚举引擎读取的 48 个 param, 找出
     # 从未被任何 preset 设置过的那些。`up_streak_low/high` 与 `liq_low/high`
     # 就在其中: 三个条件 (B 连涨 / E 流动性) 的**取值范围**从来没被调过, 一直
-    # 用引擎默认。这否证了上一轮"入口条件空间已穷尽"的表述 —— 条件本身都试过,
+    # 用引擎默认。这否证了上一轮「入口条件空间已穷尽」的表述 —— 条件本身都试过,
     # 但三个条件的**参数**没试过。
     #
-    # 实测 (四个窗口, 对 v58_mp_2):
-    #   CAGR   : 4/4 更高, 且幅度大
-    #   Calmar : 4/4 更高, 其中三个窗口优势显著
-    #   Sharpe : 2/4 更高 (另两个仅略低)
-    #   MaxDD  : 2/4 更低
-    # 即风险调整口径出现了一个跨四个窗口一致的改进 —— 这是本次挖掘里除了容量
-    # 维度之外唯一一个。
+    # 实测 (四个窗口, 对 v58_mp_2): CAGR 与 Calmar 多数窗口更高, 其中 Calmar 优势
+    # 在多数窗口显著; Sharpe / MaxDD 互有胜负。即风险调整口径出现了一个跨窗口一致
+    # 的改进 —— 这是本次挖掘里除了容量维度之外唯一一个。
     #
     # 机理: `up_streak >= 1` 其实已被 C 条件 (信号日涨 3%~10% ⇒ 必为上涨日)
     # 近乎蕴含, 所以把下限设到 1 等价于**释放 B 条件**, 只额外放行「只涨了
-    # 1~2 天」的反弹。数据说明这类短反弹比"连涨 ≥3 天"的更值得做空 —— 与
-    # "等反弹确立"的直觉相反, 与 F 条件 (要求 MA20 仍在下降) 并不冲突。
+    # 1~2 天」的反弹。数据说明这类短反弹比「连涨 ≥3 天」的更值得做空 —— 与
+    # 「等反弹确立」的直觉相反, 与 F 条件 (要求 MA20 仍在下降) 并不冲突。
     # 注: `up_streak_high` 实测**惰性** —— 没有任何信号连涨超过 10 天。
     #
     # §5 Iterative-Tuning Accounting: n_comparisons = 46 + 6
@@ -2041,6 +3049,8 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v67_mp2_bounce1": {
+        "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+        "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -2071,8 +3081,7 @@ PRESETS: dict[str, dict] = {
     # 两个方向都试过:
     #   liq_low 3e7 → 1e8 (剔除小票): 只在 W2 上更好, IND/IS1/IS2 三处 Calmar
     #     全线下降 ⇒ **窗口特异, 否定**。
-    #   liq_high 3e8 → 1e9 (放行大票): CAGR 4/4 更高, Calmar 3/4 更高,
-    #     Sharpe 3/4 更高, MaxDD 3/4 更低 ⇒ 采纳。
+    #   liq_high 3e8 → 1e9 (放行大票): CAGR / Calmar / Sharpe / MaxDD 多数窗口改善 ⇒ 采纳。
     #
     # **独立 holdout 验证** (2019-10-01..2021-09-30, 该窗口未参与本轮任何选择):
     #   v58_mp_2 (原最优) → v67 → v68 四级指标逐级改善, Calmar 逐级翻倍。
@@ -2080,7 +3089,7 @@ PRESETS: dict[str, dict] = {
     #
     # 机理: 上界 3e8 把日成交额 3 亿以上的票整类排除掉了。对大市值票做空死猫跳
     # 并不比中票差, 而排除它们只是白白丢掉一批信号 —— 与 v67 的结论同向
-    # (原条件里"多余的限制"比"不够严"更伤)。
+    # (原条件里「多余的限制」比「不够严」更伤)。
     #
     # §5 Iterative-Tuning Accounting: n_comparisons = 52 + 12
     #   (52 = v67 累计; 本轮 3 个 W2 流动性探针 + 3 个 liq_low 跨窗口
@@ -2093,6 +3102,8 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v68_liq_wide": {
+        "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+        "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -2124,13 +3135,11 @@ PRESETS: dict[str, dict] = {
     # v68 自带的 N=2。
     #
     # 五个窗口 (四个常用窗口 + 一个全新 holdout 2019-10-01..2021-09-30):
-    #   Calmar: N=4 **5/5 个窗口全部更高**, 其中四个窗口优势显著
-    #   MaxDD : N=4 **5/5 更低**
-    #   CAGR  : 2/5 更高, 3/5 略低 (差距都很小)
-    #   Sharpe: 5/5 略低 (差距都很小)
-    # 即这是一次纯粹的风险调整改进, 代价是极小的收益与 Sharpe。
+    #   Calmar 五个窗口全部更高, 其中四个窗口优势显著; MaxDD 五个窗口全部更低;
+    #   CAGR / Sharpe 互有胜负但差距都很小。
+    # ⇒ 这是一次纯粹的风险调整改进, 代价是极小的收益与 Sharpe。
     #
-    # 方法论注记: 这一步是"换了信号集就必须重扫依赖它的维度"的直接应用。
+    # 方法论注记: 这一步是「换了信号集就必须重扫依赖它的维度」的直接应用。
     # 此前本仓库把 max_positions 当成信号无关的常数, 是错的 —— 容量与信号集交互
     # (名额饱和度 = 信号数 / 席位数), 信号集变了饱和度就变了。
     #
@@ -2144,6 +3153,8 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v69_liq_wide_n4": {
+        "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+        "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -2169,26 +3180,24 @@ PRESETS: dict[str, dict] = {
     },
     # v70_pct_wide (2026-10-17): v69 + C 条件单日涨幅上界 0.10 → 0.15。
     #
-    # 由来: 沿 "继续问每个生效条件 —— 它排除掉的那一批真的更差吗" 这条线逐个查。
+    # 由来: 沿「继续问每个生效条件 —— 它排除掉的那一批真的更差吗」这条线逐个查。
     # 这一轮同时试了三个**松绑**方向 (前两次成功都是松绑, 所以优先试松绑):
-    #   close_ma60_buffer 0.07 → 0.15 : W2 Calmar 21.8 (基本无变化)
-    #   below_ratio_60    0.20 → 0.05 : W2 Calmar 22.0 (基本无变化)
-    #   pct_chg_high      0.10 → 0.15 : W2 Calmar **25.0** (四项指标同时改善)
+    #   close_ma60_buffer 0.07 → 0.15 : 基本无变化
+    #   below_ratio_60    0.20 → 0.05 : 基本无变化
+    #   pct_chg_high      0.10 → 0.15 : 四项指标同时改善 ⇒ 采纳
     #
     # 五个窗口 (W2 / IND / IS1 / IS2 + 全新 holdout 2019-10-01..2021-09-30):
-    #   CAGR  : 5/5 更高
-    #   Sharpe: 5/5 更高
-    #   Calmar: 4/5 更高 (holdout 上 9.5 vs 9.7, 基本持平)
-    # 是本轮开始"逐个查条件"以来命中面最广的一次。
+    #   CAGR 五个窗口更高; Sharpe 五个窗口更高; Calmar 4/5 更高 (holdout 上基本持平)。
+    #   是「逐个查条件」以来命中面最广的一次。
     #
     # 机理 (2026-10-17 审计后更新): 0.15 与 0.20 实测给出**完全相同**的结果
     # (同笔数、同指标) ⇒ 该上界在 0.15 以上已不生效。审计查明被 0.10 排除的到底是
-    # 什么: 主板内复权收益 >10% 的 bar 共 17,442 个, 其中 **17,432 个 (100%) 落在
-    # (10.0%, 10.5%]** —— 即**涨停日**因四舍五入把收益率顶到 10% 之上;
-    # (10.5%, 15%] 仅 6 个, >15% 仅 4 个 (这也解释了 0.15 与 0.20 的逐位相同)。
+    # 什么: 主板内复权收益 >10% 的 bar 里, 绝大多数落在 (10.0%, 10.5%] ——
+    # 即**涨停日**因四舍五入把收益率顶到 10% 之上; (10.5%, 15%] 与 >15% 各只有个位数。
+    # (这也解释了 0.15 与 0.20 的逐位相同。)
     # 所以本 preset 的真实含义是: **该上界把「封死涨停」的反弹日整类排除了,
     # 而排除它们是有害的** —— 最极端的死猫跳 (直接涨停) 恰恰是最好做空的,
-    # 与该策略的论点完全一致。这比原先写的"上界冗余"更强、也更有意义。
+    # 与该策略的论点完全一致。这比原先写的「上界冗余」更强、也更有意义。
     # (可行性: 做空是卖出, 涨停日买盘充足, 卖得出去; 且成交在 T+1 开盘, 不在涨停日当天。)
     #
     # §5 n_comparisons = 80 (= 72 + 3 个 W2 松绑探针 + 4 个跨窗口 + 1 个 0.20 对照)
@@ -2200,6 +3209,8 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v70_pct_wide": {
+        "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+        "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -2232,17 +3243,15 @@ PRESETS: dict[str, dict] = {
     #   strict          (中间)     : DIF<0 & DEA<0 & |bar| < |prev_bar|
     #
     # 五个窗口 (W2 / IND / IS1 / IS2 + 全新 holdout 2019-10-01..2021-09-30):
-    #   Calmar: strict **5/5 全部更高**, 且幅度大 (holdout 上高出一半)
-    #   MaxDD : strict **5/5 更低**
-    #   CAGR  : 3/5 更高; Sharpe: 3/5 更高
-    # ⇒ 本次挖掘里单项幅度最大的一处改进。
+    #   Calmar strict 五个窗口全部更高且幅度大; MaxDD 五个窗口更低;
+    #   CAGR / Sharpe 多数窗口更高 ⇒ 本次挖掘里单项幅度最大的一处改进。
     #
     # 且 `d_only` 也优于 `converge_strict` ⇒ 两个方向都比旧值好, 说明错的不是
-    # "多严", 而是**具体那条 ×0.5 的收紧**。DEA<0 与柱收敛这两半仍有价值。
+    # 「多严」, 而是**具体那条 ×0.5 的收紧**。DEA<0 与柱收敛这两半仍有价值。
     #
     # 值得记一笔: `strict` 本来就是**引擎的默认值** —— 2026-09-21 引入
-    # `converge_strict` 作为"v36 候选"时, 是在没有跨窗口证据的情况下把一个更好的
-    # 默认值换掉了。这是"调参调坏"的一个干净实例, 而且它的判别只需要拿默认值
+    # `converge_strict` 作为「v36 候选」时, 是在没有跨窗口证据的情况下把一个更好的
+    # 默认值换掉了。这是「调参调坏」的一个干净实例, 而且它的判别只需要拿默认值
     # 本身做对照 —— 代价极低, 却被跳过了十几轮。
     #
     # §5 n_comparisons = 86 (= 80 + 2 个 W2 取值 + 4 个跨窗口)
@@ -2254,6 +3263,8 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v71_dmode_strict": {
+        "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+        "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -2280,18 +3291,18 @@ PRESETS: dict[str, dict] = {
     # v72_tp_default (2026-10-17): v71 + tp_pct 0.08 → 0.06 (引擎默认值)。
     #
     # 由来: 把当前最优 preset 与**引擎默认值**做全量 diff —— 9 个参数与默认不同。
-    # 逐个做回退测试后, 其中两个是"改坏了":
+    # 逐个做回退测试后, 其中两个是「改坏了」:
     #   d_mode   converge_strict → strict (= 默认)  : 已在 v71 采纳
     #   tp_pct   0.08 → 0.06 (= 默认)               : 本 preset
     # 其余 7 个覆盖经回退测试**站得住** (回退后更差), 与 d_mode/tp_pct 不同型。
     #
     # 五个窗口 (W2 / IND / IS1 / IS2 + 全新 holdout 2019-10-01..2021-09-30):
-    #   **CAGR / Sharpe / MaxDD / Calmar 四项, 5/5 个窗口全部更好。**
+    #   **CAGR / Sharpe / MaxDD / Calmar 四项, 五个窗口全部更好。**
     # 这是本次挖掘里唯一一次**严格占优**(零权衡) 的改进 —— 不是用收益换风险,
     # 也不是用风险换收益, 而是把一条纯有害的覆盖撤掉。
     #
-    # 机理: tp_pct 是止盈宽度。这个策略的钱来自 TP 命中 (18.6% 的交易贡献了 86%
-    # 的盈亏), 而收窄止盈会**同时**提高命中率与降低单笔盈利 —— 实测前者胜出。
+    # 机理: tp_pct 是止盈宽度。这个策略的钱主要来自 TP 命中 (少数成交贡献了
+    # 绝大部分盈亏), 而收窄止盈会**同时**提高命中率与降低单笔盈利 —— 实测前者胜出。
     # 注: 0.08 是 2026-10-12 用 v40_tp_07 / v40_tp_08 两个单窗对照选出来的;
     # 与 v71 的 d_mode 一样, 那次选择没有跨窗口证据, 且从未与默认值对照过。
     #
@@ -2304,6 +3315,8 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v72_tp_default": {
+        "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+        "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -2329,24 +3342,23 @@ PRESETS: dict[str, dict] = {
     },
     # v73_trailing (2026-10-17): v72 + 浮动止损 2% (激活阈值 2%)。
     #
-    # 由来: 全 preset 库在当前引擎下重扫时, 逐条查"哪些**机制**从未在新配置上试过"。
-    # `trailing_stop_pct` 是 v65 (2026-10-13) 引入的, 当年被判 "WFV-failed" ——
+    # 由来: 全 preset 库在当前引擎下重扫时, 逐条查「哪些**机制**从未在新配置上试过」。
+    # `trailing_stop_pct` 是 v65 (2026-10-13) 引入的, 当年被判 「WFV-failed」 ——
     # 但那一次与 v58 的多仓判决同期, 都在容量闸门有缺陷、出口参数未修正的配置下做的。
     #
-    # ⚠️ 本 preset 上线时曾报出"幅度最大的一次改进"(W2 Calmar 60.1)。随后发现
-    # 该数字**被一个 §1 缺陷虚增**: 旧实现用**本 bar 的 low** 定出止损位, 又立刻用
-    # **本 bar 的 high** 判触发 —— 等价于假设当日最低价出现在最高价之前。证据是
-    # 它随 trailing_stop_pct → 0 而**单调**改善 (Calmar 60→63→81→101→116, 无拐点),
-    # 这是在区间内取最大有利偏移的指纹, 不是优势。
+    # ⚠️ 本 preset 上线时曾报出「幅度最大的一次改进」。随后发现该数字**被一个 §1 缺陷
+    # 虚增**: 旧实现用**本 bar 的 low** 定出止损位, 又立刻用**本 bar 的 high** 判触发 ——
+    # 等价于假设当日最低价出现在最高价之前。证据是它随 trailing_stop_pct → 0 而**单调**
+    # 改善且**无拐点**, 这是在区间内取最大有利偏移的指纹, 不是优势。
     # 已修 (触发判定改用截至上一根 bar 的最低价, 本 bar 的 low 只在出场判定之后并入),
     # 见 tests/test_short_reversal_trailing_no_lookahead.py (双向验证)。
     #
     # **修正后**的五窗口 (W2 / IND / IS1 / IS2 + holdout 2019-10-01..2021-09-30),
-    # 对 v72: CAGR 5/5 更高; Sharpe 5/5 更高; Calmar 4/5 更高 (幅度温和, 非此前
-    # 报出的量级); 仅 holdout 的 Calmar 略低。⇒ 仍然采纳, 但描述改为"温和而一致"。
+    # 对 v72: CAGR 与 Sharpe 五个窗口全部更高; Calmar 4/5 更高 (幅度温和, 非此前报出的
+    # 量级); 仅 holdout 的 Calmar 略低。⇒ 仍然采纳, 但描述改为「温和而一致」。
     #
-    # 机理: TP 命中贡献 86% 的盈亏, 且 72.8% 的成交以止损出场、止损腿几乎免费。
-    # 浮动止损在浮盈之后收紧出场位, 锁的是右尾里"先赚后吐"的部分 —— 动的是收益
+    # 机理: 少数 TP 命中贡献了绝大部分盈亏, 且多数成交以止损出场、止损腿几乎免费。
+    # 浮动止损在浮盈之后收紧出场位, 锁的是右尾里「先赚后吐」的部分 —— 动的是收益
     # 来源而非风控。
     #
     # §5 n_comparisons = 109 + 12 (= 95 基线 + 本轮库重扫 6 + W2 探针 9 + 跨窗口 13,
@@ -2358,6 +3370,8 @@ PRESETS: dict[str, dict] = {
     # max_hold: 5
     # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v73_trailing": {
+        "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+        "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,

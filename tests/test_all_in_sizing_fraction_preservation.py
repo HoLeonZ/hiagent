@@ -49,6 +49,10 @@ CLAUDE.md §2 (verbatim, 2026-09-21 update):
 ⇒ 两族是"**声明了却不被读**": §2 要求 preset 显式声明 (它们做到了), 但引擎不消费它 ——
 **声明本身因此不携带信息**。
 """
+
+# ⚠️ 附九十八: 上面引用的 §2 All-In Sizing Policy (2026-09-21) 条款**已被提交 2260ba1 替换**(现行文本见 CLAUDE.md,
+# 替代为对应节的新写法)。此处引用旧句仅为**对照**;本文件的**断言**测的是现行行为,
+# 不是那条已退休的措辞。
 from __future__ import annotations
 
 import ast
@@ -59,7 +63,12 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # 预算类变量的名字 —— 每一处对它们的赋值都必须引用 position_fraction 或 max_positions
-BUDGET_TARGETS = {"target_value", "slot_value", "budget", "budget_value", "target_qty"}
+#: 2026-10-20 合并 main 后补入 `"lots"`: cycle_price_action 的 sizing 表达式是
+#: `lots = int(self.free_cash * self.position_fraction // (price * 100))`
+#: (cycle_price_action/portfolio.py:363) —— 它是该族**唯一**读 `position_fraction`
+#: 的赋值形态, 而原名单认不出它, 于是守卫对整族"无内容"。
+#: 实测全仓仅此一处 `lots =`, 故不会波及其他族。
+BUDGET_TARGETS = {"target_value", "slot_value", "budget", "budget_value", "target_qty", "lots"}
 
 # §2 允许的**替代**: N 槽等额 (max_positions > 1 时每笔 = free_cash / N)。
 # 因此"这条预算赋值没有 position_fraction"本身不算违反 —— 除非它连 max_positions 也没有。
@@ -67,18 +76,12 @@ ALTERNATIVE_ALLOWED = {"max_positions"}
 
 # ⛔ 登记的债 (§13.66): 这些族的 preset **声明了** position_fraction, 而引擎**不读**它。
 # **修好后必须删掉对应那一行** —— 下面的断言会在债还清时立刻变红。
-REGISTERED_DEBT = {
-    "chase_up": "§13.66/§13.67 —— 22/22 preset 声明 position_fraction, 而 "
-                "chase_up 的引擎**签名里根本没有这个参数** (`inspect.signature("
-                "chase_up.portfolio.simulate_portfolio)` 无该形参) ⇒ 该键在 "
-                "preset→engine 边界上被**静默丢弃** (属 [[preset-engine-api-conformance-gap]] "
-                "那一类的 174 个键之一; 已有红灯守卫 test_preset_to_engine_api_conformance)。"
-                "补它属**结果变更** (半仓会真的变半仓), 按授权只登记。",
-    "cycle_price_action": "§13.66/§13.67 —— 21/21 preset 声明 position_fraction, 而 "
-                          "cycle_price_action/portfolio.py 的 `Portfolio.__init__` "
-                          "**签名里没有这个参数** (只有类常量 MAX_POSITION_PCT=1.0)。"
-                          "补它属**架构变更**, 按授权只登记。",
-}
+#: ✅ 2026-10-20 合并 main 后**清空** —— 两笔债都已由 main 的引擎改动还清:
+#: * `chase_up`: `simulate_portfolio` 现在**真的读** `position_fraction`;
+#: * `cycle_price_action`: `Portfolio.__init__` 现在**接受** `position_fraction`。
+#: 按本表规矩(豁免不得继续挂着)两条都已删除;其结果漂移登记于
+#: `docs/strategy_mining_log.md` §13.215(§13.66/§13.67 的债还清)。
+REGISTERED_DEBT: dict[str, str] = {}
 
 
 def _families() -> list[str]:
@@ -345,7 +348,7 @@ def test_short_reversal_position_fraction_scales_order_size(
         cerebro.adddata(AShareData(dataname=_panel(), plot=False), name="600000.SH")
         holder: dict = {"cash": 100_000.0, "trades": [], "max_dd": 0.0}
         cerebro.addstrategy(
-            Phase3V3Strategy, result_holder=holder, min_cash_ratio=0.05,
+            Phase3V3Strategy, result_holder=holder, nav_gate_ratio=0.05,
             position_fraction=position_fraction, max_positions=1,
         )
         cerebro.run()

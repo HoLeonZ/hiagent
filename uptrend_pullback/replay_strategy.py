@@ -87,14 +87,12 @@ class UpullbackTradeReplay(bt.Strategy):
         # --- CLAUDE.md §4 涨停不成交: 复核入场 bar 是否涨停开盘 ---
         # bar 0 下单 → bar 1 开盘成交; bar 1 的 open[0] 到此时才可见, 因果上无法
         # 在 bar 0 预判 (§1), 故在此复核。涨停开盘 = 物理上买不进 → 置 skipped,
-        # 由 orchestrator 丢弃该 trade (backtrader_engine.py:165)。
-        # ⚠️⚠️ 2026-10-19 (§13.120): 此处原文写「口径与 Phase 1 portfolio.py:474-476
-        # 一致, **共用 core.dual_price.is_limit_up 单一来源**」—— **后半句是假的**:
-        # `uptrend_pullback/portfolio.py` 也 import 了 `is_limit_up`, 但**从未调用**
-        # (精确扫描 `tools/scan_unused_core_imports.py` 查实); 它的守卫是**内联**式,
-        # 并配一个**本文件自定义**的 `LIMIT_UP_THRESHOLD = 0.098` (core 里是 0.095)。
-        # ⇒ **两条 Phase 用同一个公式, 但不是同一个"来源"** —— 是**同形实现**。
-        # (阈值分歧本册 §13.120 已登记; 本条只更正那句话。)
+        # 由 orchestrator 丢弃该 trade (backtrader_engine.py:165)。口径与 Phase 1
+        # portfolio.py 里的对应处一致, 共用 core.dual_price.is_limit_up 单一来源。
+        # ⚠️ 2026-10-19 (§13.120): "共用单一来源"成立, 但**阈值不同** —— Phase 1
+        # (portfolio.py)显式传它自己的本地 `LIMIT_UP_THRESHOLD = 0.098`, 本文件
+        # 不传 threshold ⇒ 走 core 默认的 0.095。同一个谓词、两个阈值
+        # (阈值分歧已在 §13.120 登记)。
         if not self.entry_done and is_limit_up(
             float(self.data.close[-1]),
             float(self.data.open[0]),

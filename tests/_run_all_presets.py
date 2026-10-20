@@ -12,7 +12,7 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, "/Users/holeon/code/hiagent")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # §0/§6 (附一百一十一)
 
 from short_reversal.engine import run_backtest_v3
 from short_reversal.presets import PRESETS

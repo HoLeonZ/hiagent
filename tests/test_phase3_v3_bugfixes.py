@@ -1,7 +1,8 @@
 """回归测试：修复后的事件驱动引擎关键行为。
 
 覆盖 3 个 bug fix：
-  - Bug 1: SL gap-aware exit price 必须用 sl_p，不能用 open_p（避免单笔 SL 损失被跳空放大）
+  - Bug 1 (2026-10-17 更正): SL gap-aware exit price 必须用 **open_p**
+    (§4 Gap-Through-Stop)。此前的断言方向是反的 —— 详见下方 Bug 1 节。
   - Bug 2: hold_days = len(self) - pos["entry_bar"]（bar 跨度，不是 bar 数 -1）
   - Bug 3: NAV-based max_dd（cash + 做空持仓 mark-to-market 浮盈）
 """
@@ -30,6 +31,8 @@ def _run_strategy(panel: pd.DataFrame, **kwargs) -> dict:
     kwargs.setdefault("pct_chg_high", 0.10)
     cerebro.addstrategy(
         Phase3V3Strategy,
+        nav_gate_ratio=0.05,  # §2 (audit 2026-10-15): 单元夹具直接构造策略,
+                              #   故须显式给出(生产路径由 preset 声明注入)
         initial_capital=initial_capital,
         lot_size=100,
         result_holder=holder,
@@ -70,21 +73,29 @@ def _build_cascade_entry_panel(n: int = 220) -> pd.DataFrame:
 
 
 # ====================================================================
-# Bug 1: SL gap-aware exit price — 必须用 sl_p 而不是 open_p
+# Bug 1 (2026-10-17 更正): SL gap-aware exit price — 必须用 **open_p**
 # ====================================================================
+#
+# 本节此前题为「必须用 sl_p 而不是 open_p」,断言 `exit_price == sl_p`,并把
+# 「用 open_p」称为 bug。**那是把 §4 的违反锁死**:CLAUDE.md §4 Gap-Through-Stop
+# 无条件要求「开盘越过止损 ⇒ 按开盘价成交(悲观),绝不用止损价」,三姊妹引擎
+# (chase_up / uptrend_pullback / cycle_price_action)在同样的位置一律按开盘价
+# 成交,只有本引擎相反 ⇒ 族内不对称,不是口径选择。
+#
+# 而且不是边缘场景:生产 preset 的 `sl_pct` 多为 **0.0005**,几乎每一笔 SL 都落进
+# 这条 gap 分支,损失被一律钉在 0.05%,与当天真实跳空幅度无关 —— 结果被系统性
+# 抬高(逆 §0 Pessimistic Default)。
+
+_GAP_OPEN = 23.0  #: bar 201/202+ 的开盘价;相对 entry(≈22.25)跳空 +3.4%
+
 
 def test_sl_exit_uses_open_when_gap_up():
-    """开盘跳空穿过 SL → exit_price 必须 = open_p (**不得**用 sl_p)。
+    """§4: 开盘跳空穿过止损 → exit_price 必须 = **open_p**(悲观),不是 sl_p。
 
-    ⚠️ 2026-10-17 反转: 本测试原先断言相反的行为 (exit_price = sl_p), 并把
-    open_p 那版称为"bug"。但 CLAUDE.md §4 是规范原文:
-
-        Gap-Through-Stop: ... the exit fills at the open (pessimistic),
-        **never at the stop price**.
-
-    旧的 sl_p 填充是乐观方向: 做空仓跳空高开时, 用 sl_p (更低) 回补, 等于假设
-    "无论跳空多远亏损都恰好在止损位"。对 sl_pct=0.05% 的配置, 这几乎把每一笔
-    亏损单钉死 —— 实测这一处口径承载了 short_reversal 此前测得的**几乎全部**优势。
+    `sl_p` 是**开盘就已越过**的价位,物理上取不到 —— 按它成交等于假设"跳空时能
+    拿回止损价"。
+    跳空幅度刻意保持在 A 股 ±10% 涨停**之内**(+3.4%),场景因此物理可成交、
+    不含封板顺延,本用例只测 gap 分支本身。
     """
     n = 220
     dates = pd.date_range("2025-01-01", periods=n, freq="B")
@@ -104,19 +115,19 @@ def test_sl_exit_uses_open_when_gap_up():
             "open": p, "high": p + 0.0001, "low": p - 0.0001, "close": p,
             "amount": 5e7, "volume": 1e6,
         })
-    # bar 201（entry bar = fill pending）→ 让 open 跳空穿过 SL
-    # entry_price (bar=200 close) ≈ 22.20
-    # sl_pct=0.10 → sl_p = 22.20 * 1.10 = 24.42
-    # 让 open_p=25.0 远高于 sl_p，且 low=24.5 ≥ sl_p → 必须 SL @ sl_p
+    # bar 201 起开盘跳空穿过 SL(entry ≈ 22.25 ⇒ sl_p = entry × 1.02 ≈ 22.70)。
+    # 跳空 +3.4%:既越过止损,又远在 ±10% 涨停之内(故不触发封板顺延)。
     rows.append({
         "thscode": "600000.SH", "date": dates[201],
-        "open": 25.0, "high": 25.0, "low": 24.5, "close": 25.0,
+        "open": _GAP_OPEN, "high": _GAP_OPEN, "low": _GAP_OPEN - 0.1,
+        "close": _GAP_OPEN,
         "amount": 5e7, "volume": 1e6,
     })
     for i in range(202, n):
         rows.append({
             "thscode": "600000.SH", "date": dates[i],
-            "open": 25.0, "high": 25.0, "low": 24.9, "close": 25.0,
+            "open": _GAP_OPEN, "high": _GAP_OPEN, "low": _GAP_OPEN - 0.1,
+            "close": _GAP_OPEN,
             "amount": 5e7, "volume": 1e6,
         })
     panel = pd.DataFrame(rows)
@@ -124,26 +135,38 @@ def test_sl_exit_uses_open_when_gap_up():
     h = _run_strategy(
         panel,
         tp_pct=0.06,
-        sl_pct=0.10,        # 10% → 远大于跳空幅度，sl_p 仍可作为 price 上限
+        sl_pct=0.02,        # 2% 止损 —— 跳空 +3.4% 必然越过它
         max_hold=20,
         a_condition="cascade_price",
         position_fraction=1.0,
-        # engine 要求显式传入 (默认 None 是 fail-fast 设计); 本测试原先漏传,
-        # 导致它在 TypeError 上早退 —— 即它**从未真正跑到过断言**。
-        min_cash_ratio=0.05,
     )
     assert len(h["trades"]) >= 1, f"未触发入场, trades={h['trades']}"
     sl_trade = next((t for t in h["trades"] if t["exit_reason"] == "SL"), None)
     assert sl_trade is not None, f"未触发 SL 出场, trades={h['trades']}"
 
-    # §4 Gap-Through-Stop: 开盘已越过止损 → 成交在**开盘价** (悲观填充)。
-    # 做空仓, 价格从 ep 跳到 open_p=25.0 → 损失 = (open_p - ep)/ep + 费用 ≈ -12.6%
-    assert sl_trade["exit_price"] == pytest.approx(25.0, rel=1e-6), (
-        f"§4 要求 SL gap 成交在 open_p=25.0, 实际={sl_trade['exit_price']:.4f} "
-        f"(旧的 sl_p 填充是乐观方向, 已被推翻)"
+    ep = float(sl_trade["entry_price"])
+    sl_p = ep * 1.02
+    # 夹具前提:确实**跳空越过**了止损 —— 否则本用例测不到 gap 分支(d 型契约
+    # 必须带非空转前提:不然"通过"无法区分"实现正确"与"分支没走到")。
+    assert _GAP_OPEN > sl_p, f"夹具失效: open={_GAP_OPEN} 未越过 sl_p={sl_p:.4f}"
+    # §4:按开盘价成交
+    assert sl_trade["exit_price"] == pytest.approx(_GAP_OPEN, rel=1e-6), (
+        f"§4 VIOLATION: 跳空穿过止损时应 fill @ open_p={_GAP_OPEN:.4f},"
+        f"实际={sl_trade['exit_price']:.4f}(sl_p={sl_p:.4f} 是取不到的价位)"
     )
-    assert sl_trade["net"] < -0.10, (
-        "跳空的损失必须计入 —— 不得被止损位抹掉"
+    # 记录的损失 = 跳空幅度 + 往返成本,**不被 stop price 截断**。
+    # 成本**从规范单源推导**,不写字面量:做空往返 = 开仓卖出(佣金+印花税)+ 回补买入(佣金)。
+    # 此前这里写死 0.0006 —— 那是费率集中到 core/ 之前的旧值,费率规范化后它就成了
+    # 一条钉住陈旧数字的断言(§2 Canonical Cost Model:费率只能有一处定义)。
+    from core.dual_price import COMMISSION_RATE, STAMP_DUTY_RATE
+
+    round_trip_fee = 2 * COMMISSION_RATE + STAMP_DUTY_RATE
+    # abs 容差:成交额较小时触发 ¥5 最低佣金下限,与纯比例口径有微小差异。
+    assert sl_trade["net"] == pytest.approx(-(_GAP_OPEN / ep - 1) - round_trip_fee, abs=1e-3)
+    # 关键:单笔损失**超过**名义 sl_pct。这条正是旧断言的反面 —— 把实现改回
+    # "gap 用 sl_p" 必然打挂它(双向验证的另一半)。
+    assert abs(sl_trade["net"]) > 0.02 + round_trip_fee - 1e-4, (
+        "损失被 stop price 截断回 -sl_pct —— §4 要求跳空按开盘价成交(悲观)"
     )
 
 
@@ -169,9 +192,6 @@ def test_hold_days_is_bar_span_not_bar_count_minus_one():
         max_hold=3,
         a_condition="cascade_price",
         position_fraction=1.0,
-        # engine 要求显式传入 (默认 None 是 fail-fast 设计); 本测试原先漏传,
-        # 导致它在 TypeError 上早退 —— 即它**从未真正跑到过断言**。
-        min_cash_ratio=0.05,
     )
     assert len(h["trades"]) >= 1, f"未触发入场, trades={h['trades']}"
     t = h["trades"][0]
@@ -233,9 +253,6 @@ def test_max_dd_includes_short_position_unrealized_pnl():
         max_hold=20,        # 较短 → bar 201+20 = 221 触发 time exit
         a_condition="cascade_price",
         position_fraction=1.0,
-        # engine 要求显式传入 (默认 None 是 fail-fast 设计); 本测试原先漏传,
-        # 导致它在 TypeError 上早退 —— 即它**从未真正跑到过断言**。
-        min_cash_ratio=0.05,
     )
     assert len(h["trades"]) >= 1, f"未触发入场, trades={h['trades']}"
     # NAV-based max_dd 应显著 > 0（持仓浮亏被计入）

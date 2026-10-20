@@ -44,7 +44,22 @@
 """
 from __future__ import annotations
 
+# §7 (audit P3, 2026-10-15): 本文件的历史绩效数值已清除(见 CLAUDE.md §7)。
+# 保留的是选型理由与负面证据;任何数值请以当前代码重算。
+
 import copy
+
+# §4 (audit P1-B2, 2026-10-15): 滑点标定值必须由 preset **显式声明**;
+# 缺声明 fail-fast(core.dual_price.resolve_atr_slip_scale)。
+#
+# `SLIP_NONE_ACKNOWLEDGED = 0.0` 是「已知 §4 缺口」的**显式确认值**:审计实测
+# 四引擎成交价恒等于 bar 开盘价,§4 强制的 ATR×参与率滑点在全部出厂 preset 上
+# 都不生效,而此前这靠 `p.get(..., 0.0)` 的沉默存在 —— 没有报错、没有日志。
+# 现在它被逐条枚举、可审计。改成真实标定值会改变成交价,属研究决策(§5 迭代
+# 计数),不在此替用户决定。
+SLIP_NONE_ACKNOWLEDGED = 0.0
+SLIP_KEY = "atr_slip_scale"
+
 
 MAX_HOLD_LIMIT = 20
 
@@ -72,6 +87,7 @@ PRESETS: dict[str, dict] = {
     # max_hold: 15
     # Note: Fixed TP/SL; no ATR multiplier. Pessimistic Default = 2.93% stop / 30.5% TP.
     "v33_long_reverse_v19": {
+                             "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         # V6 (2026-09-22, CLAUDE.md §4): SL-first tiebreak intraday — 已在 portfolio.py 落地
         "intraday_tiebreak": "sl_first",
@@ -92,6 +108,11 @@ PRESETS: dict[str, dict] = {
         "sl_pct": 0.0293,
         "max_hold": 15,
         "max_positions": 1,
+        # §2 (audit 2026-10-17): 显式声明 —— 此前**未声明**而引擎用
+        # `p.get("nav_gate_ratio", 0.05)` 静默兜底,正是契约模块
+        # (`core/preset_contract.py`)明令禁止的"让缺口靠沉默存在"。
+        # 这里声明的就是**当时实际生效**的 0.05 ⇒ 零行为变化。
+        "nav_gate_ratio": 0.05,
         "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
@@ -124,6 +145,7 @@ PRESETS: dict[str, dict] = {
     # max_hold: 18
     # Note: Fixed TP/SL; no ATR multiplier. Pessimistic Default = 2.1% stop / 26.28% TP.
     "v33_long_reverse_v20": {
+                             "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -134,6 +156,11 @@ PRESETS: dict[str, dict] = {
         "sl_pct": 0.021,
         "max_hold": 18,
         "max_positions": 1,
+        # §2 (audit 2026-10-17): 显式声明 —— 此前**未声明**而引擎用
+        # `p.get("nav_gate_ratio", 0.05)` 静默兜底,正是契约模块
+        # (`core/preset_contract.py`)明令禁止的"让缺口靠沉默存在"。
+        # 这里声明的就是**当时实际生效**的 0.05 ⇒ 零行为变化。
+        "nav_gate_ratio": 0.05,
         "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,    # §2
@@ -155,20 +182,16 @@ PRESETS: dict[str, dict] = {
     # 由来: 用修正后的评估链重估全部候选(见 uptrend_pullback/results/PRESET_SEARCH.md §14)。
     # 当时修正了三把尺子:
     #   ① equity 曲线把建仓名义额计入两次 -> sharpe/max_dd/exposure 全部失真
-    #   ② DSR 拿年化 Sharpe 比逐期阈值 -> 中等 Sharpe 被系统性折减到 0
+    #   ② DSR 拿年化 Sharpe 比逐期阈值 -> 中等 Sharpe 被系统性折减到 …
     #   ③ 目标函数: 该策略盈亏由**右尾**驱动(79% 止损、盈亏比 5.42、前 10% 交易
-    #      贡献 297% 净盈亏),而 Sharpe 会用波动率惩罚这条尾巴
+    #      贡献 … 净盈亏),而 Sharpe 会用波动率惩罚这条尾巴
     #      => 改用 R-multiple 期望 E[R] (R_trade = sl_pct × entry_price × size)
     #
     # 为什么是 regime gate: 在**三个样本**上它都是最好的那一个 ——
-    #   train  2024-09..2026-03 : E[R] +1.164 vs v20 +0.650 (PF 1.94 vs 1.41)
-    #   holdout 2026-03..2026-09: E[R] +2.622 vs v20 +0.359 (但仅 14 笔, t=1.62, 不显著)
-    #   独立期 2020-01..2024-09: E[R] -0.329 vs v20 -0.625 (两者均为负, 见下)
     # 且它的**尾部依赖最低**: 尾十分位占毛盈利 111% vs v20 191% —— 收益最不依赖少数几笔。
     # regime gate 用 compute_regime 的**默认参数**(不做调参), 避免在 gate 上过拟合。
     #
     # ⚠️ 必须同时记录的负面证据(不得只报好的一面):
-    #   * 独立时期 2020-2024: 本 preset E[R] = **-0.329** (t=-1.03); v20 = -0.625
     #     (t=-2.73, 681 笔, 签名显著为负)。即**这个族在非趋势市里是亏钱的**;
     #     2024-09 之后的正值来自当时的牛市 regime(策略 ≈ 市场 × 1.6 beta)。
     #   * 因此本 preset **没有可证实的正 alpha** (§5)。它只是「亏得最少、最不依赖
@@ -184,6 +207,7 @@ PRESETS: dict[str, dict] = {
     # tp_pct: 0.2628
     # max_hold: 18
     "v33_long_reverse_v21": {
+                             "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -194,6 +218,11 @@ PRESETS: dict[str, dict] = {
         "sl_pct": 0.021,
         "max_hold": 18,
         "max_positions": 1,
+        # §2 (audit 2026-10-17): 显式声明 —— 此前**未声明**而引擎用
+        # `p.get("nav_gate_ratio", 0.05)` 静默兜底,正是契约模块
+        # (`core/preset_contract.py`)明令禁止的"让缺口靠沉默存在"。
+        # 这里声明的就是**当时实际生效**的 0.05 ⇒ 零行为变化。
+        "nav_gate_ratio": 0.05,
         "position_sizing": "all_in",
         "position_fraction": 1.0,    # §2 (CLAUDE.md All-In Sizing Policy 2026-09-22)
         "MAX_POSITION_PCT": 1.0,     # §2
@@ -249,6 +278,7 @@ PRESETS: dict[str, dict] = {
     # max_hold: 18
     # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
     "v33_long_reverse_v22": {
+        "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
         "universe": "mainboard_only",
         "intraday_tiebreak": "sl_first",
         "max_volume_participation": 0.10,
@@ -324,6 +354,9 @@ PRESETS: dict[str, dict] = {
         "sl_pct": 0.021,
         "max_hold": 18,
         "max_positions": 1,
+        # §2: 显式声明 —— 合并 main 后 `core/preset_contract` 对缺声明 fail-fast。
+        # 声明的就是**当时实际生效**的 0.05 ⇒ 零行为变化。
+        "nav_gate_ratio": 0.05,
         "position_sizing": "all_in",
         "position_fraction": 1.0,
         "MAX_POSITION_PCT": 1.0,

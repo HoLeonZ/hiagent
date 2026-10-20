@@ -165,24 +165,52 @@ def main() -> None:
     print(f"   汇总: {summary_path}")
 
     # CLAUDE.md §5 Penalty Metrics: 多 trial sweep 必须报告 DSR
-    # observed = median_return_pct / 100 (粗略 annualized proxy); n_trials = presets
-    if not summary.empty and "median_return_pct" in summary.columns:
-        # median_return_pct 是窗口中位总收益 (近似 annualized via sqrt(time) 简化)
-        # 严格场景下应传入 SharpeRatio of equity curve, 此处仅用于 sweep 排序
-        # 时的 selection bias sanity check
-        sharpes = summary["median_return_pct"].dropna().tolist()
+    if not summary.empty and "mean_sharpe" in summary.columns:
+        # §5 (audit 2026-10-15): DSR 的 `observed_sharpe` 必须是**年化 Sharpe**
+        # —— deflated_sharpe_ratio 的 docstring 原文:"Annualized Sharpe from
+        # backtest (mean/std × sqrt(252))"。
+        #
+        # 此处原为 `median_return_pct / 100`:把**窗口中位总收益**的百分比当成
+        # Sharpe 传进去。这不是数值误差而是**结论错误** —— 收益率(0.1~1)比典型
+        # Sharpe 量级低一到两个数量级,于是 DSR / p 值会系统性地判成"毫无优势",
+        # 而它照样被打印出来,读者会把它当作显著性结论。
+        #
+        # 汇总表里本来就有 `mean_sharpe`(每个 preset 跨窗口的 Sharpe 均值),
+        # 直接用它:max over presets + n_trials = preset 数,正是本函数的契约
+        # (docstring: "selecting the best Sharpe from k trials")。
+        sharpes = summary["mean_sharpe"].dropna().tolist()
         if sharpes:
-            observed = max(sharpes) / 100.0
+            observed = max(sharpes)
+            # §5 (audit 2026-10-16): 本处的 observed 是 preset 跨**多个窗口**的
+            # mean_sharpe,故代表性 T 取各窗口日收益数的均值(每窗一个观测集)。
+            # 此前写死 252 ⇒ 而 WF 窗口实际只有 242~243 个交易日,T 高估约 4%、
+            # 标准误低估约 2% ⇒ DSR 偏乐观。缺字段即 fail-fast,不用常数兜底。
+            if "n_daily_returns" not in df.columns:
+                raise ValueError(
+                    "§5: detail 缺 n_daily_returns,无法确定 DSR 的观测数 T —— 不许用常数兜底"
+                )
+            # §5 (附八十二): `n_trials` 是"**试过多少个 preset**",不是"有多少个 preset
+            # 的 mean_sharpe 不是 NaN"。某个 preset 的所有窗口都失败时它的 `mean_sharpe`
+            # 是 NaN,会被 `dropna()` 剔除 ⇒ n_trials 少计、DSR 偏乐观。
+            # §5 Iterative-Tuning Accounting:"每一次迭代都计入"。
+            _n_tried = int(len(summary))
+            _n_ok = int(len(sharpes))
             dsr = deflated_sharpe_ratio(
-                observed_sharpe=observed, n_trials=len(sharpes), n_returns=252
+                observed_sharpe=observed, n_trials=_n_tried,
+                n_returns=int(df["n_daily_returns"].mean()),
             )
             print(
                 f"\n§5 DSR (across-presets sweep) | "
-                f"observed_median_ret={observed*100:+.2f}% | "
-                f"n_trials={len(sharpes)} | "
+                f"observed_sharpe={observed:.3f} | "
+                f"n_trials={_n_tried} | "
                 f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
-                f"p_value={dsr['p_value']:.4f}"
+                f"p_value={dsr['dsr_p_value']:.4f}"
             )
+            if _n_tried != _n_ok:
+                print(
+                    f"  ⚠️ 其中 {_n_tried - _n_ok} 个 preset 的 mean_sharpe 是 NaN"
+                    f"(全部窗口失败)—— 它们同样计入 n_trials(§5:每次迭代都算)"
+                )
 
 
 if __name__ == "__main__":

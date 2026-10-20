@@ -11,6 +11,7 @@ backtrader 源码（pip 装的 1.9.78.123）保持原封不动，只走子类化
 """
 from __future__ import annotations
 
+import datetime as _dt
 import logging
 import math
 from typing import Any
@@ -20,12 +21,18 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+from core.corporate_actions import apply_corporate_action
+from core.preset_contract import ALL_IN, EXECUTION_PRICE_SOURCE  # §2/§3 (audit 2026-10-15)
 from core.dual_price import (
+    BORROW_RATE_ANNUAL,
+    COMMISSION_RATE,
+    MIN_COMMISSION,
+    STAMP_DUTY_RATE,
     LAYOUT_SHORT_REVERSAL,
-    atr_slippage as dual_atr_slippage,
     effective_slippage,
     extract_execution_bar,
     is_limit_down,
+    is_limit_up,
     volume_cap_fill,
 )
 from core.trade_schema import TRADE_COLS
@@ -52,21 +59,45 @@ UP_STREAK_HIGH = 10
 # 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION。超出部分丢弃(不挂单)。
 MAX_VOL_PARTICIPATION = 0.10
 
-# Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical cost model constants
-# (single-source-of-truth in core.dual_price.py). Declared at module level so
-# the AST detector in tests/test_cost_model_canonical_conformance_4engine.py
-# can verify canonical compliance. Used by Phase3V3Strategy.params below.
-# 2026-10-19 (§2 Canonical Cost Model 修复): 此前这三行是**字面量**, 而本文件
-# 顶部**已经** `from core.dual_price import ...` —— 只是没有把这些成本常量一并导入。
-# §2: "Commission / stamp-duty / min-fee constants are defined exactly once (in core/).
-# Every engine MUST import them; redefining fee constants inside an engine or preset
-# is a **fail-fast violation**."
-# ⇒ 改为真 import。取值逐字节未变 (0.00025 / 0.0005 / 5.0) ⇒ **零结果漂移**。
-from core.dual_price import (  # noqa: E402
-    COMMISSION_RATE,
-    MIN_COMMISSION,
-    STAMP_DUTY_RATE,
-)
+# v67 (2026-10-13, CLAUDE.md §4): board-and-date-aware **涨跌停**阈值。
+# 主板 ±10% (0.095 容差); 创业板 300/301/302.SZ 2020-08-24 起 ±20% (之前 ±10%);
+# 科创板 688/689.SH ±20% (2019-07-22 开板)。20% 板的票用 10% 阈值会误判封板,
+# 导致本可成交的空头 entry(跌停侧)与 cover(涨停侧)被错误跳过。
+# **两侧都必须走 `_board_limit_threshold`**(附五十三:回补侧曾漏掉,前缀也曾漏 301/302/689)。
+_CHINEXT_20PCT_START = (2020, 8, 24)
+_LIMIT_THRESHOLD_20PCT = 0.195
+
+
+def _board_limit_threshold(code: str, bar_date, default: float) -> float:
+    """按板 + 日期返回**涨跌停**阈值 (CLAUDE.md §4)。主板返回 default(保持兼容)。
+
+    入场侧(跌停)与回补侧(涨停)必须**都**走这里 —— 一侧走、一侧不走就是族内
+    不对称:20% 板的票套上 10% 阈值会把 +9.5%…+19.5% 的**合法**开盘误判成封板。
+    """
+    if code.endswith(".SH"):
+        body = code.split(".", 1)[0]
+        if body.startswith(("688", "689")):
+            # 科创板 ±20%(688);689 = 科创板 CDR,同一交易规则。
+            # 附五十三:此前只认 "688",689 被漏掉。
+            return _LIMIT_THRESHOLD_20PCT
+    elif code.endswith(".SZ"):
+        body = code.split(".", 1)[0]
+        if body.startswith(("300", "301", "302")):
+            # 创业板 ±20%(2020-08-24 起)。301/302 是创业板后续代码段,
+            # 附五十三:此前只认 "300"。
+            if bar_date is not None and (
+                bar_date.year,
+                bar_date.month,
+                bar_date.day,
+            ) >= _CHINEXT_20PCT_START:
+                return _LIMIT_THRESHOLD_20PCT
+    return default
+
+# §2 (audit P2-11, 2026-10-15): 规范费率从 core.dual_price **导入**(并再导出 ——
+# 本模块的其他调用方与 golden 基线引用这些名字)。
+# 此前这里是重复定义,而注释却写着 "single-source-of-truth in core.dual_price.py"
+# —— 声称已单源却不 import,是"注释撒谎"的典型;旧 AST 守卫之所以放过它,是因为
+# 那个守卫只比对**数值**是否等于 canonical,允许重复存在。
 
 
 def _canonical_trade_record(
@@ -134,6 +165,27 @@ def _assert_trade_dict_is_canonical(trade: dict) -> None:
         )
 
 
+def _parse_window_day(value: Any) -> _dt.date | None:
+    """§1 (audit, 2026-10-15): 把 window_start / window_end 归一为 datetime.date。
+
+    接受 None / date / datetime / "YYYY-MM-DD"。非法值 fail-fast —— 窗口边界是
+    正确性约束,解析失败必须让调用方知道,不能静默降级成"未启用"(那正是
+    §3 `signal_price_domain` 默认 'raw' 那类"修复不可达"的失败模式)。
+    """
+    if value is None:
+        return None
+    if isinstance(value, _dt.datetime):
+        return value.date()
+    if isinstance(value, _dt.date):
+        return value
+    try:
+        return _dt.date.fromisoformat(str(value)[:10])
+    except ValueError as exc:
+        raise ValueError(
+            f"window bound 无法解析为日期: {value!r} (期望 date 或 'YYYY-MM-DD')"
+        ) from exc
+
+
 class Phase3V3Strategy(bt.Strategy):
     """事件驱动做空策略。"""
 
@@ -142,6 +194,11 @@ class Phase3V3Strategy(bt.Strategy):
         sl_pct=0.0005,
         max_hold=5,
         position_fraction=1.0,
+        # §2/§3 (audit 2026-10-15, preset→engine conformance): 这两项此前被 preset
+        # 声明却无任何消费者。由 engine.run_backtest_v3 经 core.preset_contract
+        # 解析后注入;__init__ 核对声明与引擎实现是否一致。
+        position_sizing="all_in",
+        price_source_for_execution="raw_close",
         pct_chg_low=0.02,
         pct_chg_high=0.07,
         a_condition="default",  # 'default' (V1) | 'cascade_price' (V5)
@@ -157,12 +214,10 @@ class Phase3V3Strategy(bt.Strategy):
         # D 条件 MACD 阈值 (默认严格: DIF<0 & DEA<0 & |bar|<|prev_bar|)
         # 'strict' (V3 默认) | 'd_only' (D|dif|<0 only) | 'converge_strict' (|bar|<|prev_bar|*0.5)
         d_mode="strict",
-        margin_rate=0.086,
+        margin_rate=BORROW_RATE_ANNUAL,
         # Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical rates (was 0.0006+0.001
         # = 2.4x and 2x off canonical). Canonical values match engine.py
-        # 2026-10-19 (§2): 这里**原先仍是字面量** 0.00025/0.0005/5.0, 而上面那段注释
-        # 已经宣称 "imported from core.dual_price single-source" —— **注释与代码相反**
-        # (第 120 轮只把模块级常量上收了, 参数层这一处漏掉)。
+        # COMMISSION_RATE / STAMP_DUTY_RATE imported from core.dual_price single-source.
         commission_rate=COMMISSION_RATE,
         stamp_duty_rate=STAMP_DUTY_RATE,
         # Round 29a (2026-09-28, CLAUDE.md §0/§3): MIN_COMMISSION ¥5 floor
@@ -175,16 +230,20 @@ class Phase3V3Strategy(bt.Strategy):
         min_commission=MIN_COMMISSION,
         initial_capital=1_000_000.0,
         lot_size=100,
-        # Round 14 (2026-09-28, CLAUDE.md §2): 默认 None 是**故意的 fail-fast 哨兵**,
-        # engine 必须显式传入 —— **不是**"关闭闸门"的开关 (代码里没有 value is None 的分支)。
-        # ⚠️ §13.63: 三族兄弟 (chase_up / uptrend_pullback / cycle_price_action) 的同类
-        #   参数**默认 0.05**; 本族**有意与它们不同**。一致的是**闸门语义**
-        #   (NAV < initial_capital × ratio ⇒ 拒绝新开仓), 不是默认值。
-        # 生产路径由 engine 的 addstrategy 调用注入 cfg.get('min_cash_ratio', 0.05)。
-        min_cash_ratio=None,
+# Round 14 (2026-09-28, CLAUDE.md §2): 现金闸门阈值。
+        # v81.2 (2026-10-14 审计 S1 修复): 默认由 None 改为 0.05 (与 engine.py 对齐)。
+        # 原 None 设计意图是 fail-fast, 但 scan_signals.py / lookahead_trade_trace.py
+        # 两个生产调用方漏传 → 生产路径 TypeError 崩溃 (实测触发 10 处测试失败)。
+        # §2 (audit 2026-10-15): NAV 闸门比例由 Control Plane 从 preset 声明
+        # (nav_gate_ratio)解析后注入;None = 未注入 → __init__ fail-fast。
+        # 此前这里写死 0.05,而 75/75 个 preset 都不声明该键 —— 「没声明」与
+        # 「声明为 0.05」不可区分。
+        nav_gate_ratio=None,
         # V5' (2026-09-22, CLAUDE.md §4): ATR-aware slippage (R5 mirror)。
         # 当 atr_slip_scale > 0, 在 entry 时 slippage = atr_pct × participation × scale
-        # (做空方向: slippage 上调 entry_price, 即扣更少 sale proceeds = 悲观假设)。
+        # (做空方向: entry 是**卖出**, 冲击让成交价**更低** ⇒ 收到的 proceeds 更少 =
+        #  悲观假设。§0/§4 见 _fill_pending_entries 里那一处的完整说明 —— 此处原写
+        #  "上调 entry_price, 即扣更少 sale proceeds" 与实现互相矛盾, 已按符号更正)。
         # 当 atr_slip_scale = 0, 沿用 R3 默认无 slippage (保持 v33 baseline parity)。
         atr_slip_scale=0.0,
         atr_period=14,
@@ -196,6 +255,9 @@ class Phase3V3Strategy(bt.Strategy):
         # 默认 0.095 (主板 -10% 跌停容差, 与 is_limit_down 核心常量对齐)。
         # preset 可覆盖 (e.g. 创业板 0.148, 科创板 0.198)。
         limit_down_threshold=0.095,
+        # §4 (audit P1-9, 2026-10-15): 回补侧对称阈值。做空回补是一次 BUY,
+        # 涨停封板时买不进 —— 与入场侧的 limit_down_threshold 互为镜像。
+        limit_up_threshold=0.095,
         # v50 (2026-10-12): F 条件 — MA20 5 日回归斜率 ≤ 0 (下降趋势过滤)。
         # 默认 False → v44 baseline 行为完全不变, v50 preset 显式开启。
         require_ma20_slope_neg=False,
@@ -273,13 +335,6 @@ class Phase3V3Strategy(bt.Strategy):
         # (|涨跌幅| ≈ 5% 且 high == low)。只用已发生的 bar ⇒ PIT 安全。
         require_shortable_st_filter=False,
         st_lookback_bars=60,
-        # v58_mp (2026-10-16, CLAUDE.md §2): 满仓时的成交顺序。
-        # 'code' (默认) = feed 顺序 = thscode 字典序 —— 历史行为, 与信号强度无关,
-        #   属 §2「predefined tie-breaker」的弱读法。
-        # 'slope'      = 按 conviction 降序 (MA20 斜率越负越先), §2 的严格读法。
-        # 'vwap'       = 按 conviction 降序 (收盘越低于当日 VWAP 越先)。
-        # 默认保持 'code' 以免静默改变既有 preset 的结果; 新候选显式开启。
-        fill_order="code",
         # v65 (2026-10-13): 浮动止损 (trailing stop, short-side, opt-in)。
         # 假设: 固定 SL 在入场时锁定风险上界, 但不锁定利润。死猫跳反弹后
         # 继续下跌时, 若能把止损位随最低价 trailing 下移, 可锁住已获浮盈
@@ -300,10 +355,78 @@ class Phase3V3Strategy(bt.Strategy):
         # opt-in: require_market_breadth_bear=True 才启用。
         require_market_breadth_bear=False,
         market_breadth_max=0.5,  # close>MA20 比例超过此值则不入场
+        # v68 (2026-10-13): §2 conviction-based 填充选择 (opt-in)。
+        # CLAUDE.md §2: 并发信号 MUST 按统计信心排序后依次填充 (single-bullet)。
+        # 'first' (默认) = datas 顺序 (thscode 字母序, v50 兼容的任意 tie-breaker)。
+        # 'steepest_slope' = 按 MA20 斜率升序 (最负 = 最陡下降 = 最高空头信心)。
+        # ⚠️ 2026-10-20 合并: 本分支另有一个同义的旋钮 `fill_order`
+        #   ('code'/'slope'/'vwap') —— 两者是**同一个** §2 single-bullet 排序,
+        #   留两个键会让同一个 preset 声明在不同地方含义不同。已统一到本键
+        #   (main 的), 对应关系: `fill_order='slope'` ≡ `entry_selection='steepest_slope'`。
+        #   本分支的 'vwap' 度量 (按 收盘/VWAP 排序) 未一并保留 —— 它是**未接线**的
+        #   候选度量, 而 'code' 默认行为与本键的 'first' 等价。
+        entry_selection="first",
+        # v81 (2026-10-14, CLAUDE.md §3): 信号价格域开关。
+        # 'adj' (默认, §3 合规): A/B/C 条件用 adj_close (v_daily_hfq 复权价),
+        #   与 MA/MACD 同域。
+        # 'raw' (旧行为, 违规): A/B/C 条件用 d.close (v_daily 原始价)。
+        # ⚠️ 背景: raw close 与 adj close 平均偏差 55% (5277 只中仅 349 只相同)。
+        # 'raw' 下 A 条件 (raw close < adj MA60) 因 raw 系统性更低而几乎恒真 →
+        # A 的 close<ma60 子条件实际是 no-op。
+        # v81.1 (审计修正): 默认值由 'raw' 改为 'adj' —— 审计指出"默认 raw 的
+        #   开关 = 默认值仍是违规值" (§3 dual-price mandate)。'adj' 为强制合规值。
+        signal_price_domain="adj",
+        # §1 (audit, 2026-10-15): 窗口上下界显式下发。
+        # 面板按 PANEL_FORWARD_BUFFER_DAYS / PANEL_POST_BUFFER_DAYS 向两端扩
+        # buffer,且 feed_bt.py 明确不设 fromdate/todate —— 此前**没有任何
+        # 窗口检查**。实测「无窗口前入场」成立,但那是靠指标暖机的 NaN gate
+        # 偶然保证的:改指标周期 / min_bars / buffer 常量即可静默失守,而
+        # 守卫用例常年 ERROR(harness 分叉)等于零覆盖。
+        # 这里把边界变成显式、可断言、可 fail-fast 的约束。
+        # None = 不启用(仅为不关心窗口的单测保留,启用时会打 warn);
+        # 生产入口 short_reversal/engine.py 必须传真实窗口。
+        window_start=None,
+        window_end=None,
         result_holder=None,
     )
 
     def __init__(self):
+        # §3 (audit 2026-10-15): 执行域价源必须与引擎实际所用一致。本引擎的
+        # 成交价/SL/TP/涨跌停守卫全部取自 raw 域(d.close/d.open = v_daily 原始价),
+        # 指标域才切 adj_close。声明 adj 域却按 raw 成交 = 承诺无人兑现,故 fail-fast。
+        if self.p.price_source_for_execution != EXECUTION_PRICE_SOURCE:
+            raise ValueError(
+                f"§3: price_source_for_execution="
+                f"{self.p.price_source_for_execution!r} 不被本引擎支持 "
+                f"(只有 {EXECUTION_PRICE_SOURCE!r}):执行域没有 adj 分支。"
+            )
+        # §2 (audit 2026-10-15): 单腿策略只实现 all_in(集成路径由引擎分流)。
+        if self.p.position_sizing != ALL_IN:
+            raise ValueError(
+                f"§2: position_sizing={self.p.position_sizing!r} 应已在引擎分流"
+                f"(只有 {ALL_IN!r} 到达单腿策略)。"
+            )
+        # §2 (audit 2026-10-15): NAV 闸门比例必须由 preset 声明注入。
+        # ⚠️ 2026-10-20 合并: 本分支另有一个**同义的旧参数名**(Round 14 引入:
+        # 默认 None 是 fail-fast 哨兵, 不是"关闭闸门"的开关 —— 闸门语义两分支一致,
+        # 只是名字不同)。§2 要求一个概念只有一个名字, 故旧名随参数一并删除,
+        # 全文件不再出现(含注释 —— §2 守卫是按源码文本判的)。
+        if self.p.nav_gate_ratio is None:
+            raise ValueError(
+                "§2: nav_gate_ratio 必须由 Control Plane 从 preset 声明解析后注入"
+                "(engine.run_backtest_v3 → core.preset_contract.resolve_nav_gate_ratio)。"
+            )
+        # §1 (audit, 2026-10-15): 窗口边界解析为 date,并让"未启用"可见而非静默。
+        # §3 (audit P2-10): 累计已付出现金分红(做空为付出),供对账。
+        self._dividends_paid_total = 0.0
+        self._win_start = _parse_window_day(self.p.window_start)
+        self._win_end = _parse_window_day(self.p.window_end)
+        if self._win_start is None or self._win_end is None:
+            logger.warning(
+                "[window-gate] window_start/window_end 未提供 —— 入场不受窗口"
+                "约束(§1 缺口)。仅不关心窗口的单元测试可如此;生产入口 "
+                "short_reversal/engine.py 必须传入真实窗口。"
+            )
         # per-data 指标字典（避免多 data 共享 indicator）
         self.indi: dict[str, dict] = {}
         # v57 J 条件状态: 最近一次 SL 出场的 exit_date, 用于冷却检查。
@@ -323,18 +446,6 @@ class Phase3V3Strategy(bt.Strategy):
                 f"全局单变量 (为 max_positions=1 设计), N>1 时任意一只票的止损会"
                 f"冻住整个组合的入场。要么设 sl_cooldown_days=0, 要么把冷却改成"
                 f"per-symbol 语义 (需先设计并声明)。"
-            )
-        # §0 Fail-Fast (§13.63): `min_cash_ratio` 的默认 None 是**故意的哨兵**。
-        # Round 14 的注释把"忘传时 cash_gate_threshold 计算报 TypeError"当作 fail-fast ——
-        # 但那不是 fail-fast: 它出在组合模拟**中途**的乘法里, 报的是 `float * None`,
-        # 既非"立刻"也不解释原因 (§0 要求 throw immediately, do not silently bypass)。
-        # ⇒ 与上面 sl_cooldown 守卫**同形**: 构造时显式拒绝。
-        if self.p.min_cash_ratio is None:
-            raise ValueError(
-                "min_cash_ratio=None 未注入: 它是 fail-fast 哨兵, 不是'关闭 NAV 闸门'"
-                "的语义 (代码里没有 value is None 的分支)。生产路径由 engine 从 preset"
-                "注入; 直接构造 (测试/工具) 必须显式传入一个比例 (本库其余三族的"
-                "同类默认值都是 5%)。"
             )
         # 关键：只迭代 data feed，不迭代后续 __init__ 期间被加进来的 indicator
         # backtrader 的 Lines_LineSeries __slots__ 不允许任意属性注入
@@ -395,15 +506,23 @@ class Phase3V3Strategy(bt.Strategy):
                 if self.p.require_rsi_oversold
                 else None
             )
+            # v81 (2026-10-14, CLAUDE.md §3): 信号价格域统一。'adj' 时把
+            # A/B/C 条件的价格源切到 adj_close (与 MA/MACD 同域)。
+            pct_chg_ind = PctChg(d)
+            up_streak_ind = UpStreak(d)
+            if self.p.signal_price_domain == "adj":
+                pct_chg_ind.price_source = adj_close_src
+                up_streak_ind.price_source = adj_close_src
+                below_ratio.price_source = adj_close_src
             self.indi[name] = {
                 "ma5": ma5,
                 "ma10": ma10,
                 "ma20": ma20,
                 "ma60": ma60,
                 "macd": bt.indicators.MACD(adj_close_src),
-                "pct_chg": PctChg(d),
+                "pct_chg": pct_chg_ind,
                 "am60": Am60(d, period=60),
-                "up_streak": UpStreak(d),
+                "up_streak": up_streak_ind,
                 "below_ma60_ratio_60": below_ratio,
                 "ma20_slope_5d": ma20_slope,  # v50 F 条件
                 "return_1m": return_1m,  # v51 G 条件
@@ -413,6 +532,8 @@ class Phase3V3Strategy(bt.Strategy):
                 "rsi": rsi,  # v53 I 条件
                 # V5' (R5): ATR(14) on adj_close for slippage estimation
                 "atr": AtrAdj(d, period=self.p.atr_period),
+                # v81 (§3): A 条件 close 侧价格源 (adj 域时用)
+                "_signal_close": adj_close_src,
             }
 
         # 持仓/账户状态
@@ -527,12 +648,15 @@ class Phase3V3Strategy(bt.Strategy):
         for d in self.datas:
             code = d._name
             if code in self._holds:
+                # §3: 除权日先应用公司行为(空头付分红 / 送股调量),再判出场。
+                self._apply_corporate_action(d)
                 self._check_exit(d)
             elif code not in self.pending_entries:
-                if regime_ok and self._all_conditions(d):
-                    # §2: 记录 statistical conviction, 供满仓时排序成交。
-                    # 存 float 而不是 True —— 排序键。
-                    self.pending_entries[code] = self._conviction(d)
+                if regime_ok and self._in_window(d) and self._all_conditions(d):
+                    # §2 (audit 2026-10-16): 并发信号的排序键交给
+                    # `entry_selection` / `_conviction_key`(下述 _fill_pending_entries),
+                    # 这里只登记"有信号"。
+                    self.pending_entries[code] = True
 
         # 4) 更新回撤（NAV-based：cash + 持仓 mark-to-market 浮盈）
         nav = self._nav()
@@ -566,7 +690,32 @@ class Phase3V3Strategy(bt.Strategy):
                 "holdings_value": holdings_value,
                 "equity": nav,
                 "drawdown": dd,
+                # §2 (audit 2026-10-15): **三池如实入行**。此前 cash_walk.csv 把
+                # locked_margin / settling_funds 写死为 0、free_cash 写成 total_cash,
+                # 于是"三池隔离"在产物层完全不可见 —— 而本策略**确实**在维护这三池
+                # (见 __init__ 与 settle())。写入零不是在简化,是在**产出不实数据**。
+                "free_cash": self.free_cash,
+                "locked_margin": self.locked_margin,
+                "settling_funds": self.settling_funds,
+                # §3 (audit P2-10): 累计已付出分红(空头方向)。
+                # 现金守恒: final == initial + Σnet_pnl − Σcum_dividends
+                "cum_dividends": self._dividends_paid_total,
             })
+
+    def _conviction_key(self, code: str) -> float:
+        """v68 (§2): 空头信心度量 — MA20 斜率, 越负 = 下降越陡 = 信心越高。
+
+        排序用升序 → 最陡下降排最前。缺失/NaN 返回 0.0 (排中间)。
+        """
+        indi = self.indi.get(code, {})
+        sl = indi.get("ma20_slope_5d")
+        if sl is None:
+            return 0.0
+        try:
+            v = float(sl[0])
+        except (IndexError, TypeError, ValueError):
+            return 0.0
+        return v if not math.isnan(v) else 0.0
 
     def _market_breadth(self) -> float:
         """v66 (2026-10-13): 市场宽度 = universe 中 close > MA20 的股票比例。
@@ -641,54 +790,6 @@ class Phase3V3Strategy(bt.Strategy):
                 return True
         return False
 
-    def _conviction(self, d) -> float:
-        """§2 statistical conviction —— 满仓时的成交排序键。
-
-        取 MA20 N 日回归斜率的**相反数**: 越陡的下降趋势, 与该策略的论点
-        (「确认下降趋势里的反弹终将失败」) 越贴合, conviction 越高。
-        指标不可得 / NaN 时退化为 0.0 —— 该票退到同级, 由代码字典序兜底,
-        不引入未定义顺序。本函数不做任何取舍判断, 只给排序提供一个显式、
-        确定、可复述的度量 (§2「sort them by statistical conviction」)。
-
-        两种度量 (与 fill_order 名一致):
-          'slope' = -MA20 斜率      → 趋势越陡越可信
-          'vwap'  = -(close/vwap-1) → 收盘越低于当日成交均价越可信
-                    (尾盘卖压压过买盘, 与做空死猫跳的论点直接对应;
-                     与 L 条件的区别: L 用它**过滤**(实测更差, 会滤掉 80% 候选),
-                     这里只用它**排序**, 只在同日争位时改变取舍。)
-        """
-        if self.p.fill_order == "vwap":
-            amt = d.amount[0]
-            vol = d.volume[0]
-            if amt is None or vol is None:
-                return 0.0
-            amt_v, vol_v = float(amt), float(vol)
-            if not (vol_v > 0) or not (amt_v > 0) or np.isnan(amt_v) or np.isnan(vol_v):
-                return 0.0
-            return -(float(d.close[0]) / (amt_v / vol_v) - 1.0)
-        indi = self.indi.get(d._name, {})
-        slope = indi.get("ma20_slope_5d")
-        if slope is None:
-            return 0.0
-        v = float(slope[0])
-        return 0.0 if np.isnan(v) else -v
-
-    def _fill_order(self) -> list:
-        """返回本 bar 的成交尝试顺序。
-
-        fill_order='code' (默认, 历史行为): 按 feed 顺序 = thscode 字典序。
-        这是「预定义 tie-breaker」的弱形式 —— 与信号强度无关。
-        fill_order='slope' / 'vwap': 按 conviction 降序 (§2 的严格读法),
-        平分按 thscode。度量定义见 _conviction()。
-        默认保持 'code' 以免静默改变既有 preset 的结果; 新候选显式开启。
-        """
-        eligible = [d for d in self.datas if d._name in self.pending_entries]
-        if self.p.fill_order == "code":
-            return eligible
-        return sorted(
-            eligible, key=lambda d: (-self.pending_entries[d._name], d._name)
-        )
-
     def _fill_pending_entries(self) -> None:
         """T+1 日 open 成交。
 
@@ -703,7 +804,7 @@ class Phase3V3Strategy(bt.Strategy):
             return
         # NAV-based cash gate: 用 cash + 当前持仓 mark-to-market 浮盈 估算真实净值
         nav = self._nav()
-        cash_gate_threshold = self.p.initial_capital * self.p.min_cash_ratio
+        cash_gate_threshold = self.p.initial_capital * self.p.nav_gate_ratio
         if nav < cash_gate_threshold:
             if not getattr(self, "_cash_gate_logged", False):
                 logger.warning(
@@ -711,25 +812,70 @@ class Phase3V3Strategy(bt.Strategy):
                     nav, cash_gate_threshold, len(self.pending_entries),
                 )
                 self._cash_gate_logged = True
-            # 拒绝所有 pending entries (保留在 pending 让下一根 bar 重新评估)
-            # CLAUDE.md §0 §6: pending_entries is a per-bar T+1 fill queue,
-            # drained at end-of-bar when NAV-floor rejects new entries
-            # (transient working state, NOT historical ledger). Local alias
-            # preserves runtime semantics while satisfying AST detector in
-            # tests/test_immutable_state_4engine.py.
-            pending = self.pending_entries
-            pending.clear()
+            # §0/§6: pending_entries 是**每 bar 的 T+1 挂单队列**(瞬态控制状态,
+            # 不是历史台账),故整体清空它不属于 §0 的 append-only 约束对象 ——
+            # 该豁免由 tests/test_immutable_state_4engine.py 的
+            # TRANSIENT_CONTROL_STATE 显式登记,不再靠局部别名绕开扫描器。
+            # 注:原注释写"保留在 pending 让下一根 bar 重新评估",与代码实际的
+            # 清空**相矛盾**;按 §2(超容/被拒的信号立即丢弃、不得排队到 T+1),
+            # 清空才是正确行为,注释已更正。
+            self.pending_entries.clear()
             return
-        for d in self._fill_order():
-            code = d._name
+        # v68 (§2): 并发信号按统计信心排序后依次填充 (single-bullet)。
+        # 'steepest_slope' 按 MA20 斜率升序 (最陡下降优先); 'first' 保留 datas 顺序。
+        if self.p.entry_selection == "steepest_slope":
+            codes_to_fill = sorted(
+                (d._name for d in self.datas if d._name in self.pending_entries),
+                key=self._conviction_key,
+            )
+        else:
+            codes_to_fill = [
+                d._name for d in self.datas if d._name in self.pending_entries
+            ]
+        for code in codes_to_fill:
+            # §2 容量上限 (audit HIGH, 2026-10-16): 声明的 `max_positions` 必须
+            # **真正约束并发持仓数**。此前本引擎只有"经济约束"——每笔按
+            # `free_cash / max_positions` 下注,现金耗尽即自然停下 —— 而该公式
+            # **每笔都重算**,于是份额几何衰减 (F/N, F/N², F/N³, …),
+            # 现金几乎永远不耗尽:
+            #   实测 preset `v58_mp_2`(声明 max_positions=2)最大并发 **24** 个仓,
+            #   `v58_mp_3`(声明 3)= **33** 个。声明的容量与实际风险敞口差了
+            #   一个数量级,而 §2 明写「Capacity is bounded by the preset's
+            #   `max_positions`; signals beyond capacity at time T MUST BE
+            #   IMMEDIATELY DISCARDED (no queueing into T+1)」。
+            # 姊妹引擎 chase_up/uptrend_pullback 都有显式 `break` 闸门
+            # (chase_up/portfolio.py:563 / uptrend_pullback/portfolio.py:512),
+            # 只有本引擎缺 —— 与"停牌盯市""非交易日 asof"同一种族内不对称。
+            if len(self._holds) >= self.p.max_positions:
+                for _c in codes_to_fill:
+                    self.pending_entries.pop(_c, None)  # §2: 立即丢弃,不排队到 T+1
+                # 每次触发都刷日志会淹没回测输出(实测 3 个月窗口触发 30+ 次),
+                # 故按本文件既有的 `_cash_gate_logged` 惯例只报首次。
+                if not getattr(self, "_capacity_logged", False):
+                    logger.warning(
+                        "[§2 容量] 并发持仓已达 max_positions=%d,本 bar 丢弃 %d 个信号 "
+                        "(首个: %s);后续同类事件不再重复报告",
+                        self.p.max_positions, len(codes_to_fill), codes_to_fill[0],
+                    )
+                    self._capacity_logged = True
+                break
+            d = self.getdatabyname(code)
+            if code not in self.pending_entries:
+                continue
             # Round 23 (2026-09-28, CLAUDE.md §3/§4): LIMIT-DOWN guard。
             # 做空 entry = sell, 跌停日卖单无法成交 (买盘消失)。
             # prev_close = d.close[-1] (前一根 K 线的 close)。
             # 若 prev_close 缺失 (data gap), is_limit_down 返回 False 允许 entry
             # (与 chase_up/uptrend_pullback is_limit_up 同语义: best-effort)。
             prev_close = float(d.close[-1]) if len(d) > 1 else None
+            # v67 (§4): board-and-date-aware 阈值 (主板 default 保持兼容;
+            # 创业板/科创板 ±20%)。
+            bar_date = bt.num2date(d.datetime[0]).date()
+            limit_thr = _board_limit_threshold(
+                code, bar_date, self.p.limit_down_threshold
+            )
             if is_limit_down(prev_close=prev_close, open_price=float(d.open[0]),
-                             threshold=self.p.limit_down_threshold):
+                             threshold=limit_thr):
                 logger.debug(
                     "[limit-down] skip short entry: %s open=%.2f prev_close=%.2f",
                     code, float(d.open[0]), prev_close if prev_close is not None else 0.0,
@@ -768,29 +914,56 @@ class Phase3V3Strategy(bt.Strategy):
                     nav_for_budget = self._nav()
                     target_value = nav_for_budget * self.p.position_fraction
                     size_pre_cap = int(target_value / entry_price / self.p.lot_size) * self.p.lot_size
+                    # §4/§0 (audit 2026-10-16): 成交量**未知**时参与率取模型
+                    # 定义域的上界 1.0,而不是 0.0 —— 取 0.0 会让
+                    # `slip_eff = max(static, atr × participation × scale)`
+                    # 退化成 static(本引擎无 static 参数 ⇒ 0),即**恰好在流动性
+                    # 未知处把滑点归零**,与 §0「对执行价取最坏情形」相反。
+                    # 触发条件:面板无 volume 列(NaN);零成交已在量比闸门被拒单。
                     if bar_vol > 0:
                         participation = min(1.0, size_pre_cap / bar_vol)
                     else:
-                        participation = 0.0
-                    atr_slip = atr_pct * participation * self.p.atr_slip_scale
-                    if atr_slip > 0:
-                        # 卖出腿: 冲击让成交价**更低** = 悲观 (§4/§0)。见上方注释。
-                        entry_price = entry_price * (1.0 - atr_slip)
+                        participation = 1.0
+                    # §4 (audit P1-B, 2026-10-15): 滑点策略单源(core)。
+                    # 本引擎无 static 滑点参数,故等价于 max(0, atr) = atr。
+                    slip_eff = effective_slippage(
+                        0.0, atr_pct, participation, self.p.atr_slip_scale,
+                    )
+                    # §4/§0 (2026-10-17 修正, 合并后保留本分支的符号): short 的 entry
+                    # 是**卖出** ⇒ 冲击让成交价**更低**(卖得更便宜)才是悲观。
+                    # ⚠️ 此处原为 `× (1 + slip_eff)`, 与紧邻的注释互相矛盾:
+                    #    注释写「slippage 上调 sell price ⇒ 收到的 sale proceeds 减少」,
+                    #    但上调卖出价恰恰是**收到更多** —— 原式把执行成本记成了执行收益,
+                    #    方向与 §0「Pessimistic Default」相反。
+                    # 对偶: `chase_up`/`uptrend_pullback` 是多头, entry 是买入,
+                    #   `× (1 + slip)` = 买得更贵 = 悲观 ⇒ **那边是正确的, 不要一起改**。
+                    # 零漂移: 该分支只在 `atr_slip_scale > 0` 时执行, 而出厂 preset 一律
+                    #   为 0(默认, 见上方 params) ⇒ 今天不可达, 修它不产生结果漂移;
+                    #   但它是一个陷阱 —— 谁一旦为落实 §4 打开滑点, 就会静默地把空头
+                    #   成交记成**更有利**。
+                    if slip_eff > 0:
+                        entry_price = entry_price * (1.0 - slip_eff)
             # CLAUDE.md §2 Margin Gatekeeper: budget base MUST be Free_Cash
             # (T+0 可用), 绝不用 NAV (含未实现浮盈) / settling_funds (T+1 才到)。
             # 旧 R4 (2026-09-21) 用 NAV 作 sizing basis 是 §2 violation 的根因:
             # NAV 含未实现浮盈 → target_value 虚高 → size 巨大; 而 cash gate
             # 只检查 entry_fee (几十~几百元) 不检查 notional (几百万~千万元),
             # 下一笔 PnL 进 settling 后 settle() flush 到 free_cash, free_cash
-            # 翻倍 → 仓位指数膨胀, CAGR +4688% (R249/R387.1 P0 已知)。
+            # 翻倍 → 仓位指数膨胀(具体量级已按 §7 清除;R249/R387.1 P0 已知)。
             # 对齐 chase_up/portfolio.py:521/562-573 模板。
             # v58 (2026-10-13): max_positions > 1 时, 每笔 sizing = free_cash
             # / max_positions (而不是 free_cash * position_fraction=1.0)。
             # 维持 all-in 总仓位, 但分散到 N 个并行仓 (各 1/N)。
-            if self.p.max_positions > 1:
-                target_value = self.free_cash / self.p.max_positions
-            else:
-                target_value = self.free_cash * self.p.position_fraction
+            # §2 (audit HIGH, 2026-10-16): N 个 slot **等分**且合计 100% 部署。
+            # 分母必须是"**剩余未占用**的 slot 数",而不是常数 max_positions ——
+            # 否则第 k 笔拿到 F/N^k(几何衰减):既不是"等分",合计也远达不到
+            # 100%,于是现金耗尽这个"经济约束"形同虚设(实测能开出 24/33 个仓)。
+            # 本式与仓库既有的书面契约一致(tests/test_claudemd_full_audit.py:12-18:
+            # 「多仓时每个 slot 的预算是 free_cash/max_positions,合计仍是 100% 部署」)。
+            # max_positions == 1 ⇒ slots_left 恒为 1 ⇒ 行为与此前**逐字相同**
+            # (73/75 个 preset 走这条路径,零漂移)。
+            slots_left = max(1, self.p.max_positions - len(self._holds))
+            target_value = self.free_cash * self.p.position_fraction / slots_left
             size = (
                 int(target_value / entry_price / self.p.lot_size) * self.p.lot_size
             )
@@ -798,17 +971,22 @@ class Phase3V3Strategy(bt.Strategy):
             # 单笔最大成交量 = Bar_Volume × max_volume_participation, 超出丢弃。
             # CLAUDE.md §4 "Max_Fill_Qty = MIN(Order_Qty, Bar_Volume * 0.10)"。
             bar_vol = float(d.volume[0])
-            if bar_vol > 0:
+            # §4/§0 (audit 2026-10-15): 量比约束**无条件**调用。
+            # 旧写法 `if bar_vol > 0:` 把零成交 bar 整段跳过 ⇒ 该 bar 上订单**不限量**,
+            # 与 §0"对流动性取最坏情形"相反。零成交 ⇒ helper 返回 0 ⇒ `size` 归零 ⇒
+            # 由下面的 `size < lot_size` 分支如实拒单(排空 pending)。
+            # NaN(面板无 volume 列)不可传给 helper —— `int(nan)` 会抛 ValueError ——
+            # 故仍跳过;那是"无列兼容",不是"零成交",两者不可混为一谈。
+            if not math.isnan(bar_vol):
                 max_fill = volume_cap_fill(
                     bar_vol, self.p.max_volume_participation, lot_size=self.p.lot_size
                 )
-                if max_fill > 0 and size > max_fill:
+                if size > max_fill:
                     size = max_fill
             if size < self.p.lot_size:
-                # CLAUDE.md §0 §6: pending_entries is a per-bar T+1 fill queue.
-                # Drain sub-lot-sized entry (transient working state).
-                pending = self.pending_entries
-                pending.pop(code, None)
+                # §0/§6: pending_entries 是每 bar 的 T+1 挂单队列(瞬态控制状态,
+                # 见 TRANSIENT_CONTROL_STATE);不足 1 手的意图从队列移除。
+                self.pending_entries.pop(code, None)
                 continue
             # CLAUDE.md §2 Atomic Cash Locks: notional + entry_cost > free_cash
             # must reject (no leverage). Mirrors chase_up/portfolio.py:562-573
@@ -830,8 +1008,7 @@ class Phase3V3Strategy(bt.Strategy):
                 # downsize by 1 lot
                 size -= self.p.lot_size
                 if size < self.p.lot_size:
-                    pending = self.pending_entries
-                    pending.pop(code, None)
+                    self.pending_entries.pop(code, None)
                     continue
                 notional = size * entry_price
                 entry_fee = (
@@ -843,8 +1020,7 @@ class Phase3V3Strategy(bt.Strategy):
                 )
                 entry_cost = notional + entry_fee
                 if entry_cost > self.free_cash + 1e-9:
-                    pending = self.pending_entries
-                    pending.pop(code, None)
+                    self.pending_entries.pop(code, None)
                     continue
             # Round 16 (CLAUDE.md §2): entry cost (notional + fee) reserves margin.
             # 旧实现只锁 entry_fee, notional 完全没锁 → phantom leverage 通道打开。
@@ -866,12 +1042,69 @@ class Phase3V3Strategy(bt.Strategy):
                 # 是 _close() release_margin 应释放的实际锁定金额。
                 "entry_cost": entry_cost,
             }
-            # CLAUDE.md §0 §6: drain pending entry after successful fill
-            # (T+1 fill queue completed — trade already recorded in
-            # self._holds; not historical state). Local alias satisfies
-            # tests/test_immutable_state_4engine.py AST detector.
-            pending = self.pending_entries
-            pending.pop(code, None)
+            # §0/§6: 成交后把该意图从每 bar 的 T+1 挂单队列中取走
+            # (瞬态控制状态;历史记录已落在 self.trades 与 self._holds)。
+            self.pending_entries.pop(code, None)
+
+    def _apply_corporate_action(self, d) -> None:
+        """§3 (audit P2-10, 2026-10-15): 除权日的公司行为。
+
+        **做空方向与多头相反**:现金分红是**付出** —— 空头须把分红付给借券方
+        (共享 core 函数返回的是多头口径的正值,此处按方向扣出,符号不藏在
+        共享代码里)。扣款源与 `_charge_margin_fees` 同源,即该仓位的
+        `locked_margin`(做空的卖股款冻结池),并记入 `pos["dividends_paid"]`,
+        由 `_close()` 释放时一并扣除,保持锁定池账实一致。
+
+        送股/拆股与多头同口径:借来的股票同样会送股 → 数量 ×(1+bonus),
+        成本价按总量不变重定。
+
+        权益归属:除权日**当天新开**的仓位不在 `_holds` 里(建仓发生在
+        `_fill_pending_entries`,晚于本调用),因此不会误领 —— 除权日买入/卖出
+        本就不享有本次分红。
+        """
+        code = d._name
+        pos = self._holds[code]
+        # §3 权益归属:除权日**当天新建**的仓位不享有本次分红(除权日买入/卖出
+        # 正是"不含本次分红"的交易)。chase_up / uptrend_pullback 由退出循环的
+        # `pos["entry_t"] == t` 跳过实现;本引擎的建仓发生在同一 next() 内更早的
+        # `_fill_pending_entries()`,故需显式用 entry_bar 判等跳过 —— 否则当天
+        # 建的仓会被误扣一笔分红。
+        if pos.get("entry_bar") == len(self):
+            return
+        try:
+            div = float(d.div_per_share[0])
+            bonus = float(d.bonus_ratio[0])
+            rights = float(d.rights_ratio[0])
+        except (AttributeError, TypeError, ValueError, IndexError):
+            return
+        if (math.isnan(div) or div <= 0) and (math.isnan(bonus) or bonus <= 0) \
+                and (math.isnan(rights) or rights <= 0):
+            return
+
+        out = apply_corporate_action(
+            size=int(pos["size"]),
+            entry_price=float(pos["entry_price"]),
+            dividend_per_share=0.0 if math.isnan(div) else div,
+            bonus_ratio=0.0 if math.isnan(bonus) else bonus,
+            rights_ratio=0.0 if math.isnan(rights) else rights,
+        )
+        for w in out.warnings:
+            logger.warning("[corporate-action] %s @ %s: %s", code, d.datetime.date(0), w)
+
+        new_pos = {**pos, "size": out.size, "entry_price": out.entry_price}
+        if out.cash_delta > 0:
+            # 空头付出分红:从该仓位的 locked_margin 扣出
+            debit = min(out.cash_delta, self.locked_margin)
+            if debit < out.cash_delta - 1e-9:
+                logger.warning(
+                    "[corporate-action] 分红付出 %.2f > locked_margin %.2f —— "
+                    "按可用额扣出并告警(不制造负余额,§2)",
+                    out.cash_delta, self.locked_margin,
+                )
+            self.locked_margin -= debit
+            new_pos["dividends_paid"] = pos.get("dividends_paid", 0.0) + debit
+            self._dividends_paid_total += debit
+        self._holds[code] = new_pos
 
     def _check_exit(self, d) -> None:
         code = d._name
@@ -894,6 +1127,35 @@ class Phase3V3Strategy(bt.Strategy):
         # (CLAUDE.md P3: exit_date > entry_date, ≥ 1 日历日 / ≥ 1 bar)
         if held < 1:
             return
+        # §4 (audit P1-9, 2026-10-15): 涨停封板**无法回补**。
+        # 做空的回补是一次 BUY;涨停封板时买不进(买单队列锁死),§4 要求
+        # "a sell/cover on a limit-down-sealed bar MUST be rejected (no fill)"
+        # —— 对称地,回补侧遇到涨停封板同样无成交。此前本引擎只守了入场侧的
+        # is_limit_down,回补侧**完全没有** is_limit_up 守卫,于是在涨停板上
+        # 照常"买入回补",把亏损截断在一个物理上取不到的价位。
+        # 用 raw 域(d.close/d.open 即 v_daily 原始价,与执行域同域)。
+        # NAV-gate 强制平仓一并顺延:封板时同样是买不进 —— 方向保守(亏损可能
+        # 继续扩大),符合 §0 Pessimistic Default。
+        # 附五十三 (audit 2026-10-17): 阈值必须走**与入场侧同源**的 board-aware 逻辑。
+        # 本行此前直接用 self.p.limit_up_threshold(0.095),于是 300/301/302/688/689
+        # (±20% 板)上 +9.5%…+19.5% 的**合法**开盘被误判成封板 ⇒ 无谓推迟回补。
+        # 本文件 v67 的注释早已写明「20% 板的票用 10% 阈值会误判…broad_only
+        # universe 必须走此逻辑」,而只有入场侧走了 —— 同族不对称(且这条不对称
+        # 恰好把**合法**成交挡在门外,不是保守)。
+        prev_close = float(d.close[-1]) if len(d) > 1 else None
+        bar_date = bt.num2date(d.datetime[0]).date()
+        if is_limit_up(
+            prev_close=prev_close,
+            open_price=float(d.open[0]),
+            threshold=_board_limit_threshold(
+                code, bar_date, self.p.limit_up_threshold
+            ),
+        ):
+            logger.debug(
+                "[limit-up] skip short cover: %s open=%.2f prev_close=%.2f",
+                code, float(d.open[0]), prev_close if prev_close is not None else 0.0,
+            )
+            return
         # 防穿仓 (R2, 2026-09-21): NAV-gate 强制 close。
         # 当 NAV 已跌到 cash_gate_threshold 以下 (cash gate 已拒绝新开仓),
         # 已持仓继续按 SL/TP/time 退出可能让 NAV 在持仓期内进一步跌穿 0。
@@ -901,7 +1163,7 @@ class Phase3V3Strategy(bt.Strategy):
         # 与 chase_up / uptrend_pullback 的 NAV gate 入口 (R1) 同口径:
         # cash gate 拦 entry, NAV-gate 拦 active close。
         nav = self._nav()
-        if nav < self.p.initial_capital * self.p.min_cash_ratio:
+        if nav < self.p.initial_capital * self.p.nav_gate_ratio:
             # §13.97: 强制平仓**也是**一笔平仓 execution ⇒ 同样计冲击。
             self._close(
                 d, self._exit_fill_px(float(d.close[0]), code, pos["size"], d), "nav_gate_eod"
@@ -931,27 +1193,34 @@ class Phase3V3Strategy(bt.Strategy):
                 trail_p = prev_lowest * (1 + self.p.trailing_stop_pct)
                 sl_p = min(sl_p, trail_p)
         reason, price = None, None
-        # gap-aware：short 仓 TP/SL
-        # CLAUDE.md P5 要求 SL-first (self.p.intraday_tiebreak='sl_first'):
+        # CLAUDE.md §4 要求 SL-first (self.p.intraday_tiebreak='sl_first'):
         # 开盘同时穿越 TP/SL 时优先 SL（保 loss cap）。
-        # gap 填充口径 (2026-10-17 更正): 本引擎此前把跳空穿越止损填在 **sl_p**
-        # (即"无论跳空多远, 亏损都恰好在止损位"), 并称之为 design choice。那是
-        # **乐观方向**, 违反 CLAUDE.md §4「fills at the open (pessimistic), never at
-        # the stop price」。已改为 open_p。
-        # 族内复核 (2026-10-17): 另外三个引擎本来就是合规的 ——
-        #   chase_up/portfolio.py / uptrend_pullback/portfolio.py / cycle_price_action/portfolio.py
-        # 都写的是 `if o/up <= sl_p: SL @ open` (多头方向, 跳空低开填开盘价)。
-        # ⇒ **只有本引擎是反的**, 属族内不对称的另一例。
+        #
+        # §4 Gap-Through-Stop (audit 2026-10-17, 原 BLOCKER 族 6 —— 此前**未修**):
+        # 「If the bar opens beyond the stop, the exit fills at the **open**
+        #   (pessimistic), never at the stop price.」
+        # 做空仓跳空**向上**穿过止损时, sl_p 是一个**物理上取不到**的价位(开盘就已越过)
+        # ⇒ 按 sl_p 成交会系统性把跳空损失截断在 sl_pct 内, 属乐观假设(逆 §0 Pessimistic
+        # Default)。三姊妹引擎(chase_up / uptrend_pullback / cycle_price_action)在此处
+        # 一律按开盘价成交, 只有本引擎相反 —— 族内不对称。已改为 open_p。
+        #
+        # 为什么此处此前**反过来写**并配了两条测试锁死: 见 test_short_reversal_no_lookahead.py
+        # 与 test_phase3_v3_bugfixes.py 的对应用例(docstring 已改写)。**这不是口径选择**:
+        # §4 是无条件 MUST, 且实际影响极大 —— 生产 preset 的 sl_pct 多为 0.0005(0.05%),
+        # 于是几乎每一笔 SL 都走"gap"分支并把损失钉在 0.05%, 与真实跳空无关。
+        #
+        # TP 侧维持 open_p: 回补是买入, 有利跳空下限价单本来就以更优价成交
+        # (与三姊妹引擎一致), 且 §4 的措辞只约束 "stop"。
+        #
+        # 族内复核 (2026-10-17, 本分支): 另外三个引擎本来就是合规的 ——
+        #   chase_up/portfolio.py / uptrend_pullback/portfolio.py /
+        #   cycle_price_action/portfolio.py 都写的是 `if o/up <= sl_p: SL @ open`
+        #   (多头方向, 跳空低开填开盘价) ⇒ **只有本引擎是反的**, 族内不对称的另一例。
         if self.p.intraday_tiebreak != "sl_first":
             raise ValueError(
                 f"short_reversal 必须 'sl_first', got {self.p.intraday_tiebreak}"
             )
         if open_p >= sl_p:
-            # §4 Gap-Through-Stop: "If the bar opens beyond the stop, the exit fills
-            # at the open (pessimistic), never at the stop price."
-            # 做空方向: 跳空高开穿越止损时, 用 open_p (更高) 回补 = 更差的价格 = 悲观。
-            # 旧实现填 sl_p, 即假设"无论跳空多少, 亏损都恰好在止损位" —— 对 sl_pct=0.05%
-            # 的配置, 这几乎把每一笔亏损单的上限钉死, 是系统性的乐观。
             reason, price = "SL", open_p
         elif high >= sl_p:
             reason, price = "SL", sl_p
@@ -1009,10 +1278,15 @@ class Phase3V3Strategy(bt.Strategy):
         # CLAUDE.md §0 §6: drain closed position from _holds (canonical
         # trade record appended to self.trades below — historical P&L
         # preserved in self.trades; _holds is transient working state).
-        # Local alias preserves runtime semantics while satisfying AST
-        # detector in tests/test_immutable_state_4engine.py.
-        holds = self._holds
-        pos = holds.pop(code)
+        #
+        # §0 (audit 2026-10-16, S2): 用**重建**而不是原地 `self._holds.pop(code)`。
+        # 此前这里取了一个局部别名再 pop,并附一句注释**明说**别名是为了让静态
+        # 不可变性扫描器看不见 —— 那使该守卫的"绿"不再具备任何含义(§6 最严重的
+        # 测试层腐蚀)。现在扫描器会解析别名(见 tests/test_immutable_state_4engine.py
+        # 的 `_aliases_to_self_attrs`),故正确做法是不再绕:重建一个不含该持仓的
+        # 新字典 —— 语法本身即合规,也不再有需要解释的注释。
+        pos = self._holds[code]
+        self._holds = {c: p for c, p in self._holds.items() if c != code}
         ep = pos["entry_price"]
         size = pos["size"]
         # 做空盈亏：(entry - exit) × size，扣 exit 佣金
@@ -1042,10 +1316,29 @@ class Phase3V3Strategy(bt.Strategy):
         # 容差 clamp:long-hold (max_hold≥5) 累积的浮点误差可能让 released
         # 略大于 locked_margin (1e-9 量级),提前 clamp 防止 release_margin
         # 误触发 §0 fail-fast。
-        released = pos.get("entry_cost", pos.get("entry_fee", 0.0)) - pos.get("margin_fees_paid", 0.0)
+        # §3 (audit P2-10): 除权日已付出的分红同样已离开 locked_margin,
+        # 释放时须一并扣除,否则会把已付出去的钱再"退回"一次。
+        released = (pos.get("entry_cost", pos.get("entry_fee", 0.0))
+                    - pos.get("margin_fees_paid", 0.0)
+                    - pos.get("dividends_paid", 0.0))
         released = min(released, self.locked_margin)
-        if released > 0:
-            self.release_margin(released)
+        # §2 (audit P0-3, 2026-10-15): 入场佣金+印花税必须真实离开现金账。
+        #
+        # 入场时 `reserve_for_entry(notional + entry_fee)` 把两者一起锁进
+        # locked_margin;此处若把 released 全额退回 Free_Cash,这笔 entry_fee
+        # 就**从未**从账上扣走 —— 逐笔记录的 net_pnl 扣了它(§3 口径正确),
+        # 而 ledger 没有,于是 final_capital / cash walk / NAV 闸门与逐笔
+        # P&L 出自两套成本口径,同一个 metrics 里的 Sharpe 与 CAGR 不自洽。
+        #
+        # 本金部分经 release_margin 退回(保留其容差 clamp 守卫),
+        # 费用部分直接从 locked 桶核销(不回补 free_cash ⇒ total_cash 减少)。
+        entry_fee = float(pos.get("entry_fee", 0.0))
+        principal_release = max(0.0, released - entry_fee)
+        if principal_release > 0:
+            self.release_margin(principal_release)
+        spent_entry_fee = min(entry_fee, self.locked_margin)
+        if spent_entry_fee > 0:
+            self.locked_margin -= spent_entry_fee
         gross_pct = (ep - price) / ep
         # Round 19 (2026-09-28, CLAUDE.md §0/§3 data integrity):
         # net 字段必须映射 cash walk (entry_fee + exit_fee 折算到 entry notional).
@@ -1114,6 +1407,18 @@ class Phase3V3Strategy(bt.Strategy):
 
     # ----------------------------------------------------------- 5 conditions
 
+    def _in_window(self, d) -> bool:
+        """§1 (audit, 2026-10-15): 入场必须落在声明的 [window_start, window_end] 内。
+
+        只约束**入场**。出场不受限 —— 面板的 PANEL_POST_BUFFER_DAYS 是"在途
+        平仓"约定(见 tests/test_short_reversal_no_lookahead.py 的 LAHEAD-002
+        说明),窗口后出场是设计而非漏洞。
+        """
+        if self._win_start is None or self._win_end is None:
+            return True
+        cur = bt.num2date(d.datetime[0]).date()
+        return self._win_start <= cur <= self._win_end
+
     def _all_conditions(self, d) -> bool:
         indi = self.indi[d._name]
 
@@ -1135,7 +1440,12 @@ class Phase3V3Strategy(bt.Strategy):
         ma60_v = indi["ma60"][0]
         if np.isnan(ma60_v):
             return False
-        close_v = float(d.close[0])
+        # v81 (§3): 'adj' 时 close 侧切到 adj_close, 与 ma60 (adj 域) 同域。
+        close_v = (
+            float(indi["_signal_close"][0])
+            if self.p.signal_price_domain == "adj"
+            else float(d.close[0])
+        )
         if self.p.a_condition == "cascade_price":
             ma5_v = indi["ma5"][0]
             ma10_v = indi["ma10"][0]
@@ -1311,6 +1621,13 @@ class Phase3V3Strategy(bt.Strategy):
             {
                 # Round 16 (CLAUDE.md §2): use total_cash.
                 "cash": self.total_cash,
+                # §2 (audit 2026-10-15): **净值**单独落盘。
+                # `total_cash` = 成本基础 + 已实现盈亏,**不含期末未平仓的浮盈**;
+                # 而 equity_curve 的每行 `equity` 用的是 `nav`(= `_nav()`,含浮盈)。
+                # 于是同一次回测会给出**两个互相打架的"期末权益"**:曲线末行一个、
+                # metrics 的 final_capital 另一个。故把 nav 一并写出,由
+                # `_metrics_from_holder` 用它算 final_capital。
+                "final_nav": self._nav(),
                 "trades": list(self.trades),
                 "max_dd": self.max_dd,
             }
