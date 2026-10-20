@@ -9073,3 +9073,163 @@ if not re.search(r"_PRICE_MATCH_REL\s*=", src) or "hfq_open" not in src:
 2. **认得出这件事的所有写法**才算认得出 —— 清单要能穷举并写下来(本批:七式);
 3. **改完之后要问"这一版自己全吗"** —— 第二次漏就是这么找出来的。
    判据要挂在**用法**上(本会话反复记的那条),而**守卫自己也要按同一条标准验收**。
+
+---
+
+## 附一百零九 —— §5 那条"禁令式规则"背后:分派规则有 **11 份副本**,3 份漏了分派 ⇒ **两个 CLI 工具对全部 preset 当场崩**
+
+(本批从"§5 Banned In-Sample Grids 是唯一一条 unguarded 的规则"出发,去量它能不能量。
+**量到了一个更大的东西**:不是"少一个守卫",而是**一条分派规则被抄了 11 遍,其中 3 遍漏了半个**。)
+
+### 1 · 起点:那条"被注释满足"的覆盖面用例
+
+审计文档把 §5 `Banned In-Sample Grids` 登记为**唯一一条 unguarded 的规则**(禁令式,
+"不许存在某种脚本"难用守卫表达)。去量它的执行面时,先撞上一条**已被登记为 RED 却没红**的用例:
+
+`tests/test_wfv_rigor_gap.py::test_sweep_dsr_test_coverage_catches_grid_runner` 的判据是
+
+```python
+has_grid_glob = bool(re.search(r"\*\*?/grid\*?\.py", src))   # src = tests/test_sweep_scripts_dsr.py
+```
+
+而那个字符串在 `test_sweep_scripts_dsr.py` 里**只出现在一行注释**中 ——
+
+> `Note: 额外 glob **/grid*.py 由 test_sweep_dsr_test_coverage_catches_grid_runner 单独 verify`
+> `(避免与 uptrend_pullback/grid.py 共触发新 RED)。`
+
+⇒ **判据认的是"提到",不是"做到"**(本会话第 N 次),而那句"单独 verify"只钉了
+`short_reversal/grid_runner.py` **一个文件名**。那句注释还自陈了**为什么**没覆盖:
+"避免与 `uptrend_pullback/grid.py` 共触发新 RED" —— 即**知道有缺口,故意不覆盖**。
+
+### 2 · 追到根:`grid.py` 不是"缺 DSR",是**根本跑不起来**
+
+我一读 `uptrend_pullback/grid.py` 就发现它做了完整网格(`itertools.product`,
+`regime` 18 档 / `stops` 12 / `signal` 18 / `slots` 4),按"各年中位收益"排一张榜,
+**一项惩罚指标都不报** —— 看着正是 §5 Penalty Metrics 的标准违反。
+
+但**实跑**才看清:
+
+```
+$ python3 uptrend_pullback/grid.py --grid slots --first-year 2024 --last-year 2025
+TypeError: select_entries() got an unexpected keyword argument 'pct_chg_low'
+```
+
+**它在第一个 combo 上就崩。** 机制:`uptrend_pullback` 有**两个**选择函数,选哪个由
+`signal["entry_mode"]` 决定 —— `"v33_long_mirror"` 走 `select_entries_v33_long_mirror`,
+否则走 `select_entries`。而三个活 preset 的 `entry_mode` **全是** `"v33_long_mirror"`,
+它们的 `signal` 里带 `pct_chg_low` / `pct_chg_high` —— **只有镜像那个函数认这两个形参**。
+
+### 3 · 类:这条分派规则有 **11 份副本**,3 份漏了分派
+
+| 处 | 份数 | 形态 | 后果 |
+|---|---|---|---|
+| `backtest.py` / `backtrader_engine.py` | 2 | ✅ 按 `entry_mode` 分派 + 滤掉它 | 正确 |
+| **`grid.py`** / **`render_trades_html.py`(两处)** | **3** | ⛔ **无条件调 `select_entries(**cfg["signal"])`** | **对全部活 preset 当场 `TypeError`** |
+| `sweep_v33_long*.py` | 6 | ⚠️ 硬编码走镜像函数 + 自己过滤 `entry_mode` | 能跑,但**过滤式再抄 6 遍** |
+
+⇒ **`grid.py` 与 `render_trades_html.py` 两个 CLI 工具都没有产出**。它们对 §5/§6 的"执行"是**零**,
+而这件事**没有任何守卫看得见**:`test_sweep_scripts_dsr.py` 的面是 `sweep*.py`(不含 `grid.py`);
+`test_preset_to_engine_api_conformance.py` 查的是"preset 的键有没有在**引擎源码**里出现",
+而它的源文件清单里**没有 `signals.py`**、也不含非引擎脚本。
+
+**`render_trades_html.py` 是双重坏的**:它还有个已死默认值(`v6`,附一百零八 已登记)——
+那意味着**它此前两处都过不去**,只是没人跑它。
+
+### 4 · 修法:把判据收成**单源**,而不是再抄第 12 遍
+
+`signals.py` 新增 `select_entries_for_preset(panel_ind, *, signal, start_date, end_date, regime_df=None)`,
+行为与那两份**正确**实现逐字等价(镜像分支滤掉 `entry_mode`,else 分支原样转发)。
+**11 处调用点全部改走它**(含 6 处硬编码的 sweep)。
+
+**等价性实证(真数据,不是推理)**:窗口 `2024-09-08..2025-09-08`、preset `v33_long_reverse_v19`、
+2,512 条候选,两种形态(`regime_df=reg` 与 `regime_df=None`)下
+`old.equals(new)` **均为 True**。
+
+**零漂移实证**:`-k "uptrend or dispatch or grid or sweep or selector or preset"` 选中 **344** 条
+(**含 golden baseline**)= `340 passed / 3 skipped / 1 failed`,而**那一条失败正是 §8 里
+"上一批的守卫抓住这一批"** ⇒ 与回测结果无关,重构没动任何成交。
+
+### 5 · 顺带补上 §5 那条 Penalty Metrics(它现在**真的**报了)
+
+`grid.py` 现在与兄弟 `sweep_v33_long.py` **逐字同口径**:
+`observed` = 成功配置里的最大 Sharpe、`n_trials` = **枚举出**的配置数(附八十二)、
+`n_returns` = 评估过的交易日**并集**,并打印一句 in-sample 声明(附九十六)。实跑:
+
+```
+§5 DSR | observed_sharpe=1.874 | n_trials=4 | n_returns=484 | deflated_sharpe=0.943 | expected_max=1.052 | p_value=0.0569
+  ⚠️ in-sample selection:本榜是在 4 个配置 × 2 个**样本内年度窗**(2023-09-08 .. 2025-09-08)上、按「各年中位收益」排出的;目标年未参与。…
+```
+
+**一处刻意的不显然**:`n_returns` 取**并集**而不是"各窗之和" —— 窗口是
+`(y-09-08, y+1-09-08)` 首尾相接,**边界日被两个窗口同时包含**,直接相加会多算最多
+`len(windows)-1` 天;而 T 偏大 ⇒ DSR **偏乐观**(附八十一 量过同款)。逐窗仍以
+`core.walkforward.window_trading_days` 为准,并加了一行**一致性核对**防本文件长出第二套口径。
+⚠️ 那行核对我最初写成 `assert`,随即改成 `raise ValueError` —— 依据是本仓库**自己**那条
+`tests/test_assert_vs_raise_audit.py`:`python -O` 会剥掉 `assert` ⇒ 不变量在"生产
+(或任何 `-O` 运行)"下静默消失,方向正好是"DSR 偏乐观"。**没在同一批里制造一条同款缺陷。**
+
+⇒ §5 网格/sweep 类 **12 个脚本,现在 0 个缺惩罚指标**。
+
+### 6 · ⚠️ 我自己新写的两条守卫,**第一版都是被"文字"满足的**(当场抓到并修掉)
+
+这是本批最该记的一段。两条新守卫都做了突变检验,而**第一次做,两处都没红**:
+
+| 突变 | 第一版结果 | 原因 |
+|---|---|---|
+| 把分派器里的分支条件换成 `if False:` | **仍然绿** ❌ | 判据是 `'"v33_long_mirror"' in body`,而那个字面量在**该函数的 docstring** 里也有 ⇒ **注释满足了判据** |
+| 把 `grid.py` 的 DSR **调用**摘掉 | **仍然绿** ❌ | 判据是正则 `deflated_sharpe_ratio\s*\(|bonferroni`,而 `bonferroni` 分支命中了**我自己加的那句注释**("报 DSR 或 Bonferroni")⇒ **注释满足了判据** |
+
+**两条守卫各自复制了它们要去抓的那个病** —— 而其中一条正是"替换掉的那个被注释满足的判据"。
+改为走 **AST**(认可执行调用:`If.test` 里的比较、`Call.func` 的名字)后,两处突变**都红**。
+
+> ★ 本会话已经记过很多次"判据要盯**用法**,不是**文本**"。本批的新内容是:
+> **我是在写"防绕过"的守卫时又犯的,而且是在同一个文件里、为了修一个"被注释满足"的判据而写的。**
+> ⇒ 结论只有一条能防住它:**每条判据写完立刻做突变检验**,不红就重写 —— 这与本会话前面的记录一字不差。
+
+### 7 · 守卫(两个新文件 + 一条重写)
+
+`tests/test_preset_signal_dispatch_is_single_source.py`(6 条):
+
+1. 包内**除 `signals.py` 外,任何模块不得直接调那两个选择函数**(把"绕过分派"变成做不到);
+2. 调用分派器的模块集合 == **精确名单**(10 个模块)—— 多一个少一个都要人看一眼;
+3. 分派器**在可执行代码里**真的分派(AST:`If.test` 比那个字面量 + 分支里真的做了 `!= entry_mode` 过滤);
+4. **签名符合性(最强的一条)**:对**每个活 preset**,`signal` 里(除 `entry_mode` 外)的每个键
+   都必须被"会被选中的那个函数"接受 —— `inspect.signature` 判定,**不落库**。
+   这条**直接编码本批的缺陷**,且与实现无关。
+
+`tests/test_in_sample_grid_scripts_report_penalty_metric.py`(2 条):
+类(引擎包内 `grid*.py` / `sweep*.py` / `wf_sweep*.py`,**精确集合**)逐一对账 +
+每一个都必须**真的调用** DSR 或 Bonferroni。
+
+另**重写** `test_wfv_rigor_gap.py` 那条覆盖率用例:从"某文件里有没有那个字符串"
+改成"存在一个把 `*/grid*.py` **枚举出来**的守卫,且每个都在惩罚指标判据下"。
+
+**四向突变两向验证**(全部当场做过):
+
+| 突变 | 结果 |
+|---|---|
+| 任一调用点退回直调 `select_entries(...)` | **红**(2 条) |
+| 分派器分支换成 `if False:` | **红**(修好判据后) |
+| 从镜像选择函数签名里拿掉 `pct_chg_low`(**复现原缺陷**) | **红**(3 条) |
+| 摘掉 `grid.py` 的 DSR 调用 | **红**(修好判据后) |
+| 新种一个无 DSR 的 `grid_foo.py` | **红**(2 条) |
+
+### 8 · 一个漂亮的自我应用:上一批的守卫抓住了这一批的修
+
+给 `grid.py` 补上 DSR 之后,**附一百零八 那条守卫**
+(`test_research_scripts_cover_every_dsr_caller`)立刻报红 —— 因为 `grid.py` 成了**新的
+DSR 调用点**,而它的类 `uptrend_pullback/sweep*.py` **匹配不到 `grid.py`**。
+⇒ 把 `grid.py` 加进显式名单即可(它的职责正是这个)。
+**一条守卫在下一批里抓到了自己那一类的新成员 —— 这是它被写出来的原因。**
+
+### 9 · 口径与边界
+
+* 本批**不改任何回测语义**:`entries` 逐元素相同(§4 实证),golden baseline 未动;
+  全量 **1460 passed / 26 skipped**。⚠️ 一次**过程**上的如实记录:全量那次跑的是
+  `assert` 版 `grid.py`(改成 `raise` 发生在它启动之后)—— 两者在非 `-O` 下**逐字节等价**;
+  改完又单独复跑了受影响的 7 个文件(**71 passed**)并**实跑一次** `grid.py`,
+  DSR 输出与之前**逐位相同**(`1.874 / 4 / 484 / 0.943 / 1.052 / 0.0569`);
+* `render_trades_html.py` 我**只**修了 `select_entries` 那条路 —— 它还需要一份 trades CSV
+  (结果按 §7 不入库)才能真正端到端跑,所以**不声称"它现在能跑了"**;
+* `uptrend_pullback/grid.py` 现在能跑、且报了 DSR;但**"该不该用这张榜选参数"是 §5 的另一半
+  (WFV)** —— 那句 in-sample 声明就是为这件事写的,不改默认行为、不给参数建议。
