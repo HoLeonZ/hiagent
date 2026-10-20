@@ -115,11 +115,13 @@ def _sweep(bars_by_code: dict, tr: pd.DataFrame, preset: dict, axis: str) -> Non
     mh = int(preset["max_hold"])
     print(f"\n=== --sweep {axis}: 同一批 {len(tr)} 个入场, 另一根轴钉在基线 "
           f"({'sl' if axis == 'tp' else 'tp'}={other:.4f}) ===")
-    print(f"  {'x基线':>7}{axis + ' 取值':>12}{'毛 Σ P&L':>16}{'Δ vs 基线':>16}{'可重放':>9}")
+    print(f"  {'x基线':>7}{axis + ' 取值':>12}{'毛 Σ P&L':>16}{'Δ vs 基线':>16}"
+          f"{'TP':>5}{'SL':>5}{'time':>6}{'top3 Σ':>16}{'top3 占比':>10}")
     rows = []
     for m in SWEEP_MULT:
         v = base_v * m
-        s, n = 0.0, 0
+        pnls: list[float] = []
+        reasons: dict[str, int] = {"TP": 0, "SL": 0, "time": 0}
         for t in tr.itertuples():
             bars = bars_by_code.get(t.thscode)
             if bars is None:
@@ -128,19 +130,34 @@ def _sweep(bars_by_code: dict, tr: pd.DataFrame, preset: dict, axis: str) -> Non
             r = _replay(bars, t.entry_date, float(t.entry_price), tp_eff, sl_eff, mh)
             if r is None:
                 continue
-            s += (r[1] - float(t.entry_price)) * int(t.size)
-            n += 1
-        rows.append((m, v, s, n))
-    ref = next(s for m, _, s, _ in rows if m == 1.0)
-    for m, v, s, n in rows:
+            pnls.append((r[1] - float(t.entry_price)) * int(t.size))
+            reasons[r[2]] = reasons.get(r[2], 0) + 1
+        s = float(sum(pnls))
+        top3 = float(sum(sorted(pnls, reverse=True)[:3]))
+        rows.append((m, v, s, reasons, top3))
+    ref = next(s for m, _, s, _, _ in rows if m == 1.0)
+    for m, v, s, rs, top3 in rows:
         tag = "  <- 基线 (有自检)" if m == 1.0 else ""
-        print(f"  {m:>7.2f}{v:>12.4f}{s:>+16,.0f}{s - ref:>+16,.0f}{n:>9}{tag}")
-    ds = [s for _, _, s, _ in rows]
+        share = (top3 / s) if s else float("nan")
+        print(f"  {m:>7.2f}{v:>12.4f}{s:>+16,.0f}{s - ref:>+16,.0f}"
+              f"{rs['TP']:>5}{rs['SL']:>5}{rs['time']:>6}{top3:>+16,.0f}{share:>10.1%}{tag}")
+    ds = [s for _, _, s, _, _ in rows]
     inc = all(b > a for a, b in zip(ds, ds[1:]))
     dec = all(b < a for a, b in zip(ds, ds[1:]))
     shape = "**单调增**" if inc else ("**单调减**" if dec else "**非单调**")
     print(f"  => 形状: {shape} (极差 {max(ds) - min(ds):>+,.0f})")
-    print("  ⚠️ 这只说明**这根轴有没有单调方向**, 不是说某一格更好 —— 同窗择优是 §5 禁令。")
+    # 非单调到底跟不跟 `n_TP` 走? (逐对相邻变动: 只比**两边都在动**的那些对)
+    ntps = [rs["TP"] for _, _, _, rs, _ in rows]
+    pairs = 0
+    flips = 0
+    for i in range(len(ds) - 1):
+        d_s, d_n = ds[i + 1] - ds[i], ntps[i + 1] - ntps[i]
+        if d_s != 0 and d_n != 0:
+            pairs += 1
+            flips += 1 if (d_s > 0) != (d_n > 0) else 0
+    print(f"  => `n_TP` 与 Σ 的相邻变动: **{pairs - flips}/{pairs} 同向**"
+          f"  (n_TP 七档: {ntps})")
+    print("  ⚠️ 这只说明**这根轴有没有单调方向**与**它跟什么联动**, 不是说某一格更好 —— 同窗择优是 §5 禁令。")
 
 
 def _load(family: str, preset_name: str, w0: str, w1: str):
