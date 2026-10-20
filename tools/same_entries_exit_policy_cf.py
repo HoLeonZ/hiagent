@@ -79,9 +79,19 @@ from hiagent_config import DB_PATH  # noqa: E402
 #    涨停/跌停拒单 (§4), 照 uptrend 的规则顺序重放它们会得到**看着像结论的假数**。
 SUPPORTED = ("uptrend_pullback",)
 
-# (家族, 默认 preset, 窗口) —— 窗口口径与 tools/capacity_ceiling.py 一致 (§13.8)。
+# (家族, 默认 preset, 默认窗口) —— 窗口口径与 tools/capacity_ceiling.py 一致 (§13.8)。
 DEFAULTS: dict[str, tuple[str, str, str]] = {
-    "uptrend_pullback": ("v33_long_reverse_v22", "2024-10-08", "2026-09-18"),
+    "uptrend_pullback": ("v33_long_reverse_v22", "W2"),
+}
+
+# ⚠️ `W2` 的末日按 §13.8 截到干净日 (§13.9: 复权因子表落后 7 个交易日,
+#    更晚的窗口在 `v_daily_hfq` 上会读到**假的暴跌**)。
+WINDOWS: dict[str, tuple[str, str]] = {
+    "W2": ("2024-10-08", "2026-09-18"),
+    "IND": ("2022-10-03", "2024-09-30"),
+    "IS1": ("2021-10-01", "2022-09-30"),
+    "IS2": ("2023-10-01", "2024-09-30"),
+    "EXTRA": ("2017-10-02", "2019-09-30"),
 }
 
 # ATR 对照臂的参数 (chase_up §13.196 用的那一档)。
@@ -240,12 +250,16 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--family", default="uptrend_pullback")
     ap.add_argument("--preset", default=None)
+    ap.add_argument("--window", default=None, choices=list(WINDOWS),
+                    help="默认取 DEFAULTS 里的那一窗")
     ap.add_argument("--teeth", action="store_true",
                     help="注入检查: 至少一个扰动必须让自检变红 (证明自检不是死钉桩)")
     args = ap.parse_args()
 
-    preset_name, w0, w1 = DEFAULTS.get(args.family, (None, None, None))
+    preset_name, win = DEFAULTS.get(args.family, (None, None))
     preset_name = args.preset or preset_name
+    win = args.window or win
+    w0, w1 = WINDOWS[win]
     preset, panel, res = _load(args.family, preset_name, w0, w1)
 
     tr = pd.DataFrame(res["trades"]).copy()
@@ -254,7 +268,7 @@ def main() -> int:
     tr["entry_date"] = pd.to_datetime(tr["entry_date"])
     tr["exit_date"] = pd.to_datetime(tr["exit_date"])
 
-    print(f"family={args.family} preset={preset_name} 窗口 {w0}..{w1}")
+    print(f"family={args.family} preset={preset_name} 窗口 {win} {w0}..{w1}")
     print(f"基线: {len(tr)} 笔, final_equity={float(res['metrics']['final_equity']):,.0f}")
 
     need = ("date", "raw_open", "raw_high", "raw_low", "raw_close", "atr_pct",
@@ -281,12 +295,16 @@ def main() -> int:
 
     tb, ta = total("base"), total("atrx")
     n_atr = int(df["atrx"].notna().sum())
-    print(f"\n=== 同一批 {len(df)} 个入场, 只换出场政策 (元) ===")
+    net_b = float(res["metrics"]["final_equity"]) - 1_000_000.0
+    print(f"\n=== 同一批 {len(df)} 个入场, 只换出场政策 ===")
+    print(f"  ⚠️ 口径: 下面两个 Σ 是 **(出场价 − 入场价) × 基线股数**, 即 **毛 P&L, 不含费用**,")
+    print(f"     且股数**固定为基线那一档** ⇒ 它与引擎报的 `final_equity − 初始` (**净**, 各臂自带股数)")
+    print(f"     **不是同一个量**, 两者之差**不可**当作「费用」或「通道」来解释。")
     print(f"  基线政策 (固定 {preset['tp_pct']:.4f} / {preset['sl_pct']:.4f}, mh={preset['max_hold']})"
-          f"  Σ P&L = {tb:>14,.0f}")
+          f"  毛 Σ P&L = {tb:>14,.0f}   (引擎净 Σ = {net_b:>14,.0f}; 差 {tb-net_b:>+12,.0f} = 费 + 口径)")
     print(f"  ATR  政策 (信号日 ATR × {ATR_TP_MULT} / {ATR_SL_MULT}, mh={ATR_MAX_HOLD}; "
-          f"可用 {n_atr}/{len(df)} 笔)  Σ P&L = {ta:>14,.0f}")
-    print(f"  ⇒ **几何通道的差 = {ta - tb:>+14,.0f}**")
+          f"可用 {n_atr}/{len(df)} 笔)  毛 Σ P&L = {ta:>13,.0f}")
+    print(f"  ⇒ **几何通道的差 (毛, 同规模) = {ta - tb:>+14,.0f}**")
     same_mh = (int(preset["max_hold"]) == ATR_MAX_HOLD)
     if same_mh:
         print(f"  ⚠️ **两臂的 max_hold 相同 (= {ATR_MAX_HOLD})** ⇒ 唯一的政策差就是 "
