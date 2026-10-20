@@ -17,6 +17,7 @@ Bug fixed:
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 
 import pytest
 
@@ -53,9 +54,15 @@ def test_uptrend_pullback_backtrader_engine_invested_formula_unit():
     )
 
 
+# §0/§6 (附一百一十一): 此前是**作者机器的绝对路径** —— 于是本用例在任何别的 checkout
+# 上都在检查**另一个目录**里有没有文件:要么永远 skip(新鲜克隆),要么**读到别人的产物**
+# 来验本仓库的代码。改为相对本文件。
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
 @pytest.mark.parametrize("fixture_csv", [
-    "/Users/holeon/code/hiagent/uptrend_pullback/results/v33_long_reverse_v19_trades.csv",
-    "/Users/holeon/code/hiagent/uptrend_pullback/results/v33_long_reverse_v20_trades.csv",
+    str(_REPO_ROOT / "uptrend_pullback/results/v33_long_reverse_v19_trades.csv"),
+    str(_REPO_ROOT / "uptrend_pullback/results/v33_long_reverse_v20_trades.csv"),
 ])
 @pytest.mark.xfail(
     reason="STALE FIXTURE: trades.csv 是 pre-Round 20 旧代码生成, "

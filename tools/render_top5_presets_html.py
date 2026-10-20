@@ -69,7 +69,7 @@ from short_reversal.render_html_report import (  # noqa: E402
 
 TOP5: list[tuple[str, str]] = [
     # AND 化后 (2026-10-10) 新增 chase_up v11 — 展示 OR→AND 后效果:
-    # 73 trades (OR) → 14 trades (AND),sub_signal_type 全是 "ABC",CAGR +318% → +124%
+    # 73 trades (OR) → 14 trades (AND),sub_signal_type 全是 "ABC";CAGR 数值已按 §7 清除
     ("chase_up", "chase_v11_pos2_equal_atr_tp6_sl15_mh18_score17"),
     ("short_reversal", "v36_d_converge"),
     ("short_reversal", "v44_ratio02_buf07"),
@@ -153,64 +153,61 @@ def _run_chase_up(preset: str, start: str, end: str) -> tuple[pd.DataFrame, pd.D
     return trades, equity, panel_ind
 
 
+#: canonical 14 列里**必须由引擎给出**的键。缺任何一个都 fail-loud ——
+#: 不再"看着像"地把它们反推出来(附六十一)。
+_CANONICAL_REQUIRED = (
+    "entry_date", "exit_date", "thscode", "exit_reason", "entry_price",
+    "exit_price", "size", "hold_days", "gross_pnl", "fees", "net_pnl",
+    "net_return",
+)
+
+
 def _normalize_short_reversal_trade(
     raw: dict, klines: dict, start: str, end: str
 ) -> dict | None:
-    """Convert raw short_reversal trade dict to canonical TRADE_COLS row.
+    """short_reversal 的成交记录 → canonical TRADE_COLS 行。
 
-    Reverse-engineers entry_date / exit_date via build_trade_dates' approach.
-    Synthesizes net_pnl / gross_pnl / fees / net_return from price+size+net%.
+    ## 附六十一:这里**不再反推**任何字段
+
+    原实现自称 "Reverse-engineers entry_date / exit_date via build_trade_dates'
+    approach":用 `|open − ep| < 0.001` 找候选 bar(**取第一根**),再找第一根
+    `low ≤ xp ≤ high` 的;找不到就**编**一个(`after.iloc[hold_days-1]`)。
+    而引擎**早就**把 entry_date / exit_date / exit_reason 与
+    gross_pnl / fees / net_pnl / net_return 放进记录里了(`_canonical_trade_record`)。
+
+    实测(2026-06-01..08-31,`v44_ratio02_buf07`,16 笔):工具反推的日期
+    **11 笔与记录不符**,其中两笔错到**一个月**
+    (`003033.SZ` 记录 06-29→07-01,工具给 05-27→05-29;
+     `002605.SZ` 记录 08-03→08-05,工具给 05-29→06-01)。
+
+    这正是 `short_reversal/render_html_report.build_trade_dates` **早已修掉**的那套
+    启发式(歧义时"任意挑第一根"、无候选时"凭空推一个日期"),在这里以**第二份实现**
+    的形态活着 —— §6「一条规则一处实现」的反例,而且活下来的是**有 bug 的那一版**。
+
+    现在:字段只从记录取;记录缺 canonical 键 ⇒ **抛错**(不静默回退到反推)。
+    `klines` 参数保留(调用方还要它画指标图),但本函数**不再读它**。
     """
-    thscode = raw["thscode"]
-    ep = float(raw["entry_price"])
-    xp = float(raw["exit_price"])
-    size = int(raw["size"])
-    net_pct = float(raw.get("net", 0.0))  # raw net is % return
-    hold_days = int(raw["hold_days"])
-    reason = raw.get("exit_reason", "TP")
-
-    if size <= 0 or ep <= 0:
+    missing = [k for k in _CANONICAL_REQUIRED if k not in raw]
+    if missing:
+        raise KeyError(
+            f"short_reversal 成交记录缺 canonical 键 {missing} —— 引擎应发布 "
+            f"TRADE_COLS 的 14 列;此处**不再**反推(附六十一)"
+        )
+    if int(raw["size"]) <= 0 or float(raw["entry_price"]) <= 0:
         return None
-
-    kline = klines.get(thscode)
-    entry_date = None
-    exit_date = None
-    if kline is not None and not kline.empty:
-        mask = (kline["open"].astype(float) - ep).abs() < 0.001
-        if mask.any():
-            entry_date = pd.Timestamp(kline.loc[mask, "date"].iloc[0])
-            after = kline[kline["date"] > entry_date].head(hold_days + 2)
-            for _, row in after.iterrows():
-                lo = float(row["low"])
-                hi = float(row["high"])
-                if lo - 1e-9 <= xp <= hi + 1e-9:
-                    exit_date = pd.Timestamp(row["date"])
-                    break
-            if exit_date is None and not after.empty:
-                exit_date = pd.Timestamp(after["date"].iloc[min(hold_days - 1, len(after) - 1)])
-
-    if entry_date is None or exit_date is None:
-        return None
-
-    notional_in = ep * size
-    gross_pnl = (xp - ep) * size
-    net_pnl = net_pct * notional_in
-    fees = gross_pnl - net_pnl
-    net_return = net_pct
-
     return {
-        "entry_date": entry_date,
-        "exit_date": exit_date,
-        "thscode": thscode,
-        "exit_reason": reason,
-        "entry_price": ep,
-        "exit_price": xp,
-        "size": size,
-        "hold_days": hold_days,
-        "gross_pnl": gross_pnl,
-        "fees": fees,
-        "net_pnl": net_pnl,
-        "net_return": net_return,
+        "entry_date": pd.Timestamp(raw["entry_date"]),
+        "exit_date": pd.Timestamp(raw["exit_date"]),
+        "thscode": raw["thscode"],
+        "exit_reason": raw["exit_reason"],
+        "entry_price": float(raw["entry_price"]),
+        "exit_price": float(raw["exit_price"]),
+        "size": int(raw["size"]),
+        "hold_days": int(raw["hold_days"]),
+        "gross_pnl": float(raw["gross_pnl"]),
+        "fees": float(raw["fees"]),
+        "net_pnl": float(raw["net_pnl"]),
+        "net_return": float(raw["net_return"]),
         "atr_pct": float("nan"),
         "sub_signal_type": "",
     }
@@ -274,7 +271,7 @@ def _compute_short_indicators(window: pd.DataFrame) -> pd.DataFrame:
 
 
 def _run_short_reversal(preset: str, start: str, end: str):
-    """Run short_reversal backtest, normalize trades, synthesize equity.
+    """跑 short_reversal 回测,取**引擎的**成交记录与权益曲线(附六十一:不再自造)。
 
     Returns (trades_df, equity_df, klines_with_indicators).
     klines_with_indicators maps thscode → DataFrame with raw OHLCV + computed
@@ -295,16 +292,21 @@ def _run_short_reversal(preset: str, start: str, end: str):
             rows.append(row)
     trades_df = pd.DataFrame(rows, columns=list(TRADE_COLS))
 
-    if not trades_df.empty:
-        trades_sorted = trades_df.sort_values("entry_date").reset_index(drop=True)
-        cum = (1.0 + trades_sorted["net_return"].fillna(0.0)).cumprod()
-        equity_df = pd.DataFrame({
-            "date": trades_sorted["entry_date"],
-            "cash": INITIAL_CAPITAL * cum,
-            "equity": INITIAL_CAPITAL * cum,
-        })
-    else:
-        equity_df = pd.DataFrame(columns=["date", "cash", "equity"])
+    # 附六十一:权益曲线用**引擎发布的**逐 bar 净值,不再用"逐笔 net_return 复利"
+    # 合成。后者把 max_positions>1、未满仓期、以及**逐 bar 回撤**全部抹平 ——
+    # 形状与回撤都不可信,而引擎本来就发布真曲线(单腿路径:
+    # `metrics["equity_curve"]`,列含 date/cash/holdings_value/equity/drawdown/free_cash)。
+    _eq_rows = res.get("equity_curve")
+    if _eq_rows is None:
+        raise RuntimeError(
+            "§3: 引擎未发布 equity_curve(ensemble 路径)—— 本工具不再自行合成一张"
+            "权益曲线(附六十一:合成曲线会抹掉逐 bar 回撤)"
+        )
+    equity_df = (
+        pd.DataFrame(_eq_rows)[["date", "cash", "equity"]]
+        if _eq_rows
+        else pd.DataFrame(columns=["date", "cash", "equity"])
+    )
 
     # Pre-compute indicators for every kline so per-trade windows are cheap.
     enriched: dict[str, pd.DataFrame] = {}
@@ -903,17 +905,31 @@ def _render_trade_table(trades: pd.DataFrame, strategy: str) -> str:
 
 
 def _summary_metrics(trades: pd.DataFrame, equity: pd.DataFrame) -> dict:
-    """Compute summary metrics from trades + equity (for header)."""
+    """汇总指标(HTML 页首)。
+
+    §6 单源 (audit 2026-10-15): 此处曾**自己算** CAGR —— 且用的是**日历日**
+    (`(last-first).days / 365.25`),而引擎的规范实现用**交易日**
+    (`len(equity) / TRADING_DAYS`)。同一次回测因此会有两个不同的 CAGR:
+    220 根 bar 的窗口下,规范口径 years≈0.905,此处 years≈0.843 —— 页首数字与
+    引擎 metrics 对不上,而两边看起来都"很合理"。这是典型的「同一指标两处定义」,
+    必然漂移。现改为与引擎同口径(交易日年化)。
+
+    仍未消除的重复(已登记):`_compute_short_indicators` 与
+    `_build_entry_reasons_*` 仍各自重述指标与 A/B/C 判定 —— 那是**展示层**的
+    第二实现,消解它需要引擎暴露逐 bar 指标序列,属重构而非顺手改。
+    """
     if trades.empty or equity.empty:
         return {}
+    from chase_up.backtest import TRADING_DAYS
+
     n = len(trades)
     wins = (trades["net_pnl"] > 0).sum()
     win_rate = wins / n if n > 0 else 0.0
     start_eq = INITIAL_CAPITAL
     end_eq = float(equity["equity"].iloc[-1])
     total_return = end_eq / start_eq - 1.0
-    days = (pd.Timestamp(equity["date"].iloc[-1]) - pd.Timestamp(equity["date"].iloc[0])).days
-    years = days / 365.25 if days > 0 else 1.0
+    # 与引擎同口径:年数按**交易日**计(len(equity) 即逐 bar 净值行数)。
+    years = len(equity) / TRADING_DAYS
     cagr = (end_eq / start_eq) ** (1.0 / years) - 1.0 if years > 0 else 0.0
     return {
         "trades": n,
@@ -1136,6 +1152,7 @@ def main(argv: list[str] | None = None) -> int:
 
     only = set(args.only.split(",")) if args.only else None
     outputs = []
+    failures = 0
     for strategy, preset in TOP5:
         if only and strategy not in only:
             continue
@@ -1150,12 +1167,20 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  ERROR {strategy}/{preset}: {e}")
             import traceback
             traceback.print_exc()
+            failures += 1          # §0(附六十三): 失败必须进退出码,不能只进 stdout
             continue
 
     print(f"\n=== Done: {len(outputs)} HTML files in {args.out_dir} ===")
     for p in outputs:
         print(f"  {p}")
-    return 0
+    from core.cli_verdict import cli_verdict
+
+    code, msg = cli_verdict(
+        failures=failures, attempted=len(TOP5), succeeded=len(outputs),
+        what="HTML 报告渲染",
+    )
+    print(f"\n{msg}")
+    return code
 
 
 if __name__ == "__main__":

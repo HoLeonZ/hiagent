@@ -32,6 +32,7 @@ from short_reversal.engine import (
     INITIAL_CAPITAL,
     MARGIN_RATE,
     STAMP_DUTY_RATE,
+    strategy_kwargs,
 )
 from short_reversal.feed_bt import AShareData
 from short_reversal.presets import get_preset
@@ -103,21 +104,20 @@ def _scan_preset(
         cerebro.broker.setcommission(commission=0.0)
         holder: dict = {"cash": INITIAL_CAPITAL, "trades": [], "max_dd": 0.0}
         cerebro.adddata(AShareData(dataname=sub, plot=False), name=code)
+        # §6 单源(2026-10-16):策略参数由 `engine.strategy_kwargs` 统一构造 ——
+        # 此前这里**手抄了一个子集**(tp/sl/max_hold/…共 12 项),既漏掉了
+        # §2 的 `nav_gate_ratio`(必须由声明解析后注入)⇒ 运行直接崩溃,
+        # 又漏掉 F/G/H/I/J/K 与 max_positions / signal_price_domain 等开关
+        # ⇒ 即便补上崩溃那一项,扫描出的信号集也会**比回测宽**(开关全走默认)。
+        # 实时扫描工具给出的名单是要拿去下单的,故必须是同一份构造逻辑。
         cerebro.addstrategy(
             Phase3V3Strategy,
-            tp_pct=preset["tp_pct"],
-            sl_pct=preset["sl_pct"],
-            max_hold=preset["max_hold"],
-            position_fraction=1.0,
-            pct_chg_low=preset.get("pct_chg_low", 0.02),
-            pct_chg_high=preset.get("pct_chg_high", 0.06),
-            a_condition=preset.get("a_condition", "default"),
-            margin_rate=MARGIN_RATE,
-            commission_rate=COMMISSION_RATE,
-            stamp_duty_rate=STAMP_DUTY_RATE,
-            initial_capital=INITIAL_CAPITAL,
-            lot_size=100,
-            result_holder=holder,
+            **strategy_kwargs(
+                # `_name` 由编排层(engine / scan_signals.main)注入,仅作 fail-fast
+                # 消息里的标签;缺它不该让扫描崩(附三十八 修构造时暴露的锐边)。
+                preset, preset.get("_name", "<scan>"), holder=holder,
+                start=str(sub["date"].iloc[0].date()), end=signal_date,
+            ),
         )
         try:
             strategies = cerebro.run()

@@ -43,27 +43,49 @@ adjustment to Position_Quantity and Average_Cost."
 """
 from __future__ import annotations
 
+import ast
+
 from pathlib import Path
 
 import pytest
 
 
 def _engine_has_event_handler(module_name: str) -> bool:
-    """检查 engine 是否实现 dividend_handler / split_handler."""
+    """引擎是否**导入并调用**了公司行为 handler(audit P3, 2026-10-15)。
+
+    原实现是**子串启发式**:在引擎源码里找 "dividend" 且 ("handler"|"_apply"|
+    "trigger")。它刚在一个合法重构上失效 —— 把 handler 提到 core 单源、引擎改为
+    导入调用之后,引擎文件里仍有 "dividend" 但不再有 "_apply",于是判为"无 handler",
+    而语义完全没变(反而更好了)。
+
+    这正是审计反复指出的"守卫断言的是文本形状而非行为"。改为 AST 判定:
+      (a) 从 core.corporate_actions 导入 apply_corporate_action,且
+      (b) 源码中确实**调用**了它。
+    对未接入的引擎为 False —— 那就是诚实的现状。
+    """
     import importlib
+
     try:
         mod = importlib.import_module(module_name)
     except ImportError:
         return False
     src = Path(mod.__file__).read_text(encoding="utf-8")
-    has_dividend = ("dividend" in src.lower() and
-                    ("handler" in src.lower() or "_apply" in src.lower() or
-                     "trigger" in src.lower()))
-    has_split = ("split" in src.lower() and
-                 ("handler" in src.lower() or "_apply" in src.lower() or
-                  "trigger" in src.lower()))
-    # 仅当 dividend/split 出现在业务逻辑而非注释/字符串 split() 才算
-    return has_dividend or has_split
+    tree = ast.parse(src)
+
+    imported = any(
+        isinstance(n, ast.ImportFrom)
+        and n.module == "core.corporate_actions"
+        and any(a.name == "apply_corporate_action" for a in n.names)
+        for n in ast.walk(tree)
+    )
+    if not imported:
+        return False
+    return any(
+        isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "apply_corporate_action"
+        for n in ast.walk(tree)
+    )
 
 
 @pytest.mark.parametrize("module", [
@@ -78,21 +100,63 @@ def test_engine_has_dividend_or_split_handler(module: str) -> None:
     当前 RED: 4 个 engine 均无 (因为使用 adj_close 前复权隐式嵌入分红,
     但 CLAUDE.md §3 字面要求显式 handler)。
     """
-    if module == "uptrend_pullback.portfolio":
-        pytest.skip(
-            "uptrend_pullback: 2026-10-13 决策为『不实现显式 CA handler』—— 实测该"
-            "策略持仓期中位数仅 3 天, 窗口内无任何持仓穿过除权日 (漏记分红 = 0, "
-            "幻影止损 = 0), 故 event 记账当前无收益; 该零暴露前提已由 "
-            "tests/test_uptrend_pullback_corporate_actions_exposure.py 以可证伪的"
-            "行为守卫锁定, 本 source-text 探针对其不再适用。"
-        )
     if _engine_has_event_handler(module):
         pytest.skip(
             f"{module} 已实现 dividend/split handler (GREEN, 本测试 supersede)"
         )
+    # 背景(2026-10-13):uptrend_pullback 曾因"持仓期中位数仅 3 天、窗口内无持仓
+    # 穿过除权日"而决策不实现显式 handler。2026-10-15 已接入 core 共享实现,
+    # 故该理由不再适用 —— 判定统一由 _engine_has_event_handler 给出。
     assert False, (
         f"GAP CAPTURED (RED): {module} 无 dividend_handler / split_handler. "
         f"CLAUDE.md §3 要求显式 cash deposit + quantity/cost 调整. "
         f"当前以 adj_close 前复权隐式嵌入分红 (设计选项 A), "
         f"需用户确认是否需切换至选项 B (raw_close + 显式 event)."
+    )
+
+# ---------------------------------------------------------------------------
+# 附五十四 —— Phase-2(backtrader)引擎的公司行为缺口:**登记**而非"通过"
+# ---------------------------------------------------------------------------
+#
+# 上面那条 `test_engine_has_dividend_or_split_handler` 把**四个 Phase-1 模块**
+# 当作"四个引擎"来判定 —— 于是它宣布 §3 已闭合,而 chase_up 的 CLI **默认引擎**
+# (`chase_up/main.py` 的 `--engine`, default="backtrader")恰恰是**未接入**的那条路径。
+# 又一次"锁一处 ≠ 锁一族"。
+#
+# 事实(逐条可核):
+#   * `chase_up.backtrader_engine` / `uptrend_pullback.backtrader_engine` 里
+#     没有任何公司行为代码路径(AST 判定,见 `_engine_has_event_handler`)。
+#   * 25 个 preset(22 chase + 3 uptrend)**全部**声明
+#     `price_source_for_execution: "raw_close"` ⇒ feed 会重映射到**原始价**
+#     (`backtrader_engine.py:96-103`),除权缺口因此是真实的原始价跳空。
+#   * Phase-2 是**逐笔 replay**:`target_size` 在构造时固定(chase_up/replay_strategy.py),
+#     没有"数量 ×(1+bonus)"或"成本价重定"的通路,也没有分红入账通路。
+#   * 后果:送股除权日会按**原始股数**在**腰斩价**卖出 ⇒ 幻影 ≈ −bonus/(1+bonus) 的亏损;
+#     现金分红日则把缺口记成亏损、分红永不入账。
+#
+# 实测暴露面(2024-09-01..2026-09-01,活库):
+#   chase v8/v10/v19 共 129 笔 + uptrend v21 68 笔 ⇒ 只有 **1 笔**跨越除权日
+#   (002534.SZ,2026-05-29,现金分红 0.1/21.61 = 0.46%),且该笔 Phase-1 与
+#   Phase-2 结果**逐字段一致**(58 笔成交、同价同 net_pnl)。
+#   即:**没有观测到 in-sample 数值背离** —— 本缺口是结构性的,不是已发生的错误。
+#   不做"Phase-2 接公司行为"这件事,是因为它是**新功能**(replay 需引入持仓量/成本
+#   的跨 bar 状态),属研究决策,登记待评估。
+
+_PHASE2_ENGINES = [
+    "chase_up.backtrader_engine",
+    "uptrend_pullback.backtrader_engine",
+]
+
+
+@pytest.mark.parametrize("module", _PHASE2_ENGINES)
+def test_phase2_engine_corporate_action_gap_is_registered(module: str) -> None:
+    """登记:Phase-2 引擎**没有**公司行为路径 = 已知缺口(不是"通过")。
+
+    与 `test_benchmark_data_gap_is_registered` 同形:钉住"现状 = 已登记的缺口"。
+    一旦有人把公司行为接进 Phase-2,本用例**变红**,提示更新审计 附五十四 的登记
+    并改写本守卫 —— 而不是让登记悄悄过期(本仓库吃过"登记逾期"的亏,见附十九)。
+    """
+    assert not _engine_has_event_handler(module), (
+        f"{module} 已接入公司行为 —— 请更新 docs/audits 附五十四 的登记,并把本守卫"
+        f"改成断言「用百分比 / 事件源」(或直接删除)。"
     )

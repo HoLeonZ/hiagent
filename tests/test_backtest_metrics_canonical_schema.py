@@ -65,6 +65,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -176,35 +178,32 @@ def test_short_reversal_backtest_json_exists_or_documented_gap() -> None:
             )
         return  # OK
 
-    # File doesn't exist — RED (this is the known gap)
-    raise AssertionError(
-        f"§2/§3 RED: short_reversal/results/backtest.json does not exist.\n"
-        f"Per [[trades-csv-schema-cross-engine-audit-2026-09-23]], "
-        f"short_reversal uses per-trade JSON format instead of aggregate "
-        f"metrics. This breaks cross-engine comparability.\n\n"
-        f"GREEN fix: short_reversal should also emit aggregate metrics "
-        f"in canonical 22-metric schema (or migrate to canonical schema)."
+    # 产物不存在 ⇒ §7 下的**预期状态**（results/ 不入库），按 §6 必须 skip，
+    # 不得 fail。原版在此 raise，等于把一条未结事项做成**永久红灯** ——
+    # 而永久红灯的代价是真实回归会藏在其中（本仓库整改过程已发生过一次）。
+    pytest.skip(
+        "§7 GAP REGISTERED: 本机 short_reversal/results/backtest.json 不存在。"
+        "results/ 按 §7 必须 gitignored，fresh clone 下必然缺失 —— 这是产物边界，"
+        "不是纪律违规。「short_reversal 未产出 canonical 22-metric 聚合 metrics」"
+        "属未结事项 —— 见 [OPEN:METRICS-22-AGG-SHORT]"
+        "（`tests/test_registered_open_items.py`）。"
     )
 
 
 def test_cycle_price_action_backtest_json_exists_or_documented_gap() -> None:
-    """§2/§3 RED: cycle_price_action lacks backtest.json.
+    """§2/§3: cycle_price_action 的 canonical backtest.json 产物边界。
 
-    Per [[equity-curve-metrics-schema-audit-2026-09-23]] Tick 51:
-    cycle_price_action produces no backtest.json at all.
+    与上一条同构：产物在 → 校验；不在 → skip 登记（§6/§7），不 fail。
     """
     path = REPO_ROOT / "cycle_price_action" / "results" / "backtest.json"
     if path.exists():
         return  # OK
 
-    raise AssertionError(
-        f"§2/§3 RED: cycle_price_action/results/backtest.json does not "
-        f"exist.\n"
-        f"Per [[equity-curve-metrics-schema-audit-2026-09-23]] Tick 51: "
-        f"cycle_price_action is one of 0/4 engines producing backtest.json "
-        f"in canonical schema.\n\n"
-        f"GREEN fix: cycle_price_action should emit canonical 22-metric "
-        f"backtest.json (currently missing entirely)."
+    pytest.skip(
+        "§7 GAP REGISTERED: 本机 cycle_price_action/results/backtest.json 不存在。"
+        "results/ 按 §7 必须 gitignored，fresh clone 下必然缺失。"
+        "「cycle_price_action 未产出 canonical 22-metric 聚合 metrics」属未结事项 —— "
+        "见 [OPEN:METRICS-22-AGG-CYCLE]（`tests/test_registered_open_items.py`）。"
     )
 
 

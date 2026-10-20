@@ -60,6 +60,10 @@ G. **Tick 61 RED state (expected)**: 0 violations (chase_up trades.csv
 - PASS baseline: entry_price and exit_price are > 0 (positive prices)
 - RED forward-defense: any unparseable value fails with row details
 """
+
+# ⚠️ 附九十八: 上面引用的 §2 Atomic Cash Locks 条款**已被提交 2260ba1 替换**(现行文本见 CLAUDE.md,
+# 替代为对应节的新写法)。此处引用旧句仅为**对照**;本文件的**断言**测的是现行行为,
+# 不是那条已退休的措辞。
 from __future__ import annotations
 
 import csv

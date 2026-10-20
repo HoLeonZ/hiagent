@@ -28,6 +28,7 @@ V6'' (2026-09-22, CLAUDE.md §4): SL-first intraday tiebreak.
 """
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from datetime import date
@@ -36,6 +37,11 @@ from typing import Any, Mapping
 
 # Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical cost rates imported from
 # core/dual_price.py single-source-of-truth. (was 0.001 = 万10 pre-Aug2023).
+from core.corporate_actions import apply_corporate_action
+from core.dual_price import is_limit_down, is_limit_up, volume_cap_fill
+from core.preset_contract import ALL_IN, EXECUTION_PRICE_SOURCE
+
+logger = logging.getLogger(__name__)
 from core.dual_price import (
     COMMISSION_RATE,
     MIN_COMMISSION,
@@ -65,26 +71,36 @@ class Portfolio:
     / no leverage).
     """
 
-    COMMISSION_RATE = 0.00025
-    MIN_COMMISSION = 5.0
-    # Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical 万5 post-Aug2023 rate
-    # (was 0.001 = 万10 pre-Aug2023 historical). Sell-side only.
-    STAMP_TAX_SELL = 0.0005
+    # §2 (audit P2-11, 2026-10-15): 类属性改为**引用**核心单源,不再写死字面量
+    # (此前虽有 import,却在类体里又用字面量覆盖了一遍 —— 导入的名字被遮蔽)。
+    COMMISSION_RATE = COMMISSION_RATE
+    MIN_COMMISSION = MIN_COMMISSION
+    # canonical 万5 post-Aug2023 rate(旧值 0.001 = 万10 pre-Aug2023 历史值)。
+    # Sell-side only.
+    STAMP_TAX_SELL = STAMP_DUTY_RATE
     # Project policy: every entry is all-in (CLAUDE.md §2, revised 2026-09-21).
     # Held at 1.0 explicitly so the constant survives for callers/tests.
     MAX_POSITION_PCT = 1.0
+    # §2 (audit 2026-10-15): 本账本的**物理**容量 —— 同一时刻只持 1 仓
+    # (`try_enter` 以 `if self._pos is not None: return None` 表达)。
+    # preset 声明的 max_positions 必须与之相等,否则 fail-fast。
+    MAX_POSITIONS_CAPACITY = 1
     # R8 (2026-09-21): Volume Participation Limit (CLAUDE.md §4)。
     # 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION。超出部分丢弃(不挂单)。
     # 与 chase_up/portfolio.py:49 / short_reversal/replay_strategy_v3.py 口径一致,
     # 防止小票大单砸穿市场。bar_volume is optional for backwards compatibility;
     # when None or NaN the cap is skipped (test fixtures without volume column)。
+    # 2026-10-15: 保留为**模块级参考值**;实际参与率由 preset 声明的
+    # `max_volume_participation` 经 __init__ 注入(self.max_volume_participation),
+    # 不再由本常量驱动 —— 此前 PRESET_V1 声明了它却无人读取。
     MAX_VOL_PARTICIPATION = 0.10
 
     # Round 10 (2026-09-28, CLAUDE.md §2): NAV-floor cash gate threshold。
     # 当 NAV (cash + 持仓 mark-to-market 浮盈) 跌到 initial_capital ×
     # NAV_GATE_RATIO 以下时, 拒绝新开仓 — 已持仓仍按 SL/TP/time exit 正常执行。
     # 与 chase_up/portfolio.py:56 + uptrend_pullback/portfolio.py:49 +
-    # short_reversal/replay_strategy_v3.py:156 (min_cash_ratio=0.05) 口径一致。
+    # ⚠️ 附九十: 一致的是**闸门语义**, 不是默认值或成员名 —— 旧注释引的
+# short_reversal/replay_strategy_v3.py 第 156 行与 `min_cash_ratio=0.05` 都已不存在。
     NAV_GATE_RATIO = 0.05
 
     def __init__(
@@ -100,11 +116,35 @@ class Portfolio:
         # 与 chase_up/portfolio.py:121 + short_reversal/replay_strategy_v3.py:154
         # (initial_capital=1_000_000.0) 口径一致, 防止多仓策略在反复 gap-down
         # 击穿 SL 后继续 all-in 累积亏损直到穿仓 0。
+        # §4 (audit P3, 2026-10-15): 涨跌停守卫属**执行层**,归 Portfolio。
+        # 此前它在 strategy 层(backtrader_engine.next 里 inflight 检查),而
+        # 另外三个引擎都在 portfolio 层 —— §6 单层归属要求一个规则只有一处归属。
+        is_limit_up_threshold: float = 0.095,
+        # §4 (附五十六): 跌停侧**镜像**阈值。A 股主板涨跌停带对称(±10%),
+        # 但语义上必须分名 —— 混用会让两侧在以后某个非对称板上悄悄绑在一起。
+        is_limit_down_threshold: float = 0.095,
         initial_capital: float = 1_000_000.0,
         # R5' (2026-09-23, CLAUDE.md §4): ATR-aware slippage opt-in.
         # When atr_slip_scale > 0, slippage = max(0, atr_pct × participation × scale)
         # is added on top of commission + tax. Default 0.0 = no slippage (back-compat).
         atr_slip_scale: float = 0.0,
+        # §4 (audit 2026-10-15, §0/§6 conformance): 成交量参与率上限。
+        # 此前本引擎把 0.10 写成类常量 MAX_VOL_PARTICIPATION,而 PRESET_V1 声明的
+        # `max_volume_participation=0.10` **从未被读取** —— 声明与常量同值,于是
+        # 改预设不会有任何效果。现在由声明驱动。
+        max_volume_participation: float = 0.10,
+        # §2 (audit 2026-10-15): preset 声明的仓位比例。此前从不被读取。
+        # 1.0 = 全仓政策;该值只**缩小**预算,余下仍受 free_cash 保证金闸门约束。
+        position_fraction: float = 1.0,
+        # §3 (audit 2026-10-15): 执行域价源声明。本组合的成交价/成交量全部来自
+        # v_daily(原始价),指标域才走 adj_close —— 见 data_feed 的 LEFT JOIN。
+        price_source_for_execution: str = "raw_close",
+        # §2 (audit 2026-10-15): 这两项此前**声明了却无任何消费者**。本组合是
+        # 单仓 all-in 账本,结构上无法多仓、也无法预留现金缓冲 —— 所以"消费"它们
+        # 的正确形态是**核对声明与容量的兼容性**:声明 2 仓或 'equal' 时必须炸,
+        # 而不是静默按 1 仓 all-in 跑完。这与 §3 价源声明同一纪律。
+        max_positions: int = 1,
+        position_sizing: str = "all_in",
     ) -> None:
         # Round 16 (2026-09-28, CLAUDE.md §2): Settlement Isolation — 3-pool
         # cash state machine. Mirror of chase_up/portfolio.py + uptrend_pullback.
@@ -119,7 +159,36 @@ class Portfolio:
         self.cash = float(cash)
         self.initial_capital = float(initial_capital)
         self.atr_slip_scale = atr_slip_scale
+        self.is_limit_up_threshold = float(is_limit_up_threshold)
+        self.is_limit_down_threshold = float(is_limit_down_threshold)
         self.intraday_tiebreak = intraday_tiebreak
+        # §4 (audit 2026-10-15): 参与率上限由声明驱动(不再读类常量)。
+        self.max_volume_participation = float(max_volume_participation)
+        # §2 (audit 2026-10-15): 仓位比例由声明驱动。
+        self.position_fraction = float(position_fraction)
+        # §3 (audit 2026-10-15): 执行域必须是原始价。本组合没有 adj 执行路径 ——
+        # 声明 adj_close 等于一句无人兑现的承诺,故 fail-fast 而非静默按 raw 执行。
+        if price_source_for_execution != EXECUTION_PRICE_SOURCE:
+            raise ValueError(
+                f"§3: price_source_for_execution={price_source_for_execution!r} "
+                f"不被本执行层支持(只有 {EXECUTION_PRICE_SOURCE!r})。"
+                "SL/TP/成交量/记账必须建立在原始价上。"
+            )
+        self.price_source_for_execution = price_source_for_execution
+        # §2 (audit 2026-10-15): 容量核对 —— 本账本同一时刻只持 1 仓。
+        if max_positions != self.MAX_POSITIONS_CAPACITY:
+            raise ValueError(
+                f"§2: preset 声明 max_positions={max_positions},但本组合的物理容量是 "
+                f"{self.MAX_POSITIONS_CAPACITY}(单仓账本)。声明超出容量 = 静默忽略。"
+            )
+        self.max_positions = int(max_positions)
+        # §2 (audit 2026-10-15): sizing 模式核对 —— 本账本只实现 all-in 分支。
+        if position_sizing != ALL_IN:
+            raise ValueError(
+                f"§2: preset 声明 position_sizing={position_sizing!r},但本组合只实现 "
+                f"{ALL_IN!r}。"
+            )
+        self.position_sizing = position_sizing
         self._pos: PositionState | None = None
         self.closed_trades: list[dict] = []
 
@@ -161,11 +230,20 @@ class Portfolio:
         self.locked_margin += actual_debit
 
     def release_margin(self, amount: float) -> None:
-        """Unlock Locked_Margin → Free_Cash (e.g., position closed).
+        """Unlock Locked_Margin on position close.
+
+        §2 (audit P0-2, 2026-10-15): **不再**把解锁额记入 Free_Cash。
+        原实现 `self.free_cash += actual_release` 与另外三个引擎
+        (chase_up/portfolio.py:154、uptrend_pullback/portfolio.py:127)的
+        约定相反,配合出场路径的 `credit_settling(全额卖出款)` 会把同一个
+        入场本金记两次 —— 一轮完整往返后 total_cash 多出一个本金
+        (100 → 入场 30 → 出场得款 33 应得 103,实际 133)。
+
+        正确语义:release 只是把 locked 桶解冻,仓位价值由出场时的
+        `credit_settling(卖出款)` 承载(卖出款已包含本金返还)。
 
         Round 28 (2026-09-28, CLAUDE.md §0 Pessimistic Default):
-        Tolerate sub-epsilon IEEE 754 drift on locked_margin
-        (sibling fix to Round 26 release_margin for short_reversal).
+        Tolerate sub-epsilon IEEE 754 drift on locked_margin.
         Clamp the actual release to `min(amount, locked_margin)`
         so cash walk stays consistent.
         """
@@ -176,11 +254,51 @@ class Portfolio:
             )
         actual_release = min(amount, self.locked_margin)
         self.locked_margin -= actual_release
-        self.free_cash += actual_release
 
     def credit_settling(self, amount: float) -> None:
         """Credit T+0 sell proceeds to Settling_Funds (not Free_Cash)."""
         self.settling_funds += amount
+
+    def apply_corporate_action(
+        self,
+        dividend_per_share: float = 0.0,
+        bonus_ratio: float = 0.0,
+        rights_ratio: float = 0.0,
+    ) -> None:
+        """§3 (audit P2-10, 2026-10-15): 除权日公司行为(多头方向)。
+
+        - 现金分红 → `free_cash`(§3: physical cash deposit into Free_Cash)
+        - 送股/拆股 → 数量 ×(1+bonus),成本价按总量不变重定;`PositionState` 是
+          frozen dataclass,故**重建**而非原地修改(§0 append-only)。
+        - 配股不建模,由 core 产出告警后落日志。
+
+        权益归属:本方法只在"bar 起始已持有"时被调用(引擎在 next() 顶部、
+        建仓分支之前应用),因此除权日当天新建的仓位不会被误记分红。
+        """
+        pos = self._pos
+        if pos is None:
+            return
+        if (dividend_per_share <= 0) and (bonus_ratio <= 0) and (rights_ratio <= 0):
+            return
+        out = apply_corporate_action(
+            size=int(pos.shares),
+            entry_price=float(pos.entry_price),
+            dividend_per_share=dividend_per_share,
+            bonus_ratio=bonus_ratio,
+            rights_ratio=rights_ratio,
+        )
+        for w in out.warnings:
+            logger.warning("[corporate-action] %s @ %s: %s", pos.thscode, pos.entry_date, w)
+        self.free_cash += out.cash_delta
+        self.cash = self.total_cash
+        if out.size != pos.shares or out.entry_price != pos.entry_price:
+            self._pos = PositionState(
+                thscode=pos.thscode,
+                shares=out.size,
+                entry_price=out.entry_price,
+                entry_date=pos.entry_date,
+                decision_meta=pos.decision_meta,
+            )
 
     @property
     def position(self) -> PositionState | None:
@@ -211,10 +329,21 @@ class Portfolio:
         # R8 (2026-09-21): Volume Participation Limit input.
         # None / NaN → skip cap (back-compat for tests without volume column)。
         bar_volume: float | None = None,
+        # §4 (audit P3, 2026-10-15): 前收。提供时强制**涨停不成交**
+        # (CLAUDE.md §3 Reality Mapping:涨停封板无法买入)。None → 跳过检查
+        # (best-effort 回退,与 chase_up/uptrend/short_reversal 同口径)。
+        prev_close: float | None = None,
     ) -> PositionState | None:
         if self._pos is not None:
             return None
         if price <= 0:
+            return None
+        # §4: 涨停开盘拒绝(执行层的物理不可成交约束)
+        if is_limit_up(
+            prev_close=prev_close,
+            open_price=price,
+            threshold=self.is_limit_up_threshold,
+        ):
             return None
         # Round 10 (2026-09-28, CLAUDE.md §2): NAV-floor cash gate。
         # 当 NAV (cycle 单仓策略, NAV = self.cash, 因为 self._pos is None 守卫
@@ -231,7 +360,7 @@ class Portfolio:
         # (locked_margin grows) but self.cash stays at initial value →
         # sizing over-allocates → reserve_for_entry fail-fast "cost >
         # free_cash". Fix: gate against free_cash directly.
-        lots = int(self.free_cash // (price * 100))
+        lots = int(self.free_cash * self.position_fraction // (price * 100))
         if lots < 1:
             return None
         shares = lots * 100
@@ -253,9 +382,22 @@ class Portfolio:
         # 单笔最大成交量 = Bar_Volume × MAX_VOL_PARTICIPATION, 超出丢弃 (不挂单)。
         # 这是 CLAUDE.md §4 "Max_Fill_Qty = MIN(Order_Qty, Bar_Volume * 0.10)"
         # 防止小票大单砸穿市场、产生 slippage / market impact。
-        if bar_volume is not None and not _is_nan(bar_volume) and bar_volume > 0:
-            max_fill = int(bar_volume * self.MAX_VOL_PARTICIPATION // 100) * 100
-            if max_fill > 0 and shares > max_fill:
+        # §4/§0 (audit 2026-10-15): `bar_volume > 0` 这个条件**去掉**。
+        # 它把"零成交"(= helper 返回 0,即 §4 的 `MIN(Target, 0)`)与"无 volume 列"
+        # 混为一谈,于是零成交 bar 上订单**不限量** —— 与 §0"对流动性取最坏情形"相反。
+        # 现在:None/NaN 才是"无列兼容"(跳过约束);零成交走 helper → max_fill=0 →
+        # `shares < 100` → 如实拒单。
+        if bar_volume is not None and not _is_nan(bar_volume):
+            # §4 (2026-10-15): 改用规范 `volume_cap_fill`。旧式写法先把
+            # `bar_volume × pct` 除以 100 取整、再乘回 100 —— 当
+            # `bar_volume × pct < 100` 时结果为 **0**,`max_fill > 0` 守卫随之被跳过,
+            # 薄量 bar 上的下单**完全不受约束**(liquidity illusion: 小票照样砸出
+            # 巨量成交)。规范助手在此情形下至少返回 1 lot,由调用方决定成交或拒绝
+            # (与 chase_up / uptrend_pullback / short_reversal 同口径)。
+            max_fill = volume_cap_fill(
+                bar_volume, self.max_volume_participation, lot_size=100
+            )
+            if shares > max_fill:
                 shares = max_fill
                 cost = self._buy_cost(price, shares)
                 if cost > self.free_cash + 1e-9 or shares < 100:
@@ -304,6 +446,28 @@ class Portfolio:
         self._pos = None
         return proceeds
 
+    def exit_blocked_by_limit_down(
+        self, prev_close: float | None, open_price: float
+    ) -> bool:
+        """§4 卖方跌停 no-fill:封板日**卖不出去**。
+
+        `a sell/cover on a limit-down-sealed bar MUST be rejected (no fill)`。
+        长仓出场是一次 SELL ⇒ 与入场侧的涨停不可成交(`try_enter` 的 `is_limit_up`)
+        互为镜像,且按 `test_cycle_limit_up_guard_lives_in_the_execution_layer`
+        的 §6 裁定,**同属执行层**,故放在同一个类里、只实现一次。
+
+        此前 cycle 全包**零处** `is_limit_down`,而 chase_up(portfolio.py 的出场路径) 与
+        uptrend_pullback(同上) 都有这道门 —— 于是 cycle 的出场阶梯会在一个
+        物理上取不到的价位上"卖出"。
+        """
+        if prev_close is None:
+            return False
+        return is_limit_down(
+            float(prev_close),
+            float(open_price),
+            threshold=self.is_limit_down_threshold,
+        )
+
     def try_exit_with_intraday_check(
         self,
         exit_date: date,
@@ -313,6 +477,9 @@ class Portfolio:
         close: float,
         tp_pct: float,
         sl_pct: float,
+        # §4 (附五十六): 前收。提供时强制**跌停不成交**(与 try_enter 的
+        # prev_close 参数镜像);None → 跳过检查(best-effort,与入场侧同口径)。
+        prev_close: float | None = None,
     ) -> tuple[float, str]:
         """V6'' (2026-09-22, CLAUDE.md §4): Daily-bar SL-first tiebreak exit.
 
@@ -349,6 +516,11 @@ class Portfolio:
                 f"intraday_tiebreak must be 'sl_first' (CLAUDE.md §4), "
                 f"got {self.intraday_tiebreak!r}"
             )
+        # §4 (附五十六): 封板日**不能卖** ⇒ 本 bar 不做任何出场(含 time)。
+        # 返回专用 reason,由引擎据此跳过本 bar 的全部出场判定。
+        if self.exit_blocked_by_limit_down(prev_close, open_price):
+            return 0.0, "limit_down"
+
         entry = self._pos.entry_price
         tp_p = entry * (1 + tp_pct)
         sl_p = entry * (1 - sl_pct)
@@ -363,6 +535,21 @@ class Portfolio:
             fill, reason = float(tp_p), "TP"
         else:
             fill, reason = float(close), "time"
+
+        # §2/§6 (audit P0-2b / B6, 2026-10-15): `time` = **未出场**。
+        #
+        # 本方法是"检查并出场",但 SLA/TP 以外的分支**不该提交成交** —— 调用方
+        # (backtrader_engine.next) 明确只在 `reason in ("SL","TP")` 时重置
+        # `_entry_day`,并注释 "reason == 'time' → fall through to max_hold
+        # check below"。而被调方此前在 time 分支也无条件写 closed_trades、清
+        # `self._pos` —— 于是:
+        #   - 持仓在第一根未触发 SL/TP 的 bar 就被强平;
+        #   - 调用方的 max_hold 分支成为**死代码**(`_pos` 已为 None);
+        #   - `_entry_day` 与实际持仓状态不一致。
+        # 即调用方与被调方的契约矛盾。此处把提交动作限定在真正触发的分支,
+        # 与调用方语义对齐;时间出场由调用方的 max_hold 分支经 try_exit() 完成。
+        if reason == "time":
+            return fill, reason
 
         gross_in = self._buy_cost(entry, self._pos.shares)
         net_out = self._sell_proceeds(fill, self._pos.shares)

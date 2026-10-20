@@ -123,18 +123,44 @@ def test_exit_fee_enforces_min_commission_floor_small_notional() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_trace_entry_fee_enforces_min_commission_floor() -> None:
-    """§0 MEDIUM: TraceStrategy._fill_pending_entries inherits the floor gap."""
+def test_trace_entry_fee_comes_from_production_path_with_floor() -> None:
+    """§0 MEDIUM: trace 的 entry_fee 必须取自生产路径(含 MIN_COMMISSION floor)。
+
+    审计 P3 (2026-10-15): 原用例对 `TraceStrategy._fill_pending_entries` 做源码
+    正则,找 `max(min_commission, ...)`。但该方法当时是生产入场逻辑的**分叉
+    副本** —— 正因为它自己重算了一遍,才需要自己实现 floor(也正因为它分叉,
+    `reserve_for_entry` 没被调用,导致 `locked_margin` 恒为 0、引擎在每笔建仓后
+    被融券费 fail-fast 打死,三个窗口不变量用例常年 ERROR)。
+
+    该方法现已改为**薄包装**:委托 `super()._fill_pending_entries()`,入场费由
+    生产路径计算并写入持仓字典,floor 由生产实现负责;trace 只读取。因此断言
+    落在真实位置上:
+      (a) trace 必须委托生产实现(不得再有副本);
+      (b) trace 读取的 `entry_fee` 来自持仓字典(即生产写入的那个值);
+      (c) 生产实现本身确实施加 floor。
+    """
     from short_reversal.lookahead_trade_trace import TraceStrategy
+
     block = _method_source_block(TraceStrategy, "_fill_pending_entries")
-    has_floor = bool(re.search(
-        r"max\s*\(\s*(?:self\.p\.min_commission|MIN_COMMISSION)",
-        block,
-    ))
-    assert has_floor, (
-        "§0/§3 VIOLATION: lookahead_trade_trace.TraceStrategy._fill_pending_entries "
-        "entry_fee does NOT enforce MIN_COMMISSION floor. Trace report "
-        "systematically undercharges per-trade fee on small-notional trades."
+    assert "super()._fill_pending_entries()" in block, (
+        "§6 VIOLATION: TraceStrategy._fill_pending_entries 必须委托生产实现,"
+        "不得再是分叉副本(副本会导致 harness 测的不是生产行为)。"
+    )
+    assert not re.search(
+        r"entry_fee\s*=\s*\(", block
+    ), "§6 VIOLATION: TraceStrategy 仍在自行重算 entry_fee"
+
+    close_block = _method_source_block(TraceStrategy, "_close")
+    assert re.search(r"pos\.get\(\s*[\"']entry_fee[\"']", close_block), (
+        "§0/§3: trace 的 entry_fee 必须取自持仓字典(生产路径写入),"
+        "而不是自行重算 —— 否则脱离 MIN_COMMISSION floor 与 stamp duty 口径。"
+    )
+
+    prod_block = _method_source_block(Phase3V3Strategy, "_fill_pending_entries")
+    assert re.search(
+        r"max\s*\(\s*(?:self\.p\.min_commission|MIN_COMMISSION)", prod_block
+    ), (
+        "§0/§3 VIOLATION: 生产入场路径 entry_fee 未施加 MIN_COMMISSION floor。"
     )
 
 

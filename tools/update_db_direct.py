@@ -21,10 +21,19 @@ import argparse
 import os
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import duckdb
 import requests
+
+#: §0 (audit 2026-10-15, 时间确定性): 交易所时区固定为 **UTC+8**(A 股,无夏令时)。
+#:
+#: 原实现把日期与毫秒时间戳互转时用的是**本机时区** —— `datetime.strptime(...)`
+#: 得到 naive datetime,其 `.timestamp()` 按本地时区解释;反方向的
+#: `datetime.fromtimestamp(...)` 同样按本地时区还原。后果是**同一份 API 负载在
+#: 不同机器上会落成不同的 bar 日期**(UTC 与 UTC+8 机器可差一天),直接违反 §0
+#: 「把时间戳归一到单一交易所时区」。CLAUDE.md §0 的可复现性要求里这一条是明写的。
+EXCHANGE_TZ = timezone(timedelta(hours=8))
 
 
 def _require_env(name: str) -> str:
@@ -35,8 +44,17 @@ def _require_env(name: str) -> str:
 
 
 def to_ms(date_str: str) -> int:
-    dt = datetime.strptime(date_str, "%Y-%m-%d")
+    """交易日 → epoch ms,以**交易所时区**当日 00:00 为基准(与本机时区无关)。"""
+    dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=EXCHANGE_TZ)
     return int(dt.timestamp() * 1000)
+
+
+def from_ms(ms: int) -> str:
+    """epoch ms → 交易日字符串,按**交易所时区**还原(与本机时区无关)。
+
+    与 `to_ms` 构成往返:`from_ms(to_ms(d)) == d`,且两者都不依赖 TZ 环境变量。
+    """
+    return datetime.fromtimestamp(ms / 1000, tz=EXCHANGE_TZ).strftime("%Y-%m-%d")
 
 
 def fetch_historical(
@@ -75,6 +93,19 @@ def fetch_historical(
                 raise
             time.sleep(1)
     raise RuntimeError(f"failed after {max_retries} retries: {last_err}")
+
+
+def update_verdict(inserted: int, skipped: int, errors: int) -> tuple[int, str]:
+    """本工具的口径 —— 委托给共享实现 `core.cli_verdict`(§0 单一实现)。
+
+    `attempted = inserted + skipped`(有数据回包的目标数),`succeeded = inserted`。
+    """
+    from core.cli_verdict import cli_verdict
+
+    return cli_verdict(
+        failures=errors, attempted=inserted + skipped, succeeded=inserted,
+        what="行情库更新",
+    )
 
 
 def main() -> int:
@@ -134,7 +165,7 @@ def main() -> int:
         to_insert = []
         for r in rows:
             try:
-                date_str = datetime.fromtimestamp(r["date_ms"] / 1000).strftime("%Y-%m-%d")
+                date_str = from_ms(r["date_ms"])
                 to_insert.append((
                     code, date_str,
                     float(r["open_price"]), float(r["high_price"]),
@@ -180,7 +211,12 @@ def main() -> int:
     print(f"  max(date): {cur_max} -> {new_max}")
     print(f"  elapsed:   {time.time() - t0:.0f}s")
     con.close()
-    return 0
+
+    # §0 (附六十三): 结论落在**退出码**上 —— 部分失败必须非零,否则 pipeline 会把
+    # 一次半更新当成成功,下游回测随即读到不一致的行情库。
+    code, msg = update_verdict(inserted, skipped, errors)
+    print(f"\n[update_db_direct] {msg}")
+    return code
 
 
 if __name__ == "__main__":

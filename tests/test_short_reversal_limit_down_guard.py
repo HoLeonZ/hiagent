@@ -161,7 +161,7 @@ def test_short_reversal_skips_limit_down_open(monkeypatch: pytest.MonkeyPatch) -
     # Round 14 (2026-09-28): min_cash_ratio 默认 None (fail-fast)。测试直接调用
     # strategy 时必须显式传 0.05 才能跑过 cash gate (line 369) 进入 limit-down 守卫。
     cerebro.addstrategy(
-        Phase3V3Strategy, result_holder=holder, min_cash_ratio=0.05,
+        Phase3V3Strategy, result_holder=holder, nav_gate_ratio=0.05,
     )
     results = cerebro.run()
     strat = results[0]
@@ -213,7 +213,7 @@ def test_short_reversal_accepts_normal_open(monkeypatch: pytest.MonkeyPatch) -> 
     # Round 14 (2026-09-28): min_cash_ratio 默认 None (fail-fast)。测试直接调用
     # strategy 时必须显式传 0.05 才能跑过 cash gate (line 369) 进入 limit-down 守卫。
     cerebro.addstrategy(
-        Phase3V3Strategy, result_holder=holder, min_cash_ratio=0.05,
+        Phase3V3Strategy, result_holder=holder, nav_gate_ratio=0.05,
     )
     results = cerebro.run()
     strat = results[0]

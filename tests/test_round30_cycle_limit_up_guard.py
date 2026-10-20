@@ -46,43 +46,29 @@ def _read(path: str | Path) -> str:
     return Path(path).read_text()
 
 
-def test_cycle_engine_has_limit_up_guard_in_next() -> None:
-    """§3 RED→GREEN: CyclePriceActionStrategy.next must call is_limit_up()
-    (or compute the equivalent (open/prev_close - 1) >= threshold check)
-    BEFORE the try_enter call in the entry branch."""
-    src = _read(CYCLE_ENGINE)
-    # Check that the strategy next() method mentions is_limit_up
-    has_is_limit_up_call = bool(re.search(r"is_limit_up\s*\(", src))
-    # Or check for the inline equivalent
-    has_inline_check = bool(re.search(
-        r"(?:open|o|bar\[.open.\])\s*/\s*(?:prev_close|pc|close\[-1\]|self\.datas\[0\]\.close\[-1\])",
-        src,
-    ))
-    assert has_is_limit_up_call or has_inline_check, (
-        "§3 VIOLATION: cycle_price_action is the ONLY engine without an "
-        "entry-time is_limit_up guard. Entering at limit-up open would "
-        "generate phantom PnL — the stock cannot be purchased at limit-up "
-        "(no shares available)."
+def test_cycle_limit_up_guard_lives_in_the_execution_layer() -> None:
+    """§6 单层归属:涨停不可成交是**执行**约束 → 归 Portfolio。
+
+    audit P3 (2026-10-15): 本文件原断言守卫必须在 `strategy.next()` 里,而
+    `test_cycle_limit_up_guard.py` 同时断言它必须在 `Portfolio.try_enter()` 里 ——
+    **两个测试文件对归属层互相矛盾**。§6 要求一条规则只有一处归属,否则两处会各自
+    演化;而另外三个引擎都在 portfolio 层。故以执行层为准,本处改为钉住:
+      (a) 执行层确实实现该守卫(`portfolio.py` 调用 core 的 is_limit_up),且
+      (b) 生产路径确实把 prev_close 传下去 —— 否则守卫不可达(与窗口门同款教训)。
+    行为由 tests/test_cycle_limit_up_guard.py 的 4 条用例覆盖。
+    """
+    engine_src = _read(CYCLE_ENGINE)
+    assert re.search(r"prev_close\s*=\s*prev_close", engine_src), (
+        "§4 VIOLATION: 引擎未把 prev_close 传给 try_enter —— "
+        "执行层的涨停守卫在生产路径上不可达"
     )
-
-
-def test_cycle_engine_limit_up_before_try_enter() -> None:
-    """§3 structural: limit-up guard must execute BEFORE try_enter call."""
-    src = _read(CYCLE_ENGINE)
-    # Find positions of is_limit_up call (if any) and try_enter call
-    m_limit = re.search(r"is_limit_up\s*\(", src)
-    m_try = re.search(r"\.try_enter\s*\(", src)
-    if m_limit is None or m_try is None:
-        pytest.fail(
-            "§3 VIOLATION: cycle_price_action has no is_limit_up guard "
-            "before try_enter — see test_cycle_engine_has_limit_up_guard_in_next."
-        )
-    assert m_limit.start() < m_try.start(), (
-        "§3 VIOLATION: is_limit_up guard must execute BEFORE try_enter. "
-        f"Found is_limit_up at offset {m_limit.start()} but try_enter at "
-        f"offset {m_try.start()}."
+    port = (ROOT / "cycle_price_action" / "portfolio.py").read_text(encoding="utf-8")
+    assert "is_limit_up" in port, (
+        "§4 VIOLATION: Portfolio 未实现涨停守卫(§6:该规则归属执行层)"
     )
-
+    assert re.search(r"if is_limit_up\(", port), (
+        "§4 VIOLATION: Portfolio 里 is_limit_up 存在但未用于拒绝入场"
+    )
 
 def test_cycle_engine_threshold_param_overridable() -> None:
     """§3 forward-defense: limit-up threshold should be exposed via params

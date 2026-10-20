@@ -32,7 +32,13 @@ def mixed_db(tmp_path):
                 volume DOUBLE, amount DOUBLE
             )
         """)
-        dates = pd.date_range("2025-01-01", "2025-09-30", freq="B")
+        # §1 (audit P1-C2, 2026-10-15): 数据起点前移,使 `start=2025-03-01`
+        # 之前有 >=60 个交易日的历史。流动性门 (lookback=60) 的均值只允许
+        # 用 as_of(=start) 之前的成交额 —— 这是 §1 AsOf 规则的要求,也是本
+        # 仓库的既定设计(见 test_cycle_survivorship_bias 的 pre-window pad)。
+        # 原 fixture 从 2025-01-01 起,因果窗口内仅约 42 个交易日,不满足
+        # 该门的既有前置条件,会被全部剔除 → 宇宙为空。
+        dates = pd.date_range("2024-06-03", "2025-09-30", freq="B")
         rows: list[tuple] = []
         # Healthy stock: monotonic uptrend
         for i, d in enumerate(dates):

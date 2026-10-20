@@ -1,7 +1,7 @@
 """v5 - 在 v33_long_reverse 最优点附近精扫,找 Pareto front。
 
 目标 (v33_long_reverse 基准):
-  CAGR 280.27% | Sharpe 2.704 | DD 34.27% | Win 38.60% | PF 1.629 | Trades 57
+  CAGR / Sharpe / DD / Win / PF / Trades —— 数值已按 §7 清除;请以当前代码重算
 
 优化方向:
   - 信号收紧 (min_above_ma60_ratio↑): Win rate↑ / PF↑
@@ -34,8 +34,12 @@ from hiagent_config import DB_PATH
 from uptrend_pullback.backtest import compute_metrics
 from uptrend_pullback.data import load_panel
 from uptrend_pullback.portfolio import simulate_portfolio
-from uptrend_pullback.signals import compute_indicators, select_entries_v33_long_mirror
+from uptrend_pullback.signals import compute_indicators, select_entries_for_preset
 from dna_stats.deflated import deflated_sharpe_ratio
+from core.walkforward import window_trading_days  # §5 窗口交易日数单源 (附八十一)
+from core.sweep_axes import (  # §0 网格是否真的在扫 (附八十七)
+    DEFAULT_METRIC_KEYS, collapsed_grid_warning,
+)
 from uptrend_pullback.universe import load_universe
 
 START, END = "2025-09-16", "2026-09-16"
@@ -59,12 +63,10 @@ def sweep(base: dict, grid: dict, panel_ind) -> pd.DataFrame:
         for k, v in combo.items():
             _set(cfg, k, v)
 
-        sig_kwargs = {k: v for k, v in cfg["signal"].items() if k != "entry_mode"}
-        entries = select_entries_v33_long_mirror(
-            panel_ind,
-            start_date=START, end_date=END,
-            regime_df=None,
-            **sig_kwargs,
+        # §6 单源 (附一百零九):分派与 `entry_mode` 过滤收在
+        # `signals.select_entries_for_preset` —— 此前这一段在 11 处各写一遍。
+        entries = select_entries_for_preset(
+            panel_ind, signal=cfg["signal"], start_date=START, end_date=END,
         )
         if entries.empty:
             continue
@@ -217,21 +219,51 @@ def main():
                 show5[c] = show5[c].round(2)
     print(show5[cols].to_string(index=False))
 
+    # §0 (附八十七): 网格有没有**真的在扫** —— 塌掉的轴不许被当成敏感性表。
+    # 实测本仓库出过两条:①键名漏了 `signal.` 前缀(顶层写法不会被传给信号函数);
+    # ②变的是被 base 里别的键**盖住**的参数(atr 模式下的 tp_pct/sl_pct)。
+    # 判据落在**观测**(所有 combo 结果是否逐位相同),不依赖对引擎的知识。
+    _collapsed = collapsed_grid_warning({"grid": df.to_dict("records")}, DEFAULT_METRIC_KEYS)
+    if _collapsed:
+        print(_collapsed)
+
     # CLAUDE.md §5 Penalty Metrics: 多 trial sweep 必须报告 DSR
     if not df.empty and "sharpe" in df.columns:
         sharpes = df["sharpe"].dropna().tolist()
         if sharpes:
             observed = max(sharpes)
+            # §5 (附八十二): `n_trials` 是"**试过多少个配置**",不是"有多少个配置产出了信号"。
+            # `sweep()` 对没信号的 combo 直接 `continue`(**不落行**)⇒ `len(sharpes)` 少计
+            # ⇒ E[max] 偏小 ⇒ **DSR 偏乐观**。§5 Iterative-Tuning Accounting 的原话是
+            # "每一次迭代都计入" —— 网格**枚举出 combo 就是在算它的信号**,故枚举数才是
+            # "试过多少"。(`observed` 仍取成功者的最大:选择只在有数的配置间发生。)
+            _n_tried = len(list(itertools.product(*grid.values())))
+            _n_ok = int(len(sharpes))
             dsr = deflated_sharpe_ratio(
-                observed_sharpe=observed, n_trials=len(sharpes), n_returns=252
+                observed_sharpe=observed, n_trials=_n_tried, n_returns=window_trading_days(panel, START, END)
             )
             print(
                 f"\n§5 DSR | observed_sharpe={observed:.3f} | "
-                f"n_trials={len(sharpes)} | "
+                f"n_trials={_n_tried} | "
                 f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
                 f"expected_max={dsr['expected_max_sharpe']:.3f} | "
-                f"p_value={dsr['p_value']:.4f}"
+                f"p_value={dsr['dsr_p_value']:.4f}"
             )
+            # §5 (附九十六): 单一窗口选优**必须自己说清楚** ——
+            # 与 附十七 给 chase 两个脚本加的那条同形;那回只覆盖了看到的两处,
+            # 本族六个脚本一直没声明(实测:全库 11 个网格脚本里 8 个无声明)。
+            print(
+                f"  ⚠️ in-sample selection:本榜是在单一窗口 {START} → {END} 上\n"
+                f"     从 {_n_ok} 个配置里选出的。DSR 不能替代样本外验证 ——\n"
+                f"     要把某个 config 当结论,请用滚动窗口的 uptrend_pullback/wfv_eval.py,\n"
+                f"     或在本榜**未参与选择**的窗口上复跑(§5 WFV)。"
+            )
+            if _n_tried != _n_ok:
+                print(
+                    f"  ⚠️ 其中 {_n_tried - _n_ok} 个配置**没产出信号**"
+                    f"(sweep 里 `entries.empty → continue`)—— 它们同样计入 n_trials"
+                    f"(§5:每次迭代都算)"
+                )
 
 
 if __name__ == "__main__":

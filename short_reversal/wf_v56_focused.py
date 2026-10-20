@@ -15,6 +15,12 @@ sys.path.insert(0, str(ROOT))
 from short_reversal.engine import run_backtest_v3  # noqa: E402
 from dna_stats.deflated import deflated_sharpe_ratio  # noqa: E402
 from hiagent_config import DB_PATH  # noqa: E402
+from short_reversal.presets import get_preset  # §5: 取 n_comparisons
+
+# §5 (附六十): 这里曾有一个 `WINDOW_TRADING_DAYS = 126` 常数(注释写"6 个月窗口 ≈ 126 个交易日")。
+# 但本脚本的窗口长度是 **2 个月**(见 WINDOWS 的构造),126 与之不符 ⇒ T 被高估约 3 倍,
+# DSR 的 `sqrt(T-1)` 随之变大 ⇒ **DSR 系统性偏乐观**(危险方向)。
+# 现改为取**每个窗口实际跑出来的** `n_trading_days`(引擎随 metrics 发布),缺则 fail-fast。
 
 WINDOWS = [
     ("2024-09-18", "2025-03-18"),
@@ -31,6 +37,7 @@ def main():
         raise SystemExit(f"preset {preset!r} not in PRESETS")
     print(f"=== {preset} walk-forward ===")
     sharpes: list[float] = []
+    t_days: list[int] = []   # §5: 每个窗口的**真实**收益观测数 T
     yields: list[float] = []
     dds: list[float] = []
     for s, e in WINDOWS:
@@ -39,6 +46,7 @@ def main():
         dt = time.time() - t0
         yield_actual = m["total_yield"] * 100
         sharpes.append(float(m["sharpe"]))
+        t_days.append(int(m["n_trading_days"]))   # §5 fail-fast:缺即 KeyError
         yields.append(yield_actual)
         dds.append(m["max_dd"] * 100)
         print(f"  [{dt:>5.1f}s] {s} → {e}  n={m['trades_count']:>4} "
@@ -47,10 +55,32 @@ def main():
               f"TP/SL/T={m['tp_count']}/{m['sl_count']}/{m['time_count']}",
               flush=True)
     if sharpes:
-        observed = max(sharpes)
-        n_trials = 31  # v56 sweep: 28 v55 + 3 v56 = 31
+        # §5 (audit 2026-10-15): DSR 的输入必须与 n_trials 描述**同一次选择**。
+        # 此前是 `observed = max(sharpes)` —— 对**窗口**取最大,而 n_trials 计的是
+        # **配置**数(n_comparisons)。分子="最好的那一个窗口",分母="试过多少配置",
+        # 两者不是同一次选择,于是**窗口那一层选择完全没有被折减**。
+        # 这与 deflated_sharpe_ratio 的契约直接冲突(docstring 原文:n_trials 是
+        # "selecting the best Sharpe from k trials" 里的 k)。
+        # 现取**跨窗口均值**(WFV 的无偏汇总),n_trials 仍为配置数 —— 分子分母
+        # 描述同一次选择。逐窗口数值在上面已逐行打印,信息不丢失。
+        observed = sum(sharpes) / len(sharpes)
+        best_window_sharpe = max(sharpes)
+        # §5 (audit P3, 2026-10-15): 改为**消费** preset 声明的累计试验数,而不是
+        # 在脚本里再写一份。此处原本硬编码 `31  # 28 v55 + 3 v56`,而 v56 的 preset
+        # 已声明 `n_comparisons=31` —— 同一个数两处维护,必然漂移;该字段此前被声明
+        # 却无消费者,正是本文件在给它的用途打补丁。
+        _cfg = get_preset(preset) if isinstance(preset, str) else preset
+        # §5 (附六十): T 必须来自本次运行,不许用常数兜底。
+        _observed_t = int(round(sum(t_days) / len(t_days)))
+        # 附八十一: 这里原先**只在调用点内联** `int(_cfg["n_comparisons"])`,而下面的
+        # 摘要 f-string 却打印裸名 `{n_trials}` —— 那个名字**从未绑定** ⇒ 摘要一打印就
+        # NameError,整条脚本跑不完(与其他 wf_* 脚本不同:那些打印的是表达式)。
+        # 现绑成变量,调用点与打印**同源**。
+        n_trials = int(_cfg["n_comparisons"])
         dsr = deflated_sharpe_ratio(
-            observed_sharpe=observed, n_trials=n_trials, n_returns=126,
+            observed_sharpe=observed,
+            n_trials=n_trials,
+            n_returns=_observed_t,
         )
         avg_yield = sum(yields) / len(yields)
         max_dd_peak = max(dds)
@@ -58,7 +88,7 @@ def main():
             f"\n=== {preset} WF summary ==="
             f"\n  4 windows: avg yield={avg_yield:>+8.2f}%  peak DD={max_dd_peak:>5.1f}%"
             f"\n  win count: {sum(1 for y in yields if y > 0)}/4 positive"
-            f"\n  §5 DSR: observed_sharpe={observed:.3f} | n_trials={n_trials} | "
+            f"\n  §5 DSR: mean_oos_sharpe={observed:.3f} | best_window={best_window_sharpe:.3f}(选中值,不作显著性输入) | n_trials={n_trials} | "
             f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
             f"expected_max={dsr['expected_max_sharpe']:.3f} | "
             f"p_value={dsr['dsr_p_value']:.4f}"

@@ -42,6 +42,17 @@ from hiagent_config import DB_PATH  # noqa: E402
 from uptrend_pullback.presets import MAX_HOLD_LIMIT, get_preset  # noqa: E402
 from uptrend_pullback.walkforward import monthly_windows, run_windows  # noqa: E402
 
+# §5 (附六十六): 这里原有 `WINDOW_TRADING_DAYS_PER_MONTH = 21`,把 T 估成
+# `21 × window_months`,理由写的是"取自仓库既有口径:walk-forward 家族用 6 个月 =
+# 126 个交易日,即 126/6 = 21"。
+#
+# 那个"既有口径"**本身就是一个猜**(见附六十:`126` 被当成"6 个月"写死,而窗口长度是
+# CLI 参数)—— 于是这里用**另一个猜**给这个猜背书。两个数都不是从运行里来的。
+# 实测偏差:A 股实际月均 ≈ 20.25 个交易日(243/12)⇒ T 约 **+4% 偏乐观**
+# (与附三十二 那次 252 vs 242 同量级、同方向)。
+#
+# 现直接取引擎发布的真实观察数 `n_daily_returns`(附六十六),不再估。
+
 logger = logging.getLogger(__name__)
 
 
@@ -113,6 +124,20 @@ def sample_preset(base: dict, rng: random.Random) -> dict:
     if cfg["max_hold"] > MAX_HOLD_LIMIT:
         cfg["max_hold"] = MAX_HOLD_LIMIT
     return cfg
+
+
+def _mean_window_returns(windows: list[dict]) -> int | None:
+    """各窗口 `n_daily_returns` 的均值(四舍五入)—— 即 DSR 的 T。
+
+    **取均值而不是求和**:2 月窗 / 1 月步之间**重叠**,相加会把不独立的东西当独立、
+    反而低估标准误;单窗口径在方向上偏保守,符合 §0(与附六十/六十四 同口径)。
+
+    窗口缺该键 ⇒ 返回 None(由调用方 fail-fast,**不许用"每月天数 × 月数"的估计兜底**)。
+    """
+    ts = [int(w["n_daily_returns"]) for w in windows if w.get("n_daily_returns") is not None]
+    if not ts:
+        return None
+    return int(round(sum(ts) / len(ts)))
 
 
 def score_windows(
@@ -195,6 +220,10 @@ def main() -> None:
     print(f"[base] v33_long_reverse_v19 (current Pareto opt)")
 
     rows: list[dict] = []
+    # §5 (附八十二): 失败的迭代**没有进 rows**(下一段 `continue`),但它**是一次迭代**
+    # —— 配置被采样、被送去评分,搜索为它花了预算。§5 Iterative-Tuning Accounting 的原话
+    # 是"每一次迭代都计入",故单独计数,最后并入 n_trials。
+    n_errors = 0
     t_start = time.time()
     for i in range(args.iter):
         cfg = sample_preset(base, rng)
@@ -204,6 +233,7 @@ def main() -> None:
         if "error" in res:
             if not args.quiet:
                 print(f"  [{i+1:>3}/{args.iter}] [{dt:>5.1f}s] ERR: {res['error']}", flush=True)
+            n_errors += 1
             continue
         row = {
             "iter": i + 1,
@@ -220,6 +250,9 @@ def main() -> None:
             "n_total": res["n_total"],
             "avg_trades": res["avg_trades"],
             "elapsed_s": dt,
+            # 附六十六:把该配置的**窗口观测数**在评分时就折成一个标量带上
+            # (row 是从 res 里挑键重建的,原来的 `windows` 明细不会进 row)。
+            "n_daily_returns": _mean_window_returns(res.get("windows") or []),
         }
         rows.append(row)
         if not args.quiet and ((i + 1) % 5 == 0 or i + 1 == args.iter):
@@ -253,6 +286,68 @@ def main() -> None:
             f"{r['sharpe_med']:>+7.2f} {r['avg_dd']*100:>+8.2f} "
             f"{r['worst_dd']*100:>+10.2f} {r['n_pos']:>4} {r['avg_trades']:>7.2f}",
         )
+
+    # ================= §5 Penalty Metrics =================
+    # (audit 2026-10-15) 这是一个**多 trial 搜索**(默认 100 次迭代),而此前它只打印
+    # TOP-K、**没有任何惩罚指标** —— 违反 §5 verbatim:
+    #   "Evaluation scripts must output DSR or apply Bonferroni corrections when
+    #    reporting backtest results from multi-parameter sweeps."
+    # 同仓库的姊妹脚本 `uptrend_pullback/sweep_v33_long.py` 是有的,这个漏了。
+    #
+    # 口径(与仓库既有约定一致):
+    #   observed = **被选中那个配置**的窗口中位 Sharpe(即 rank-1 那一行);
+    #   n_trials = **试过的配置数** = 评出分的 + 评分时崩掉的(§5 Iterative-Tuning
+    #              Accounting 要的是累计试验数,不是窗口数)。
+    #   (附八十二 更正:此处原为 `len(rows)`,理由是"失败的迭代并没有被评分"——
+    #    这句话只对了一半:它确实没有**分数**,但它**被采样、被送进评分器**,
+    #    是一次已付出的尝试。§5 的原话是"每一次迭代都计入";同仓库另 10 处同形状
+    #    的少计也一并改了。`n_returns`/`observed` 不变 —— 选择只在**有数的**配置间发生。)
+    #   注:`args.iter` 仍不是正确答案:循环内的显式跳过与提前退出会让"枚举数"虚高,
+    #    只有"评出分 + 崩掉"才是真实尝试数。
+    #   n_returns = 单窗交易日数。
+    #
+    # ⚠️ 仍须说清楚:TOP-K 是在**同一批窗口**上选出来的(selection in-sample)。
+    # DSR 量化的正是"从 k 个配置里挑最好"带来的虚高,但**它不能代替样本外验证**。
+    # 要把某个 config 当作结论,必须另外跑 OOS —— **本仓库目前没有"代码强制的划分"**:
+    # `wfv_eval.py` 的窗口来自 monthly_windows(滚动、无 train/test),它的 OOS 靠
+    # 操作者自己换 --start-month/--end-month 并声明 --window-role holdout(附七十四
+    # 更正:此前这里写的是"见 wfv_eval.py 的 train/test 划分" —— **那个东西不存在**)。
+    try:
+        from dna_stats.deflated import bonferroni_correct, deflated_sharpe_ratio
+
+        observed = float(rows[0]["sharpe_med"])
+        n_trials = len(rows) + n_errors
+        # 附六十六:T 取自本次运行(每个窗口的 `n_daily_returns`,引擎发布;
+        # 见 uptrend_pullback/backtest.py),在评分时已折成标量带上。
+        n_returns = rows[0].get("n_daily_returns")
+        if n_returns is None:
+            raise ValueError(
+                "§5: 取不到窗口的真实观察数(n_daily_returns)—— 不许用"
+                "「每月天数 × 月数」的估计兜底,那正是本项要修的缺陷(附六十六)"
+            )
+        dsr = deflated_sharpe_ratio(
+            observed_sharpe=observed, n_trials=n_trials, n_returns=n_returns,
+        )
+        bonf = bonferroni_correct(
+            p_values=[dsr["dsr_p_value"]], n_comparisons=n_trials,
+        )
+        print(
+            f"\n§5 DSR(rank-1 配置) | observed_sharpe={observed:+.3f} | "
+            f"n_trials={n_trials}(试过的配置数:评出分 {len(rows)} + 崩掉 {n_errors}) | "
+            f"deflated_sharpe={dsr['deflated_sharpe']:.3f} | "
+            f"expected_max={dsr['expected_max_sharpe']:.3f} | "
+            f"raw_p={dsr['dsr_p_value']:.4f} | "
+            f"bonferroni_p={float(bonf[0]):.4f}"
+        )
+        print(
+            f"  ⚠️ in-sample selection:TOP-K 是在上面这 {len(windows)} 个窗口上选出的。\n"
+            f"     DSR 只量化「从 {n_trials} 个配置里挑最好」的虚高,**不等于**样本外验证 ——\n"
+            f"     要把某个 config 当结论,请另跑 uptrend_pullback/wfv_eval.py,"
+            f"换一段 --start-month/--end-month 并声明 --window-role holdout"
+            f"(本仓库没有代码强制的 train/test 划分)。"
+        )
+    except ImportError as exc:  # pragma: no cover - 仅在缺 dna_stats 时
+        print(f"\n[!] §5 惩罚指标不可用({exc})—— 结果**不得**作为结论引用")
 
     # 输出 top-K 参数对比
     print("\n=== TOP-{} preset diff vs v19 base ===".format(args.top))

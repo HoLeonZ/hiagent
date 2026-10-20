@@ -12,10 +12,16 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from pathlib import Path
 
 import duckdb
 import pandas as pd
+
+# 附一百零八: 让本脚本能作为**脚本**直接跑(此前缺 sys.path 前导,
+# 直接 `python3 uptrend_pullback/bt_compare_presets.py` 会在 import 阶段就 ModuleNotFound)。
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
 from hiagent_config import DB_PATH
 
@@ -135,6 +141,18 @@ def main():
     print(f"[window] {args.start} .. {args.end}")
 
     # 一次加载 panel + indicators,所有 preset 复用
+    # §5 (附一百零八): 把**失败原因与由来**一并给出,而不是抛裸 KeyError。
+    # `v33_long_reverse_v3` 是在提交 4b7eab0("iter #2 CLAUDE.md fixes")中被**裁剪**的
+    # (删除而非重命名 ⇒ 不存在可安全回指的替代名)。登记在
+    # `tests/test_research_scripts_reference_live_presets.py::KNOWN_DEAD_REFERENCES`。
+    _DEAD = "v33_long_reverse_v3"
+    if _DEAD not in PRESETS:
+        raise SystemExit(
+            f"{_DEAD} 不在 PRESETS —— 它在提交 03cb590(「删除 v3-v15,仅保留 v16」)中被裁剪(删除而非重命名),"
+            f"故没有可推断的替代名;本脚本属**已登记债务**"
+            f"(见 tests/test_research_scripts_reference_live_presets.py::KNOWN_DEAD_REFERENCES)。"
+            f"要跑对比请改用现存 preset(现行为 {sorted(PRESETS)[:3]}…)。"
+        )
     base_universe = PRESETS["v33_long_reverse_v3"]["universe"]
     universe = set(load_universe(base_universe, Path(args.db_path), asof_date=args.start))
     panel = load_panel(Path(args.db_path), args.start, args.end, universe=universe)

@@ -110,7 +110,17 @@ def execution_open(panel_row: pd.Series, price_source_for_execution: str) -> flo
         col = "open"
     if col in panel_row.index and not pd.isna(panel_row[col]):
         return float(panel_row[col])
-    for fallback in ("raw_open", "adj_open", "open"):
+    # §3 (audit 2026-10-15): **不得跨域回退** —— 与同文件的两个兄弟函数同规则。
+    #
+    # 此前这里是 `("raw_open", "adj_open", "open")`:当 raw_open 缺失时,会先落到
+    # **adj_open**,也就是让**执行价**静默变成**复权价**。这直接违反 §3
+    # ("ALWAYS use Raw Prices for evaluating limit order triggers, stop-losses, and
+    # portfolio physical cash mark-to-market"),而且与 `execution_close` /
+    # `signal_close` 明确写在注释里的规则**互相矛盾**:
+    #   "skip the OTHER family ... they're not interchangeable"
+    # 后果正是本仓库此前抓到的幻影成交:入场价被换成另一个价域而不留任何痕迹。
+    # 现在缺 raw_open 就 fail-fast(与 `execution_close` 缺 close 时同样),不猜。
+    for fallback in ("open",):
         if fallback in panel_row.index and not pd.isna(panel_row[fallback]):
             return float(panel_row[fallback])
     raise KeyError(

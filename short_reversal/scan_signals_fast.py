@@ -8,9 +8,27 @@
   C 涨跌幅: pct_chg ∈ [pct_chg_low, pct_chg_high]
   D MACD:   dif < 0 AND dea < 0 AND |bar| < |prev_bar|
 
+⚠️ §6/§0 (audit 2026-10-16) —— **本器不是引擎的等价实现**,只有满足下列全部条件的
+preset 才能走这条路,否则 `_scan_preset` 会 fail-fast 拒答:
+
+  1. 未启用 J 与 market-breadth 这两个**路径依赖**的入场开关（单行扫描**原理上**
+     无法复现：J 取决于运行历史里的 SL 出场时点，breadth 取决于当日全市场宽度）。
+     F/G/H/I/K 已于 2026-10-17(附四十)实现：指标走 `short_reversal.indicators_bt`
+     的 pandas 对偶，且**逐值对拍** backtrader 原件、再经信号集端到端对拍；
+  2. 未声明与 `BAKED_IN_PARAMS` 不同的参数 —— 本器把 E/A/B/C/D 的参数**写死在
+     代码里**（`_filter_signals` 里直接写 3e7/3e8/3/10/0.6），不读 preset 的同名声明；
+  3. 不是多腿集成的 preset（本器不评估 `ensemble_substrategies`）。
+
+实测(2026-10-17):75 个 preset 里 **68 个可信**,余 7 个被拒 =
+J 冷静期 3 条(v57_cd_*)+ 市场宽度 1 条(v66_regime)+ ensemble 3 条。
+(历史:先前 1/75 —— 参数写死 + F–K 未实现。)此前的 docstring 曾宣称本器与策略**完全等价**
+—— 那对**实时交易**工具是危险的：多报的信号就是会去下单的票。（这句夸大的
+等价声明已删；保留此处说明是为了让后来者知道**它曾经存在过**。）
+需要其它 preset 时请用 `python -m short_reversal.scan_signals`（构造真实
+`Phase3V3Strategy`，与回测同一条条件路径）。
+
 回测引擎 (run_backtest_v3) 是 per-stock cerebro 单跑,这里向量化版本
 只对 T 日 close 这一行做 5 条件,所以不重复 warmup 逻辑、也不进出场。
-结果与策略 100% 等价(LAHEAD-001 信号层 vs 执行层已经解耦)。
 
 §6 architecture (Tick 40, 2026-09-28): panel loading moved to Control Plane
 helper `short_reversal._panel_loader`. _scan_preset / _filter_signals are
@@ -28,6 +46,12 @@ import pandas as pd
 from hiagent_config import DB_PATH
 
 from short_reversal._panel_loader import load_panel_for_signal
+from short_reversal.indicators_bt import (
+    amount_ratio_pandas,
+    ma20_slope_pandas,
+    return_n_pandas,
+    rsi_pandas,
+)
 from short_reversal.presets import get_preset
 from short_reversal.universe import load_universe_asof
 
@@ -37,29 +61,42 @@ logger = logging.getLogger(__name__)
 def _compute_indicators(panel: pd.DataFrame) -> pd.DataFrame:
     """按 thscode 分组计算全部 5 条件需要的指标。"""
     df = panel.sort_values(["thscode", "date"]).reset_index(drop=True)
+
+    # §3 (audit 2026-10-17): **信号域 = 复权价**。引擎在 `signal_price_domain=="adj"`
+    # (shipped 默认)时把 A/B/C/D 与 F–K 的价格源切到 `adj_close`;而本扫描器此前一律
+    # 用 raw `close` ⇒ 两者在**94% 的行**上是不同的价格水平(实测 000001.SZ
+    # 2026-01-12:raw=11.48 vs adj=14.74,差 28%),于是扫描给出的名单与回测会进场的
+    # 名单在**大半个市场**上不同(V5 的"原始 close 与复权 MA60 混域"在引擎侧修好了,
+    # 扫描侧被漏下)。缺 `adj_close`(legacy 面板)时逐行回退 `close` —— 与引擎
+    # `adj_close_src` 的规则同一条。
+    if "adj_close" in df.columns:
+        df["_px"] = df["adj_close"].fillna(df["close"])
+    else:
+        df["_px"] = df["close"]
+
     g = df.groupby("thscode", group_keys=False)
 
     # MA family
-    df["ma5"] = g["close"].transform(lambda s: s.rolling(5, min_periods=5).mean())
-    df["ma10"] = g["close"].transform(lambda s: s.rolling(10, min_periods=10).mean())
-    df["ma20"] = g["close"].transform(lambda s: s.rolling(20, min_periods=20).mean())
-    df["ma60"] = g["close"].transform(lambda s: s.rolling(60, min_periods=60).mean())
+    df["ma5"] = g["_px"].transform(lambda s: s.rolling(5, min_periods=5).mean())
+    df["ma10"] = g["_px"].transform(lambda s: s.rolling(10, min_periods=10).mean())
+    df["ma20"] = g["_px"].transform(lambda s: s.rolling(20, min_periods=20).mean())
+    df["ma60"] = g["_px"].transform(lambda s: s.rolling(60, min_periods=60).mean())
 
     # A: below_ma60_ratio_60
-    df["below_ma60"] = (df["close"] < df["ma60"]).astype(float)
+    df["below_ma60"] = (df["_px"] < df["ma60"]).astype(float)
     df["below_ma60_ratio_60"] = g["below_ma60"].transform(
         lambda s: s.rolling(60, min_periods=60).mean()
     )
 
     # C: pct_chg
-    df["pct_chg"] = g["close"].pct_change()
+    df["pct_chg"] = g["_px"].pct_change()
 
     # E: am60 (60-day rolling mean of amount)
     df["am60"] = g["amount"].transform(lambda s: s.rolling(60, min_periods=60).mean())
 
     # D: MACD dif / dea / bar
-    ema12 = g["close"].transform(lambda s: s.ewm(span=12, adjust=False).mean())
-    ema26 = g["close"].transform(lambda s: s.ewm(span=26, adjust=False).mean())
+    ema12 = g["_px"].transform(lambda s: s.ewm(span=12, adjust=False).mean())
+    ema26 = g["_px"].transform(lambda s: s.ewm(span=26, adjust=False).mean())
     df["dif"] = ema12 - ema26
     df["dea"] = g["dif"].transform(lambda s: s.ewm(span=9, adjust=False).mean())
     df["bar"] = df["dif"] - df["dea"]
@@ -81,7 +118,19 @@ def _compute_indicators(panel: pd.DataFrame) -> pd.DataFrame:
             out.append(cur)
         return pd.Series(out, index=s.index)
 
-    df["up_streak"] = g["close"].transform(_streak)
+    df["up_streak"] = g["_px"].transform(_streak)
+
+    # F/G/H/I 条件所需指标 —— 一律调用 `short_reversal.indicators_bt` 里的 pandas
+    # **对偶**(附四十):那批函数与引擎的 backtrader 原件做过逐值对拍
+    # (`tests/test_indicator_equivalence_pandas_vs_backtrader.py`),
+    # 不是在本文件里另抄一份定义。
+    df["ma20_slope_5d"] = g["ma20"].transform(ma20_slope_pandas)
+    for label, period in (("1m", 21), ("3m", 63), ("6m", 126)):
+        df[f"return_{label}"] = g["_px"].transform(
+            lambda s, _p=period: return_n_pandas(s, _p)
+        )
+    df["amount_ratio"] = g["amount"].transform(amount_ratio_pandas)
+    df["rsi"] = g["_px"].transform(rsi_pandas)
     return df
 
 
@@ -98,39 +147,153 @@ def _filter_signals(df: pd.DataFrame, preset: dict, signal_date: str) -> pd.Data
     # T-day row = 各 thscode 的最后一行
     last_g = df.groupby("thscode").tail(1).reset_index(drop=True)
 
-    # 5 条件
+    # 5 条件(参数一律取 preset 的**声明值** —— 2026-10-16:此前写死 3e7/3e8、3/10、
+    # 0.6、无 buffer、只实现 strict,于是 70/75 个 preset 的结论与引擎不一致)。
+    # 详见 `_assert_fast_path_equivalent` 与 tests/test_fast_scanner_equivalence_gate.py。
+    liq_low = cfg.get("liq_low", 3e7)
+    liq_high = cfg.get("liq_high", 3e8)
+    us_low = cfg.get("up_streak_low", 3)
+    us_high = cfg.get("up_streak_high", 10)
+    ratio_min = cfg.get("below_ratio_60", 0.6)
+    ma60_buf = cfg.get("close_ma60_buffer", 0.0)
+    d_mode = cfg.get("d_mode", "strict")
+
     # E: 流动性
-    cond_e = (last_g["am60"] >= 3e7) & (last_g["am60"] <= 3e8)
-    # A: 默认 V1 (close < ma60 AND below_ratio ≥ 0.6)
+    cond_e = (last_g["am60"] >= liq_low) & (last_g["am60"] <= liq_high)
+    # A: 默认 V1(close < ma60 ×(1+buffer) AND below_ratio ≥ 声明值)
     if a_cond == "cascade_price":
         cond_a = (
             (last_g["ma5"] < last_g["ma10"])
             & (last_g["ma10"] < last_g["ma20"])
             & (last_g["ma20"] < last_g["ma60"])
-            & (last_g["close"] < last_g["ma20"])
+            & (last_g["_px"] < last_g["ma20"])
         )
     else:
         cond_a = (
-            (last_g["close"] < last_g["ma60"])
-            & (last_g["below_ma60_ratio_60"] >= 0.6)
+            (last_g["_px"] < last_g["ma60"] * (1.0 + ma60_buf))
+            & (last_g["below_ma60_ratio_60"] >= ratio_min)
         )
     # B: 连阳
-    cond_b = (last_g["up_streak"] >= 3) & (last_g["up_streak"] <= 10)
+    cond_b = (last_g["up_streak"] >= us_low) & (last_g["up_streak"] <= us_high)
     # C: 涨跌幅
     cond_c = (last_g["pct_chg"] >= pc_low) & (last_g["pct_chg"] <= pc_high)
-    # D: MACD
-    cond_d = (
-        (last_g["dif"] < 0)
-        & (last_g["dea"] < 0)
-        & (last_g["bar"].abs() < last_g["prev_bar"].abs())
-    )
+    # D: MACD —— 三种模式与引擎 _all_conditions 逐字对应
+    if d_mode == "d_only":
+        cond_d = last_g["dif"] < 0
+    elif d_mode == "converge_strict":
+        cond_d = (
+            (last_g["dif"] < 0)
+            & (last_g["dea"] < 0)
+            & (last_g["bar"].abs() < last_g["prev_bar"].abs() * 0.5)
+        )
+    else:  # 'strict'(默认)
+        cond_d = (
+            (last_g["dif"] < 0)
+            & (last_g["dea"] < 0)
+            & (last_g["bar"].abs() < last_g["prev_bar"].abs())
+        )
 
     mask = cond_e & cond_a & cond_b & cond_c & cond_d
+
+    # F/G/H/I/K —— 与引擎 `_all_conditions` **逐条对应**(附四十)。
+    # NaN 语义一致:引擎遇 NaN 一律 `return False`;pandas 的 NaN 比较亦为 False ✓。
+    if cfg.get("require_ma20_slope_neg", False):
+        # 引擎:`if isnan(slope) or slope > threshold: return False` ⇒ 通过 ⇔ slope <= thr
+        mask &= last_g["ma20_slope_5d"] <= cfg.get("ma20_slope_threshold", 0.0)
+    for label, key, default in (
+        ("1m", "require_weak_1m", "weak_1m_threshold"),
+        ("3m", "require_weak_3m", "weak_3m_threshold"),
+        ("6m", "require_weak_6m", "weak_6m_threshold"),
+    ):
+        if cfg.get(key, False):
+            # 引擎:`if isnan(ret) or ret > thr: return False` ⇒ 通过 ⇔ ret <= thr
+            mask &= last_g[f"return_{label}"] <= cfg.get(
+                default, {"weak_1m_threshold": -0.05, "weak_3m_threshold": -0.10,
+                          "weak_6m_threshold": -0.15}[default]
+            )
+    if cfg.get("require_amount_dryup", False):
+        mask &= last_g["amount_ratio"] <= cfg.get("amount_dryup_threshold", 0.70)
+    if cfg.get("require_rsi_oversold", False):
+        # 引擎:`if isnan(rsi) or rsi >= thr: return False` ⇒ 通过 ⇔ rsi < thr(**严格**)
+        mask &= last_g["rsi"] < cfg.get("rsi_oversold_threshold", 30)
+    if cfg.get("require_intraday_reversal", False):
+        # K 用 **raw** open/high/low/close —— 与引擎 `_all_conditions` 里
+        # `d.open/high/low/close`(= feed 默认列 = v_daily 原始价)一致,是刻意保留的。
+        high_v, low_v = last_g["high"], last_g["low"]
+        rng = high_v - low_v
+        # 引擎:`if high <= low: return False`,再比较 close 在日内的相对位置。
+        k_ok = (rng > 0) & (
+            (last_g["close"] - low_v) / rng
+            >= cfg.get("intraday_reversal_threshold", 0.6)
+        )
+        if cfg.get("intraday_reversal_require_close_above_open", True):
+            k_ok &= last_g["close"] > last_g["open"]
+        mask &= k_ok
     out = last_g.loc[mask, ["thscode", "date", "close", "amount"]].copy()
     out = out.rename(columns={"date": "signal_date", "close": "last_close"})
     out["signal_date"] = out["signal_date"].dt.strftime("%Y-%m-%d")
     out = out.sort_values("last_close").reset_index(drop=True)
     return out
+
+
+class FastScannerDivergence(ValueError):
+    """快速扫描器对**这个** preset 的结论与引擎不等价 —— 不得出结果。"""
+
+
+#: 引擎会评估、而本器**未实现**的入场开关 —— 只剩**路径依赖**的两个。
+#: 2026-10-17(附四十):F/G/H/I/K 已实现(指标走 `indicators_bt` 的 pandas 对偶,
+#: 并经逐值对拍);下面这两个**原理上**无法由单行向量化复现:
+#:   · `sl_cooldown_days`(J):取决于**运行历史**中最近一次 SL 出场的时点;
+#:   · `require_market_breadth_bear`:取决于**当日全市场**宽度。
+UNSUPPORTED_ENTRY_SWITCHES = (
+    "sl_cooldown_days",             # J(路径依赖)
+    "require_market_breadth_bear",  # 路径依赖
+)
+
+#: 2026-10-16:**参数一律改读 preset 声明**(此前写死 3e7/3e8、3/10、0.6、无 buffer、
+#: 只实现 `d_mode='strict'`,于是 70/75 个 preset 的结论与引擎不一致)。
+#: 因此"参数被写死"这一条已不再构成不等价理由;取代它的是
+#: `test_filter_signals_reads_declared_params`(源码层禁止再写死)与
+#: `tests/test_fast_scanner_equivalence_gate.py` 里的对拍。
+#: 保留这个空集合是为了让 `fast_path_divergences()` 的形状稳定(调用方无需改),
+#: 同时**明确**它现在是空的 —— 而不是删掉后让人以为这里从没有过检查。
+BAKED_IN_PARAMS: dict = {}
+
+
+def fast_path_divergences(cfg: dict) -> list[str]:
+    """列出本器**无法忠实复现**这个 preset 的原因（空列表 = 结论可信）。"""
+    reasons: list[str] = []
+    for key in UNSUPPORTED_ENTRY_SWITCHES:
+        if cfg.get(key) not in (None, False, 0, 0.0):
+            reasons.append(f"启用了本器未实现的入场开关 {key}={cfg[key]!r}")
+    for key, baked in BAKED_IN_PARAMS.items():
+        declared = cfg.get(key, baked)
+        if declared != baked:
+            reasons.append(f"{key} 声明为 {declared!r}，而本器写死 {baked!r}")
+    if "ensemble_substrategies" in cfg:
+        reasons.append("该 preset 是多腿集成（ensemble），本器不评估子策略")
+    return reasons
+
+
+def _assert_fast_path_equivalent(cfg: dict, preset_name: str) -> None:
+    """§6/§0 (audit 2026-10-16): 不等价即 fail-fast，不静默给出偏的信号集。
+
+    本器是 E/A/B/C/D 的**第二处实现**，且把参数写死。实测 75 个 preset 里
+    **71 个**两者结论不一致（37 个启用未实现开关；71 个有参数被写死：
+    `d_mode` 70、`below_ratio_60` 70、`close_ma60_buffer` 70、`up_streak_*` 2、
+    `liq_*` 2、`a_condition` 1）—— 而模块 docstring 当时宣称"结果与策略 100% 等价"。
+    对**实时交易**工具而言，多报的信号就是要下单的票，方向错误比不出结果更糟。
+    """
+    reasons = fast_path_divergences(cfg)
+    if reasons:
+        raise FastScannerDivergence(
+            f"§6 fail-fast: preset {preset_name!r} 的结论**不能**由快速扫描器给出，"
+            f"它与引擎条件不等价：\n  - " + "\n  - ".join(reasons) + "\n"
+            f"本器只做 E/A/B/C/D 且参数写死（见 _filter_signals），引擎还会评估 "
+            f"F/G/H/I/J/K 与 preset 声明的参数。请改用 `python -m "
+            f"short_reversal.scan_signals`（它直接构造 Phase3V3Strategy，与回测走"
+            f"同一条条件路径，只是慢）。"
+        )
 
 
 def _scan_preset(
@@ -147,6 +310,7 @@ def _scan_preset(
     pd.DataFrame in. This function performs only compute + filter, no IO.
     """
     cfg = get_preset(preset_name)
+    _assert_fast_path_equivalent(cfg, preset_name)
     if panel.empty:
         return pd.DataFrame(), []
 

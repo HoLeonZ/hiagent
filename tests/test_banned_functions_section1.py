@@ -61,6 +61,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # Directories to scan for §1 violations
+# 2026-10-15 (audit 附十五): 此前漏掉 `dna_data` 与 `tools` —— 而 `dna_data` 正是
+# **产出引擎所消费的 panel** 的那一层:`bfill` / `shift(-1)` 出现在那里,会把前视
+# 注入到下游**每一个**回测里,而守卫看不到(它只看引擎、core、dna_stats)。
+# 覆盖缺口是静默的:它不会报错,只会让"没被扫到的地方"与"合规"看起来一样。
+# `sql/` 未纳入:AstScanner 是 Python AST 实现,SQL 需要另一套检查(已登记)。
 SCAN_DIRS = [
     "chase_up",
     "uptrend_pullback",
@@ -68,6 +73,8 @@ SCAN_DIRS = [
     "cycle_price_action",
     "core",
     "dna_stats",
+    "dna_data",
+    "tools",
 ]
 
 # Excluded subdirs (tests, __pycache__, etc.)

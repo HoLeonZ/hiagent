@@ -17,13 +17,14 @@ from statistics import NormalDist
 
 import pytest
 
-from dna_stats.deflated import deflated_sharpe_ratio
+from core.trade_schema import TRADING_DAYS_PER_YEAR
+from dna_stats.deflated import deflated_sharpe_ratio, sharpe_significance_pvalue
 
 _ND = NormalDist()
 
 
 def _reference_dsr(sr_annual: float, n_trials: int, n_returns: int,
-                   trading_days: int = 252) -> float:
+                   trading_days: int = TRADING_DAYS_PER_YEAR) -> float:
     """独立参考实现 (Bailey & López de Prado), 全部在逐期单位下计算。"""
     sr = sr_annual / math.sqrt(trading_days)          # 年化 → 逐期
     gamma = 0.5772156649015329
@@ -52,7 +53,10 @@ def test_dsr_matches_bailey_reference(sr_annual: float, n_trials: int) -> None:
         observed_sharpe=sr_annual, n_trials=n_trials, n_returns=n_returns,
     )["deflated_sharpe"]
     expect = _reference_dsr(sr_annual, n_trials, n_returns)
-    assert got == pytest.approx(expect, abs=0.02), (
+    # 附六十八: 容差从 abs=0.02 收紧到 abs=1e-9 —— 原来的 0.02 **正好用来吞掉
+    # "实现用 243、参考实现用 252"这个不一致**(实测差值 0.008~0.013)。一个自称
+    # 校验"单位口径"的用例,自己两边用了不同的年化常量,等于它守不住它要守的东西。
+    assert got == pytest.approx(expect, abs=1e-9), (
         f"DSR 单位口径不一致: SR_annual={sr_annual}, k={n_trials}\n"
         f"  实现 = {got:.4f}\n  参考 = {expect:.4f}"
     )
@@ -68,3 +72,95 @@ def test_dsr_is_monotone_in_observed_sharpe() -> None:
         f"年化 Sharpe=0.84 / k=19 / T=1071 的 DSR 不应被折减到 ~0 "
         f"(参考值 ≈ {_reference_dsr(0.84, 19, 1071):.2f}), 实际 {vals[2]:.4f}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 附六十八 —— 兄弟函数的**同一处单位混用**(修前量级错约 15 个数量级)
+# ---------------------------------------------------------------------------
+#
+# `sharpe_significance_pvalue` 此前是 `z = observed_sharpe / (1/sqrt(T-1))` ——
+# 年化 Sharpe 除以**逐期**标准误,z 被放大约 sqrt(243) ≈ 15.6 倍 ⇒ p 被压到 ~0。
+# 实测:年化 SR=0.3/T=243 给 1.5e-06(真值 0.382)、SR=0.5/T=250 给 1.6e-15(真值 0.306)。
+# 而 `walkforward_report` 印出来的 **Bonferroni p 正是由它算** ⇒ §5 的多重比较惩罚
+# 在这一行上等于不存在。
+#
+# `deflated_sharpe_ratio` 在 2026-10-13 已经修过**同一处**单位混用,兄弟函数没一起修。
+
+
+def _reference_pvalue(sr_annual: float, n_returns: int,
+                      trading_days: int = TRADING_DAYS_PER_YEAR) -> float:
+    """独立参考:年化 → 逐期,再 z = SR_per·sqrt(T-1),p = 1 − Φ(z)。"""
+    sr = sr_annual / math.sqrt(trading_days)
+    return 1.0 - _ND.cdf(sr * math.sqrt(n_returns - 1))
+
+
+@pytest.mark.parametrize("sr_annual,n_returns", [
+    (0.84, 1071), (0.50, 250), (0.30, 243), (2.00, 252), (1.00, 42), (0.10, 100),
+])
+def test_pvalue_matches_reference(sr_annual: float, n_returns: int) -> None:
+    """与独立参考实现一致(逐期口径)。"""
+    got = sharpe_significance_pvalue(
+        observed_sharpe=sr_annual, n_returns=n_returns,
+    )
+    expect = _reference_pvalue(sr_annual, n_returns)
+    assert got == pytest.approx(expect, abs=1e-9), (
+        f"p-value 单位口径不一致: SR_annual={sr_annual}, T={n_returns}\n"
+        f"  实现 = {got:.6e}\n  参考 = {expect:.6e}"
+    )
+
+
+def test_pvalue_is_not_absurdly_small_for_a_modest_sharpe() -> None:
+    """**非空转钳制**:年化 SR=0.5(252 个观测)是 ~1.4σ,p 必须量级正确。
+
+    这条是对"修好了"的独立确认:一个非零但普通的 Sharpe **不该**给出 1e-15 那种
+    p 值 —— 那种数量级只有在"年化被当成逐期"时才会出现。
+    """
+    p = sharpe_significance_pvalue(observed_sharpe=0.5, n_returns=250)
+    assert 0.05 < p < 0.8, f"p={p:.3e} 不合常理(修前的单位混用会给 ~1e-15)"
+
+
+def test_pvalue_actually_uses_the_annualization_parameter() -> None:
+    """`trading_days_per_year` 必须**真的参与换算** —— 修前它被接受但**完全没用**。
+
+    年化常量越大 ⇒ 逐期 Sharpe 越小 ⇒ z 越小 ⇒ p 越大。
+    """
+    a = sharpe_significance_pvalue(
+        observed_sharpe=1.0, n_returns=250, trading_days_per_year=243,
+    )
+    b = sharpe_significance_pvalue(
+        observed_sharpe=1.0, n_returns=250, trading_days_per_year=252,
+    )
+    assert b > a, "年化常量没有参与换算(修前该参数被忽略)"
+    assert abs(b - a) > 1e-6
+
+
+# ---------------------------------------------------------------------------
+# 附七十 —— `_norm_ppf` 的精度**声明**与实测不符;现在由守卫把声明钉住
+# ---------------------------------------------------------------------------
+#
+# 原 docstring 写 "Accurate to ~1e-9"。实测(与 stdlib `NormalDist().inv_cdf` 逐点比对):
+#   中心区 p∈(0,1) 最大误差 ≈ 2.9e-9;
+#   E[max] 会用到的远端(如 k=1e12 时 p = 1−1/(k·e))最大误差 ≈ 7.9e-9。
+# 即声明**小了一个量级**。影响可忽略(E[max] 上 8e-9 传到 DSR 也是 8e-9),但
+# "声明 ≠ 实测"正是本审计反复记录的那一类 —— 与其改口径,不如**把声明变成守卫**:
+# 谁把它换成更差的近似(三段有理式那种,误差 ~1e-3),这里就会红。
+
+
+def test_norm_ppf_accuracy_is_enforced() -> None:
+    """`_norm_ppf` 与 stdlib NormalDist.inv_cdf 的误差必须 < 1e-7。"""
+    from dna_stats.deflated import _norm_ppf
+
+    worst = max(abs(_norm_ppf(i / 1000) - _ND.inv_cdf(i / 1000)) for i in range(1, 1000))
+    assert worst < 1e-7, f"中心区误差 {worst:.2e} 超出守卫上限 1e-7"
+
+
+@pytest.mark.parametrize("k", [10, 1000, 10 ** 6, 10 ** 9, 10 ** 12])
+def test_norm_ppf_accuracy_in_the_far_tail_used_by_expected_max(k: int) -> None:
+    """E[max] 的取值点 `p = 1−1/(k·e)` 必须同样准(那里是近似最容易失真的地方)。"""
+    from dna_stats.deflated import _norm_ppf
+
+    for m in (1.0, math.e):
+        p = 1.0 - 1.0 / (k * m)
+        assert abs(_norm_ppf(p) - _ND.inv_cdf(p)) < 1e-6, (
+            f"k={k}, m={m}: 远端误差过大"
+        )

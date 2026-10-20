@@ -26,21 +26,173 @@ from short_reversal._panel_loader import (
     load_panel_for_backtest,
 )
 from short_reversal.feed_bt import build_per_stock_feeds
-from short_reversal.presets import PRESETS, get_preset
+from short_reversal.presets import ENSEMBLE_SPLIT, PRESETS, get_preset
 from short_reversal.replay_strategy_v3 import Phase3V3Strategy
 from short_reversal.universe import load_universe_asof
 
 # §2 single-source (2026-10-14 审计修正): 规范费率从 core.dual_price 导入。
 # 此前为模块级重复定义, 且注释谎称"已从 core.dual_price 导入" (实际无 import)。
-from core.dual_price import COMMISSION_RATE, STAMP_DUTY_RATE
+from core.dual_price import (
+    resolve_atr_slip_scale,
+    BORROW_RATE_ANNUAL,
+    COMMISSION_RATE,
+    STAMP_DUTY_RATE,
+)
+from core.preset_contract import (  # §0/§2/§3 (audit 2026-10-15)
+    ALL_IN,
+    EXECUTION_PRICE_SOURCE,
+    resolve_execution_price_source,
+    resolve_max_positions,
+    resolve_nav_gate_ratio,
+    resolve_position_fraction,
+    resolve_position_sizing,
+    resolve_volume_participation,
+)
+from core.trade_schema import annualized_years  # §2 年化单源 (audit 2026-10-15)
+from core.walkforward import window_trading_days  # §5 窗口交易日数单源 (附八十一)
 
 INITIAL_CAPITAL = 1_000_000.0
-# MARGIN_RATE (融券年化费率) 无 canonical 源, 保留本地定义。
-MARGIN_RATE = 0.086
-DAYS_PER_YEAR = 365
+# §4 (audit P2-11, 2026-10-15): 融券年化费率改为 core 单源并再导出
+# (scan_signals / lookahead_trade_trace 从本模块引用 MARGIN_RATE)。
+# 此前注释写"无 canonical 源,保留本地定义",而 presets.py 的
+# BORROW_ASSUMPTION.borrow_cost_rate 又独立写了同一个 0.086 —— 同值不同源。
+MARGIN_RATE = BORROW_RATE_ANNUAL
 
 # Re-export for back-compat: tests/golden baselines reference this constant.
 PANEL_FORWARD_BUFFER_DAYS = PANEL_FORWARD_BUFFER_DAYS
+
+
+def _benchmark_block(panel, total_return: float) -> dict:
+    """§5:基准收益 + 相对超额。见 core/benchmark.py 的选择理由。
+
+    基准**算不出时**(窗口内没有可构成买入持有的标的)发布 `None`,不是 0.0 ——
+    否则 `excess_return` 会等于总收益,读起来像"基准没动",与真实的 0% 不可区分
+    (与 `profit_factor` 的 None 口径一致)。
+    """
+    from core.benchmark import BENCHMARK_KIND_EQUAL_WEIGHT, equal_weight_basket_return
+
+    bench, n_members = equal_weight_basket_return(panel)
+    return {
+        # 数字必须带着它的含义一起发布(与 sharpe_kind / n_daily_returns 同一原则):
+        # "超额 +3%"在没说明基准是什么之前,不是一个可引用的结论。
+        "benchmark_kind": BENCHMARK_KIND_EQUAL_WEIGHT,
+        "benchmark_return": bench,
+        "benchmark_members": n_members,
+        "excess_return": None if bench is None else total_return - bench,
+    }
+
+
+def strategy_kwargs(cfg: dict, name: str, *, holder: dict, start: str, end: str) -> dict:
+    """构造 `Phase3V3Strategy` 的**全部**参数(§6 单源)。
+
+    生产入口(`engine.run_backtest_v3`)与实时扫描工具(`scan_signals._scan_preset`)
+    必须用**同一份**构造逻辑 —— 否则后者会以默认值评估 opt-in 开关,给出与回测
+    不一致的信号集。2026-10-16 实测:`scan_signals` 只传了参数子集,连 §2 的
+    `nav_gate_ratio`(必须由声明解析后注入)都没传 ⇒ **直接崩溃**;而即便补上那一个,
+    它的 F/G/H/I/J/K 等开关仍全部走默认值 ⇒ 信号集偏多(与快速扫描器同一类错)。
+
+    新增策略参数时**只改这里** —— 两个构造点会同时跟上(附三十八)。
+    """
+    return dict(
+        tp_pct=cfg["tp_pct"],
+        sl_pct=cfg["sl_pct"],
+        max_hold=cfg["max_hold"],
+        # v58 (2026-10-13): 多仓并行。max_positions > 1 时每笔 sizing 改为
+        # free_cash / max_positions, 维持 all-in 总仓位。默认 1 保 v50 兼容。
+        # §2 (audit 2026-10-17): 声明必须到达引擎。本引擎**没有物理容量上限**
+        # (按 free_cash/N 分散、容量闸门逐 bar 约束),故 capacity=None ——
+        # 只强制"必须声明",不编一个假的上界。
+        max_positions=resolve_max_positions(cfg, name),
+        # §2 (audit 2026-10-15): 经规范契约解析(缺声明/越界 fail-fast),不再
+        # `cfg.get(..., 1.0)` —— 那样「没声明」与「声明为 1.0」不可区分。
+        position_fraction=resolve_position_fraction(cfg, name),
+        # §2 (audit 2026-10-15): 单腿路径只可能是 all_in(集成路径已在上面分流)。
+        position_sizing=resolve_position_sizing(cfg, name, allowed=frozenset({ALL_IN})),
+        # §3 (audit 2026-10-15): 上面已解析(碰库之前),此处只注入。
+        # §3: 在 helper 内部解析(原先是调用方的局部变量) —— 声明不合法即 fail-fast,
+        # 且这一处是**唯一**的价源解析点,扫描工具与回测因此不可能取到不同的域。
+        price_source_for_execution=resolve_execution_price_source(
+            cfg, name, supported=frozenset({EXECUTION_PRICE_SOURCE}),
+        ),
+        pct_chg_low=cfg.get("pct_chg_low", 0.02),
+        pct_chg_high=cfg.get("pct_chg_high", 0.06),
+        a_condition=cfg.get("a_condition", "default"),
+        up_streak_low=cfg.get("up_streak_low", 3),
+        up_streak_high=cfg.get("up_streak_high", 10),
+        liq_low=cfg.get("liq_low", 3e7),
+        liq_high=cfg.get("liq_high", 3e8),
+        below_ratio_60=cfg.get("below_ratio_60", 0.6),
+        close_ma60_buffer=cfg.get("close_ma60_buffer", 0.0),
+        d_mode=cfg.get("d_mode", "strict"),
+        margin_rate=MARGIN_RATE,
+        commission_rate=COMMISSION_RATE,
+        stamp_duty_rate=STAMP_DUTY_RATE,
+        initial_capital=INITIAL_CAPITAL,
+        lot_size=100,
+        # §2 (audit 2026-10-15): NAV 闸门比例经规范契约解析(缺声明/越界 fail-fast),
+        # 不再 `cfg.get("min_cash_ratio", 0.05)` —— 那样「没声明」与「声明为 0.05」
+        # 不可区分,而此处此前 75/75 个 preset 都不声明。
+        nav_gate_ratio=resolve_nav_gate_ratio(cfg, name),
+        # V5' (2026-09-22, CLAUDE.md §4): ATR-aware slippage is opt-in via preset。
+        # 默认 0.0 = baseline parity (无 slippage), preset 可上调启用真实市场摩擦。
+        atr_slip_scale=resolve_atr_slip_scale(cfg, name),
+        # V8 (2026-09-22, CLAUDE.md §4): max_volume_participation 与 intraday_tiebreak
+        # 从 preset 显式 plumb 到 strategy (而非依赖模块常量/默认值)。
+        # 当前 preset 默认 0.10 / 'sl_first', 完整覆盖 11/11 preset。
+        max_volume_participation=resolve_volume_participation(cfg, name),
+        intraday_tiebreak=cfg.get("intraday_tiebreak", "sl_first"),
+        # v50 (2026-10-12): F 条件 — MA20 下降趋势斜率过滤 (opt-in)。
+        require_ma20_slope_neg=cfg.get("require_ma20_slope_neg", False),
+        ma20_slope_period=cfg.get("ma20_slope_period", 5),
+        ma20_slope_threshold=cfg.get("ma20_slope_threshold", 0.0),
+        # v51 (2026-10-12): G 条件 — 弱势股过滤 (1M/3M/6M 累计跌幅, opt-in)。
+        require_weak_1m=cfg.get("require_weak_1m", False),
+        weak_1m_threshold=cfg.get("weak_1m_threshold", -0.05),
+        require_weak_3m=cfg.get("require_weak_3m", False),
+        weak_3m_threshold=cfg.get("weak_3m_threshold", -0.10),
+        require_weak_6m=cfg.get("require_weak_6m", False),
+        weak_6m_threshold=cfg.get("weak_6m_threshold", -0.15),
+        # v52 (2026-10-12): H 条件 — 无成交下跌过滤 (5d/20d 成交金额比率, opt-in)。
+        # v51 测绝对跌幅 (cumret) 失败, 改测资金流衰减: 卖压枯竭 = 死猫跳最佳入场。
+        require_amount_dryup=cfg.get("require_amount_dryup", False),
+        amount_dryup_threshold=cfg.get("amount_dryup_threshold", 0.70),
+        amount_dryup_short=cfg.get("amount_dryup_short", 5),
+        amount_dryup_long=cfg.get("amount_dryup_long", 20),
+        # v53 (2026-10-12): I 条件 — RSI(14) 超卖过滤 (opt-in)。
+        # v52 (H 资金流 dry-up) 失败, 用户选 B 方向: 测价格动量超卖。
+        require_rsi_oversold=cfg.get("require_rsi_oversold", False),
+        rsi_oversold_threshold=cfg.get("rsi_oversold_threshold", 30),
+        rsi_period=cfg.get("rsi_period", 14),
+        # v57 (2026-10-12): J 条件 — SL 之后冷静期 (opt-in)。
+        # 若上一笔以 SL 出场, 强制 N 日全局冷却, 跳过最强信号。
+        # max_positions=1 时 J 是「全局」冷却, 因为单仓策略同一时间只持 1 笔。
+        sl_cooldown_days=cfg.get("sl_cooldown_days", 0),
+        # v61 (2026-10-13): K 条件 — 日内反转 (intraday reversal, opt-in)。
+        # 与 F (多日趋势) 正交: K 测「单日 close 在 day range 中的位置 + 收阳」。
+        # 死猫跳最经典微观结构 → 多仓顺势加码,空仓博弈次日的失败回吐。
+        require_intraday_reversal=cfg.get("require_intraday_reversal", False),
+        intraday_reversal_threshold=cfg.get("intraday_reversal_threshold", 0.6),
+        intraday_reversal_require_close_above_open=cfg.get(
+            "intraday_reversal_require_close_above_open", True
+        ),
+        # v65 (2026-10-13): 浮动止损 (trailing stop, short-side, opt-in)。
+        trailing_stop_pct=cfg.get("trailing_stop_pct", 0.0),
+        trailing_activation_pct=cfg.get("trailing_activation_pct", 0.0),
+        # v66 (2026-10-13): 市场宽度 regime gate (opt-in)。
+        require_market_breadth_bear=cfg.get("require_market_breadth_bear", False),
+        market_breadth_max=cfg.get("market_breadth_max", 0.5),
+        # v68 (2026-10-13, §2): conviction-based 填充选择 (opt-in)。
+        entry_selection=cfg.get("entry_selection", "first"),
+        # v81 (2026-10-14, §3): 信号价格域 ('raw' 默认兼容 / 'adj' §3 合规)。
+        signal_price_domain=cfg.get("signal_price_domain", "adj"),
+        # §1 (audit, 2026-10-15): 窗口上下界显式下发到策略。
+        # 面板向两端扩 buffer 且 feed 不设 fromdate/todate,此前入场不受任何
+        # 窗口约束 —— 「无窗口前入场」只是指标暖机 NaN gate 的偶然结果。
+        # 生产入口必须传真实窗口;策略侧对 None 会打 warn 而非静默放行。
+        window_start=start,
+        window_end=end,
+        result_holder=holder,
+    )
 
 
 def _load_panel(db_path: Path, start: str, end: str, universe: list[str]) -> pd.DataFrame:
@@ -56,16 +208,39 @@ def _load_panel(db_path: Path, start: str, end: str, universe: list[str]) -> pd.
     return load_panel_for_backtest(db_path, start, end, universe)
 
 
-def _metrics_from_holder(holder: dict, start: str, end: str, cfg: dict) -> dict:
-    """从 result_holder + 区间算出最终 metrics dict。"""
-    final_capital = float(holder["cash"])
+def _metrics_from_holder(
+    holder: dict, start: str, end: str, cfg: dict, *, n_trading_days: int,
+) -> dict:
+    """从 result_holder + 区间算出最终 metrics dict。
+
+    §2 单源 (audit 2026-10-15): 年化用 **交易日数**,与 chase_up /
+    uptrend_pullback 同口径。此前这里用**日历日跨度** `/365`,而两引擎用
+    `交易日/243` —— 同一窗口同一收益会得到不同的 CAGR,且**两边都看起来合理**:
+
+    | 窗口 | 交易日/日历日 | 交易日口径 | 日历日口径 |
+    |---|---|---|---|
+    | 2026-04-01→05-01 | 23/30  | 173.7% | 218.9% |
+    | 2026-05 之前的 2025 全年 | 261/364 | 9.28% | 10.03% |
+
+    `n_trading_days` 是**必填**参数:让"用错口径"在调用点就失败,而不是悄悄
+    按日历日年化出一个与别的引擎不可比的数字。
+    """
+    # §2 (audit 2026-10-15): final_capital 必须用**净值**,不是总现金。
+    # `total_cash` 只含成本基础 + 已实现盈亏 → **期末未平仓的浮盈被抹掉**;
+    # 而 equity_curve 的每行 `equity` 用的是 nav(含浮盈)—— 同一次回测于是
+    # 给出两个互相打架的"期末权益"。stop() 会写 final_nav;缺它即 fail-fast
+    # (合成夹具若只给 cash,就会拿到一个与曲线末行不一致的数)。
+    if "final_nav" not in holder:
+        raise KeyError(
+            "§2: result_holder 缺 final_nav —— final_capital 必须取净值(含期末浮盈),"
+            "不能用 total_cash。生产路径由 Phase3V3Strategy.stop() 写入;"
+            "单元夹具请显式提供 final_nav。"
+        )
+    final_capital = float(holder["final_nav"])
     trades = holder["trades"]
     trades_count = len(trades)
 
-    years = max(
-        (pd.Timestamp(end) - pd.Timestamp(start)).days / DAYS_PER_YEAR,
-        1.0 / DAYS_PER_YEAR,
-    )
+    years = annualized_years(n_trading_days)
     total_yield = final_capital / INITIAL_CAPITAL - 1
     cagr = (final_capital / INITIAL_CAPITAL) ** (1 / years) - 1 if final_capital > 0 else -1.0
 
@@ -86,6 +261,15 @@ def _metrics_from_holder(holder: dict, start: str, end: str, cfg: dict) -> dict:
         "preset": cfg["_name"],
         "start": start,
         "end": end,
+        # §6/§7 (audit 2026-10-16): 逐 bar 权益曲线**带进 metrics**。
+        # 此前它只活在 `result_holder["equity_curve"]` 里,而 main.py 读的是
+        # `m.get("equity_curve")` —— 该键根本不存在 ⇒ `eq_rows` 恒为 None ⇒
+        # equity_curve.csv / cash_walk.csv 的 writer **永远不执行**(静默空转),
+        # 尽管策略每个 bar 都在往那个列表里写。典型的"已实现但不可达"。
+        "equity_curve": list(holder.get("equity_curve", [])),
+        # §2 (audit 2026-10-15): 年化口径随产物发布 —— 拿到 cagr 时旁边就有它
+        # 的年数分母(交易日数),而不是让读者猜是交易日还是日历日。
+        "n_trading_days": int(n_trading_days),
         "trades": trades,
         "trades_count": trades_count,
         "win_rate": float(win_rate),
@@ -93,6 +277,7 @@ def _metrics_from_holder(holder: dict, start: str, end: str, cfg: dict) -> dict:
         "total_yield": float(total_yield),
         "cagr": float(cagr),
         "sharpe": float(sharpe),
+        "sharpe_kind": "per_trade_ratio_approx",  # §2 (audit 2026-10-15): 逐笔 net 的 mean/std × √(min(n,250)) —— **交易级比率**,不是日收益 Sharpe,仅供本引擎内排序
         "max_dd": min(1.0, max(0.0, float(holder["max_dd"]))),
         "avg_pnl": avg_pnl,
         "avg_hold_days": avg_hold,
@@ -162,10 +347,11 @@ def _run_ensemble(
             all_trades.append(t2)
     all_trades.sort(key=lambda t: t.get("entry_time", ""))
 
-    years = max(
-        (pd.Timestamp(end) - pd.Timestamp(start)).days / DAYS_PER_YEAR,
-        1.0 / DAYS_PER_YEAR,
-    )
+    # §2 单源 (audit 2026-10-15): 年化必须用**交易日**,不能用日历日跨度 ——
+    # 后者与 chase_up / uptrend_pullback 的口径不同,同一窗口会给出不同的 CAGR
+    # (实测差 8%~26%,而两边都"看起来合理")。子策略共享同一窗口,故交易日数相同。
+    n_trading_days = max((r["n_trading_days"] for r in sub_results), default=0)
+    years = annualized_years(n_trading_days)
     cagr = (final_capital / INITIAL_CAPITAL) ** (1 / years) - 1
 
     wins = sum(1 for t in all_trades if t["net"] > 0)
@@ -178,10 +364,36 @@ def _run_ensemble(
     sl_count = sum(1 for t in all_trades if t["exit_reason"] == "SL")
     time_count = sum(1 for t in all_trades if t["exit_reason"] == "time")
 
+    # §5 Attribution Mandate: 集成的基准取自子策略 —— 它们共享同一窗口与(实际
+    # 上相同的)宇宙,故基准应当一致。**不一致即 fail-fast**:那说明子策略的宇宙
+    # 不同,怎么合并基准是个人为决定,不该由这里悄悄取平均或取第一个。
+    raw_bench = [r["benchmark_return"] for r in sub_results]
+    if any(b is None for b in raw_bench) and not all(b is None for b in raw_bench):
+        raise ValueError(
+            f"§5: 集成子策略的基准部分为 None(无法计算): {raw_bench} —— 不允许静默取平均"
+        )
+    bench_values = sorted({None if b is None else round(float(b), 12) for b in raw_bench})
+    if len(bench_values) != 1:
+        raise ValueError(
+            f"§5: 集成子策略的基准不一致 {bench_values} —— 子策略宇宙不同,"
+            "基准如何合并需显式决定,不得静默取平均"
+        )
+    bench = bench_values[0]
+    n_members = max(int(r["benchmark_members"]) for r in sub_results)
+
     return {
         "preset": cfg["_name"],
         "start": start,
         "end": end,
+        "n_trading_days": int(n_trading_days),
+        # 集成:多个子组合各自的权益曲线尚未聚合,故此处置 None。
+        # **显式 None 而不是"缺键"** —— 缺键会让 main.py 的 `m.get(...)` 与
+        # "字段根本没实现"不可区分(附三十三 的教训);None 可被读取方明确抱怨。
+        "equity_curve": None,
+        "benchmark_kind": sub_results[0]["benchmark_kind"],
+        "benchmark_return": bench,
+        "benchmark_members": n_members,
+        "excess_return": None if bench is None else float(total_yield) - bench,
         "trades": all_trades,
         "trades_count": trades_count,
         "win_rate": float(win_rate),
@@ -189,6 +401,7 @@ def _run_ensemble(
         "total_yield": float(total_yield),
         "cagr": float(cagr),
         "sharpe": float(sharpe),
+        "sharpe_kind": "per_trade_ratio_approx",  # §2 (audit 2026-10-15): 逐笔 net 的 mean/std × √(min(n,250)) —— **交易级比率**,不是日收益 Sharpe,仅供本引擎内排序
         "max_dd": min(1.0, max(0.0, float(max_dd))),
         "avg_pnl": avg_pnl,
         "avg_hold_days": avg_hold,
@@ -217,12 +430,41 @@ def run_backtest_v3(
     """
     cfg = dict(get_preset(preset))
     cfg["_name"] = preset
+    _name = cfg.get("_name", "short_reversal")
 
     # v63 (2026-10-13): Ensemble 模式 — 跑 N 个子策略, 资金等分, 汇总 PnL。
     # OOS-validated (WFV mean +10.9%, holdout 2026-H2 +5.4%) over v50_slope.
     # 实现是 N 个独立 backtest 的 wrapper, 复用 v3 引擎, 行为等价。
-    if "ensemble_substrategies" in cfg:
+    #
+    # §2 (audit 2026-10-15, preset→engine conformance): 此前**真正**决定走哪条
+    # 路径的是结构性开关 `"ensemble_substrategies" in cfg`,而 preset 声明的
+    # `position_sizing` 从未被读取 —— 声明纯装饰(75 个 preset 全中)。现在两者
+    # 必须一致:'ensemble_split' ⇔ 有子策略。不一致 → fail-fast,而不是按声明
+    # 以外的方式静默跑完。
+    position_sizing = resolve_position_sizing(
+        cfg, _name, allowed=frozenset({ALL_IN, ENSEMBLE_SPLIT}),
+    )
+    has_ensemble = "ensemble_substrategies" in cfg
+    if has_ensemble != (position_sizing == ENSEMBLE_SPLIT):
+        raise ValueError(
+            f"§2: preset {_name!r} 声明 position_sizing={position_sizing!r},但 "
+            f"ensemble_substrategies {'存在' if has_ensemble else '缺失'} —— "
+            "声明与真正决定路径的结构性开关不一致:两者必须同时修正。"
+        )
+    if has_ensemble:
         return _run_ensemble(cfg, start, end, db_path, min_bars)
+
+    # §3 (audit 2026-10-15): 执行域价源声明。本引擎的成交价/SL/TP 全部取自
+    # raw 域(d.close/d.open 即 v_daily 原始价);指标域才切 adj_close。
+    # 声明别的价源必须炸 —— 否则「按原始价成交」是一句无人兑现的承诺。
+    # 与 position_sizing 一样在**碰数据库之前**解析:preset 契约不合法时
+    # 不应先跑半个宇宙再报错。
+    price_source_for_execution = resolve_execution_price_source(
+        cfg, _name, supported=frozenset({EXECUTION_PRICE_SOURCE}),
+    )
+    # §2 (audit 2026-10-15): NAV 闸门比例由 preset 的 `nav_gate_ratio` 声明驱动。
+    # 此前 75/75 个 preset 都不声明它,引擎却写 `cfg.get("min_cash_ratio", 0.05)`
+    # —— 「没声明」与「声明为 0.05」不可区分。现与参数同名,一个概念一个名字。
 
     universe = load_universe_asof(cfg["universe"], start, db_path)
     panel = _load_panel(db_path, start, end, universe)
@@ -232,88 +474,34 @@ def run_backtest_v3(
     cerebro.broker.setcash(INITIAL_CAPITAL)
     cerebro.broker.setcommission(commission=0.0)  # 成本由 strategy 内扣
 
-    holder: dict = {"cash": INITIAL_CAPITAL, "trades": [], "max_dd": 0.0}
+    # §2 (audit 2026-10-15): `final_nav` 也在此初始化。
+    # 窗口太短/全部被 warmup 门滤掉时**策略根本没跑**,`stop()` 不会被调用 ——
+    # 此时空仓,净值 == 初始资金,初始化值就是**正确**答案(不是占位谎言)。
+    # 真有运行时 `stop()` 会用 `_nav()` 覆盖它。
+    holder: dict = {"cash": INITIAL_CAPITAL, "final_nav": INITIAL_CAPITAL,
+                    "trades": [], "max_dd": 0.0}
 
     for code, feed in feeds:
         cerebro.adddata(feed, name=code)
     cerebro.addstrategy(
         Phase3V3Strategy,
-        tp_pct=cfg["tp_pct"],
-        sl_pct=cfg["sl_pct"],
-        max_hold=cfg["max_hold"],
-        # v58 (2026-10-13): 多仓并行。max_positions > 1 时每笔 sizing 改为
-        # free_cash / max_positions, 维持 all-in 总仓位。默认 1 保 v50 兼容。
-        max_positions=cfg.get("max_positions", 1),
-        position_fraction=cfg.get("position_fraction", 1.0),
-        pct_chg_low=cfg.get("pct_chg_low", 0.02),
-        pct_chg_high=cfg.get("pct_chg_high", 0.06),
-        a_condition=cfg.get("a_condition", "default"),
-        up_streak_low=cfg.get("up_streak_low", 3),
-        up_streak_high=cfg.get("up_streak_high", 10),
-        liq_low=cfg.get("liq_low", 3e7),
-        liq_high=cfg.get("liq_high", 3e8),
-        below_ratio_60=cfg.get("below_ratio_60", 0.6),
-        close_ma60_buffer=cfg.get("close_ma60_buffer", 0.0),
-        d_mode=cfg.get("d_mode", "strict"),
-        margin_rate=MARGIN_RATE,
-        commission_rate=COMMISSION_RATE,
-        stamp_duty_rate=STAMP_DUTY_RATE,
-        initial_capital=INITIAL_CAPITAL,
-        lot_size=100,
-        min_cash_ratio=cfg.get("min_cash_ratio", 0.05),
-        # V5' (2026-09-22, CLAUDE.md §4): ATR-aware slippage is opt-in via preset。
-        # 默认 0.0 = baseline parity (无 slippage), preset 可上调启用真实市场摩擦。
-        atr_slip_scale=cfg.get("atr_slip_scale", 0.0),
-        # V8 (2026-09-22, CLAUDE.md §4): max_volume_participation 与 intraday_tiebreak
-        # 从 preset 显式 plumb 到 strategy (而非依赖模块常量/默认值)。
-        # 当前 preset 默认 0.10 / 'sl_first', 完整覆盖 11/11 preset。
-        max_volume_participation=cfg.get("max_volume_participation", 0.10),
-        intraday_tiebreak=cfg.get("intraday_tiebreak", "sl_first"),
-        # v50 (2026-10-12): F 条件 — MA20 下降趋势斜率过滤 (opt-in)。
-        require_ma20_slope_neg=cfg.get("require_ma20_slope_neg", False),
-        ma20_slope_period=cfg.get("ma20_slope_period", 5),
-        ma20_slope_threshold=cfg.get("ma20_slope_threshold", 0.0),
-        # v51 (2026-10-12): G 条件 — 弱势股过滤 (1M/3M/6M 累计跌幅, opt-in)。
-        require_weak_1m=cfg.get("require_weak_1m", False),
-        weak_1m_threshold=cfg.get("weak_1m_threshold", -0.05),
-        require_weak_3m=cfg.get("require_weak_3m", False),
-        weak_3m_threshold=cfg.get("weak_3m_threshold", -0.10),
-        require_weak_6m=cfg.get("require_weak_6m", False),
-        weak_6m_threshold=cfg.get("weak_6m_threshold", -0.15),
-        # v52 (2026-10-12): H 条件 — 无成交下跌过滤 (5d/20d 成交金额比率, opt-in)。
-        # v51 测绝对跌幅 (cumret) 失败, 改测资金流衰减: 卖压枯竭 = 死猫跳最佳入场。
-        require_amount_dryup=cfg.get("require_amount_dryup", False),
-        amount_dryup_threshold=cfg.get("amount_dryup_threshold", 0.70),
-        amount_dryup_short=cfg.get("amount_dryup_short", 5),
-        amount_dryup_long=cfg.get("amount_dryup_long", 20),
-        # v53 (2026-10-12): I 条件 — RSI(14) 超卖过滤 (opt-in)。
-        # v52 (H 资金流 dry-up) 失败, 用户选 B 方向: 测价格动量超卖。
-        require_rsi_oversold=cfg.get("require_rsi_oversold", False),
-        rsi_oversold_threshold=cfg.get("rsi_oversold_threshold", 30),
-        rsi_period=cfg.get("rsi_period", 14),
-        # v57 (2026-10-12): J 条件 — SL 之后冷静期 (opt-in)。
-        # 若上一笔以 SL 出场, 强制 N 日全局冷却, 跳过最强信号。
-        # max_positions=1 时 J 是「全局」冷却, 因为单仓策略同一时间只持 1 笔。
-        sl_cooldown_days=cfg.get("sl_cooldown_days", 0),
-        # v61 (2026-10-13): K 条件 — 日内反转 (intraday reversal, opt-in)。
-        # 与 F (多日趋势) 正交: K 测「单日 close 在 day range 中的位置 + 收阳」。
-        # 死猫跳最经典微观结构 → 多仓顺势加码,空仓博弈次日的失败回吐。
-        require_intraday_reversal=cfg.get("require_intraday_reversal", False),
-        intraday_reversal_threshold=cfg.get("intraday_reversal_threshold", 0.6),
-        intraday_reversal_require_close_above_open=cfg.get(
-            "intraday_reversal_require_close_above_open", True
-        ),
-        # v65 (2026-10-13): 浮动止损 (trailing stop, short-side, opt-in)。
-        trailing_stop_pct=cfg.get("trailing_stop_pct", 0.0),
-        trailing_activation_pct=cfg.get("trailing_activation_pct", 0.0),
-        # v66 (2026-10-13): 市场宽度 regime gate (opt-in)。
-        require_market_breadth_bear=cfg.get("require_market_breadth_bear", False),
-        market_breadth_max=cfg.get("market_breadth_max", 0.5),
-        # v68 (2026-10-13, §2): conviction-based 填充选择 (opt-in)。
-        entry_selection=cfg.get("entry_selection", "first"),
-        # v81 (2026-10-14, §3): 信号价格域 ('raw' 默认兼容 / 'adj' §3 合规)。
-        signal_price_domain=cfg.get("signal_price_domain", "adj"),
-        result_holder=holder,
+        **strategy_kwargs(cfg, _name, holder=holder, start=start, end=end),
     )
     cerebro.run()
-    return _metrics_from_holder(holder, start, end, cfg)
+    # §2 单源 (audit 2026-10-15): 年化用**窗口内的交易日数**(面板去重日期),
+    # 而不是日历日跨度 —— 与 chase_up / uptrend_pullback 同口径。
+    # §2 单源 / §5 (附八十一): 年化与 DSR 都要**窗口内**的交易日数 ——
+    # 而这里此前传的是 `panel["date"].nunique()`,即**整张面板**(含暖机缓冲,
+    # 且两端都外扩;实测:2 个月窗口 43 个交易日,面板却报 197,并含窗口之后的日期)。
+    # 后果:①CAGR 的年化分母大 ~4 倍 ⇒ 短窗口 CAGR 被系统性压低
+    #      (而各 walk-forward 汇总正是逐窗 CAGR);②附六十 把同一个数当成 DSR 的 T
+    #      ⇒ T 被高估、DSR 偏乐观。
+    # 口径现收到 `core.walkforward.window_trading_days` 单源(全库 8 处同缺陷,见附八十一);
+    # 窗口内一个交易日都没有时它在内部 fail-fast。
+    metrics = _metrics_from_holder(
+        holder, start, end, cfg,
+        n_trading_days=window_trading_days(panel, start, end),
+    )
+    # §5 Attribution Mandate(此前全库无实现,2026-10-16 补齐)
+    metrics.update(_benchmark_block(panel, float(metrics["total_yield"])))
+    return metrics

@@ -163,7 +163,13 @@ class TestWalkforwardContractPinning:
     """
 
     def test_walkforward_windows_enforces_oos_test_window(self):
-        """每个 window 的 train_end < test_start (无 sample overlap)."""
+        """每个 window 的 train_end < test_start(**窗口内** OOS)。
+
+        附七十五 更正:原 docstring 写的是「(无 sample overlap)」—— 那句话**只在窗口内**
+        成立。**跨窗口**是否重叠由 `roll_months` 与 `test_months` 决定,而仓库默认
+        (roll 6 < test 12)下相邻 **test 窗重叠 50%**(实测)。跨窗口的语义与告警见
+        `tests/test_walkforward_coverage.py` 与 `core.walkforward.window_coverage`。
+        """
         from core.walkforward import walkforward_windows
 
         windows = walkforward_windows(

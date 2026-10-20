@@ -7,6 +7,7 @@ import pytest
 from dna_stats.deflated import (
     annualized_sharpe,
     bonferroni_correct,
+    raw_kurtosis_from_excess,
     deflated_sharpe_ratio,
     sharpe_significance_pvalue,
 )
@@ -69,9 +70,12 @@ def test_deflated_sharpe_skewness_kurtosis_input():
     """V7: 接受 skewness/kurtosis/autocorr_lag1 参数, 不报错。
     这覆盖了 non-normality correction 路径。
     """
+    # 附六十九: `kurtosis` 要的是**原始**峰度(正态 = 3)。下面这个 5.0 即"超额 2"
+    # 的厚尾分布 —— 写成 `raw_kurtosis_from_excess(2.0)` 是为了让口径**在调用点可见**,
+    # 而不是靠读者记得"这里要不要 +3"。
     res = deflated_sharpe_ratio(
         observed_sharpe=1.5, n_trials=50,
-        skewness=-0.5, kurtosis=5.0,
+        skewness=-0.5, kurtosis=raw_kurtosis_from_excess(2.0),
         autocorr_lag1=0.1, n_returns=252,
     )
     assert "deflated_sharpe" in res
@@ -105,12 +109,93 @@ def test_bonferroni_significant_preserved():
 
 
 def test_sharpe_significance_basic():
-    """V7: 高 Sharpe + 大样本 → 极低 p-value。"""
+    """年化 Sharpe=2.0、252 个观测 ⇒ **约 2σ**,p ≈ 0.021(不是"极低")。
+
+    附六十八 更正:本用例原断言 `p < 0.001`,原注释写"高 Sharpe + 大样本 → 极低
+    p-value"。而按本模块的约定 `observed_sharpe` 是**年化**值 ⇒ 逐期 Sharpe =
+    2.0/sqrt(243) ≈ 0.128,z ≈ 2.0 ⇒ 单侧 p ≈ 0.021。
+
+    旧实现把年化 Sharpe 直接除以逐期标准误(`1/sqrt(T-1)`),z 被放大约
+    `sqrt(243) ≈ 15.6` 倍 ⇒ p 被压到 ~0 —— **那条 `< 0.001` 的断言正是这个单位错误
+    的另一种写法**(它把 bug 写成了期望,于是修复反而会打红它)。
+    """
+    # 附七十八 自查:这里原本是 `approx(0.021, abs=0.003)` —— 一个**魔法数 + 宽容差**。
+    # 它够用来抓单位 bug(那个会把 p 压到 ~0),但沿用了"当年那版实现"的期望值写法;
+    # 改为**独立复算**(stdlib NormalDist,与 test_deflated_sharpe_units.py 同法),
+    # 容差随之收紧到 1e-12 —— 于是"实现变了多少"这件事由复算本身约束,不靠人记住一个数。
+    from statistics import NormalDist
+
+    from core.trade_schema import TRADING_DAYS_PER_YEAR
+
+    z = (2.0 / (TRADING_DAYS_PER_YEAR ** 0.5)) * ((252 - 1) ** 0.5)
+    expect = 1.0 - NormalDist().cdf(z)
     p = sharpe_significance_pvalue(observed_sharpe=2.0, n_returns=252)
-    assert p < 0.001
+    assert p == pytest.approx(expect, abs=1e-12), (
+        f"年化 SR=2.0 / T=252 的单侧 p 应为 {expect:.6f}(约 2σ),实际 {p}"
+    )
+    assert p > 0.01, f"p={p:.3e} 不像「约 2σ」该给的量级(单位混用会给 ~0)"
 
 
 def test_sharpe_significance_zero():
     """V7: Sharpe=0 → p ≈ 0.5 (无显著差异)。"""
     p = sharpe_significance_pvalue(observed_sharpe=0.0, n_returns=100)
     assert p == pytest.approx(0.5, abs=0.01)
+
+
+# ---------------------------------------------------------------------------
+# 附六十九 —— `kurtosis` 的**口径合同**:docstring 曾写"We accept excess",
+#              而实现按**原始**峰度用(default 3.0、公式 (γ4−1)/4)
+# ---------------------------------------------------------------------------
+#
+# 当前**行为是对的**(与论文 eq.(5) 一致:γ4=3 时给 0.5),错的是合同:
+# 参数默认 3.0 是原始峰度,而 docstring 说"接受超额"。谁按 docstring 传"超额峰度"
+# (正态 = 0)就会静默算出一个错的 DSR。故:
+#   1) docstring 改成明确说**原始**,并给出换算入口;
+#   2) 对数学上不可能是原始峰度的值(< 1)**fail-fast**,并指出多半是传了超额;
+#   3) 提供有名字的换算 `raw_kurtosis_from_excess`,免得调用方各写一个 "+3"。
+
+
+def test_default_kurtosis_is_raw_normal_not_excess() -> None:
+    """默认值 3.0 必须被当作**原始**峰度使用(等价于"超额 0")。"""
+    a = deflated_sharpe_ratio(observed_sharpe=1.0, n_trials=10, n_returns=250)
+    b = deflated_sharpe_ratio(
+        observed_sharpe=1.0, n_trials=10, n_returns=250,
+        kurtosis=raw_kurtosis_from_excess(0.0),      # 显式:超额 0 ⇒ 原始 3
+    )
+    assert a["deflated_sharpe"] == pytest.approx(b["deflated_sharpe"], abs=1e-12), (
+        "默认口径与'超额 0 ⇒ 原始 3'不一致 —— docstring 与实现又分家了"
+    )
+
+
+def test_excess_kurtosis_is_rejected_loudly() -> None:
+    """传超额峰度(正态 = 0)⇒ fail-fast,并指出该怎么办。
+
+    原始峰度恒 ≥ 1(`E[X⁴] ≥ E[X²]²`),故 < 1 不可能是原始值。静默算错的代价是
+    一个看起来正常的 DSR —— 宁可报错。
+    """
+    with pytest.raises(ValueError, match="raw_kurtosis_from_excess"):
+        deflated_sharpe_ratio(
+            observed_sharpe=1.0, n_trials=10, n_returns=250, kurtosis=0.0,
+        )
+
+
+def test_raw_kurtosis_helper() -> None:
+    """换算纯函数:正态(超额 0)→ 3;厚尾(超额 2)→ 5。"""
+    assert raw_kurtosis_from_excess(0.0) == pytest.approx(3.0)
+    assert raw_kurtosis_from_excess(2.0) == pytest.approx(5.0)
+    assert raw_kurtosis_from_excess(-1.0) == pytest.approx(2.0)   # 薄尾
+
+
+def test_bonferroni_rejects_impossible_comparison_counts() -> None:
+    """§0:`n_comparisons < 1` ⇒ fail-fast(否则会把校正整个取消掉)。
+
+    实测(修前):`n_comparisons=0` ⇒ 所有 p 变成 **0.0**(读作"极其显著");
+    `n_comparisons=-1` ⇒ 所有 p 变成**负数**(任何 `p < 0.05` 都通过)。
+    即"用一个不可能的参数把多重比较校正取消掉",而输出看起来更"显著"。
+    """
+    for bad in (0, -1, -100):
+        with pytest.raises(ValueError, match="n_comparisons"):
+            bonferroni_correct([0.4], n_comparisons=bad)
+    # 反向:合法输入不受影响
+    assert bonferroni_correct([0.4], n_comparisons=1)[0] == pytest.approx(0.4)
+    assert bonferroni_correct([0.4], n_comparisons=10)[0] == pytest.approx(1.0)

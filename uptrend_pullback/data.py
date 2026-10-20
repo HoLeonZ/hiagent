@@ -21,6 +21,7 @@ import logging
 from pathlib import Path
 
 import duckdb
+from core.data_coverage import assert_adjusted_coverage  # §3/§0 因子覆盖单源 (附一百零四)
 import pandas as pd
 
 from uptrend_pullback import UptrendPullbackError
@@ -43,13 +44,15 @@ def load_panel(
 
     返回 columns=[thscode, date,
                   open, high, low, close, volume, amount,           -- 前复权
-                  raw_open, raw_high, raw_low, raw_close, raw_prev_close],
+                  raw_open, raw_high, raw_low, raw_close, raw_prev_close,
+                  div_per_share, bonus_ratio, rights_ratio],
     按 (thscode, date) 排序。raw_* 列来自 raw_kline_daily LEFT JOIN, 缺失填 NaN。
     """
     load_start = (pd.Timestamp(start) - pd.Timedelta(days=warmup_days)).strftime("%Y-%m-%d")
 
     con = duckdb.connect(str(db_path), read_only=True)
     try:
+        assert_adjusted_coverage(con, start, end, source="uptrend_pullback/data.load_panel")
         # V3a (2026-09-22, CLAUDE.md §3): LEFT JOIN raw_kline_daily 注入 raw_*
         # 保持 v_daily_qfq 行完整性 (signal-only panel 不能丢行)。
         panel = con.execute(
@@ -66,8 +69,20 @@ def load_panel(
                    -- Inline LAG keeps qfq schema compatibility for open/high/low/close.
                    LAG(r.close, 1) OVER (
                        PARTITION BY r.thscode ORDER BY r.date
-                   ) AS raw_prev_close
+                   ) AS raw_prev_close,
+                   -- §3 (audit P2-10, 2026-10-15): 事件化公司行为(与 chase_up 同口径)
+                   COALESCE(ev.dividend_per_share, 0.0) AS div_per_share,
+                   COALESCE(ev.per_share_bonus, 0.0)    AS bonus_ratio,
+                   COALESCE(ev.rights_ratio, 0.0)       AS rights_ratio
             FROM v_daily_qfq q
+            LEFT JOIN (
+                SELECT thscode, ex_date,
+                       SUM(dividend_per_share) AS dividend_per_share,
+                       SUM(per_share_bonus)    AS per_share_bonus,
+                       SUM(rights_ratio)       AS rights_ratio
+                FROM raw_adjustment_events
+                GROUP BY thscode, ex_date
+            ) ev ON q.thscode = ev.thscode AND q.date = ev.ex_date
             LEFT JOIN raw_kline_daily r
               ON q.thscode = r.thscode AND q.date = r.date
             WHERE q.date BETWEEN ? AND ?

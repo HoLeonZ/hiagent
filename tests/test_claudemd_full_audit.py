@@ -7,12 +7,15 @@ only covered intraday_tiebreak / volume / dual-price / n_comparisons.
 CLAUDE.md sections audited at the preset level:
   §2 — Capital & State Determinism:
        - All-In Sizing Policy (2026-09-21):
-         position_sizing="all_in", MAX_POSITION_PCT=1.0,
-         max_positions=1 (so each slot uses 100% of cash),
-         position_fraction=1.0.
-       Note: explicit dual-key (single-slot + all-in) is what enforces
-       the policy at the engine level, since equal sizing with N positions
-       gives 1/N fraction which is not "all_in" for the trade slot.
+         position_sizing 必须是引擎**已实现**的模式(all_in | ensemble_split),
+         position_fraction=1.0(§2 verbatim)。
+       - max_positions 必须是正整数。**不要求等于 1** —— §2 verbatim 说
+         "Capacity is bounded by the preset's `max_positions`",即多仓容量是
+         §2 明确**容许**的;多仓时每个 slot 的预算是 free_cash/max_positions,
+         合计仍是 100% 部署,没有 §2 禁止的"开仓前预留现金缓冲"。
+         (2026-10-15 修正:原规则断言 max_positions 必须为 1,并把
+         position_sizing 钉成 'all_in' —— 两条都超出 §2 原文,会把 v58 多仓
+         与 v63/v64/v79 集成这三类**合规**设计判成违规。)
   §3 — Data Integrity:
        - price_source_for_signal = "adj_close"
        - price_source_for_execution = "raw_close"
@@ -29,9 +32,19 @@ CLAUDE.md sections audited at the preset level:
 Sections §1 (Temporal) and §6 (Architecture) are code-level concerns,
 not preset-level. They are referenced as informational reminders only.
 """
+
+# ⚠️ 附九十八: 上面引用的 §2 All-In Sizing Policy (2026-09-21) 条款**已被提交 2260ba1 替换**(现行文本见 CLAUDE.md,
+# 替代为对应节的新写法)。此处引用旧句仅为**对照**;本文件的**断言**测的是现行行为,
+# 不是那条已退休的措辞。
 from __future__ import annotations
 
 import pytest
+
+#: §2 真正被引擎实现的 sizing 模式。`all_in` = 单腿全仓;`ensemble_split` =
+#: 集成路径(资金等分到 N 条腿)。两者都不是 §2 的偏离 —— 前者是政策默认,
+#: 后者在主策略层仍是"把钱全投出去"。名单由引擎侧 `resolve_position_sizing`
+#: 的 `allowed` 集合决定,这里必须与之保持一致(2026-10-15)。
+VALID_SIZING_MODES = frozenset({"all_in", "ensemble_split"})
 
 
 def _audit_full(presets_dict: dict, strategy_name: str) -> list[str]:
@@ -51,10 +64,16 @@ def _audit_full(presets_dict: dict, strategy_name: str) -> list[str]:
         position_fraction = p.get("position_fraction")
         max_position_pct = p.get("MAX_POSITION_PCT")
 
-        if sizing != "all_in":
+        if sizing not in VALID_SIZING_MODES:
             gaps.append(
                 f"[{strategy_name}] {name}: §2 position_sizing={sizing!r} "
-                f"(must be 'all_in' — CLAUDE.md All-In Sizing Policy 2026-09-21)"
+                f"不在引擎已实现的模式 {sorted(VALID_SIZING_MODES)} 内 —— "
+                "声明一个引擎不实现的模式 = 承诺被静默丢弃。"
+            )
+        elif sizing == "ensemble_split" and "ensemble_substrategies" not in p:
+            gaps.append(
+                f"[{strategy_name}] {name}: §2 position_sizing='ensemble_split' "
+                "但未声明 ensemble_substrategies —— 与引擎的分流开关不一致。"
             )
         # position_fraction is recommended for clarity even when redundant
         if position_fraction is None:
@@ -71,12 +90,12 @@ def _audit_full(presets_dict: dict, strategy_name: str) -> list[str]:
         if max_pos is None:
             gaps.append(
                 f"[{strategy_name}] {name}: §2 max_positions missing "
-                f"(expected 1 — single trade slot, full cash)"
+                "(§2 verbatim:每个 preset 必须显式声明 max_positions)"
             )
-        elif max_pos != 1:
+        elif not isinstance(max_pos, int) or isinstance(max_pos, bool) or max_pos < 1:
             gaps.append(
                 f"[{strategy_name}] {name}: §2 max_positions={max_pos!r} "
-                f"(must be 1 — 'all_in' requires single-slot per CLAUDE.md 2026-09-21)"
+                "必须是 ≥1 的整数。"
             )
 
         # MAX_POSITION_PCT convention (uppercase, mirrors Python constant)
@@ -118,7 +137,11 @@ def _audit_full(presets_dict: dict, strategy_name: str) -> list[str]:
         # §4 — Exit thresholds (policy, either fixed or ATR-based)
         has_fixed = "sl_pct" in p
         has_atr = "atr_sl_mult" in p
-        if not (has_fixed or has_atr):
+        # 集成 preset 自身不设 TP/SL:阈值由每条**子策略**各自声明(§4 要求"在
+        # preset 的合规头里写明选择",集成 preset 的合规头写的是 per_sub_strategy
+        # 并列出子策略)。故 `ensemble_substrategies` 是等价的合规证据。
+        delegates = "ensemble_substrategies" in p
+        if not (has_fixed or has_atr or delegates):
             gaps.append(
                 f"[{strategy_name}] {name}: §4 exit policy missing — "
                 f"either fixed 'sl_pct' or ATR-based 'atr_sl_mult' must be declared"

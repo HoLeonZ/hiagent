@@ -42,3 +42,20 @@ figures/
 
 # MCP / browser tool scratch output
 .playwright-mcp/
+
+# §7 (audit 2026-10-15): 运行产物按**文件名**全局忽略。
+# 上面只忽略 `results/` **目录**,于是散落在别处的同名产物(手工 `--out .`、
+# 复制粘贴、某个脚本忘了用 results/)仍然**可以被提交** —— 而 §7 明令
+# trades.csv / metrics JSON / 生成的报告永不入库,a fresh clone 必须零历史绩效。
+# 这些模式均已核对:不匹配任何**已跟踪**文件(tracked 的 html 只有
+# short_reversal/docs/d_condition_explained.html,是文档,不受影响)。
+trades.csv
+*_trades.csv
+equity_curve.csv
+cash_walk.csv
+*_metrics.json
+metrics.json
+backtest.json
+all_strategies_report*.json
+all_strategies_report*.html
+*_report_*.html

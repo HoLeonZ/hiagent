@@ -5,27 +5,8 @@
     "2026-09-19"
   ],
   "engine": "simulate",
-  "metrics": {
-    "trades": 76,
-    "win_rate": 0.3158,
-    "total_return": 0.1769,
-    "cagr": 0.1777,
-    "sharpe": 0.67,
-    "max_dd": 0.6597,
-    "tp_count": 10,
-    "sl_count": 25,
-    "time_count": 2,
-    "eod_count": 1,
-    "profit_factor": 1.04,
-    "avg_net_return": 0.0197,
-    "exposure": 0.941,
-    "final_equity": 1176892.1928548017,
-    "initial_capital": 1000000.0,
-    "avg_hold_days": 6.0,
-    "max_hold_days": 18
-  },
-  "trades_csv_sha256": "b9738c149af3bf2e41ff7560246a6c2a853b1dcb122dd89f598a9b20b1d709be",
-  "trades_csv_rows": 76,
+  "trades_csv_sha256": "af13d5cd5c116a774ccd08623840a5022eb62e5c14f3fe37c420d810907c7807",
+  "trades_csv_rows": 25,
   "trades_csv_cols": [
     "entry_date",
     "exit_date",
@@ -42,18 +23,6 @@
     "atr_pct",
     "sub_signal_type"
   ],
-  "vs_v5": {
-    "v5_cagr": 2.416,
-    "v5_max_dd": 0.3131,
-    "v5_walkforward_profitable": "2/9",
-    "v5_walkforward_mean": "-19.36%"
-  },
-  "vs_v8": {
-    "v8_cagr": 2.6112,
-    "v8_max_dd": 0.4258,
-    "v8_walkforward_profitable": "3/9",
-    "v8_walkforward_mean": "+30.68%"
-  },
   "note": "v9 = v8 + min_score=1.2(过滤弱信号)。Pareto 改善:CAGR + Sharpe + DD 同时提升。",
   "v6_change_note": "V6 (2026-09-22): chase_up/portfolio.py intraday tiebreak flipped TP-first → SL-first per CLAUDE.md §4 worst-case. Some TP exits where intraday low also crossed SL became SL exits. Compare tp_count/sl_count against pre-V6 baseline.",
   "v7_change_note": "V7 (2026-09-22, CLAUDE.md §2 All-In Sizing Policy): preset converted from multi-slot equal sizing to single-slot all_in (position_sizing='equal' max_positions=2 → 'all_in' max_positions=1). Engine `chase_up/portfolio.py:325` now locks 100% cash per slot. trades.csv regenerated under new sizing; row count and PnL reflect single-slot dynamics. Walk-forward results originally searched under multi-slot diversification are now stale — see docs/claudemd_preset_audit_2026_09_22.md for §2 re-baseline plan.",

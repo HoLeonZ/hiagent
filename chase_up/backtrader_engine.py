@@ -21,6 +21,24 @@ from chase_up.replay_broker import AStockBroker
 from chase_up.replay_strategy import ChaseUpTradeReplay
 from chase_up.signals import compute_indicators, select_entries
 from chase_up.universe import load_universe
+# §2 单源 (audit 2026-10-17): 契约键一律经 core.preset_contract 解析(缺声明即
+# fail-fast),不再用 `p.get(key, <看起来合理的默认值>)`。
+from core.preset_contract import (
+    ALL_IN,
+    resolve_nav_gate_ratio,
+    resolve_max_positions,
+    resolve_position_fraction,
+    resolve_position_sizing,
+    resolve_volume_participation,
+)
+
+from core.dual_price import (  # §2 单源 (audit P2-11, 2026-10-15)
+    resolve_atr_slip_scale,
+    COMMISSION_RATE,
+    MIN_COMMISSION,
+    STAMP_DUTY_RATE,
+)
+from core.preset_contract import resolve_position_fraction  # §2 (audit 2026-10-15)
 
 logger = logging.getLogger(__name__)
 
@@ -203,24 +221,31 @@ def run_backtrader_backtest(
         start_date=start, end_date=end,
         initial_capital=initial_capital,
         atr_tp_mult=atr_tp, atr_sl_mult=atr_sl,
-        position_sizing=p.get("position_sizing", "equal"),
+        position_sizing=resolve_position_sizing(
+            p, p.get("_name", "chase_up"), allowed=frozenset({ALL_IN})
+        ),
         kelly_fraction=p.get("kelly_fraction"),
+        # §2 (audit 2026-10-15): 此前 22/22 preset 声明 position_fraction 却
+        # 无人读取。经规范契约解析后注入(缺声明 fail-fast)。
+        position_fraction=resolve_position_fraction(p, p.get("_name", "chase_up")),
         # Round 15 (2026-09-28, CLAUDE.md §0/§4): cost model plumbing
         # (commission/stamp/floor) + ATR-aware slippage from preset。
         # Defaults preserve pre-R15 behavior (legacy presets 无 key 时仍得
         # canonical 0.00025+0.0005+5.0 与 0.0 slippage)。
-        commission_rate=p.get("commission_rate", 0.00025),
-        stamp_duty_rate=p.get("stamp_duty_rate", 0.0005),
-        min_commission=p.get("min_commission", 5.0),
+        commission_rate=p.get("commission_rate", COMMISSION_RATE),
+        stamp_duty_rate=p.get("stamp_duty_rate", STAMP_DUTY_RATE),
+        min_commission=p.get("min_commission", MIN_COMMISSION),
         slippage=p.get("slippage", 0.0),
-        atr_slip_scale=p.get("atr_slip_scale", 0.0),
+        atr_slip_scale=resolve_atr_slip_scale(p, p.get("_name", "chase_up")),
         # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System execution source。
         price_source_for_execution=p.get("price_source_for_execution", "adj_close"),
         # V8 (2026-09-22, CLAUDE.md §4): preset→strategy explicit plumbing。
         intraday_tiebreak=p.get("intraday_tiebreak", "sl_first"),
-        max_volume_participation=p.get("max_volume_participation", 0.10),
+        max_volume_participation=resolve_volume_participation(
+            p, p.get("_name", "chase_up")
+        ),
         # Round 14 (2026-09-28, CLAUDE.md §2): NAV-floor cash gate threshold from preset。
-        nav_gate_ratio=p.get("nav_gate_ratio", 0.05),
+        nav_gate_ratio=resolve_nav_gate_ratio(p, p.get("_name", "chase_up")),
     )
 
     if not verify or trades_p1.empty:
@@ -283,8 +308,8 @@ def run_backtrader_backtest(
         # buy_commission = max(notional × commission_rate, min_commission)
         notional_in = entry_price * size
         buy_commission = max(
-            notional_in * p.get("commission_rate", 0.00025),
-            p.get("min_commission", 5.0),
+            notional_in * p.get("commission_rate", COMMISSION_RATE),
+            p.get("min_commission", MIN_COMMISSION),
         )
         invested = notional_in + buy_commission
         net_return = net_pnl_bt / invested if invested > 0 else 0.0

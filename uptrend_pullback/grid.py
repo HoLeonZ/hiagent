@@ -23,12 +23,14 @@ import pandas as pd
 
 from hiagent_config import DB_PATH
 
+from core.walkforward import window_trading_days  # §5 窗口交易日数单源
+from dna_stats.deflated import deflated_sharpe_ratio  # §5 Penalty Metrics
 from uptrend_pullback.backtest import compute_metrics
 from uptrend_pullback.data import load_panel
 from uptrend_pullback.portfolio import simulate_portfolio
 from uptrend_pullback.presets import MAX_HOLD_LIMIT, get_preset
 from uptrend_pullback.regime import compute_regime
-from uptrend_pullback.signals import compute_indicators, select_entries
+from uptrend_pullback.signals import compute_indicators, select_entries_for_preset
 from uptrend_pullback.universe import load_universe
 
 logger = logging.getLogger(__name__)
@@ -102,6 +104,15 @@ def run_grid(
     # returns[combo_idx][window_key] = total_return
     returns: list[dict] = [{} for _ in combos]
     trades_n: list[dict] = [{} for _ in combos]
+    #: §5 Penalty Metrics 用:每 (combo, 窗口) 的 Sharpe。
+    sharpes: list[dict] = [{} for _ in combos]
+    #: DSR 的 `n_returns` = **评估过的交易日并集**。
+    #: 不是"各窗之和" —— 窗口是 `(y-09-08, y+1-09-08)` 首尾相接,**边界日被两个窗口同时包含**,
+    #: 直接相加会多算最多 `len(windows)-1` 天;而 T 偏大 ⇒ DSR **偏乐观**(附八十一 量过同款)。
+    _day_union: set = set()
+    #: **实际评估过的**窗口(形如 `(start, end)`)—— 用于 §5 那句"这是样本内多少窗"的声明。
+    #: 单独记 span 而不是复用 `returns` 的 key:key 只有起点,单窗时会显示成 `2024-09-08 .. 2024-09-08`。
+    _eval_spans: list[tuple[str, str]] = []
 
     for start, end in windows:
         try:
@@ -114,6 +125,22 @@ def run_grid(
             # MemoryError propagate.
             logger.warning("窗口 %s..%s 跳过: %s", start, end, e)
             continue
+        # 逐窗仍以 `window_trading_days` 为准(单源),并在此核对"并集用的谓词"与它一致 ——
+        # 否则本文件会悄悄长出第二套窗口长度口径。
+        _w_days = window_trading_days(panel, start, end)
+        _w_dates = set(
+            panel.loc[
+                (panel["date"] >= pd.Timestamp(start)) & (panel["date"] <= pd.Timestamp(end)),
+                "date",
+            ]
+        )
+        if len(_w_dates) != _w_days:
+            raise ValueError(
+                f"§5: 窗口 {start}..{end} 的天数与单源 {_w_days} 不一致({len(_w_dates)}) —— "
+                "本文件的并集口径与 core.walkforward 已经分叉"
+            )
+        _day_union |= _w_dates
+        _eval_spans.append((start, end))
         panel_ind = compute_indicators(panel)
         regime_cache: dict[tuple, pd.DataFrame] = {}
 
@@ -131,8 +158,9 @@ def run_grid(
                     regime_cache[rkey] = compute_regime(panel_ind, **cfg["regime"])
                 reg = regime_cache[rkey]
 
-            entries = select_entries(
-                panel_ind, start_date=start, end_date=end, regime_df=reg, **cfg["signal"]
+            # §6 单源 (附一百零九):分派规则收在 `signals.select_entries_for_preset`。
+            entries = select_entries_for_preset(
+                panel_ind, signal=cfg["signal"], start_date=start, end_date=end, regime_df=reg
             )
             trades_df, equity_df = simulate_portfolio(
                 entries, panel_ind,
@@ -144,6 +172,7 @@ def run_grid(
             m = compute_metrics(trades_df, equity_df, max_hold=cfg["max_hold"])
             returns[ci][start] = m["total_return"]
             trades_n[ci][start] = m["trades"]
+            sharpes[ci][start] = m["sharpe"]
 
         logger.info("窗口 %s..%s 完成", start, end)
         del panel, panel_ind, regime_cache
@@ -167,6 +196,36 @@ def run_grid(
     df = pd.DataFrame(rows)
     if df.empty:
         return df
+
+    # CLAUDE.md §5 Penalty Metrics:多参数网格**必须**报 DSR 或 Bonferroni。
+    # 本脚本此前**一项都没有**(而它的孪生兄弟 `short_reversal/grid_runner.py` 早已补上 ⇒
+    # 族内不对称,附一百零九)。口径与 `uptrend_pullback/sweep_v33_long.py` 逐字一致:
+    #   observed = 全部 (combo, 窗口) 里**成功者**的最大 Sharpe(选择只在有数的配置间发生);
+    #   n_trials = **枚举出的** combo 数(附八十二:没信号的 combo 不出现在 rows 里,
+    #              但"枚举出它"就算试过,用 rows 长度会把 DSR 报乐观);
+    #   n_returns = 评估过的交易日**并集**(见上方 `_day_union` 的注释)。
+    all_sharpes = [s for per in sharpes for s in per.values() if pd.notna(s)]
+    if all_sharpes and _day_union:
+        _observed = max(all_sharpes)
+        _dsr = deflated_sharpe_ratio(
+            observed_sharpe=_observed, n_trials=len(combos), n_returns=len(_day_union),
+        )
+        print(
+            f"\n§5 DSR | observed_sharpe={_observed:.3f} | "
+            f"n_trials={len(combos)} | n_returns={len(_day_union)} | "
+            f"deflated_sharpe={_dsr['deflated_sharpe']:.3f} | "
+            f"expected_max={_dsr['expected_max_sharpe']:.3f} | "
+            f"p_value={_dsr['dsr_p_value']:.4f}"
+        )
+        # §5 (附九十六 那条同形):选优必须**自己说清楚**它是样本内的 ——
+        # DSR 校正的是"从 k 个里挑最好"的选择偏差,**不能**替代样本外验证。
+        print(
+            f"  ⚠️ in-sample selection:本榜是在 {len(rows)} 个配置 × "
+            f"{len(_eval_spans)} 个**样本内年度窗**({_eval_spans[0][0]} .. {_eval_spans[-1][1]})上、"
+            "按「各年中位收益」排出的;目标年未参与。DSR 不等于样本外验证 —— "
+            "要把某个 config 当结论,请在**未参与选择**的窗口上复跑(§5 WFV)。"
+        )
+
     return df.sort_values(
         ["median_ret", "worst_ret"], ascending=[False, False]
     ).reset_index(drop=True)

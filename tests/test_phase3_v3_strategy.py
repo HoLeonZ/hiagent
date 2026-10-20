@@ -39,6 +39,8 @@ def _run_strategy(
     holder: dict = {"cash": initial_capital, "trades": [], "max_dd": 0.0}
     cerebro.addstrategy(
         Phase3V3Strategy,
+        nav_gate_ratio=0.05,  # §2 (audit 2026-10-15): 单元夹具直接构造策略,
+                              #   故须显式给出(生产路径由 preset 声明注入)
         tp_pct=tp_pct,
         sl_pct=sl_pct,
         max_hold=max_hold,

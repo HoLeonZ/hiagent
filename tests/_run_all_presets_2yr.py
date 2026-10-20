@@ -1,7 +1,7 @@
 """Loop every preset across 4 strategies through its CLI on a 2-year window.
 
 聚合位置:``/tmp/hiagent_all_presets_2yr/``(CLAUDE.md §7 — 不进 repo, results/ 已
-gitignored;本脚本为临时协调脚本,本身也未列入 git)。
+gitignored;本脚本为临时协调脚本(**它确实在 git 里** —— 原句说反了,附一百一十一 更正))。
 
 Window:
   start = 2024-10-10(2 年前同日 ±1)
@@ -24,7 +24,9 @@ import sys
 import time
 from pathlib import Path
 
-REPO = Path("/Users/zhl/code/hiagent").resolve()
+# §0/§6 (附一百一十一): 此前硬编码的是**另一个用户**的家目录 ⇒ 在任何别的
+# checkout 上都指向不存在的地方。
+REPO = Path(__file__).resolve().parents[1]
 OUT_DIR = Path("/tmp/hiagent_all_presets_2yr")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 SUMMARY_MD = OUT_DIR / "summary.md"

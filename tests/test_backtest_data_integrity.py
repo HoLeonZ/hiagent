@@ -26,6 +26,7 @@ from chase_up.data import load_panel
 from chase_up.signals import compute_indicators
 from chase_up.universe import load_universe
 from hiagent_config import DB_PATH
+from tests.conftest import require_market_db  # §6 共享跳过助手
 
 
 PRESET = "chase_v5_pos2_equal_atr_tp6_sl15_mh10"
@@ -34,6 +35,10 @@ WINDOW = ("2025-07-01", "2026-07-01")
 
 @pytest.fixture(scope="module")
 def panel():
+    # §6 (audit 2026-10-15): 无库时 **skip 而非 error**。此前的 skip 检查写在文件
+    # 中部的一个测试里,而这三个 module 级 fixture 在它之前就先连库了 —— 于是
+    # fresh clone 下 5 个用例是 ERROR,不是 skip。
+    require_market_db()
     universe = set(load_universe("mainboard_only", DB_PATH))
     return load_panel(DB_PATH, WINDOW[0], WINDOW[1], universe=universe)
 
@@ -54,8 +59,17 @@ def test_layer1_raw_prev_close_coverage(panel):
     (DuckDB raw_kline_daily.prev_close NULL upstream), 由 data 层 fix 处理.
     此测试固定记录现状, 数据层修复后覆盖率应提升到 100%."""
     cov = panel["raw_prev_close"].notna().mean()
-    # 记录基线; 一旦数据层修复, 应改为 assert cov == 1.0
-    assert cov >= 0.0
+    # audit P3 (2026-10-15): 原为 `assert cov >= 0.0` —— 恒真,任何输入都通过,
+    # 等于没有断言(§6 意义上最坏的一种守卫)。改为可证伪的两条:
+    #   (a) 列必须存在(数据层契约);
+    #   (b) 覆盖率不足时,入口守卫必须有 adj 回退 —— 那才是缺口被处理的方式。
+    assert "raw_prev_close" in panel.columns, "面板缺少 raw_prev_close 列"
+    if cov < 1.0:
+        guard = (ROOT / "chase_up" / "portfolio.py").read_text(encoding="utf-8")
+        assert "raw_prev_close" in guard, (
+            f"raw_prev_close 覆盖率仅 {cov:.4%} 且入口守卫无回退 —— "
+            "缺口既未被修复,也未被处理"
+        )
     print(f"\n[Layer 1] raw_prev_close coverage = {cov:.4%}")
 
 
@@ -130,24 +144,37 @@ def test_layer4_per_trade_math_closure(trades):
     assert not bad, f"{len(bad)} trades 内部数学闭环失败:\n{bad[:5]}"
 
 
-def test_layer5_cash_walk_conservation(trades):
-    """Layer 5: sum(net_pnl) ≈ final_equity - initial_capital (允许小 epsilon).
+def test_layer5_cash_walk_conservation(panel_ind):
+    """Layer 5:现金守恒 —— 用**当前运行**的账本断言精确恒等式。
 
-    验证 cash walk 守恒: 所有 trade 的 net_pnl 之和应等于最终权益变化.
+    audit P3 (2026-10-15): 原实现从 golden 里读一个**存储的** final_equity,并用
+    **30% 容差**比较,注释写着"含分红 / 利息 / 闲置资金收益,不等于 sum(net_pnl)"。
+    那条"守恒"测试因此既依赖一份会漂移的历史数字(§7 已要求清除),又宽到 22% 的
+    偏差也能通过 —— 一个 30% 容差的不变量不是不变量。
+
+    现在断言精确恒等式(§2/§3):
+        final_equity == initial + Σ net_pnl + Σ dividends
+    分红是**独立于逐笔 P&L 的现金流**(§3 要求显式入 Free_Cash),故必须显式计入;
+    此前"守恒测试需要 30% 容差"正是因为漏了它。
     """
-    net_total = float(trades["net_pnl"].sum())
-    # 假设 initial_capital=1_000_000, 取 baseline 中 final_equity
+    import pandas as pd
+
+    from chase_up.backtest import run_backtest
+    from hiagent_config import DB_PATH as _DB
+
+    if not Path(_DB).exists() or Path(_DB).stat().st_size == 0:
+        pytest.skip(f"§6: 本地 DuckDB 不可用({_DB})—— skip 而非 error")
+
+    res = run_backtest(PRESET, WINDOW[0], WINDOW[1], _DB, panel_ind=panel_ind)
+    trades, eq = res["trades"], res["equity"]
     initial = 1_000_000.0
-    # 从 baseline 拿 final_equity
-    import json
-    baseline_path = ROOT / "tests" / "golden" / "chase_v5_baseline.json"
-    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
-    final_equity = baseline["metrics"]["final_equity"]
-    delta = final_equity - initial
-    # 容许 30% epsilon: cash walk 含分红 / 利息 / 闲置资金收益, 不等于 sum(net_pnl)
-    # 但 abs(delta - net_total) 不应超过 delta 绝对值的 30%. 实测 v5 当前 ~22%.
-    rel_err = abs(net_total - delta) / max(delta, 1)
-    assert rel_err < 0.30, (
-        f"cash walk 不守恒: sum(net_pnl)={net_total:.2f} "
-        f"vs final_equity-initial={delta:.2f} (rel_err={rel_err:.4%})"
+    realised = float(pd.to_numeric(trades["net_pnl"], errors="coerce").sum())
+    dividends = float(eq["cum_dividends"].iloc[-1]) if "cum_dividends" in eq.columns else 0.0
+    final = float(eq["equity"].iloc[-1])
+    expected = initial + realised + dividends
+    rel_err = abs(final - expected) / initial
+    assert rel_err < 1e-9, (
+        f"现金不守恒: final_equity={final:,.6f} != initial({initial:,.0f}) + "
+        f"Σnet_pnl({realised:,.6f}) + 分红({dividends:,.6f}) = {expected:,.6f} "
+        f"(rel_err={rel_err:.3e})"
     )

@@ -149,19 +149,19 @@ def test_volume_cap_rounding_constant_pin_short_reversal() -> None:
 
 
 def test_volume_cap_rounding_constant_pin_cycle() -> None:
-    """Pin (out-of-scope): cycle_price_action still uses `// 100 * 100`.
+    """Pin (GREEN, 2026-10-15): cycle_price_action 已 wire 到 volume_cap_fill。
 
-    Per scope note (2026-09-28): cycle_price_action/portfolio.py 的 volume cap
-    fix 不在本 agent 任务范围内。PIN 仅用于 forward-defense, 检测后续 cycle
-    修复时不要引入 round-to-0 模式。若 cycle 已修复, 翻转此断言即可。
+    此处原为「out-of-scope」红灯 pin,钉的是 round-to-0 公式仍在。该缺陷已修:
+    cycle 改走 `core.dual_price.volume_cap_fill`,与 chase_up / uptrend_pullback /
+    short_reversal 同口径 —— 薄量 bar 上至少返回 1 lot,而不是取整到 0 后**跳过
+    整个守卫**(下单完全不受约束)。
     """
     src = Path("cycle_price_action/portfolio.py").read_text(encoding="utf-8")
-    has_buggy = (
-        "int(bar_volume * self.MAX_VOL_PARTICIPATION // 100) * 100" in src
+    assert "volume_cap_fill" in src, (
+        "§4 regression: cycle_price_action/portfolio.py 不再使用规范 "
+        "volume_cap_fill 助手。"
     )
-    # 当前 cycle 仍未修复 round-to-0 模式 — 此 pin 仍处于 RED→GREEN 中间状态。
-    # 若 cycle 已 wire 到 volume_cap_fill, 翻转此断言为 has_helper 模式。
-    assert has_buggy, (
-        "cycle_price_action/portfolio.py 不再使用 `// 100 * 100` 公式 — "
-        "若已 wire 到 volume_cap_fill, 请更新此 pin 测试以匹配 GREEN 状态。"
+    assert "// 100) * 100" not in src, (
+        "§4 regression: cycle_price_action/portfolio.py 重新引入了 "
+        "round-to-0 公式 —— 薄量 bar 上守卫会被跳过。"
     )

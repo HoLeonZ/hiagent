@@ -319,3 +319,38 @@ def select_entries_v33_long_mirror(
     ).reset_index(drop=True)
     logger.info("select_entries_v33_long_mirror: %d 个候选信号", len(out))
     return out
+
+
+def select_entries_for_preset(
+    panel_ind: pd.DataFrame,
+    *,
+    signal: dict,
+    start_date: str,
+    end_date: str,
+    regime_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """按 `signal["entry_mode"]` 分派到正确的选择函数 —— **单一来源**。
+
+    ⚠️ 附一百零九:这条分派规则此前有**五份副本**(`backtest.py` / `backtrader_engine.py`
+    各一份正确实现,`grid.py` / `render_trades_html.py`×2 三份**漏掉了分派**)。
+    后果不是"少一个分支",而是**两个 CLI 工具对仓库里的全部 preset 当场崩**:
+    三个活 preset 的 `entry_mode` 都是 `"v33_long_mirror"`,它们的 `signal` 里带
+    `pct_chg_low` / `pct_chg_high`,而 `select_entries()` 不接受这两个形参 ⇒
+    `TypeError: select_entries() got an unexpected keyword argument 'pct_chg_low'`。
+    (实测:`uptrend_pullback/grid.py` 在第一个 combo 上就崩;`render_trades_html.py`
+    的两处调用点同形。)两者都**没有产出**,所以它们对 §5 纪律的"执行"是零。
+
+    本函数的行为与那两份正确实现**逐字等价**(镜像分支剔除 `entry_mode`,
+    else 分支原样转发)。判据由此收成一处;`tests/test_preset_signal_dispatch_is_single_source.py`
+    钉住"包内不得再有模块直接调那两个选择函数"。
+    """
+    if signal.get("entry_mode") == "v33_long_mirror":
+        kwargs = {k: v for k, v in signal.items() if k != "entry_mode"}
+        return select_entries_v33_long_mirror(
+            panel_ind, start_date=start_date, end_date=end_date,
+            regime_df=regime_df, **kwargs,
+        )
+    return select_entries(
+        panel_ind, start_date=start_date, end_date=end_date,
+        regime_df=regime_df, **signal,
+    )

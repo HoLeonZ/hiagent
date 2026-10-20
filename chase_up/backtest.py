@@ -14,10 +14,29 @@ from chase_up.presets import MAX_HOLD_LIMIT, get_preset
 from chase_up.signals import compute_indicators, select_entries
 from chase_up.universe import load_universe
 
+from core.dual_price import (  # §2 单源 (audit P2-11, 2026-10-15)
+    resolve_atr_slip_scale,
+    COMMISSION_RATE,
+    MIN_COMMISSION,
+    STAMP_DUTY_RATE,
+)
+from core.trade_schema import TRADING_DAYS_PER_YEAR  # §2 单源 (audit 2026-10-15)
+# §2 单源 (audit 2026-10-17): 契约键一律经 core.preset_contract 解析(缺声明即
+# fail-fast),不再用 `p.get(key, <看起来合理的默认值>)` —— 那正是 preset_contract
+# docstring 明令禁止的「让缺口靠沉默存在」。
+from core.preset_contract import (
+    ALL_IN,
+    resolve_nav_gate_ratio,
+    resolve_position_sizing,
+    resolve_volume_participation,
+)
+
 logger = logging.getLogger(__name__)
 
 INITIAL_CAPITAL = 1_000_000.0
-TRADING_DAYS = 243
+#: 年化口径单源 —— 见 core.trade_schema.TRADING_DAYS_PER_YEAR 的说明
+#: (日历日 vs 交易日会让同一窗口的 CAGR 差 8%~26%)。此处保留旧名以兼容调用方。
+TRADING_DAYS = TRADING_DAYS_PER_YEAR
 
 
 def compute_metrics(
@@ -56,27 +75,53 @@ def compute_metrics(
     if trades_df.empty:
         return {
             "trades": 0, "win_rate": 0.0, "final_equity": final_equity,
+        # §5 (audit 2026-10-16): 观察数**随产物发布**。DSR 的 `n_returns` 参数是
+        # "Sharpe 用了多少个收益观测"(T = len(eq) - 1,因为 rets = diff(eq)),
+        # 而此前各 sweep 只能把这个数**硬编码**(多处写 252),窗口实际只有
+        # 242~243 个交易日 ⇒ T 被高估约 4%,标准误被低估约 2%,DSR 系统性偏乐观。
+        # 与 short_reversal 的 `n_trading_days` 是**两个量**:那个是"窗口有多少个
+        # 交易日"(用于年化),这个是"有多少个收益观测"(用于标准误),差一个观测。
+        "n_daily_returns": int(max(len(eq) - 1, 0)),
             "total_return": total_return, "cagr": cagr, "sharpe": sharpe,
+            # §2 (audit 2026-10-15): sharpe 的定义随产物发布 —— 与 short_reversal
+            # 的 `sharpe` 不是同一个量(那个是逐笔比率的近似)。
+            "sharpe_kind": "daily_returns_annualized",
             "max_dd": max_dd, "avg_hold_days": 0.0, "max_hold_days": 0,
             "overrun_count": 0,
             "tp_count": 0, "sl_count": 0, "time_count": 0, "eod_count": 0,
-            "avg_net_return": 0.0, "profit_factor": float("inf"), "exposure": exposure,
+            "avg_net_return": 0.0, "profit_factor": None, "exposure": exposure,
         }
 
     net = trades_df["net_pnl"].to_numpy(dtype=float)
     wins = net[net > 0]
     losses = net[net < 0]
+    # §0/§7 (audit 2026-10-15): 无亏损笔数时 `profit_factor` **无定义**(分母 0),
+    # 返回 None 而不是 `float("inf")` —— Python 的 `json.dumps(inf)` 会写出
+    # `Infinity`,那不是 RFC 8259 的合法值:除 Python 自己的宽松 `json.loads`
+    # (正因它能读回来,这个缺陷一直没被发现)之外,JS / Go / Rust / jq 一律拒绝。
+    # 于是 `results/backtest.json` 在"全胜窗口"下是**非法 JSON**。None 既合法,
+    # 也与本仓库既有的"算不出就 None"口径一致(max_dd=None / cagr=None / beta=None)。
     profit_factor = (
-        float(wins.sum() / abs(losses.sum())) if losses.size and losses.sum() != 0 else float("inf")
+        float(wins.sum() / abs(losses.sum()))
+        if losses.size and losses.sum() != 0
+        else None
     )
 
     return {
         "trades": int(len(trades_df)),
         "win_rate": float((net > 0).mean()),
         "final_equity": final_equity,
+        # §5 (audit 2026-10-16): 观察数**随产物发布**。DSR 的 `n_returns` 参数是
+        # "Sharpe 用了多少个收益观测"(T = len(eq) - 1,因为 rets = diff(eq)),
+        # 而此前各 sweep 只能把这个数**硬编码**(多处写 252),窗口实际只有
+        # 242~243 个交易日 ⇒ T 被高估约 4%,标准误被低估约 2%,DSR 系统性偏乐观。
+        # 与 short_reversal 的 `n_trading_days` 是**两个量**:那个是"窗口有多少个
+        # 交易日"(用于年化),这个是"有多少个收益观测"(用于标准误),差一个观测。
+        "n_daily_returns": int(max(len(eq) - 1, 0)),
         "total_return": total_return,
         "cagr": cagr,
         "sharpe": sharpe,
+        "sharpe_kind": "daily_returns_annualized",  # §2 (audit 2026-10-15): 日收益序列的 Sharpe(mean/std × √243)。与 short_reversal 的 `sharpe` **不是**同一个量
         "max_dd": max_dd,
         "avg_hold_days": float(trades_df["hold_days"].mean()),
         "max_hold_days": int(trades_df["hold_days"].max()),
@@ -88,6 +133,26 @@ def compute_metrics(
         "avg_net_return": float(trades_df["net_return"].mean()),
         "profit_factor": profit_factor,
         "exposure": exposure,
+    }
+
+
+def _benchmark_block(panel, total_return: float) -> dict:
+    """§5:基准收益 + 相对超额。见 core/benchmark.py 的选择理由。
+
+    基准**算不出时**(窗口内没有可构成买入持有的标的)发布 `None`,不是 0.0 ——
+    否则 `excess_return` 会等于总收益,读起来像"基准没动",与真实的 0% 不可区分
+    (与 `profit_factor` 的 None 口径一致)。
+    """
+    from core.benchmark import BENCHMARK_KIND_EQUAL_WEIGHT, equal_weight_basket_return
+
+    bench, n_members = equal_weight_basket_return(panel)
+    return {
+        # 数字必须带着它的含义一起发布(与 sharpe_kind / n_daily_returns 同一原则):
+        # "超额 +3%"在没说明基准是什么之前,不是一个可引用的结论。
+        "benchmark_kind": BENCHMARK_KIND_EQUAL_WEIGHT,
+        "benchmark_return": bench,
+        "benchmark_members": n_members,
+        "excess_return": None if bench is None else total_return - bench,
     }
 
 
@@ -125,31 +190,41 @@ def run_backtest(
         initial_capital=initial_capital,
         atr_tp_mult=p.get("atr_tp_mult"),
         atr_sl_mult=p.get("atr_sl_mult"),
-        position_sizing=p.get("position_sizing", "equal"),
+        position_sizing=resolve_position_sizing(
+            p, p.get("_name", "chase_up"), allowed=frozenset({ALL_IN})
+        ),
         kelly_fraction=p.get("kelly_fraction"),
         # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System execution source。
         price_source_for_execution=p.get("price_source_for_execution", "adj_close"),
         # V8 (2026-09-22, CLAUDE.md §4): preset→strategy explicit plumbing。
         intraday_tiebreak=p.get("intraday_tiebreak", "sl_first"),
-        max_volume_participation=p.get("max_volume_participation", 0.10),
+        max_volume_participation=resolve_volume_participation(
+            p, p.get("_name", "chase_up")
+        ),
         # R5 (2026-10-09, CLAUDE.md §2): NAV-floor cash gate, 与 backtrader_engine.py:223 保持一致。
         # portfolio.py:175-189 文档化 Round 14 (2026-09-28) 引入,默认 0.05。
-        nav_gate_ratio=p.get("nav_gate_ratio", 0.05),
+        nav_gate_ratio=resolve_nav_gate_ratio(p, p.get("_name", "chase_up")),
         # R6 (2026-10-09, CLAUDE.md §0/§4): cost model plumbing, 与 backtrader_engine.py:212-216 保持一致。
         # Round 15 (2026-09-28) 在 portfolio.py:247-254 引入 ATR-aware slippage 与成本参数。
         # 当前 0/22 preset 声明这些 key, 函数默认 0.00025/0.0005/5.0/0.0/0.0 与 backtrader_engine.py p.get 默认完全一致 (R5 nav_gate_ratio 同模式)。
         # 显式 plumb 防止未来 preset override 时两引擎 drift。
-        commission_rate=p.get("commission_rate", 0.00025),
-        stamp_duty_rate=p.get("stamp_duty_rate", 0.0005),
-        min_commission=p.get("min_commission", 5.0),
+        commission_rate=p.get("commission_rate", COMMISSION_RATE),
+        stamp_duty_rate=p.get("stamp_duty_rate", STAMP_DUTY_RATE),
+        min_commission=p.get("min_commission", MIN_COMMISSION),
         slippage=p.get("slippage", 0.0),
-        atr_slip_scale=p.get("atr_slip_scale", 0.0),
+        atr_slip_scale=resolve_atr_slip_scale(p, p.get("_name", "chase_up")),
     )
 
     metrics = compute_metrics(
         trades_df, equity_df, initial_capital=initial_capital, max_hold=p["max_hold"]
     )
     metrics.update({"start": start, "end": end, "signals": int(len(entries))})
+
+    # §5 Attribution Mandate(此前**全库无实现**,2026-10-16 补齐):
+    # 「Headline returns MUST be reported alongside benchmark-relative excess
+    # return (index or style basket)」—— 否则"纯 style beta"会被当成 alpha 呈现。
+    # 基准 = 本窗口 PIT 宇宙的等权买入持有;选择理由与价格域见 core/benchmark.py。
+    metrics.update(_benchmark_block(panel_ind, float(metrics["total_return"])))
     if isinstance(preset, str):
         metrics["preset"] = preset
     return {"metrics": metrics, "trades": trades_df, "equity": equity_df}

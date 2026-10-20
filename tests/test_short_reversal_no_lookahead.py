@@ -8,11 +8,14 @@ Audit-driven invariants locked here:
     they exist by design (60-day post-buffer is in-flight close convention,
     not entry allowance). The presence of post-window exits is therefore NOT
     a violation. What IS a violation: any trade with entry_date < start.
-  - SR-LA-06: SL gap-fill at sl_p (loss-cap semantics) is DESIGN CHOICE not a bug.
-    Refutes the audit's recommendation to flip to open_p; the existing
-    test_phase3_v3_bugfixes.py::test_sl_exit_uses_sl_price_not_open_when_gap_up
-    already locks the loss-cap behavior. This file re-asserts the symmetry:
-    TP gap → open_p (favorable to trader), SL gap → sl_p (loss cap, also favorable).
+  - SR-LA-06: 2026-10-17 **更正**。此前本文件写着 "SL gap-fill at sl_p
+    (loss-cap semantics) is DESIGN CHOICE not a bug. Refutes the audit's
+    recommendation to flip to open_p" —— 那个"驳回"是错的:§4 Gap-Through-Stop
+    是无条件 MUST(「开盘越过止损 ⇒ 按开盘价成交(悲观),绝不用止损价」),三姊妹
+    引擎也都如此;而生产 preset 的 sl_pct 多为 0.0005,导致几乎每笔 SL 都按 sl_p
+    成交、损失恒被钉在 0.05%。**审计的建议是对的,已按建议修**。现在两条用例钉住
+    的是同一件事的两侧:TP gap → open_p(买入限价单在有利跳空下以更优价成交)、
+    SL gap → open_p(卖出止损在跳空下以实际可取到的价成交)。
 
 Structural fragility (acknowledged but not blocking):
   - SR-LA-03 / SR-LA-04 / FINDING-001: panel has 180-day pre-buffer and 60-day
@@ -49,14 +52,19 @@ from short_reversal.replay_strategy_v3 import Phase3V3Strategy
 import backtrader as bt
 
 from hiagent_config import DB_PATH
+from tests.conftest import market_db_available  # §6: 存在**且非空**
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT.parent))
 
 # ---------- skip-on-no-DB ----------------------------------------------------
 
-_REAL_DB = DB_PATH if DB_PATH.exists() else None
-pytestmark = pytest.mark.skipif(_REAL_DB is None, reason="需要 hiagent_config.DEFAULT_DB_PATH")
+# §6 (audit 2026-10-15): 原为 `DB_PATH.exists()` —— 0 字节占位文件(正是 fresh clone
+# 的形状)会漏过去,于是无可用库时这 3 个用例是 ERROR 而不是 skip。
+_REAL_DB = DB_PATH if market_db_available() else None
+pytestmark = pytest.mark.skipif(
+    _REAL_DB is None, reason="§6: 本地行情库不可用(无库或 0 字节占位)"
+)
 
 
 # ---------- fixtures --------------------------------------------------------
@@ -74,6 +82,7 @@ def trace_report() -> dict:
 
 # ---------- LAHEAD-001: no entry before window start -----------------------
 
+@pytest.mark.slow  # trace_report 是 module 级 fixture,setup 约 7 分钟
 def test_pre_window_entry_count_is_zero(trace_report):
     """LAHEAD-001: across all traces, ZERO trades have entry_date < start."""
     assert trace_report["pre_window_entry_trades_count"] == 0, (
@@ -83,6 +92,7 @@ def test_pre_window_entry_count_is_zero(trace_report):
     assert trace_report["pre_window_pnl"] == 0.0
 
 
+@pytest.mark.slow  # trace_report 是 module 级 fixture,setup 约 7 分钟
 def test_pre_window_pnl_contribution_is_zero(trace_report):
     """锁定 LAHEAD-001 的 PnL 侧面: pre-window PnL 必须 = 0。"""
     assert trace_report["pre_window_pnl_contribution_pct"] == 0.0
@@ -90,6 +100,7 @@ def test_pre_window_pnl_contribution_is_zero(trace_report):
 
 # ---------- FINDING-001: post-end entry structural fragility --------------
 
+@pytest.mark.slow  # trace_report 是 module 级 fixture,setup 约 7 分钟
 def test_no_post_window_entries(trace_report):
     """FINDING-001: 即使有 60-day post-buffer,post-window entry 必须 = 0。
 
@@ -126,15 +137,22 @@ def test_no_post_window_entries(trace_report):
 # See module docstring "SKIPPED" section for full rationale.
 
 
-# ---------- SR-LA-06: design choice — TP gap @ open_p, SL gap @ sl_p ------
+# ---------- SR-LA-06: gap fills (short side) — 两侧都按 §4 的语义 ----------
+#
+# 2026-10-17 更正: 这一组此前写着 "design choice — TP gap @ open_p, SL gap @ sl_p",
+# 并断言 SL gap 成交价 = sl_p。**那是把 §4 的违反锁死**:§4 Gap-Through-Stop 无条件
+# 要求"开盘越过止损 ⇒ 按开盘价成交(悲观),绝不用止损价",三姊妹引擎也都如此。
+# 影响不是措辞问题 —— 生产 preset 的 sl_pct 多为 0.0005,几乎每笔 SL 都落进 gap
+# 分支,于是损失被一律钉在 0.05%,与当天真实跳空无关(结果被系统性抬高)。
+
 
 def test_tp_gap_fill_uses_open_p():
-    """SR-LA-06 / design choice: TP gap (short, open <= tp_p) → fill @ open_p.
+    """TP gap (short, open <= tp_p) → fill @ open_p。
 
-    做空仓 TP 在价格跳空穿过 tp_p 时,实际成交价是 open_p(对 trader 有利)。
-    这是 design choice 而非 bug —— 与 project CLAUDE.md P1 不直接冲突
-    (open_p 是开盘第一笔的实际 fill),与 TP 配对的 SL gap 用 sl_p
-    (loss-cap semantics) 形成不对称但 deliberate 的设计。
+    做空仓 TP 在价格跳空**向下**穿过 tp_p 时,回补是买入 ⇒ 限价单在有利跳空下
+    本来就以更优价(open_p)成交。这**不是**与 SL 侧"不对称的 deliberate 设计":
+    §4 的 Gap-Through-Stop 措辞只约束 stop;两侧各自符合物理约定。
+    (SL 侧见下一条 —— 它与本条同向,都取"开盘那一刻的价"。)
     """
     df = _run_single_stock_scenario(
         ep_estimate=22.20, tp_pct=0.06, sl_pct=10.0, max_hold=20,
@@ -157,40 +175,67 @@ def test_tp_gap_fill_uses_open_p():
     )
 
 
-def test_sl_gap_fill_uses_sl_p_loss_cap_semantics():
-    """SR-LA-06: SL gap (short, open >= sl_p) → fill @ sl_p (loss cap)。
+def test_sl_gap_fill_uses_open_p_per_section_4():
+    """§4 Gap-Through-Stop: 做空跳空向上穿过止损 → 必须按 **open_p** 成交。
 
-    这不是 bug,而是 deliberate design choice:
-      - 紧止损 (sl_pct ≤ 0.5%) 时,gap 风险本身小,截断语义合理
-      - 宽止损 (如测试中 10%) 时,这是 v33 fix 的核心目标
-        (见 presets.py 注释 "SL 跳空放大让单笔 SL 损失从 -0.05% 变 -10%")
+    ## 这条用例此前把**错误行为**锁死(2026-10-17 更正)
 
-    此测试与 test_phase3_v3_bugfixes.py::test_sl_exit_uses_sl_price_not_open_when_gap_up
-    形成 lock-in: 任何 flip 到 open_p 的提交都会同时打挂两个测试。
+    原名 `test_sl_gap_fill_uses_sl_p_loss_cap_semantics`,断言
+    `exit_price == sl_p`,docstring 称之为 "deliberate design choice / loss cap",
+    并与 `test_phase3_v3_bugfixes.py::test_sl_exit_uses_sl_price_not_open_when_gap_up`
+    "lock-in" —— 两条一起,把任何改回 §4 的提交都打挂。
+
+    它引用的那条依据("presets.py 注释:SL 跳空放大让单笔 SL 损失从 -0.05% 变 -10%")
+    **在 presets.py 里并不存在**(`grep 跳空 short_reversal/presets.py` = 0 命中):
+    又是一次"守卫依赖已消失的产物"。
+
+    真实后果:生产 preset 的 `sl_pct` 多为 **0.0005**(0.05%),于是**几乎每一笔 SL
+    都落进这条 gap 分支**,损失被一律钉在 0.05% —— 与当天实际跳空多大无关。这同时
+    违反 §0 Pessimistic Default 与 §4 Gap-Through-Stop,且方向是**乐观**(抬高结果)。
+    三姊妹引擎在这里一律按开盘价成交,只有本引擎相反 ⇒ **族内不对称,不是口径选择**。
     """
     df = _run_single_stock_scenario(
-        ep_estimate=22.20, tp_pct=0.06, sl_pct=0.10, max_hold=20,
+        ep_estimate=22.20, tp_pct=0.06, sl_pct=0.02, max_hold=20,
         a_condition="cascade_price",
-        # bar 201 fill 后,bar 202 开盘跳空穿过 SL (sl_p ≈ 24.42)
-        bar202_open=25.0,  # > sl_p
-        bar202_high=25.0, bar202_low=24.5, bar202_close=25.0,
+        # bar 202 开盘跳空穿过 SL(ep=22.20 ⇒ sl_p=22.644),跳空 +3.6%。
+        # 刻意保持在 A 股 ±10% 涨停**之内** —— 场景物理可成交,不掺杂封板顺延,
+        # 于是本用例只测 gap 分支本身(此前夹具用 +12.6%,已越过涨停)。
+        bar202_open=23.0, bar202_high=23.0, bar202_low=22.9, bar202_close=23.0,
     )
     trades = df["trades"]
     assert trades, "未触发入场"
     sl_trade = next((t for t in trades if t["exit_reason"] == "SL"), None)
     assert sl_trade is not None, f"未触发 SL 出场: {trades}"
-    sl_p_expected = sl_trade["entry_price"] * 1.10
-    # SL gap → fill @ sl_p (loss cap, trader 不被跳空放大损失)
-    assert sl_trade["exit_price"] == pytest.approx(sl_p_expected, rel=1e-4), (
-        f"SL gap 应 fill @ sl_p={sl_p_expected:.4f},实际={sl_trade['exit_price']:.4f}"
+    ep = float(sl_trade["entry_price"])
+    sl_p = ep * 1.02
+    # 夹具前提:确实**跳空穿过了**止损 —— 否则本用例根本测不到 gap 分支
+    # (域契约类守卫必须带非空转前提,见审计附四十七/五十的教训)
+    assert 23.0 > sl_p, f"夹具失效:open=23.00 未越过 sl_p={sl_p:.4f}"
+    # §4:开盘越过止损 ⇒ 按开盘价成交,绝不用止损价
+    assert sl_trade["exit_price"] == pytest.approx(23.0, rel=1e-6), (
+        f"§4 VIOLATION: SL gap 应 fill @ open_p=23.0000,实际={sl_trade['exit_price']:.4f} "
+        f"(sl_p={sl_p:.4f} 是开盘就已越过的、取不到的价位)"
     )
-    # SL 单笔损失严格 ≤ sl_pct (不被 open_p=25.0 放大到 -12.6%)
-    assert sl_trade["net"] > -0.10 - 0.001, (
-        f"SL gap 损失 {sl_trade['net']:.4f} 应 < -10% (loss cap)"
+    round_trip_fee = 2 * _FIXTURE_COMMISSION + _FIXTURE_STAMP_DUTY
+    assert sl_trade["net"] == pytest.approx(-(23.0 / ep - 1) - round_trip_fee, abs=1e-3), (
+        f"SL gap 损失 {sl_trade['net']:.5f} 应 = -(跳空幅度) - 往返成本"
+    )
+    # 关键断言:单笔损失**超过**名义 sl_pct —— 跳空损失不得被 stop price 截断。
+    # (这条断言正是旧用例的反面,故"改回旧实现"必然打挂它。)
+    assert abs(sl_trade["net"]) > 0.02 + round_trip_fee - 1e-4, (
+        "损失被 stop price 截断回 -sl_pct —— §4 要求跳空按开盘价成交(悲观)"
     )
 
 
 # ---------- helper: build single-stock cascade scenario --------------------
+
+#: 夹具显式声明的费率。命名成常量,是为了让断言(gap 成交价 = open、损失 = 跳空幅度
+#: + 往返成本)与夹具**同源** ——
+#: 两边各写一遍字面量,费率一改就会出现「夹具用 A、断言用 B」的静默漂移。
+_FIXTURE_COMMISSION = 0.0006
+_FIXTURE_STAMP_DUTY = 0.001
+_FIXTURE_MARGIN_RATE = 0.086
+
 
 def _run_single_stock_scenario(
     *,
@@ -240,6 +285,25 @@ def _run_single_stock_scenario(
         "low": bar202_low, "close": bar202_close,
         "amount": 5e7, "volume": 1e6,
     }
+    # §4 (2026-10-15): bar 203+ 必须**维持在跳空后的价位**。
+    #
+    # 此前这里让价格回落到 22.20(低于空头止损),于是:bar 202 的涨停封板按 §4
+    # 正确地拒绝了回补(做空平仓 = 买入,+12.6% 已越过涨停),而后续价格又跌回
+    # 止损下方 → SL 永不触发、面板结束前无法平仓 → `trades` 为空,测试报
+    # 「未触发入场」(信息具有误导性:其实入场了,是**没平掉**)。
+    #
+    # 维持在跳空价位既更贴合场景(跳空穿过止损后价格**留在**那里),也让 §4 的
+    # 真实语义显形:开盘越过止损 ⇒ **按开盘价**成交(§4 Gap-Through-Stop)。
+    # (2026-10-17 更正:此处原写"按 sl_p 成交 —— 损失仍被 sl_pct 截断",那是把
+    #  乐观实现当成了语义;维持价位这条设计本身是对的,故保留。)
+    for i in range(203, n):
+        rows[i] = {
+            "thscode": "600000.SH",
+            "date": dates[i],
+            "open": bar202_open, "high": bar202_high,
+            "low": bar202_low, "close": bar202_close,
+            "amount": 5e7, "volume": 1e6,
+        }
     panel = pd.DataFrame(rows)
 
     cerebro = bt.Cerebro(stdstats=False)
@@ -252,9 +316,16 @@ def _run_single_stock_scenario(
         Phase3V3Strategy,
         tp_pct=tp_pct, sl_pct=sl_pct, max_hold=max_hold,
         position_fraction=1.0,
+        # §2 (audit 2026-10-15): NAV 闸门比例现由 preset 声明注入(生产路径经
+        # engine.run_backtest_v3 → core.preset_contract.resolve_nav_gate_ratio)。
+        # 单元夹具直接构造策略,故须显式给出 —— 此处沿用原写死默认值 0.05,
+        # 行为与修复前一致。
+        nav_gate_ratio=0.05,
         pct_chg_low=0.0, pct_chg_high=0.10,
         a_condition=a_condition,
-        margin_rate=0.086, commission_rate=0.0006, stamp_duty_rate=0.001,
+        margin_rate=_FIXTURE_MARGIN_RATE,
+        commission_rate=_FIXTURE_COMMISSION,
+        stamp_duty_rate=_FIXTURE_STAMP_DUTY,
         initial_capital=INITIAL_CAPITAL, lot_size=100,
         result_holder=holder,
     )
@@ -263,7 +334,7 @@ def _run_single_stock_scenario(
 
 
 def test_nav_gate_rejects_new_short_when_cash_below_threshold():
-    """min_cash_ratio 守卫 (R1+R2, 2026-09-21): NAV < initial × 5% 时拒绝新开仓。
+    """nav_gate_ratio 守卫 (R1+R2, 2026-09-21; 2026-10-15 更名为 preset 同名): NAV < initial × 5% 时拒绝新开仓。
 
     short_reversal 的 cash gate 在 replay_strategy_v3._fill_pending_entries:
     NAV = cash + (entry - current_close) × size (做空浮盈可正可负)。
@@ -318,7 +389,7 @@ def test_nav_gate_rejects_new_short_when_cash_below_threshold():
         margin_rate=0.0,  # 关掉 margin 费用以避免影响 NAV 估算
         commission_rate=0.0, stamp_duty_rate=0.0,
         initial_capital=initial, lot_size=100,
-        min_cash_ratio=0.05,
+        nav_gate_ratio=0.05,
         result_holder=holder,
     )
     cerebro.run()
@@ -372,6 +443,11 @@ def test_volume_participation_cap_enforced_for_short_entry():
         Phase3V3Strategy,
         tp_pct=0.06, sl_pct=0.10, max_hold=20,
         position_fraction=1.0,
+        # §2 (audit 2026-10-15): NAV 闸门比例现由 preset 声明注入(生产路径经
+        # engine.run_backtest_v3 → core.preset_contract.resolve_nav_gate_ratio)。
+        # 单元夹具直接构造策略,故须显式给出 —— 此处沿用原写死默认值 0.05,
+        # 行为与修复前一致。
+        nav_gate_ratio=0.05,
         pct_chg_low=0.0, pct_chg_high=0.10,
         a_condition="cascade_price",
         margin_rate=0.0, commission_rate=0.0, stamp_duty_rate=0.0,

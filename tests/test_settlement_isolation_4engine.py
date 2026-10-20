@@ -55,6 +55,10 @@ F. **Why this is a §2 violation, not just cosmetic**:
    - Conflating these means strategy may think it has more capital
      than reality allows (over-confidence in position sizing)
 """
+
+# ⚠️ 附九十八: 上面引用的 §2 Atomic Cash Locks 条款**已被提交 2260ba1 替换**(现行文本见 CLAUDE.md,
+# 替代为对应节的新写法)。此处引用旧句仅为**对照**;本文件的**断言**测的是现行行为,
+# 不是那条已退休的措辞。
 from __future__ import annotations
 
 import ast

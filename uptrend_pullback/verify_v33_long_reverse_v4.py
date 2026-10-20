@@ -1,7 +1,7 @@
 """v4 = v3a + v3c 组合 — 信号收紧 + SL 略紧。
 
 预期:
-  - v3a: CAGR 326.97%, DD 31.33%, Sharpe 2.779, Win 39.29%, PF 1.818
+  - v3a: CAGR / DD / Sharpe / Win / PF —— 数值已按 §7 清除;请以当前代码重算
   - v4: DD 可能再降 1-3%, CAGR 可能微降 (sl 更紧砍得快)
 """
 from __future__ import annotations
@@ -24,6 +24,18 @@ V4 = {
     "max_hold": 15,
     "max_positions": 1,
     "position_sizing": "all_in",
+    "position_fraction": 1.0,   # §2 All-In(强制值,非自由选择)
+    # §4: 滑点标定值必须显式声明(缺声明 fail-fast)。全库 100/100 preset 都用这个
+    # 「确认已知缺口」的哨兵值 —— 与仓库既定状态一致,不是本脚本自选。
+    "atr_slip_scale": 0.0,
+    # 以下四项同样是**全库 preset 的统一取值**,不是本脚本自选:
+    #   max_volume_participation §4 默认(Bar_Volume × 0.10);
+    #   nav_gate_ratio           §2 NAV 闸门;
+    #   price_source_*           §3 双价(信号用 adj、执行用 raw)。
+    "max_volume_participation": 0.1,
+    "nav_gate_ratio": 0.05,
+    "price_source_for_execution": "raw_close",
+    "price_source_for_signal": "adj_close",
     "signal": {
         "entry_mode": "v33_long_mirror",
         "min_down_streak": 3,

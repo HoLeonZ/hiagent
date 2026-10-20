@@ -271,6 +271,8 @@ def test_acknowledged_batch_patterns_have_noqa_comment() -> None:
     Pin these so future batch patterns follow same documentation
     discipline.
     """
+    # 注(附七十七): 本条断言的是**注释里**有 `# noqa: BLE001` —— 主题就是注释。
+    # `tests/_census_comment_guards.py` 会把它列为候选,那是**已知误报**(不是空转)。
     sweep_all_src = Path("chase_up/sweep_all.py").read_text(encoding="utf-8")
     wf_sweep_all_src = Path("chase_up/wf_sweep_all.py").read_text(
         encoding="utf-8"
@@ -339,16 +341,24 @@ def test_short_reversal_scan_signals_raises_on_engine_exception(
     """
     import short_reversal.scan_signals as scan_mod
 
-    # Minimal preset pointing at temp_duckdb (schema matches v_daily)
-    preset = {
-        "tp_pct": 0.06,
-        "sl_pct": 0.0005,
-        "max_hold": 5,
-        "universe": "mainboard_only",
-        "pct_chg_low": 0.02,
-        "pct_chg_high": 0.06,
-        "a_condition": "default",
-    }
+    # 从一个**真实** preset 派生,再改成本用例关心的那几个值。
+    # 附三十八:此前这里手写了一个"最小 dict" —— 而策略构造现在要求 §2/§3/§4 的
+    # 声明齐备(`nav_gate_ratio` / `position_fraction` / `position_sizing` /
+    # `atr_slip_scale` … 缺一即 fail-fast),手写 dict 会先因**声明缺失**而失败,
+    # 于是本用例测的就不是它想测的东西(异常传播)了。派生写法也不会随参数增加而腐坏。
+    from short_reversal.presets import get_preset
+
+    preset = dict(get_preset("v35_agg_pctchg_04_09"))
+    preset["_name"] = "fixture"
+    preset.update(
+        tp_pct=0.06,
+        sl_pct=0.0005,
+        max_hold=5,
+        universe="mainboard_only",
+        pct_chg_low=0.02,
+        pct_chg_high=0.06,
+        a_condition="default",
+    )
 
     def boom(self):  # noqa: ARG001
         raise RuntimeError(

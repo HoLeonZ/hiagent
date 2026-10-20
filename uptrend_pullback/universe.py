@@ -57,13 +57,28 @@ def _all_thscodes(db_path: Path, asof_date: str | None = None) -> list[str]:
             # 否则 `HAVING MAX(date) >= asof` 在 asof 是周末/节假日时对每只票都不成立
             # (最后一个交易日 < asof) → 全部被误判为「已退市」→ 空集 → 回测静默产出
             # 0 笔交易。last_td 在交易日上恒等于 asof, 故交易日行为不变。
+            # §3 PIT (audit 2026-10-16): "已退市" 的判据必须是「**整表**最后一根
+            # bar 早于 asof 当日或之前的最后一个交易日」,而不是「asof 那天没有
+            # bar」。后者把**当日停牌**与**已退市**混为一谈:`MAX(date)` 是在
+            # `date <= ?` 过滤后的分组里取的,恒 <= asof,于是
+            # `HAVING MAX(date) >= last_td` 退化成「在最后一个交易日**恰好有** bar」
+            # —— 这正是本注释上半段自己声明的判据(「asof_date 之前已退市的票」)
+            # 的反面。
+            #
+            # 实测(2026-01-09,mainboard_only):本式 3167 只 vs short_reversal 3176 只,
+            # 少掉的 9 只全部是**当天/近日停牌**的票(如 002049.SZ 最后一根 bar
+            # 2025-12-29,而整表最后一根是 2026-09-30 —— 停牌,不是退市)。
+            # 停牌票仍在市、窗口内会复牌,按 §1/§3 必须留在 universe 里。
             rows = con.execute(
-                "SELECT thscode FROM v_daily "
-                "WHERE date <= (SELECT MAX(date) FROM v_daily WHERE date <= ?) "
-                "GROUP BY thscode "
-                "HAVING MAX(date) >= (SELECT MAX(date) FROM v_daily WHERE date <= ?) "
-                "ORDER BY thscode",
-                [asof_date, asof_date],
+                "WITH last_td AS (SELECT MAX(date) AS d FROM v_daily WHERE date <= ?), "
+                "     overall AS (SELECT thscode, MAX(date) AS last_any "
+                "                 FROM v_daily GROUP BY thscode) "
+                "SELECT DISTINCT v.thscode FROM v_daily v "
+                "JOIN overall o ON o.thscode = v.thscode "
+                "WHERE v.date <= (SELECT d FROM last_td) "
+                "  AND o.last_any >= (SELECT d FROM last_td) "
+                "ORDER BY v.thscode",
+                [asof_date],
             ).fetchall()
     finally:
         con.close()
@@ -71,11 +86,23 @@ def _all_thscodes(db_path: Path, asof_date: str | None = None) -> list[str]:
 
 
 def _load_exclude(exclude_path: Path | None) -> set[str]:
-    if exclude_path is None or not Path(exclude_path).exists():
+    """读取黑名单。None → 空集(未要求排除);显式传入但文件缺失 → fail-fast。
+
+    §0 (audit 2026-10-15): 此前 `not Path(exclude_path).exists()` 也静默返回空集,
+    于是"要排除 29 只"与"排除了 0 只"不可区分 —— 一个失效的风险控制输入会被
+    当成"已启用"。
+    """
+    if exclude_path is None:
         return set()
+    path = Path(exclude_path)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"§0: 要求应用黑名单,但文件不存在: {path}。"
+            "静默返回空集会让「要排除」与「排除 0 个」不可区分。"
+        )
     return {
         line.strip()
-        for line in Path(exclude_path).read_text(encoding="utf-8").splitlines()
+        for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.strip().startswith("#")
     }
 

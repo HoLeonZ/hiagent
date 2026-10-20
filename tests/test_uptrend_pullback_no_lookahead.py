@@ -37,6 +37,7 @@ from uptrend_pullback.portfolio import TRADE_COLS, simulate_portfolio
 from uptrend_pullback.replay_broker import AStockBroker
 from uptrend_pullback.replay_strategy import UpullbackTradeReplay
 from uptrend_pullback.signals import compute_indicators
+from tests.conftest import require_market_db  # §6 共享跳过助手
 
 
 # --------------------------------------------------------------------------- #
@@ -544,6 +545,7 @@ def test_v3_e2e_signal_date_conditions_hold():
     这等价于证明: 每个信号在决策时刻只用 past+current bar 数据,绝无穿越。
     """
     from pathlib import Path as _P
+    require_market_db()  # §6 (audit 2026-10-15): 无库时 skip 而非 fail
     from hiagent_config import DB_PATH as _DB
     from uptrend_pullback.backtrader_engine import run_backtrader_backtest
     from uptrend_pullback.data import load_panel as _lp
@@ -614,6 +616,7 @@ def test_v3_e2e_exit_price_is_fill_bar_open():
     exit_price ∈ {raw_open, [raw_low, raw_high]}.
     """
     from pathlib import Path as _P
+    require_market_db()  # §6 (audit 2026-10-15): 无库时 skip 而非 fail
     from hiagent_config import DB_PATH as _DB
     from uptrend_pullback.backtrader_engine import run_backtrader_backtest
     from uptrend_pullback.data import load_panel as _lp
@@ -667,6 +670,7 @@ def test_v3_e2e_entry_price_is_entry_bar_open():
     这证明 entry fill 是 T+1 OPEN,不是回看 close。比较 raw_open 而非 adj_open.
     """
     from pathlib import Path as _P
+    require_market_db()  # §6 (audit 2026-10-15): 无库时 skip 而非 fail
     from hiagent_config import DB_PATH as _DB
     from uptrend_pullback.backtrader_engine import run_backtrader_backtest
     from uptrend_pullback.data import load_panel as _lp
@@ -785,6 +789,7 @@ def test_phase2_does_not_silently_degrade_to_sentinel():
     该笔 trade 就退化成哨兵值 (exit_date 回填 Phase 1 的, exit_price = entry_price)。
     test_v3_e2e_exit_price_is_fill_bar_open 会跳过哨兵值, 因此该缺陷不会被它发现。
     """
+    require_market_db()  # §6 (audit 2026-10-15): 无库时 skip 而非 fail
     from hiagent_config import DB_PATH as _DB
     from pathlib import Path as _P
     from uptrend_pullback.backtrader_engine import run_backtrader_backtest
