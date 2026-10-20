@@ -1652,6 +1652,32 @@
 >     ⇒ **同一坑第 N 次** (§13.79 同词汇不同语义 · §13.81 按 `size` 找而 cycle 用 `shares`) ⇒
 >     **规矩: 一个命中 0 的「不对称」发现, 先换 2–3 个写法重扫再写。**
 >   * **§5**: 不评估任何配置 ⇒ `n_comparisons` **不变 (399)**; **不改代码、不重生成 baseline**。
+> * ⛔ **§13.212: 核 §13.211 剩的 10 条 —— 而它先**推翻了我自己上一节的判据与归因** (三处)。**
+>   * ⛔⛔ **判据错 (最该带走的一条)**: §13.211 我用**一个字符串** `GAP CAPTURED` 判"自陈 RED",
+>     而仓库的措辞**不止一种** (还有 `§2/§3 RED:`)。改用**失败消息级三词判据**重扫 ⇒
+>     **总数仍然是 20/29 —— 而**成员换了 3 处****:
+>     `section4_microstructure_gap` 那条**不是** RED (`_accepted` 白名单问题);
+>     `backtest_metrics_canonical_schema` 有 **2 条是** `§2/§3 RED:`;
+>     `preset_to_engine_api_conformance` 有 1 条是 **`AUDIT METHOD BROKEN`**。
+>     > ★★★ **两次判据给出同一个总数, 却指着不同的 20 条 ⇒ **只比计数等于没比分类**。**
+>     > 而这**正是我在同一节 (f) 里对 `chase_up` 犯的同一个错** (判据认的**词** ≠ 那个**概念**)。
+>   * ⛔⛔ **归因错**: §13.211(e) 我说「`is_limit_up` 有 import, 守卫在另一条路径」——
+>     **实测 `cycle/portfolio.py` 里 `is_limit_up`/`limit_up`/`prev_close` 各 0 处** (我 grep 的是
+>     `cycle_price_action/*.py` 并把 `backtrader_engine.py:32` 记到了 `portfolio.py` 头上)。
+>     真根因: ①`Portfolio` **无守卫、无 `prev_close` 形参**; ②4 条测试打的是**从未实现的 API**
+>     (`TypeError: unexpected keyword argument`); ③★ **但生产路径是受守卫的** ——
+>     `Portfolio` **只**在 `backtrader_engine.py:122` 被构造, 而 `:237` 的 `is_limit_up` 在**调用方**先执行。
+>     ⇒ **不是活的 §4 违规**; 处置 = **测试侧**, **不动引擎**。
+>   * ★ **`test_dual_price` 那 2 条 = **口径选择**, 不是缺陷** ⇒ **登记不改**: 测试自陈"期望 raw 优先、
+>     NaN 时取 0.0, 本函数保持纯净"; 而实现**回退到 adj** (返回 7.8) —— 后者**正是 §13.84 认可过的设计**。
+>     两种立场都说得通 ⇒ 按本册规矩**只登记**。
+>   * ✅ **本轮顺手做掉一件事**: `test_metrics_basis_table_is_pinned` 的报错**指向本册新工具**
+>     (`same_entries_exit_policy_cf.py` 提到 3 个族名)。核过它**只支持 uptrend、对另三族拒跑** ⇒
+>     按**守卫自己给的第二种补救**加**具名豁免 + 理由**; 并**注入检验**证明没弄钝:
+>     注入一个"并列四族 sharpe/cagr 且零披露"的工具 ⇒ **1 failed (抓住)**; 移除 ⇒ **18 passed**。
+>     ★ 这是 §13.90 那条守卫**第四次**抓我的新工具, **四次都是「提到族名 ≠ 并列族口径」**。
+>   * **§5**: `n_comparisons` **不变 (399)**; **不改引擎代码、不重生成 baseline**;
+>     唯一改动的文件是**测试**(那条豁免), 零引擎漂移。
 > * ⚠️ **§3.1 与 §3.2 是留档, 不是行动清单** —— 见两节各自的更正横幅。
 >   **文档的阅读顺序与结论的时间顺序相反, 所以旧节可能比新节更"乐观"。**
 ---
@@ -18260,3 +18286,117 @@ GAP CAPTURED (RED): chase_up/results/backtest.json is a single file overwritten 
 * ⚠️ (g) 那一类**只按名字归组**, 明确**未核因** ⇒ 不可引用;
 * ⚠️ **归属未变**: §13.205 已实测本轮改动**不是**任何一条的原因;
 * ⚠️ **不重生成 baseline、不改任何代码** (§6)。
+
+---
+
+### 13.212 ⛔ **核 §13.211 剩下的 10 条** —— 而它先**推翻了我自己上一节的判据与归因** (三处)
+
+#### (a) 目标
+§13.211(g) 留了 10 条"只按名字归组、未核因"。本轮逐条拿**真实报错**来核
+(`pytest … --tb=line`, 49 条一次跑完, 10.3 秒)。
+
+#### (b) ⛔⛔ **第一处: 我上一节的判据是一条**词表里的一个词**, 不是全部**
+§13.211 我用字符串 `GAP CAPTURED` 判"自陈 RED"。**实测: 仓库自陈 RED 的措辞不止一种** ——
+至少还有 **`§2/§3 RED:`** (在 `test_backtest_metrics_canonical_schema.py` 里)。
+改成**失败消息级的三词判据** (`GAP CAPTURED` / `GREEN fix` / `RED:`) 重扫:
+
+| | 上一节 (按**文件**含 `GAP CAPTURED`) | 本节 (按**失败消息**含三词) |
+|---|---|---|
+| 自陈 RED | **20** | **20** |
+| 其余 | 29 | 29 |
+
+> ★★ **总数一模一样 —— 而**成员不同**。** 三处误分:
+> * `test_section4_microstructure_gap` 的报错是 **`` `_accepted` 白名单不含 intraday_tiebreak ``** ⇒
+>   **不是**自陈 RED (它的**文件**里别处有 `GAP CAPTURED` ⇒ 上一节把整文件算成了 RED);
+> * `test_backtest_metrics_canonical_schema` 里 **2 条是** `§2/§3 RED:`, 上一节漏了;
+> * `test_preset_to_engine_api_conformance` 里有一条是 **`AUDIT METHOD BROKEN`** ⇒ 也不是 RED, 上一节多算了。
+> ⇒ ★★★ **只比"总数"等于没比分类**: 两次判据给出**同一个 20**, 却指着**不同的 20 条**。
+> 这与 §13.211(f) 我对 `chase_up` 犯的是**同一个错** (判据认的**词** ≠ 那个**概念**), 只不过这次犯在**我自己的新分类器**上。
+
+#### (c) ⛔⛔ **第二处: §13.211(e) 对 `cycle` 那组的归因是错的, 且实测推翻**
+上一节我写: 「`backtrader_engine.py:237` **有** `is_limit_up` ⇒ 守卫存在, 只是**在另一条路径**」。
+**实测三件事**:
+1. **`cycle_price_action/portfolio.py` 里 `is_limit_up` / `limit_up` / `prev_close` 各 **0 处**** ——
+   我上一节 grep 的是 `cycle_price_action/*.py` (通配), 把 `backtrader_engine.py:32` 的 import
+   **记到了 `portfolio.py` 头上**;
+2. 4 条测试失败的真实原因是 **`TypeError`**: `Portfolio.try_enter() got an unexpected keyword argument 'prev_close'`
+   与 `Portfolio.__init__() got an unexpected keyword argument 'is_limit_up_threshold'`
+   ⇒ **它们打的是一个从未实现过的 API** (真实签名: `try_enter(self, thscode, price, entry_date, decision_meta, …)`);
+3. ★★ **但生产路径是受守卫的**: `Portfolio` **只**在 **`backtrader_engine.py:122`** 被构造,
+   而 `:237` 的 `is_limit_up(...)` 检查在**调用方**、先于进入 ⇒
+   **`cycle` 的实盘/回测路径**有**涨停拒单**。
+> ⇒ **修正结论: 这 5 条**不是**活的 §4 违规。** 缺口在**一个非生产入口**上, 且那个入口的**签名测试也没对齐**
+> ⇒ **处置 = 测试侧** (对着真实 API / 真实路径写), **不动引擎**。
+> ★ 这与 §13.66 那一族同形 ("守卫的路径清单指向不存在/非生产的文件") —— **又一次"测试打错了地方"**,
+> 而且这次**我自己在上一节把它读成了"路径权威问题"**, 方向对而证据错。
+
+#### (d) ★ `test_dual_price.py` 那 2 条: **是**口径选择**, 不是缺陷** ⇒ **登记, 不改**
+测试正文自己写着:
+```python
+assert bar.open == 0.0      # raw NaN 时回退 adj_open 但 safe=NaN→0
+# 注: 这里期望 raw 优先, NaN 时仍取 raw (即 0.0), 这是 §3 严格语义。
+# 真实 phantom 防护由 entry override guard 在上层处理, 本函数保持纯净。
+```
+**实测**: `extract_execution_bar` 在 `raw_*` 全 NaN 时返回 **7.8** (即 `adj_open`) ⇒ 它**回退到 adj**。
+* **测试的立场**: 本函数应**纯净** —— raw 或缺则 0.0;
+* **实现的立场**: **raw, 缺则回退 adj** —— 而后者**正是 §13.84 认可过的设计**
+  ("代码自己的设计就是'求 raw, 缺列回退 adj' ⇒ raw+回退 ≥ adj 无条件")。
+> ⇒ **两种立场都说得通** (0.0 会让缺价**显形**; adj 会让回测**跑得下去**) ⇒ 属**口径选择** ⇒
+> 按本册规矩 (**口径/结果变更只登记**) **不擅自改测试、也不改实现**。已登记待决策。
+> 另一条 `test_extract_partial_nan_close_raises` (期望 `ValueError`) 同源: 实现**不抛**而是回退。
+
+#### (e) ✅ `test_backtest_metrics_canonical_schema.py` 的 3 条: **2 条自陈 RED + 1 条普通断言**
+* 2 条 (`short_reversal` / `cycle`) 打的是 `§2/§3 RED: …/results/backtest.json does not exist` + `GREEN fix:` ⇒ **自陈 RED**;
+* 1 条是**普通断言**: `chase_up has 8 trades.csv files but only 0 metrics.json files` (`assert 0 >= 8`)
+  ⇒ **产物溯源缺失** (有逐笔成交、没有逐 preset 指标) ⇒ 真实、且与上面两条同源。
+
+#### (f) ★ 两条新看到的小形状
+* `test_preset_to_engine_api_conformance` 有一条自己报 **`AUDIT METHOD BROKEN: this audit failed to detect t…`**
+  ⇒ **一条自陈失效的判据** (本册"判据不能是死钉桩"那族, 而它**自己承认了**);
+* `test_round30_cycle_limit_up_guard` 的失败是 **`params dict not found in cycle strategy`**
+  ⇒ **文本钉桩找不到自己的锚** ⇒ §13.122 的"钉了某一次的实现细节"形状。
+
+#### (g) 修正后的分类 (成员, 不只是计数)
+| 类 | 条数 | 与 §13.211 的差 |
+|---|---|---|
+| 自陈 RED (三词判据) | **20** | 成员换 3 处 (见 (b)) |
+| 钉桩产物漂移 | **10** | 不变 (8 chase + 2 uptrend `v19`/`v20`) |
+| `cycle` 非生产入口缺守卫 | **5** | **归因改正** (不是"路径权威", 是"测试打在不存在的 API 上") |
+| 元守卫 / 全仓静态审计 | **4** | 不变 |
+| **已核因的其余** | **7** | `assert_vs_raise`(§0 5 处 `assert`) · `claudemd_full_audit` · `immutable_state_4engine`(§0 1 处) · `metrics_basis_table_is_pinned`(**都落在本册自己的工具上**) · `phase3_v3_bugfixes`(`hold_days` 口径) · `sql_order_by_discipline` · `chase_phase2` ×2 |
+| **仍是口径决策** | **2** | `dual_price` (见 (d)) |
+| | **49** | |
+
+★ 注意 `test_metrics_basis_table_is_pinned` 那条的报错是:
+**「这些工具**提到**了某些族, 却没披露它们的口径: {'tools/same_en…'}」** ——
+⇒ **它抓的是本册自己本轮新增的工具** (`same_entries_exit_policy_cf.py`)!
+⇒ ★ 那是 §13.90 那条跨族披露守卫**又一次生效**, 而它已经"六次抓到我的新工具、零次误报" (§13.90 记载)。
+**待确认它抓得对不对** —— 我的工具**确实**提到 `chase_up`/`short_reversal`/`cycle` 的族名 (在拒跑消息里),
+但**没有并列它们的任何数字** ⇒ 按 §13.90 的判据(只提族名 = 具名豁免)**应当豁免**。**未做, 下一轮。**
+
+#### (i) ✅ **本轮顺手做掉的一件事: 给 `tools/same_entries_exit_policy_cf.py` 加**具名豁免****
+(g) 里那条 `test_metrics_basis_table_is_pinned` 的报错**指向本册自己新增的工具**:
+```
+§13.90: 这些工具**提到**了某些族, 却没披露它们的口径:
+  {'tools/same_entries_exit_policy_cf.py': ['chase_up', 'short_reversal', 'uptrend_pullback']}
+⇒ 若某个族名只是顺带提到、并未并列其数字, 请把该工具加入 `_EXEMPT` 并写明理由。
+```
+**核过**: 本工具**只支持 `uptrend_pullback`**, 对另三族**直接 `SystemExit` 拒跑** ⇒
+**不读也不并列任何一族的指标** ⇒ 属守卫自己说的**第二种**情形 ⇒ **按它的指示加具名豁免** (含理由)。
+> ★ 这是 §13.90 那条守卫**第四次**抓到我的新工具, **而四次都是「提到族名 ≠ 并列族口径」** ——
+> 它不区分"我有没有用到", 只区分"我有没有把数字并列", 这条判据仍然值得留着。
+
+★★ **而"加豁免"必须证明没有把守卫弄钝** (§13.120 的做法: 让它学会新形态, 并证明它仍抓得住错值)。
+**注入检验** (临时造一个**并列四族 sharpe/cagr、零口径披露**的工具):
+```
+注入后: 1 failed, 17 passed   ⇒ **守卫仍然抓住**
+移除后: 18 passed             ⇒ 恢复
+```
+⇒ **豁免是**具名的、具体的**, 不是"把总体吞光"** (守卫自己还有一条 `len(_EXEMPT) < len(found)` 的防空转断言)。
+
+#### (h) §5 与边界
+* 不评估任何配置 ⇒ `n_comparisons` **不变 (399)**; **不改引擎代码、不重生成 baseline**;
+* ✅ **唯一改动的文件是测试**: `tests/test_metrics_basis_table_is_pinned.py` 加**一条具名豁免** (见 (i)) ——
+  它是**守卫自己的报错消息指令的补救**, 且经注入检验证明**没有把守卫弄钝** ⇒ **零引擎漂移**;
+* ⚠️ (d) 是**决策项**不是缺陷 ⇒ **未改**; (g) 里"已核因"的 7 条**只核了报错**, 未核修复路径;
+* ⚠️ **本节最该带走的是 (b)**: **两次判据给出同一个总数, 却指着不同的 20 条。**
