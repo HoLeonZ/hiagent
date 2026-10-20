@@ -84,10 +84,36 @@ def assert_state_writable() -> None:
     _ASSERTED.add(home)
 
 
+def _under_runs(run_id: str, name: str | None) -> Path:
+    """拼出 `runs/<id>[/<name>]` 并**断言它确实在 `runs/` 底下**。
+
+    为什么要有这一层：闸原先只检查 `state_home()` **本身**在不在仓库内，
+    却**不知道拼接之后的路径已经跑出去了**。实测（2026-10-19）：
+    `run_artifact("../../../../../../etc/hostname", "x")` 解析后落在
+    `/private/etc/hostname/x`。
+
+    **今天经 HTTP 到不了**（FastAPI/Starlette 在路由层就拒掉带 `/` 的路径参数，
+    三种编码写法实测都是 404）—— 但 `list_runs()` 会拿**账本行里的 run_id**来调它，
+    而账本是可以被手改/被损坏的。**靠调用方凑巧安全**正是我已经修过四次的那个形状。
+
+    判据取"**解析后仍在 `runs/` 之下**"，而不是"`run_id` 长得像不像 id"：
+    后者会把测试里那些可读的 id（`r1`/`abc123`）一并拒掉，而它并不提供更多保证。
+    """
+    runs_root = (state_home() / "runs").resolve()
+    p = runs_root / run_id if name is None else runs_root / run_id / name
+    resolved = p.resolve()
+    if resolved != runs_root and runs_root not in resolved.parents:
+        raise RuntimeError(
+            f"run_id/name escapes the runs directory: {run_id!r} -> {resolved}; "
+            f"must stay under {runs_root}"
+        )
+    return resolved
+
+
 def run_dir(run_id: str) -> Path:
     """单次运行的产物目录，不存在则创建。**写盘前唯一的 §7 闸。**"""
     assert_state_writable()
-    d = state_home() / "runs" / run_id
+    d = _under_runs(run_id, None)
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -103,4 +129,4 @@ def run_artifact(run_id: str, name: str) -> Path:
 
     **写**一律用 `run_dir()`（它过闸并建目录）；**读**用本函数（不建目录、不开闸）。
     """
-    return state_home() / "runs" / run_id / name
+    return _under_runs(run_id, name)

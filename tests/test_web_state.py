@@ -117,3 +117,37 @@ def test_a_relative_state_home_cannot_sneak_inside_the_repo(monkeypatch, tmp_pat
     monkeypatch.chdir(REPO_ROOT)
     with pytest.raises(RuntimeError, match="inside the git repository"):
         state_mod.assert_state_writable()
+
+
+def test_a_run_id_cannot_escape_the_runs_directory(monkeypatch, tmp_path):
+    """**拼接后的路径必须在 `runs/` 底下** —— 闸不能只检查 `state_home()` 本身。
+
+    实测（2026-10-19）：`run_artifact("../../../../../../etc/hostname", "x")`
+    在加守卫前解析到 `/private/etc/hostname/x` —— **状态目录之外**。
+
+    **今天经 HTTP 到不了**（FastAPI/Starlette 在路由层就拒掉带 `/` 的路径参数，
+    三种编码写法实测都是 404）—— 所以这不是一个可利用的漏洞，我不夸大它。
+    但 `list_runs()` 会拿**账本行里的 run_id** 来调它，而账本可以被手改或损坏；
+    **"靠调用方凑巧安全"** 正是这个仓库我已经修过四次的形状。
+
+    判据取"解析后仍在 `runs/` 之下"，而不是"`run_id` 长得像不像 id"：
+    后者会把测试里那些可读的 id（`r1`/`abc123`）一并拒掉，却不提供更多保证。
+    """
+    from web.state import run_artifact, run_dir
+
+    monkeypatch.setenv("HIAGENT_PLATFORM_HOME", str(tmp_path))
+    from web import state as state_mod
+    state_mod._ASSERTED.clear()
+
+    for evil in ("..", "../..", "../../../../../../etc/hostname", "/etc/passwd",
+                 "runs/../../escape"):
+        with pytest.raises(RuntimeError, match="escapes the runs directory"):
+            run_artifact(evil, "run.log")
+        with pytest.raises(RuntimeError, match="escapes the runs directory"):
+            run_dir(evil)
+
+    # 正常 id（含带子目录的——它仍在 runs/ 之下）照常
+    assert run_artifact("r1", "run.log").name == "run.log"
+    assert str(run_artifact("a/b", "x")).endswith("runs/a/b/x")
+    d = run_dir("abc123")
+    assert d.is_dir()
