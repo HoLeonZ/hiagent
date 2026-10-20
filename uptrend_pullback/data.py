@@ -21,6 +21,7 @@ import logging
 from pathlib import Path
 
 import duckdb
+from core.data_coverage import assert_adjusted_coverage  # §3/§0 因子覆盖单源 (附一百零四)
 import pandas as pd
 
 from uptrend_pullback import UptrendPullbackError
@@ -51,6 +52,7 @@ def load_panel(
 
     con = duckdb.connect(str(db_path), read_only=True)
     try:
+        assert_adjusted_coverage(con, start, end, source="uptrend_pullback/data.load_panel")
         # V3a (2026-09-22, CLAUDE.md §3): LEFT JOIN raw_kline_daily 注入 raw_*
         # 保持 v_daily_qfq 行完整性 (signal-only panel 不能丢行)。
         panel = con.execute(

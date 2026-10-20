@@ -115,22 +115,35 @@ def test_engine_left_join_query_shape(monkeypatch):
 
     captured = {"sql": None, "params": None}
 
+    #: 附一百零四:`load_panel_for_backtest` 现在**先**跑一次"窗口内有没有未覆盖的交易日"
+    #: (`core/data_coverage`,读 `calc_adjust_factor_daily`)。假连接必须认识这条查询 ——
+    #: 否则它会把 `captured["sql"]` 抢走,让本用例想钉的 LEFT JOIN 形状失去意义。
+    #: **返回空结果 = "没有未覆盖的交易日" ⇒ 放行**,不是"跳过检查"。
     class FakeCon:
         def execute(self, sql, params=None):
+            class _Cur:
+                def __init__(self_inner, frame):
+                    self_inner._frame = frame
+
+                def fetchdf(self_inner):
+                    return self_inner._frame
+
+                def fetchall(self_inner):
+                    return []          # 覆盖检查:空 = 没有未覆盖的交易日
+
+            if "calc_adjust_factor_daily" in sql:
+                return _Cur(pd.DataFrame())
             captured["sql"] = sql
             captured["params"] = params
-            class _Cur:
-                def fetchdf(self_inner):
-                    return pd.DataFrame({
-                        "thscode": ["TEST.SH"] * 2,
-                        "date": pd.to_datetime(["2024-06-01", "2024-06-02"]),
-                        "open": [10.0, 10.1], "high": [10.5, 10.6],
-                        "low": [9.5, 9.6], "close": [10.0, 10.1],
-                        "amount": [1e7, 1.1e7], "volume": [1e6, 1.1e6],
-                        "adj_open": [10.0, 10.1], "adj_high": [10.5, 10.6],
-                        "adj_low": [9.5, 9.6], "adj_close": [10.0, 10.1],
-                    })
-            return _Cur()
+            return _Cur(pd.DataFrame({
+                "thscode": ["TEST.SH"] * 2,
+                "date": pd.to_datetime(["2024-06-01", "2024-06-02"]),
+                "open": [10.0, 10.1], "high": [10.5, 10.6],
+                "low": [9.5, 9.6], "close": [10.0, 10.1],
+                "amount": [1e7, 1.1e7], "volume": [1e6, 1.1e6],
+                "adj_open": [10.0, 10.1], "adj_high": [10.5, 10.6],
+                "adj_low": [9.5, 9.6], "adj_close": [10.0, 10.1],
+            }))
         def close(self_inner):
             pass
 

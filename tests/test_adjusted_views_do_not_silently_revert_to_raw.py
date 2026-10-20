@@ -251,36 +251,94 @@ def test_that_divergence_check_actually_discriminates() -> None:
 
 
 @pytest.mark.slow
-def test_the_engine_refuses_a_window_past_the_factor_coverage() -> None:
-    """§0:引擎**不许**静默跑一个越过因子表末端的窗口。
+def test_the_engine_refuses_a_window_with_uncovered_trading_days() -> None:
+    """§0:引擎**不许**静默跑一个"窗口里有未覆盖交易日"的回测。
+
+    ⚠️ 判据**不是**"`end` 是否晚于因子表末日" —— 第一版按后者写,
+    把 `--end 2026-09-19`(**周六**,窗口内无数据)误判成越界,一次红掉 6 个用例。
+    **"日子越界"与"窗口里有未覆盖的交易日"是两回事**,本用例把两者都钉住。
 
     消费者侧的 fail-fast 落在 `cycle_price_action/main.py::assert_adjusted_window_is_covered`
-    (它默认 `end = today`,而因子表止于 2026-09-18 ⇒ **默认跑法就会中**)。
-    本用例**两个方向都测**:覆盖内必须放行(否则 fail-fast 会变成"永远拒绝"),
-    越界必须抛错(否则它没在守)。
+    (薄包装,规则本身在 `core/data_coverage`),并被四个引擎的复权价入口各自调用。
     """
     from datetime import date, timedelta
 
     require_market_db()
+    from core.data_coverage import uncovered_trading_days
     from cycle_price_action.main import assert_adjusted_window_is_covered
 
     con = _con()
     try:
-        factor_max = con.execute("SELECT max(date) FROM calc_adjust_factor_daily").fetchone()[0]
+        coverage = con.execute(
+            "SELECT max(date) FROM calc_adjust_factor_daily"
+        ).fetchone()[0]
     finally:
         con.close()
 
-    # ① 覆盖内(正好落在因子表最后一天)⇒ 放行
-    assert_adjusted_window_is_covered(str(DB_PATH), factor_max)
+    # ① 覆盖之内 ⇒ 放行(否则 fail-fast 会退化成"永远拒绝")
+    assert_adjusted_window_is_covered(str(DB_PATH), coverage - timedelta(days=365), coverage)
 
-    # ② 越界(末日 +1 天)⇒ 抛错,且信息里点出因子表末端与"退回原始价"
-    with pytest.raises(ValueError) as ei:
-        assert_adjusted_window_is_covered(str(DB_PATH), factor_max + timedelta(days=1))
-    msg = str(ei.value)
-    assert str(factor_max) in msg and "原始价" in msg, f"错误信息没说清:{msg}"
+    # ② **周末当终点** ⇒ 放行:窗口里没有任何未覆盖的**交易日**
+    #    (这条正是第一版判据的漏洞:字面上 end > coverage,但没有数据)
+    weekend = coverage + timedelta(days=1)
+    assert weekend.weekday() >= 5, f"夹具失效:{weekend} 不是周末"
+    con = _con()
+    try:
+        assert uncovered_trading_days(con, coverage - timedelta(days=30), weekend) == []
+    finally:
+        con.close()
+    assert_adjusted_window_is_covered(str(DB_PATH), coverage - timedelta(days=365), weekend)
 
-    # ③ 顺带钉住"当前默认跑法本来就会中"这个事实,免得将来有人以为它无害。
-    #    (因子表一旦刷新到覆盖今天,这一条会自动不再触发 —— 那时它也该被删掉。)
-    if date.today() > factor_max:
-        with pytest.raises(ValueError):
-            assert_adjusted_window_is_covered(str(DB_PATH), date.today())
+    # ③ 越过覆盖且**确有交易日** ⇒ 必须抛错,且点名日期
+    later = coverage + timedelta(days=14)
+    con = _con()
+    try:
+        bad = uncovered_trading_days(con, coverage - timedelta(days=365), later)
+    finally:
+        con.close()
+    if bad:   # 因子表一旦刷新到覆盖 later,这一段自动不再触发
+        with pytest.raises(ValueError) as ei:
+            assert_adjusted_window_is_covered(str(DB_PATH), coverage - timedelta(days=365), later)
+        msg = str(ei.value)
+        assert str(bad[0]) in msg and "原始价" in msg, f"错误信息没说清:{msg}"
+
+
+#: 四个引擎各自的**复权价入口**(复权价从这些函数进 engine)。
+#: 逐个实测确认过:chase/uptrend 的 `load_panel`、short_reversal 的 `load_panel_for_backtest`、
+#: cycle 的 `load_universe_data`(它 LEFT JOIN v_daily_hfq 取 adj_close;
+#: 而同模块的 `load_bars_by_code` 读的是 **v_daily 原始价**,不需要这道检查)。
+ADJUSTED_PRICE_ENTRY_POINTS = {
+    "chase_up/data.py": "chase_up/data.load_panel",
+    "uptrend_pullback/data.py": "uptrend_pullback/data.load_panel",
+    "short_reversal/_panel_loader.py": "short_reversal/_panel_loader.load_panel_for_backtest",
+    "cycle_price_action/data_feed.py": "cycle_price_action/data_feed.load_universe_data",
+}
+
+
+def test_every_engine_checks_the_coverage_at_its_adjusted_price_entry() -> None:
+    """**四个引擎各自的复权价入口**都必须接这条检查。
+
+    (附一百零三 只给 `cycle` 的 CLI 加了检查 —— 那是"只改了看到的那一个"的形状。
+     判据已在附一百零四 收到 `core/data_coverage` 单源;本用例钉**接线是满的**,
+     免得将来新增一个 loader 时又漏一格。)
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    missing = []
+    for rel, source_tag in ADJUSTED_PRICE_ENTRY_POINTS.items():
+        src = (root / rel).read_text(encoding="utf-8")
+        if f'source="{source_tag}"' not in src:
+            missing.append(f'{rel} 未接(期望 source="{source_tag}")')
+    assert not missing, (
+        "§3/§0: 以下**复权价入口**没有做因子覆盖检查 —— 越过因子表末端的窗口会在那里静默退回原始价:\n  "
+        + "\n  ".join(missing)
+    )
+
+
+def test_the_coverage_entry_list_is_not_vacuous() -> None:
+    """**非空转**:四个引擎一个都不能少(少一个就说明我漏了某个价域)。"""
+    engines = {rel.split("/")[0] for rel in ADJUSTED_PRICE_ENTRY_POINTS}
+    assert engines == {"chase_up", "uptrend_pullback", "short_reversal", "cycle_price_action"}, (
+        f"复权价入口的引擎集合不完整:{sorted(engines)}"
+    )

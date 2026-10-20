@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import date
 
 import duckdb
+from core.data_coverage import assert_adjusted_coverage  # §3/§0 因子覆盖单源 (附一百零四)
 import pandas as pd
 
 from core.dual_price import (
@@ -210,6 +211,7 @@ def load_universe_data(
     """
     con = duckdb.connect(db_path, read_only=True)
     try:
+        assert_adjusted_coverage(con, start, end, source="cycle_price_action/data_feed.load_universe_data")
         # §3 PIT: 成员判定 = 「在请求窗口内至少有一个交易日」。
         # §3 (audit P1-C2, 2026-10-15): 旧实现要求
         # `MAX(date) >= min(asof_date or end, db_last)`,即「必须活到参考日」——

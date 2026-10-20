@@ -14,6 +14,7 @@ import logging
 from pathlib import Path
 
 import duckdb
+from core.data_coverage import assert_adjusted_coverage  # §3/§0 因子覆盖单源 (附一百零四)
 import pandas as pd
 
 from chase_up import ChaseUpError
@@ -44,6 +45,7 @@ def load_panel(
 
     con = duckdb.connect(str(db_path), read_only=True)
     try:
+        assert_adjusted_coverage(con, start, end, source="chase_up/data.load_panel")
         panel = con.execute(
             """
             SELECT q.thscode, q.date,
