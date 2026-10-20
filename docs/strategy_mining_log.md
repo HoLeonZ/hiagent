@@ -1631,6 +1631,27 @@
 >   * ★★★ **结论: 候选关闭, 入场门槛这条轴也关闭** ⇒ **`signal.min_mom120` 与 `tp_pct`/`sl_pct` 是同一形状的轴**
 >     ⇒ 本册第一次可以说: **本族"调参类"的改进在这套数据上**系统性地**不产生跨窗区域** —— 不是某一根轴的问题。**
 >   * **§5**: +30 (6 档 × 5 窗) ⇒ `n_comparisons` **369 → 399**。
+> * ✅ **§13.211: 把那 49 条**分组归类** —— 而分类的第一个结论是: 那个数**高估了债**约 41%。**
+>   * ★★★ **20 条是仓库**自己声明的 RED**** (判据是无歧义的字符串 `GAP CAPTURED`), 它们会**主动打印**
+>     `GAP CAPTURED (RED): …` 并附 `GREEN fix: …` (例: 0/4 族产 `equity_curve.csv` · 公司行动无 handler ·
+>     `backtest.json` 单文件覆盖丢 19/22 preset 指标) ⇒ **它们在**正确地响**, 不是缺陷。**
+>     > ⚠️ 与 [[guard-audit-taxonomy]] 那条**方向相反**的同一个坑: 那条防"**自陈 RED 不是分拣过滤器**",
+>     > 本节记另一面 —— **自陈 RED 也不该被计入「债务条数」**。**两句都对。**
+>   * **10 条是钉桩产物漂移** (chase `v5..v14` ×8 + uptrend **`v19`/`v20`** ×2; **`v22` 不在其中**, 已实测)
+>     ⇒ §6 已记"两段漂移, 未验证前**不得重生成 baseline**" ⇒ **有意不修**。
+>   * **5 条是 `cycle` 的涨停路径** —— 而「守卫不存在」这个读法是**错的**: `backtrader_engine.py:237` **有**
+>     `is_limit_up(...)`; 4 条测试打的是 `Portfolio.try_enter` (**另一条路径**); 且 `backtest.py:106` **自陈**
+>     `limit_up_threshold` **声明无效** ⇒ **真问题是「哪条路径权威 + 一个无效键」= 设计决策, 不是 bug。**
+>   * **4 条是元守卫 / 全仓静态审计** (全仓一致性 ⇒ 一条红指不出具体位置 ⇒ 用「回退重跑」逐条归因, §13.201 范式);
+>     **10 条只按名字归组, 明确未核因** ⇒ **不可引用**。
+>   * ★★ **合起来: 49 条里只有 **10 条**是「还没人看过的东西」** (按名字能归到 7 个文件);
+>     其余 39 条是**设计好的响** / **已登记的债** / **待决策的路径问题**。
+>     ⇒ **本节把「49」从一个吓人的数变成一张**有处置的短表**; 最大的一格 (20 条) 还带着修复方案。**
+>   * ⚠️ **我自己本轮造过一个假发现, 靠看一眼才拦住**: 用 `grep is_limit_up` 扫四族得到 `chase_up` **0 处**,
+>     **差点写下「chase 没有涨停判据」** —— 实测 `chase_up/portfolio.py:178` 有 `LIMIT_UP_THRESHOLD = 0.098`。
+>     ⇒ **同一坑第 N 次** (§13.79 同词汇不同语义 · §13.81 按 `size` 找而 cycle 用 `shares`) ⇒
+>     **规矩: 一个命中 0 的「不对称」发现, 先换 2–3 个写法重扫再写。**
+>   * **§5**: 不评估任何配置 ⇒ `n_comparisons` **不变 (399)**; **不改代码、不重生成 baseline**。
 > * ⚠️ **§3.1 与 §3.2 是留档, 不是行动清单** —— 见两节各自的更正横幅。
 >   **文档的阅读顺序与结论的时间顺序相反, 所以旧节可能比新节更"乐观"。**
 ---
@@ -18117,3 +18138,125 @@ W2 净 Σ    : +1.11M  → +3.65M    → +1.63M    → +5.05M    → +5.96M    �
 * ⚠️ **不报哪一档最好, 不采用任何取值**; 本节只报**形状、分布与计数拆解**;
 * ⚠️ `IND`/`IS2` 重叠 ⇒ 独立单位 ≈ 4; ⚠️ `IS2` 的基线只有 17 笔 (加密档更少) ⇒ 它的每一格都**薄**;
 * ⚠️ **仍未做**: §13.209(g) 记的"本库内无验证途径"**没有变** —— 本轮**没有**、也**不能**给那个候选任何样本外。
+
+---
+
+### 13.211 ✅ **把 §13.205 那 49 条**分组归类** —— 而分类的第一个结论是: 那个数**高估了债**约 41%**
+
+#### (a) 为什么先做分类而不是先修
+§6 那条是 "pre-existing failures are registered **debt with an owner**"。
+§13.205 把清单落了盘, 但**没有分类** —— 而没有"类"的清单**既没有 owner 也没有处置**。
+本节**只分类, 不修**; 且**不重生成任何 golden baseline** (§6 的既定禁令)。
+
+#### (b) ★★★ **第一个结论: 49 条里 **20 条是仓库**自己声明的 RED****
+判据是**可无歧义匹配的字符串** `GAP CAPTURED` (我扫文件正文, 不靠印象)。
+这 20 条会**主动打印** `GAP CAPTURED (RED): …` 并附一句 `GREEN fix: …` —— 例如:
+
+```
+GAP CAPTURED (RED): 0/4 engines produce equity_curve.csv.
+  Per CLAUDE.md §2/§3: per-bar NAV evolution must be recordable ...
+  GREEN fix: add equity_curve.csv writer to each engine's backtest pipeline.
+```
+```
+GAP CAPTURED (RED): chase_up/results/backtest.json is a single file overwritten ...
+  GREEN fix: rename backtest.json per preset ...
+```
+
+| 条数 | 文件 | 自陈的缺口 |
+|---|---|---|
+| **4** | `test_preset_to_engine_api_conformance.py` | preset 键"声明了但到不了引擎" |
+| **3** | `test_corporate_actions_gap.py` | §3「事件溯源的公司行动」三族无 handler (**文件头写明"需用户拍板 选 A 还是 B"**) |
+| **3** | `test_corporate_actions_dividend_deposit.py` | 同上 (股息入账 / 拆股调整 / 事件溯源总收益) |
+| **3** | `test_equity_curve_cash_walk_output.py` | 0/4 族产 `equity_curve.csv` · 0/4 族产 `cash_walk.csv` · `backtest.json` 单文件覆盖丢 19/22 preset 指标 |
+| **2** | `test_cash_walk_and_metrics_provenance.py` | 同上 (溯源) |
+| **2** | `test_limit_up_guard_cross_engine.py` | 见 (e) |
+| **1** | `test_cycle_price_action_sha256_baseline.py` | 未钉基线文件 |
+| **1** | `test_metrics_output_conformance.py` | 各族未产 equity_curve |
+| **1** | `test_section4_microstructure_gap.py` | cycle 的 `intraday_tiebreak` 声明无引擎效果 |
+| | **合计 20 条 / 9 个文件** | |
+
+> ⇒ ★★ **"49 failed" 这个头条把约 **41%** 的条目算成了缺陷, 而它们**是本仓库自己写下的、
+> 带 GREEN 修复方案的登记条目** —— 它们在**正确地响**。
+> ⚠️ 与本册 [[guard-audit-taxonomy]] 那条**相反方向**的同一个坑: 那条防的是"**自陈 RED 不是分拣过滤器**"
+> (别把落在自陈 RED 文件里的**真**回归当免责); 本节记的是另一面:
+> **自陈 RED 也不该被计入"债务条数"**。两句都对, 方向相反。
+
+#### (c) **第二类: 钉桩产物漂移 (10 条)**
+| 条数 | 文件 | |
+|---|---|---|
+| **8** | `test_chase_up_no_lookahead.py` | chase 的 `v5..v14` golden `trades.csv` 哈希 |
+| **2** | `test_uptrend_pullback_sha256_baseline.py` | `v19` / `v20` (**不是 `v22`**, §13.205 已实测) |
+
+⇒ §6 早就记过这一族: "**两段漂移**: 配置漂移 (V7 `equal`/`mp2` → `all_in`/`mp1`) 可归因;
+引擎漂移 (V6/V3a) **未验证** ⇒ **在验证前不得重生成 baseline**"。
+⇒ **处置 = 已定 (不改)**: 这是一条**有意不修**的登记债;
+★ 而"`v22` 不在其中"这一点本轮再一次被测到 (§13.205) ⇒ **当前最优的成交表没有漂移**。
+
+#### (d) **第三类: 元守卫 / 静态审计 (5 条)** —— 其中 2 条**归属已实测**
+| 条数 | 文件 |
+|---|---|
+| 1 | `test_assert_vs_raise_audit.py` |
+| 1 | `test_claudemd_full_audit.py` — ⛔ **报的是 `short_reversal` 的 §2 `max_positions`/`position_sizing`**, **§13.201 已用"回退文件重跑"实测为预存债** |
+| 1 | `test_metrics_basis_table_is_pinned.py` |
+| 1 | `test_sql_order_by_discipline_4engine.py` |
+| 1 | `test_immutable_state_4engine.py` |
+> ⇒ 这一类扫的是**全仓的规则一致性**, 所以**一条红就说不出是哪一族哪一行** ——
+> §13.201 那个"回退到 HEAD 再跑"的实测就是给这一类做的。
+
+#### (e) ★★ **第四类: `cycle` 的涨停路径 (5 条) —— 而「守卫不存在」这个读法是错的**
+5 条 = `test_cycle_limit_up_guard.py`(4) + `test_round30_cycle_limit_up_guard.py`(1)。
+⚠️ **注意不要重复计数**: `test_limit_up_guard_cross_engine.py` 那 2 条讲的是**同一件事**
+(cycle 的涨停守卫), 但**它的文件自陈 `GAP CAPTURED`** ⇒ 已归入 (b) 的第一类。
+**同一件事在两类里各露一次头 —— 分类必须让五类**恰好划分**那 49 条, 不许重叠。**
+**实测**:
+* `cycle_price_action/backtrader_engine.py:237` **有** `is_limit_up(... threshold=...)` 调用 ⇒ **守卫存在, 在 backtrader 路径上**;
+* 而 4 条测试打的是 **`cycle_price_action.portfolio.Portfolio.try_enter`** (另一条路径);
+* 且 `cycle_price_action/backtest.py:106` **自己写着**: "`limit_up_threshold` 在 params 里、不在白名单里 ⇒ 声明它**无效**"
+  ⇒ 那两条"阈值覆盖 / 默认值 0.095"的测试正是打在这个**已被记录为无效**的键上。
+> ⇒ **本类的真问题不是"缺守卫", 而是"哪条路径是权威 + 一个声明无效的键"** —— 一个**设计决策**, 不是一个 bug。
+> ★ 与本册反复出现的"**族内不对称**"同族: 四族的涨停判据**拼法、取值、所在路径都不同**
+> (见 (f) 那次实测)。
+
+#### (f) ⚠️ **而我自己在本轮**造过一个假发现**, 靠看一眼才拦住**
+我先用 `grep "is_limit_up"` 扫四族, 得到 `chase_up` **0 处** ⇒ **差点写下"chase 没有涨停判据"**。
+**实测**: `chase_up/portfolio.py:178` 有 `LIMIT_UP_THRESHOLD = 0.098`, `:581` 写着"涨停开盘视为无法买入"。
+⇒ **chase 有, 只是它不叫 `is_limit_up`。**
+> ★★ **同一个坑的第 N 次**: 判据认的**那个词** ≠ 那个**概念**
+> (§13.79「同词汇不同语义」· §13.81「按 `size` 找而 cycle 用 `shares`」· 本节「按 `is_limit_up` 找而 chase 用 `LIMIT_UP_THRESHOLD`」)。
+> ⇒ **落地规矩 (再写一次): 一个 grep 命中数为 0 的"不对称"发现, 先换 2–3 个写法重扫再写。**
+
+#### (g) **第五类: 其余 19 条 (13 个文件) —— ⚠️ 本节**只按名字归组, 未逐条核因****
+| 条数 | 文件 | 本节**没有**做的事 |
+|---|---|---|
+| 3 | `test_backtest_metrics_canonical_schema.py` | 未核该 json 是产物缺失还是 schema 变 |
+| 2 | `test_dual_price.py` | 未核 `extract_*` 的期望行为 |
+| 2 | `test_chase_up_phase2_limit_up_skip.py` / `_sl_first.py` | 未核 Phase-2 引擎的具体断言 |
+| 1 | `test_chase_up_phase2_sl_first.py` | 同左 |
+| 1 | `test_cycle_buy_execution_bar.py` | 同左 |
+| 1 | `test_immutable_state_4engine.py` | 未核是 `short_reversal` 的哪一处自改状态 |
+| 1 | `test_phase3_v3_bugfixes.py` | 未核 `hold_days` 的 bar-span 口径 |
+| | **合计 10 条 / 7 个文件** | |
+
+> ⇒ **本节的可引用产出只有两条 (b) 与 (c)**, 它们是**实测**的;
+> (e) 是**一条实测的根因**; (g) 是**未核的名字分组** —— **不得**把 (g) 当结论引用。
+
+#### (h) 合起来 & 处置
+| 类 | 条数 | 性质 | 处置 |
+|---|---|---|---|
+| **自陈 RED / 登记缺口** | **20** | **仓库自己写的、带 GREEN 方案** | **不是缺陷** — 等**决策** (§3 选 A/B) |
+| **钉桩产物漂移** | **10** | §6 已点名, 有意不修 | **不改** (禁令: 未验证前不得重生成) |
+| **(e) cycle 涨停路径** | **5** | 路径权威 + 无效键 = **设计决策** | **登记**, 需决策而非修 |
+| **(d) 元守卫 / 全仓静态审计** | **4** | 全仓一致性, 一条红指不出具体位置 | 用「回退重跑」逐条归因 (§13.201 范式) |
+| **(g) 未核名字分组** | **10** | **未核** | **下一轮** |
+| | **49** | | 五类**恰好划分**, 无重叠 |
+
+⇒ ★★ **「49 条失败」里, 现在只有 **10 条**是「还没人看过的东西」** (而且按名字就能归到 7 个文件);
+其余 39 条要么是**设计好的响**, 要么是**已登记的债**, 要么是需要**决策**的路径问题。
+> **这是本节真正的产出: 它把「49」从一个吓人的数变成一张**有处置的短表**;
+> 而其中最大的一格 (20 条) 是**仓库自己写的、还带着修复方案**的。**
+
+#### (i) §5 与边界
+* **本节不评估任何配置** ⇒ `n_comparisons` **不变 (399)**;
+* ⚠️ (g) 那一类**只按名字归组**, 明确**未核因** ⇒ 不可引用;
+* ⚠️ **归属未变**: §13.205 已实测本轮改动**不是**任何一条的原因;
+* ⚠️ **不重生成 baseline、不改任何代码** (§6)。
