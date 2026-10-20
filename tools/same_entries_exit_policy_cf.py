@@ -120,20 +120,8 @@ def _sweep(bars_by_code: dict, tr: pd.DataFrame, preset: dict, axis: str) -> Non
     rows = []
     for m in SWEEP_MULT:
         v = base_v * m
-        pnls: list[float] = []
-        reasons: dict[str, int] = {"TP": 0, "SL": 0, "time": 0}
-        for t in tr.itertuples():
-            bars = bars_by_code.get(t.thscode)
-            if bars is None:
-                continue
-            tp_eff, sl_eff = (v, other) if axis == "tp" else (other, v)
-            r = _replay(bars, t.entry_date, float(t.entry_price), tp_eff, sl_eff, mh)
-            if r is None:
-                continue
-            pnls.append((r[1] - float(t.entry_price)) * int(t.size))
-            reasons[r[2]] = reasons.get(r[2], 0) + 1
-        s = float(sum(pnls))
-        top3 = float(sum(sorted(pnls, reverse=True)[:3]))
+        tp_eff, sl_eff = (v, other) if axis == "tp" else (other, v)
+        s, reasons, top3, _ = _policy_stats(bars_by_code, tr, tp_eff, sl_eff, mh)
         rows.append((m, v, s, reasons, top3))
     ref = next(s for m, _, s, _, _ in rows if m == 1.0)
     for m, v, s, rs, top3 in rows:
@@ -306,6 +294,75 @@ def _teeth_check(bars_by_code: dict, tr: pd.DataFrame, preset: dict) -> bool:
     return fired >= 1
 
 
+def _policy_stats(bars_by_code: dict, tr: pd.DataFrame, tp_eff: float, sl_eff: float,
+                  mh: int) -> tuple[float, dict, float, int]:
+    """同一批入场、同一批股数下: (毛 Σ, 出场原因计数, top-3 Σ, 可重放笔数)。"""
+    pnls: list[float] = []
+    reasons: dict[str, int] = {"TP": 0, "SL": 0, "time": 0}
+    for t in tr.itertuples():
+        bars = bars_by_code.get(t.thscode)
+        if bars is None:
+            continue
+        r = _replay(bars, t.entry_date, float(t.entry_price), tp_eff, sl_eff, mh)
+        if r is None:
+            continue
+        pnls.append((r[1] - float(t.entry_price)) * int(t.size))
+        reasons[r[2]] = reasons.get(r[2], 0) + 1
+    return (float(sum(pnls)), reasons, float(sum(sorted(pnls, reverse=True)[:3])), len(pnls))
+
+
+def _all_windows(family: str, preset_name: str) -> int:
+    """§13.202(g) 的**可证伪推论**: 「宽 TP 受益多少」应由该窗的**尾部集中度**决定。
+
+    逐窗在**基线政策**下量两个量 (全在同一批入场、同一批股数上):
+      `T` = top-3 Σ ÷ Σ        (尾部集中度)
+      `S` = Σ(tp×3.0) − Σ(tp×0.5)   (宽减窄; >0 ⇒ 该窗要宽)
+    机理预测: **T 高的窗 S 应当为正、T 低的窗 S 为负 ⇒ 按 T 排序与按 S 排序同序。**
+
+    ⚠️ **每个窗都过一遍 §13.199 的自检**; 任何一窗复现不了基线 ⇒ 该窗作废 (不静默略过)。
+    ⚠️ 独立单位: `IND` 与 `IS2` 时间**重叠** ⇒ 有效独立单位 ≈ 4 而非 5 (§13.192)。
+    """
+    print(f"\n=== --all-windows: {family} / {preset_name} ===")
+    print(f"  {'窗口':<7}{'笔数':>5}{'基线毛 Σ':>14}{'T=top3/Σ':>11}"
+          f"{'Σ(tp×0.5)':>14}{'Σ(tp×3.0)':>14}{'S=宽−窄':>14}{'符号':>7}")
+    rows, dead = [], []
+    for win, (w0, w1) in WINDOWS.items():
+        preset, panel, res = _load(family, preset_name, w0, w1)
+        tr = pd.DataFrame(res["trades"]).copy()
+        if len(tr) == 0:
+            print(f"  {win:<7}  无成交 ⇒ 跳过"); continue
+        tr["entry_date"] = pd.to_datetime(tr["entry_date"])
+        tr["exit_date"] = pd.to_datetime(tr["exit_date"])
+        bars_by_code = {c: s.reset_index(drop=True)
+                        for c, s in panel.groupby("thscode", sort=False)}
+        if not _self_check(_build_df(bars_by_code, tr, preset), win, quiet=True):
+            dead.append(win); continue
+        tp, sl, mh = float(preset["tp_pct"]), float(preset["sl_pct"]), int(preset["max_hold"])
+        base, _, top3, n = _policy_stats(bars_by_code, tr, tp, sl, mh)
+        wide = _policy_stats(bars_by_code, tr, tp * 3.0, sl, mh)[0]
+        narrow = _policy_stats(bars_by_code, tr, tp * 0.5, sl, mh)[0]
+        T = top3 / base if base else float("nan")
+        S = wide - narrow
+        rows.append((win, n, base, T, S))
+        print(f"  {win:<7}{n:>5}{base:>+14,.0f}{T:>11.1%}"
+              f"{narrow:>+14,.0f}{wide:>+14,.0f}{S:>+14,.0f}{'宽' if S > 0 else '窄':>7}")
+    if dead:
+        print(f"  ⛔ 自检未过的窗**作废**: {dead}")
+
+    ok = [r for r in rows if r[3] == r[3]]
+    by_T = [r[0] for r in sorted(ok, key=lambda r: r[3])]
+    by_S = [r[0] for r in sorted(ok, key=lambda r: r[4])]
+    print(f"\n  按 T (尾部集中度) 升序: {by_T}")
+    print(f"  按 S (宽−窄)      升序: {by_S}")
+    print(f"  ⇒ 两个排序**同序**? **{'是' if by_T == by_S else '否'}**"
+          f"  ({len(ok)} 个窗; ⚠️ `IND`/`IS2` 重叠 ⇒ 有效独立单位 ≈ {len(ok) - 1})")
+    n_pos = sum(1 for r in ok if r[4] > 0)
+    n_hiT = sum(1 for r in ok if r[3] > 0)
+    print(f"  ⇒ S>0 的窗 **{n_pos}/{len(ok)}** · T>0 的窗 **{n_hiT}/{len(ok)}**")
+    print("""  读法: 机理说「T 高 ⇒ 要宽」。同序 = 支持; 乱序 = 该机理**降级为对两窗的事后描述**。
+  ⚠️ 排序一致在 4 个单位上是很弱的检验 ⇒ 只作**一致性检查**, 不当作"证明了机理"。""")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--family", default="uptrend_pullback")
@@ -316,7 +373,13 @@ def main() -> int:
                     help="注入检查: 至少一个扰动必须让自检变红 (证明自检不是死钉桩)")
     ap.add_argument("--sweep", choices=["tp", "sl"], default=None,
                     help="在同一批入场上一次只动一根轴, 只报形状 (±1.0 那点有自检); 不报最优")
+    ap.add_argument("--all-windows", action="store_true",
+                    help="五个窗逐个跑: 量「尾部集中度 T」与「宽减窄 S」, 查机理预测 (同序?)")
     args = ap.parse_args()
+
+    if args.all_windows:
+        preset_name = args.preset or DEFAULTS["uptrend_pullback"][0]
+        return _all_windows(args.family, preset_name)
 
     preset_name, win = DEFAULTS.get(args.family, (None, None))
     preset_name = args.preset or preset_name
