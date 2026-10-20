@@ -8927,3 +8927,149 @@ if not re.search(r"_PRICE_MATCH_REL\s*=", src) or "hfq_open" not in src:
 `tests/test_phantom_tool_detects_both_domains.py` 由 3 条扩到 **7 条**:
 两个工具 × (高价票钉"域" / 低价票钉"相对化"并证明修法必要) + 1 条族守卫。
 两个工具**各自**都要通过三个方向(exit=qfq 报 / exit=hfq 报 / exit=raw 不报)。
+
+---
+
+## 附一百零八 —— 死 preset 守卫的**面**与**式**都漏:6 条真债,其中 4 条此前完全看不见(含**两个活工具的默认值已死**)
+
+(上一批我把这条守卫的扫描面从"按文件名"改成"按内容推导",它报"干净"。本批追问
+"**这个面本身是怎么划的、这个判据本身认得哪些写法**" —— 两层都不全,而且**第二次修完还是不全**。)
+
+### 1 · 第一层漏:面按**文件名**划 ⇒ 两个文件从来不在视野里
+
+守卫的扫描面原本是 `research_scripts()` = `wf_*` / `grid*` / `sweep*` 三组 glob + 显式 4 个,
+共 **29** 个文件。而**引用 preset 名**这件事与文件名无关:
+
+| 文件 | 引用的死 preset | 旧面 | 内容面 |
+|---|---|---|---|
+| `uptrend_pullback/bt_compare_presets.py` | `v33_long_reverse_v3` | ✗ | ✓ |
+| `run_sizing_comparison.py` | `v6` | ✗ | ✓ |
+
+两者都**引用了一个已不存在的 preset**,而守卫报"干净"。
+⇒ 改成**按内容推导**(凡出现 `PRESETS["…"]` / `get_preset("…")` / `run_one("…")` 的引擎脚本),
+面变成 33 个;**两并集 44 个**,15 个文件只被内容面抓到。
+
+这与 附八十五 / 附八十六 同族 —— 那两次是 **DSR 守卫**的扫描面按前缀划、漏了 `walkforward.py`;
+这次是 **preset 守卫**的面按文件名划。**同一根,长在两棵树上。**
+
+### 2 · 第二层漏:内容面的**识别式**只有四式 ⇒ 11 个文件走别的写法
+
+把面改成按内容推导之后我做了"扫描面自己是不是全的"这一问(没做的话本批就到此为止):
+
+* 内容面第一版只认 `run_one(` / `run_backtest_v3(` / `run_backtest(` / `get_preset(` 四种**调用式**;
+* 实测 **11 个**文件是用模块级**赋值式**把名字写进去的(`PRESET = "v35_agg_pctchg_04_09"`);
+* 其中 **2 个**(`chase_up/render_v3_trades_html.py`、`short_reversal/lookahead_trade_trace.py`)
+  **旧文件名面、新内容面都不在** —— 两个面都漏。
+
+这两个引用的名字**当时都还活着**,所以没爆出债务;但那是**运气**,不是覆盖。
+
+### 3 · 修的过程里我自己踩了两个坑(都实测暴露,都留下注释)
+
+**坑一:贪婪回退。** 把赋值式放宽时我写成 `=[^\n]*"([^"]+)"`。`[^\n]*` **贪婪**,
+会回退到行内**最后一个**引号(即闭引号),于是 `preset = "v35_agg_pctchg_04_09"` 捕获到的是
+**紧跟其后的下一行整段** —— 实测 **6 个 wf 脚本**全部捕获成了
+`'\n    if preset not in _p.PRESETS:\n        raise SystemExit(f'`。
+改为"**先匹配整行,再从行里抽引号 token**"才对。
+
+**坑二:"整行只有一个字符串"这一式不能裸用。** 它是用来抓**字面量集合的元素**的
+(`TOP2 = ["chase_v18…", …]`、`presets = args.preset or ["v33_mainboard…", …]`),
+但 SQL 续行、HTML 模板行、日志格式串、docstring 行**全都符合**它:
+
+| 口径 | 命中"死引用" | 其中真债 |
+|---|---|---|
+| 裸用 | **56** | **1** |
+| 加名字形态过滤 | **7**(全库不重复字面量) | **0 假** |
+
+⇒ 必须再套一层**名字形态**。形态不是拍的,是从**活名字**推出来的
+(`(词_)*v<数字>[字母]?(…)_…`,外加 cycle 的 `PRESET_V1`;`v` 后必须是**数字**,
+否则 `max_volume_participation` / `validate_price_source` 的 `v` 会被吞进来)。
+实测:**102 个活 preset 名,不符合该形态的 0 个**;过滤后全库只剩 7 个一律是 preset 名的字面量。
+
+### 4 · 把式扩到七式之后,**4 条新的真债**浮出来 —— 其中两条是**活工具**
+
+| 文件 | 死 preset | 引用写在哪 | 删除提交 |
+|---|---|---|---|
+| `short_reversal/main.py` | `v33_mainboard_tp6_sl005_mh5_realistic` | `--preset` 的 **default=** | `4b7eab0` |
+| `uptrend_pullback/render_trades_html.py` | `v6` | `--preset` 的 **default=** | `e3cd4f9` |
+| `short_reversal/scan_signals.py` | `v33_mainboard_tp6_sl005_mh5_realistic` + `v33_mainboard_tp2_sl05_dneg` | **字面量列表的两项** | `4b7eab0` |
+| `short_reversal/scan_signals_fast.py` | 同上两项 | **字面量列表的两项** | `4b7eab0` |
+
+**与 2026-10-15 那批的性质不同**,这一点值得单独记:
+
+* 那批是**冻结的研究脚本**(`wf_v*_focused.py`),存在的意义就是记录一个已被删除的 preset;
+* 这四条是**活工具** —— `python3 -m short_reversal.main`(不传 `--preset`)、
+  `scan_signals.py` / `scan_signals_fast.py`(不传参走兜底列表)、
+  `uptrend_pullback/render_trades_html.py`(不传 `--preset`)**四个入口当场就死**。
+  实测失败是**响亮**的:`get_preset()` / `run_backtest_v3()` 抛
+  `ValueError: Unknown preset: '…'. Available: [全部 75 个]`(连可用名都列出来了)。
+
+**处置同 附十三 §3:登记,不改名。** 要恢复成"裸跑可用"必须**替它们选一个 preset** ——
+而被删的那些没有可推断的重命名映射(实测 `e3cd4f9` 删的是 **`v6`** 这个 key,
+而它的提交标题写的是"drop **v2** preset";`4b7eab0` 删的是整个 `v33*` 家族)。
+**选一个"看起来像"的,就是编造实验记录。**
+
+⚠️ 顺带否掉一条我本来想用的修法:**给 `--preset` 加 `choices=` 让 argparse 自己拦**。
+实测 **Python 3.14 的 argparse 不校验 default 与 choices**
+(`parse_args([])` 对 `choices=['a','b']` + `default='dead'` **不报错**,直接把 `'dead'` 给你)——
+这条路不通。
+
+### 5 · 出处必须用 **git** 验,不能拿登记表验登记表
+
+上一批我给每条登记项加了"删除提交",并加了一条测试断言**脚本的失败信息里含这个提交号**。
+问题:那个提交号**也是登记表里的那个** —— **登记错了也全绿**。
+
+本批补 `test_each_registered_removal_commit_really_removed_it`:直接问 git ——
+**该提交的父版本里有这个名字、该提交里没有**。实测 10 条全部通过
+(`4b7eab0`×7、`e3cd4f9`×2、`03cb590`×1)。拿不到 git / 浅克隆时 **skip**,不假装通过(§6)。
+
+(这次核对是**必要的**:我一度以为 `v6` 的出处记错了 —— 因为 `e3cd4f9` 的标题写"drop v2"。
+按 key 集合逐版本 diff 才看清:该提交删掉的 key 里**就有 `v6`**,标题写漏了;
+而 `03cb590` 删的是 `v33_long_reverse_v3` 与 v7–v14。**标题不是证据,key 集合才是。**)
+
+### 6 · 顺带修掉的两处判据缺陷
+
+1. **`cycle_price_action` 的可寻址名是 `"v1"`,不是 `PRESET_V1`**。
+   `_preset_names` 此前返回 `{"PRESET_V1"} + dict 的**配置键**`,于是
+   `main.py` 的 `add_argument("--preset", default="v1", choices=["v1"])` 被判成**死引用**(假债)。
+   配置键**不是名字**,已从名字集合里移出。
+2. **"响亮失败"的判据从"源码里有没有 `SystemExit` 字样"改成"这个名字是否走了会校验它的解析路径"**。
+   旧判据**过宽**(任何 `raise SystemExit(main())` 都满足)又**会误杀**
+   (`render_trades_html.py` 没有 `SystemExit` 字样,却老老实实调 `get_preset`)。
+3. **"未登记死引用"的判据从"有没有未登记的文件"改成"逐文件集合相等"** ——
+   否则一个**已登记**的文件里**多出**一个死引用也照样绿。
+   (改完立刻见效:`scan_signals*.py` 各引用**两个**死名,而登记值原本只装得下一个 ⇒ 登记值
+   改成"名字元组 + 提交"。)
+
+### 7 · 测试覆盖与两向验证
+
+`tests/test_research_scripts_reference_live_presets.py`:**25 → 42 条**。新增/加强:
+
+* `test_preset_scan_surface_is_the_whole_set` —— **集合对账**,判据**换一套机制**
+  (「活着的 preset 名有没有以任意形态的引号字符串出现」),不关心引用写成长什么样;
+* `test_every_preset_name_matches_the_idiom` —— 惯用法**前提**守卫(102 个名字 0 例外);
+* `test_each_registered_removal_commit_really_removed_it` —— 出处由 **git** 核对;
+* `test_the_authored_message_set_is_a_subset_of_the_registry` —— 防幽灵项;
+* 另有三条判据被改写(见 §6)。
+
+**两向验证(全部当场做过,改一处红一处)**:
+
+| 改动 | 结果 |
+|---|---|
+| `_DEFAULT` 从判据里去掉 | **红**(`test_preset_scan_surface_is_the_whole_set` 等 3 条) |
+| `_BARE` 去掉名字形态过滤 | **红**(假债涌入) |
+| 把一个出处改错(`v6` 的 `e3cd4f9` → `4b7eab0`) | **红**(2 条:信息用例 + git 核验) |
+| 把一个名字拼错(`v6` → `v6_typo`) | **红**(4 条) |
+| 恢复 | **42 passed** |
+
+### 8 · 这一条的位置
+
+本会话里"**扫描面 ≠ 实际集合**"已经是**第三次**出现(附八十五、附八十六在 DSR 面上),
+而本批**一次之内出现了两次**(按文件名 → 按内容的**调用式** → 按内容的**全部式**),
+其中第二次是**我自己刚修完的那一版**。
+
+可复用的形状,三条:
+
+1. **面**要按"这件事的特征"(引用 preset 名)划,不能按文件名划;
+2. **认得出这件事的所有写法**才算认得出 —— 清单要能穷举并写下来(本批:七式);
+3. **改完之后要问"这一版自己全吗"** —— 第二次漏就是这么找出来的。
+   判据要挂在**用法**上(本会话反复记的那条),而**守卫自己也要按同一条标准验收**。
