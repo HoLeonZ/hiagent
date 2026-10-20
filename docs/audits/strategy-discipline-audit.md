@@ -9735,3 +9735,72 @@ OPEN_ITEMS = {          # 5 条
 **两批之后,四族里有三族的指标层、两族的信号层有了可执行的截尾判据**,
 且每一族都留下了实测读数 —— 其中 `short_reversal` 那族是"**bar 循环里现算**",
 原本是风险最高、判据最缺的一处。
+
+---
+
+## 附一百一十五 —— 第四族的 §1:`cycle_price_action` 的信号层(**结构判据 + 三个分数的截尾不变**)
+
+(附一百一十三/一百一十四 之后,四族里只剩 `cycle` 没有 §1 的强判据。本批补上,**这条线收口**。)
+
+### 1 · 这一族与前两族不同在哪
+
+前两族的信号是"面板 → 信号表"离线预生成;`cycle` 的三个分数**在 bar 循环里现算**,
+而且每一次都用**当天的切片**:
+
+```python
+bars_until_today = bars_up_to(df, bar["date"])      # no_lookahead.py:10  → df[date <= T].copy()
+kscore = k_line_score(bars_until_today, detect_k_patterns(bars_until_today)).iloc[-1]
+cyc    = phase_score(bars_until_today["date"]).iloc[-1]
+cal    = calendar_score(bars_until_today["date"]).iloc[-1]
+sig    = entry_signal(pd.Series([kscore]), pd.Series([cyc]), pd.Series([cal]), …)
+```
+
+⇒ **风险不在函数内部,而在"有没有哪个调用点漏了那个切片"**。所以判据必须分两层。
+
+### 2 · 判据与实测读数
+
+| 判据 | 钉什么 | 实测 |
+|---|---|---|
+| ① | `bars_up_to` 真是因果切片(逐行等于 `df[date<=T]`,副本,最大日期 ≤ T) | ✅ |
+| ② **结构** | 收面板的四个入口(`detect_k_patterns`/`k_line_score`/`phase_score`/`calendar_score`)**实参必须是 `bars_until_today`**;`entry_signal` 收已算好的标量 ⇒ 另判它**不许**收到全量面板 | ✅ **五个入口全部只在 `backtrader_engine.py:257-260` 出现一次,且全部传切片** |
+| ③ **性质** | 三个分数 + `detect_k_patterns` 对**截尾**不变 | ✅ 0 违反 |
+| ④ | 非空转(分数不能是常数;调用点 ≥4;五个入口都有定义) | ✅ |
+
+### 3 · ⚠️ 判据②第一版**写粗了**(当场假报)
+
+第一版对**所有**入口都要求"第一个位置实参以 `bars_until_today` 开头",于是
+`entry_signal(pd.Series([kscore]), …)` 被报成违规 —— 而它**本来就该**收三个标量。
+⇒ 已按"**收面板的** / **收标量的**"分开判:前者查切片,后者查"**不许**是 `df`/`bars`/`panel`"。
+**同一个"要求实参形状"的判据,对不同签名的函数必须分开写** —— 这是本册第 N 次同形状(判据粗于它的对象)。
+
+### 4 · 一处**如实记下**的脆弱性(不是前视)
+
+`phase_score` 内部用 `t = np.arange(len(series))` —— 相位**依赖序列起点**:
+
+* 对**截尾**(切掉尾部)**不变** ⇒ 本判据在本方向上成立;
+* 对**起点漂移**敏感 ⇒ 面板起点一变(例如暖机长度/`end` 变化导致 feed 名册变化),
+  **所有 phase 值随之变**。
+
+这是本册已登记的"**边界敏感**"族(附 §13.154:改窗口 `end` 会改 feed 名册与暖机),
+**不是前视**。故本文件**只在截尾方向断言**,并在 docstring 里写清**另一个方向没有**被断言 ——
+免得后人读成"这个函数完全稳定"。
+
+### 5 · ★ 四族 §1 覆盖全景(这条线的收口)
+
+| 族 | 指标层 | 信号层 | 判据 |
+|---|---|---|---|
+| `chase_up` | ✅ 40 列截尾不变 | ✅ 625 条信号集合不变 | `test_signal_layers_are_causal.py`(附一百一十四) |
+| `uptrend_pullback` | ✅ 44 列 | ✅ 716 条 | 同上 |
+| `short_reversal` | ✅ 9 个 pandas 对偶(与 backtrader 路径有等价性守卫互锁) | ⚠️ 在 `next()` 里逐 bar 判定(不适用"面板→信号表"式比较),由既有 `no_lookahead` 文件覆盖 | `test_short_reversal_indicators_are_causal.py`(附一百一十三) |
+| `cycle_price_action` | ✅ 结构:五个入口只在切片上算 | ✅ 三个分数截尾不变 | `test_cycle_signal_layer_is_causal.py`(本批) |
+
+⇒ **三批之后,四族的信号/指标层都有了可执行的 §1 强判据**,且每族都留下了实测读数。
+**而此前这套东西在仓库里一件都没有**(附一百一十三 §5 的更正:`*_are_causal.py` 在任何分支上都不存在)。
+
+### 6 · 未覆盖的仍如实列出
+
+* **成交/出场决策层**(`next()` 里的 TP/SL/涨跌停/T+1)不属本判据 —— 由各族
+  `no_lookahead` 文件与 §4 的成交规则守卫覆盖;
+* `short_reversal` 的**信号层**仍是 `next()` 逐 bar,没有同形式判据(它的窗口边界与
+  跳空填充由既有文件覆盖);
+* `cycle` 的**指标层**(如果有)未单独判 —— 它的指标层就在上面那三个分数里。
