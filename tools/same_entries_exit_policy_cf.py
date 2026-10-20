@@ -74,6 +74,9 @@ sys.path.insert(0, str(ROOT))
 
 from hiagent_config import DB_PATH  # noqa: E402
 
+# §2 Canonical Cost Model: 费用常量只在 core/ 定义一次 —— 本工具**导入**而非重写。
+from core.dual_price import calc_commission, calc_stamp_duty  # noqa: E402
+
 # ⚠️ 只支持出场语义已被本工具逐行对齐过的那一族。其余族 **fail-fast 拒跑**,
 #    不猜、不近似 —— cycle 走分配器 (每票独立账户)、short_reversal 需 T+1 与
 #    涨停/跌停拒单 (§4), 照 uptrend 的规则顺序重放它们会得到**看着像结论的假数**。
@@ -294,9 +297,30 @@ def _teeth_check(bars_by_code: dict, tr: pd.DataFrame, preset: dict) -> bool:
     return fired >= 1
 
 
+# `--net`: 是否扣规范费用 (§2 单一来源: `core.dual_price`)。
+NET = False
+
+
+def entry_fee(px: float, size: int) -> float:
+    """买入腿费用 = 佣金 (含 ¥5 地板); 买入不缴印花税。"""
+    return float(calc_commission(px * size))
+
+
+def exit_fee(px: float, size: int) -> float:
+    """卖出腿费用 = 佣金 (含 ¥5 地板) + **印花税**。"""
+    return float(calc_commission(px * size) + calc_stamp_duty(px * size, "sell"))
+
+
 def _policy_stats(bars_by_code: dict, tr: pd.DataFrame, tp_eff: float, sl_eff: float,
-                  mh: int) -> tuple[float, dict, float, int]:
-    """同一批入场、同一批股数下: (毛 Σ, 出场原因计数, top-3 Σ, 可重放笔数)。"""
+                  mh: int, net: bool | None = None) -> tuple[float, dict, float, int]:
+    """同一批入场、同一批股数下: (毛/净 Σ, 出场原因计数, top-3 Σ, 可重放笔数)。
+
+    `net` 为真 (或 `None` 时取模块级 `NET`) 时, 按 **`core.dual_price` 的规范费用**扣减
+    (单一来源, §2): 双边佣金 (含 ¥5 地板) + **卖出**方印花税。
+    ⚠️ **股数仍固定在基线那一档** ⇒ `--net` 只补上**费用**, 不解决"各臂自有股数";
+       所以净读数与引擎的 `final_equity` **仍不是同一个量**, 但**格与格之间**同尺可比。
+    """
+    use_net = NET if net is None else net
     pnls: list[float] = []
     reasons: dict[str, int] = {"TP": 0, "SL": 0, "time": 0}
     for t in tr.itertuples():
@@ -306,7 +330,11 @@ def _policy_stats(bars_by_code: dict, tr: pd.DataFrame, tp_eff: float, sl_eff: f
         r = _replay(bars, t.entry_date, float(t.entry_price), tp_eff, sl_eff, mh)
         if r is None:
             continue
-        pnls.append((r[1] - float(t.entry_price)) * int(t.size))
+        entry_px, exit_px, size = float(t.entry_price), float(r[1]), int(t.size)
+        pnl = (exit_px - entry_px) * size
+        if use_net:
+            pnl -= entry_fee(entry_px, size) + exit_fee(exit_px, size)
+        pnls.append(pnl)
         reasons[r[2]] = reasons.get(r[2], 0) + 1
     return (float(sum(pnls)), reasons, float(sum(sorted(pnls, reverse=True)[:3])), len(pnls))
 
@@ -444,7 +472,7 @@ def _grid(family: str, preset_name: str) -> int:
     且 §8.1 已说样本外预算用尽 ⇒ 即便有格 ≥4/5 也**只能登记, 不能采用**。
     ⚠️ `IND`/`IS2` 时间重叠 ⇒ 有效独立单位 ≈ 4 (§13.192)。
     """
-    print(f"\n=== --grid: {family} / {preset_name} (5×5 (tp,sl) 网格, 同一批入场) ===")
+    print(f"\n=== --grid: {family} / {preset_name} (5×5 (tp,sl) 网格, 同一批入场; {'净(含费)' if NET else '毛'}) ===")
     per_win: dict[str, dict[tuple[float, float], float]] = {}
     base_sig: dict[str, float] = {}
     for win, (w0, w1) in WINDOWS.items():
@@ -465,13 +493,20 @@ def _grid(family: str, preset_name: str) -> int:
         for mt in GRID_MULT:
             for ms in GRID_MULT:
                 cells[(mt, ms)] = _policy_stats(bars_by_code, tr, tp * mt, sl * ms, mh)[0]
-        # 免费内检: (1.0, 1.0) 必须**恰**等于基线
+        # 免费内检①: (1.0, 1.0) 必须**恰**等于基线
         assert abs(cells[(1.0, 1.0)] - base) < 1.0, (win, cells[(1.0, 1.0)], base)
+        # 免费内检②(仅 --net): 我算的费 vs 引擎自己的口径差 (final_equity vs 毛基线)
+        if NET:
+            gross = _policy_stats(bars_by_code, tr, tp, sl, mh, net=False)[0]
+            engine_net = float(res["metrics"]["final_equity"]) - 1_000_000.0
+            mine = gross - base
+            print(f"  {win:<6} 费用核对: 我算 {mine:>+10,.0f} · 引擎口径差 {gross - engine_net:>+10,.0f}"
+                  f" · 比 {mine / (gross - engine_net) if (gross - engine_net) else float('nan'):.2f}×")
         per_win[win] = cells
         base_sig[win] = base
         beat = sum(1 for v in cells.values() if v > base)
-        print(f"  {win:<6} n={n:>3} 基线毛 Σ={base:>+12,.0f} | "
-              f"25 格里**超过基线**的 {beat:>2} 格 · 其中毛 Σ>0 的 "
+        print(f"  {win:<6} n={n:>3} 基线{'毛' if not NET else '净'} Σ={base:>+12,.0f} | "
+              f"25 格里**超过基线**的 {beat:>2} 格 · 其中 Σ>0 的 "
               f"{sum(1 for v in cells.values() if v > 0):>2} 格  ✅自检过")
 
     if len(per_win) < 2:
@@ -508,6 +543,9 @@ def main() -> int:
                     help="在同一批入场上一次只动一根轴, 只报形状 (±1.0 那点有自检); 不报最优")
     ap.add_argument("--all-windows", action="store_true",
                     help="五个窗逐个跑: 量「尾部集中度 T」与「宽减窄 S」, 查机理预测 (同序?)")
+    ap.add_argument("--net", action="store_true",
+                    help="扣规范费用 (core.dual_price: 双边佣金含 ¥5 地板 + 卖出印花税); "
+                         "股数仍固定在基线那一档")
     ap.add_argument("--grid", action="store_true",
                     help="★ 最终形态问题: 同一批入场上 5x5 (tp,sl) 网格, 数每格在几个窗上超过基线 "
                          "(只报计数的分布, 不报哪一格最好)")
@@ -515,6 +553,12 @@ def main() -> int:
                     help="配合 --all-windows: 把每窗入场按时间切成 N 个连续块, 逐块算 T/S "
                          "(零额外模拟; 用来问 S 的符号是时期性质还是成交层特异)")
     args = ap.parse_args()
+
+    global NET
+    NET = bool(args.net)
+    if NET:
+        print("⚠️ `--net`: 已扣规范费用 (core.dual_price); 股数**仍固定在基线那一档** ⇒ "
+              "与引擎 `final_equity` 仍不是同一个量。\n")
 
     if args.grid:
         preset_name = args.preset or DEFAULTS["uptrend_pullback"][0]
