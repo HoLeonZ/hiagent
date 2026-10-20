@@ -38,8 +38,8 @@ from uptrend_pullback.presets import get_preset  # noqa: E402
 
 import attribute_uptrend_selection as AT  # noqa: E402
 
-START_FLOOR = "2017-10-02"   # 暖机够的最早起点 (DB 起 2016-09-02 + 400 天)
-END_CAP = "2026-09-18"       # §13.8 的最后一个干净日
+START_FLOOR = "2017-10-02"   # 暖机的最早起点 (DB 起 2016-10-20 ⇒ 至此 347 天, 非原设想的 400; §13.214)
+END_CAP = "2026-09-18"       # §13.8 的最后一个干净日 —— ⚠️ §13.214 刷新后**已不必再截** (未改, 属结果变更)
 
 
 def main() -> None:
