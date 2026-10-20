@@ -10369,3 +10369,81 @@ dsr = deflated_sharpe_ratio(…, n_trials=n_trials, …)
 
 ⇒ **四族全部 0 例符号翻转** ⇒ 补上这一格之后,结论仍是:**该缺口不改变任何已报告的判定**;
 但它的**单笔量级**在 `chase` 与 `cycle` 上可以到"占总盈亏 1–2.5%"这一档 —— 不是可以忽略的零。
+
+---
+
+## 附一百二十三 —— 两件收尾:死 preset 守卫的**面排除了 `tests/`**;以及**重 pin 的 11 条全部可复现**
+
+(都是**我自己在 附一百一十八 留下的口子**。前者是那批守卫的第二个面洞,后者是那批我明确登记的"未做"。)
+
+### 1 · 面洞:死 preset 守卫的扫描面**排除了 `tests/`**
+
+附一百零八 把那个守卫的面从"按文件名"改成"按内容推导",但 `preset_referencing_scripts()`
+**跳过 `tests/`**。于是:
+
+`tests/golden/_capture_baseline.py` 里
+
+```python
+PRESET = "v33_mainboard_tp6_sl005_mh5_realistic"
+```
+
+是**已删**的 preset(附一百零八 认定的 `v33_mainboard_*` 家族,**一个都没留**),而这个脚本
+**既不在内容推导的扫描面内、也不在登记表里** ⇒ **两边都看不见**。
+**它正是本守卫存在的理由**:一个引用了已删 preset、因而**跑不起来**的工具。
+
+**处置**:加 `EXTRA_REFERENCING_SCRIPTS`(`{相对路径: 引擎}`,两处显式名单)并入迭代,
+把 `tests/golden/_capture_baseline.py` 登记进 `KNOWN_DEAD_REFERENCES`(删除提交 `4b7eab0`,
+仍由 **git** 核验)。牙齿:把登记项拿掉 ⇒ `test_no_new_dead_preset_references` **红**;恢复 ⇒ 44 passed。
+
+### 2 · ⚠️ 为什么不干脆把面扩到整个 `tests/`(这是本批更值钱的一句)
+
+**实测**(把面放宽到 `tests/` 下所有引用 preset 名的文件):牵出 **8 个**文件 ——
+**2 个是真的**(本批登记的 `_capture_baseline.py`,+ 按设计不入表的 `_combine_preset_html.py`)、
+**6 个是假报**:
+
+| 文件 | 为什么是假报 |
+|---|---|
+| `test_preset_declarations_are_load_bearing.py` | `planted_adj` / `planted_all_in` / `planted_split` —— **故意**种的负面夹具 |
+| `test_presets.py` | `v33_does_not_exist` —— 同上 |
+| `test_short_reversal_v8_plumbing.py` | `test_atr_preset` —— 夹具 |
+| `test_benchmark_attribution.py` | 写的是 **chase** 的 preset,被推成 `short_reversal` |
+| `test_preset_to_engine_api_conformance.py` | `PRESET_V1` 是 cycle 的名字,引擎推错 |
+| 守卫**自己**那个文件 | 它的正则/docstring 里的 `'x'` / `'…'` / `'死名'` |
+
+⇒ **放宽判据会让它淹没在自己的假报里** —— 那正是本会话反复记的那类失败(假报比漏报更坏:
+它会让人去改一条本来好的东西)。故**显式登记真债,而不放宽判据**。
+
+**另一个同类文件 `tests/_combine_preset_html.py` 不入表**,理由写进代码注释:
+它**只按名字读产物 HTML**(`GOLDEN / f"{preset}_trades.html"`)、**不解析 preset**
+⇒ 本守卫的两条判据(①经校验路径解析 ②删除提交可由 git 核验)**都不适用**;
+它的失效形态是 `FileNotFoundError`(响亮,但不是本守卫要钉的那种)。**不为收它而放宽判据。**
+
+### 3 · 重 pin 的 **11 条全部可复现**(关掉 附一百一十八 §6 登记的"未做")
+
+附一百一十八 §6 我登记过:"统一脚本没有做**第二次比对**(首个 `_capture_short_reversal_baseline.py`
+有'重算两次要求一致'那条),下次重 pin 时优先用那个脚本"。本批用 `--dry-run` **就地补上第二遍**:
+
+```
+[chase_v5]      96712d7b96bf… → 96712d7b96bf…   rows=38
+[chase_v8]      e06f431ac4b6… → e06f431ac4b6…   rows=27
+…(chase v9/v11–v14 同)
+[cycle_v1]      89aab8372c49… → 89aab8372c49…   rows=490
+[short_v50_slope] 32b585966fb0… → 32b585966fb0… rows=27
+[short_v58_mp_2]  b4389b8a16c8… → b4389b8a16c8… rows=52
+[uptrend_v21]   f0295d630b28… → f0295d630b28…   rows=65
+```
+
+**11 条、四族、两次独立重算 ⇒ 逐位相同。** (`dry-run` 未写盘:末行自报"打了指纹 0 个文件;
+重 pin 11 条(dry-run,未写盘)"。)
+
+⇒ §0 的 *"Identical inputs MUST produce byte-identical outputs"* 对**这批 pin** 得到了实测支持 ——
+而这正是**能重生成**与**只能碰运气重生成**的区别:`_capture_short_reversal_baseline.py`
+当初把"两次一致"写进纪律,理由是"不可复现的东西不该被 pin";本批把同一条纪律**补到了其余三族**。
+
+### 4 · 边界
+
+* 复现性验证是**同一台机、同一天、同一份库**下的两次独立重算 ⇒ 验的是**运行间确定性**,
+  不是"跨环境可复现";
+* 只验了**重 pin 的那 11 条**;其余 8 条未漂移的 pin 由全量套件(1493 passed)覆盖;
+* `tests/_combine_preset_html.py` 的失效**仍未修**(它读不到产物就会 `FileNotFoundError`)——
+  **只登记、不改**(CLAUDE.md:看到未使用的代码指出而不删)。
