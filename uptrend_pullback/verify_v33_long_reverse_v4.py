@@ -24,6 +24,18 @@ V4 = {
     "max_hold": 15,
     "max_positions": 1,
     "position_sizing": "all_in",
+    "position_fraction": 1.0,   # §2 All-In(强制值,非自由选择)
+    # §4: 滑点标定值必须显式声明(缺声明 fail-fast)。全库 100/100 preset 都用这个
+    # 「确认已知缺口」的哨兵值 —— 与仓库既定状态一致,不是本脚本自选。
+    "atr_slip_scale": 0.0,
+    # 以下四项同样是**全库 preset 的统一取值**,不是本脚本自选:
+    #   max_volume_participation §4 默认(Bar_Volume × 0.10);
+    #   nav_gate_ratio           §2 NAV 闸门;
+    #   price_source_*           §3 双价(信号用 adj、执行用 raw)。
+    "max_volume_participation": 0.1,
+    "nav_gate_ratio": 0.05,
+    "price_source_for_execution": "raw_close",
+    "price_source_for_signal": "adj_close",
     "signal": {
         "entry_mode": "v33_long_mirror",
         "min_down_streak": 3,
