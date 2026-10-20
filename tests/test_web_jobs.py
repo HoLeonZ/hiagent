@@ -432,3 +432,38 @@ def test_the_ledger_records_the_EVALUATED_window_not_the_requested_one(home, fas
     for rid, start in zip(rids, starts):
         meta = _json.loads(run_artifact(rid, "job.json").read_text(encoding="utf-8"))
         assert meta["start"] == start, "job.json 应保留用户请求的起点"
+
+
+def test_a_dead_worker_is_detected_and_restarted(home, monkeypatch):
+    """worker 是**唯一**的一条 —— 它死了没人接手。
+
+    原实现用一个**一次性布尔** `_WORKER_STARTED`：置 True 之后再也不看线程
+    **是否还活着**。worker 若死了（护栏之外的任何原因），后续作业只会一直躺在
+    `_QUEUE` 里：状态永远是 `queued`，界面上只显示"已等 N 分钟"，
+    **没有任何错误可见** —— 用户无从判断是该等还是该报告。
+
+    本条装一个**确实已经结束**的线程对象，模拟"worker 死了"，要求
+    `_ensure_worker()` 能发现并重启。
+    """
+    import threading
+
+    # 用一个**会阻塞、且不去取队列**的替身代替真 worker：
+    # 真 worker 起来会把 `_QUEUE` 里的东西取走，于是**别的测试**的作业被它偷跑
+    # ——同一个坑今天已经踩过一次（顺序测试单跑绿、全文件跑红）。
+    hold = threading.Event()
+    monkeypatch.setattr(jobs_mod, "_worker", lambda: hold.wait(30))
+
+    dead = threading.Thread(target=lambda: None, daemon=True)
+    dead.start()
+    dead.join()
+    assert not dead.is_alive(), "前置：装进去的线程必须是死的"
+
+    previous = jobs_mod._WORKER          # **还原**：否则本测试结束时全局仍指向一个
+    jobs_mod._WORKER = dead             # 死线程，后续测试会误起第二个 worker
+    jobs_mod._ensure_worker()            # → 两个 worker 抢同一个队列，别的测试随即变红
+    try:
+        assert jobs_mod._WORKER is not dead, "没检测到 worker 已死"
+        assert jobs_mod._WORKER.is_alive(), "检测到了却没有重启"
+    finally:
+        hold.set()          # 让替代线程退出，不留后台线程
+        jobs_mod._WORKER = previous   # 把全局状态还给原来的 worker

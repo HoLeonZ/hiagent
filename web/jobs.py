@@ -34,7 +34,8 @@ JOB_TIMEOUT_SECONDS = 30 * 60
 _JOBS: dict[str, "Job"] = {}
 _QUEUE: "queue.Queue[str]" = queue.Queue()
 _LOCK = threading.Lock()
-_WORKER_STARTED = False
+#: 唯一的 worker 线程。持对象而非"已启动"布尔，是为了能发现它**已经死了**。
+_WORKER: threading.Thread | None = None
 
 
 @dataclass
@@ -311,12 +312,28 @@ def list_runs(limit: int = 50) -> list[dict[str, Any]]:
 
 
 def _ensure_worker() -> None:
-    global _WORKER_STARTED
+    """确保 worker 还在跑。
+
+    原实现用一个**一次性布尔** `_WORKER_STARTED`：置 True 之后再也不看线程
+    **是否还活着**。
+    worker 若死了（护栏之外的任何原因——护栏自己的代码抛错、线程被外部中断），
+    后续作业只会一直躺在 `_QUEUE` 里：**状态永远是 `queued`**，界面上只显示
+    "已等 N 分钟"，**没有任何错误可见**。而它是**唯一**的 worker，没有人会来接手。
+
+    现在每次提交都看一眼线程；死了就重启，并**响亮**地说一声 —— 一次静默的
+    worker 死亡会让后面所有作业看起来像"卡住了"，而用户无从判断该不该等。
+    """
+    global _WORKER
     with _LOCK:
-        if not _WORKER_STARTED:
-            threading.Thread(target=_worker, name="hiagent-platform-worker",
-                             daemon=True).start()
-            _WORKER_STARTED = True
+        if _WORKER is not None and _WORKER.is_alive():
+            return
+        if _WORKER is not None:
+            print("[jobs] WARNING: worker 线程已停止 —— 重新启动。"
+                  "此前若有作业卡在 queued，现在会被处理；"
+                  "若仍不动，说明 worker 又死了（看上面的异常日志）", flush=True)
+        _WORKER = threading.Thread(target=_worker, name="hiagent-platform-worker",
+                                   daemon=True)
+        _WORKER.start()
 
 
 def assert_no_test_seam() -> None:
