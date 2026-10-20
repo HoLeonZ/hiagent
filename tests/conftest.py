@@ -140,3 +140,55 @@ def require_market_db() -> Path:
     if not market_db_available():
         pytest.skip(f"§6: 本地行情库不可用({db})—— skip 而非 error")
     return db
+
+
+# ---------------------------------------------------------------------------
+# §0/§6: golden pin 的**数据指纹** —— 把「数据变了」与「引擎变了」分开(附一百一十七)
+# ---------------------------------------------------------------------------
+def current_db_fingerprint() -> str:
+    """数据侧指纹(廉价但敏感):行情表末日 | 因子表末日 | 事件条数 | 事件最大 ex_date。
+
+    为什么取这四个:2026-10-20 实测到的漂移机制是 —— 事件表新增"**已公告的未来除权**",
+    而 `v_daily_qfq` 是**前复权**(锚在最新日)⇒ **整条历史 qfq 序列被平移**。
+    所以"事件条数"与"事件最大 ex_date"必须进指纹;只看行情表末日是看不出这件事的。
+    """
+    import duckdb
+
+    from hiagent_config import get_db_path
+
+    con = duckdb.connect(str(get_db_path()), read_only=True)
+    try:
+        row = con.execute(
+            """SELECT (SELECT max(date) FROM v_daily),
+                      (SELECT max(date) FROM calc_adjust_factor_daily),
+                      (SELECT count(*) FROM raw_adjustment_events),
+                      (SELECT max(ex_date) FROM raw_adjustment_events)"""
+        ).fetchone()
+    finally:
+        con.close()
+    return "|".join(str(x) for x in row)
+
+
+def skip_if_pinned_under_other_data(baseline: dict, name: str) -> None:
+    """指纹不符 ⇒ **skip 并说明是数据变了**,而不是报成"引擎漂移"。
+
+    * 指纹**相符** ⇒ 调用方照常比哈希;哈希不符才是**引擎漂移**(该红);
+    * 指纹**不符** ⇒ pin 的哈希本就不该复现 —— 报红会训练人忽略红灯(§6 的 background noise);
+      故 skip,并给出两个指纹与重 pin 的入口;
+    * 指纹字段**缺失**(旧格式) ⇒ 也 skip,并要求重生成 ——
+      因为此时**无法区分**两种漂移,而"分不清"时把红当引擎问题看是错的。
+    """
+    pinned = baseline.get("db_fingerprint")
+    if pinned is None:
+        pytest.skip(
+            f"{name}: 该基线**未记录数据指纹**(旧格式)⇒ 无法区分「数据变了」与「引擎变了」。"
+            "请重生成:`python tests/_repin_after_data_refresh.py`(或各族 _regen_/_capture_ 脚本)。"
+        )
+    current = current_db_fingerprint()
+    if pinned != current:
+        pytest.skip(
+            f"{name}: **数据变了**(不是引擎漂移)—— pin 时的库指纹与现在不同。\n"
+            f"  pin 时: {pinned}\n  现在 : {current}\n"
+            "前复权视图锚在最新日,新增「已公告的未来除权」会平移整条历史序列 ⇒ "
+            "同一批成交被重新定价。重 pin:`python tests/_repin_after_data_refresh.py`。"
+        )
