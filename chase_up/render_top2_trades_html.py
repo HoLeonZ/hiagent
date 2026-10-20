@@ -34,7 +34,9 @@ END = "2026-09-19"
 WINDOW_BEFORE = 30
 WINDOW_AFTER = 10
 
-RESULTS_DIR = Path("/Users/holeon/code/hiagent/chase_up/results")
+# §0/§6 (附一百一十一): 同上 —— 此前读的是**另一个 checkout** 的产物目录。
+ROOT = Path(__file__).resolve().parent.parent
+RESULTS_DIR = ROOT / "chase_up" / "results"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 

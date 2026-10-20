@@ -16,7 +16,9 @@ import sys
 import time
 from pathlib import Path
 
-REPO = Path("/Users/zhl/code/hiagent").resolve()
+# §0/§6 (附一百一十一): 此前硬编码的是**另一个用户**的家目录 ⇒ 在任何别的
+# checkout 上都指向不存在的地方。
+REPO = Path(__file__).resolve().parents[1]
 OUT_DIR = Path("/tmp/hiagent_all_presets_2yr")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 SUMMARY_MD = OUT_DIR / "summary.md"

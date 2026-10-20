@@ -17,7 +17,11 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-DB_PATH = "/Users/holeon/Library/Application Support/hithink-finance/data/market.duckdb"
+# §0/§6 单源 (附一百一十一): 本文件此前**绕过** `hiagent_config` 硬编码库路径 ——
+# 后果不只是"换机器就废":它**忽略 `DNA_STRAT_DB` 覆盖**(测试与我的批次都靠它指库),
+# 于是这个工具会静默连到**另一个库**上去。路径的唯一来源是 `hiagent_config`(它自己
+# 用 `Path.home()` 拼默认值并读环境变量)。
+from hiagent_config import DB_PATH
 
 #: (附一百零七) 判据用**相对**差,不用绝对元值 —— 后者与股价量级耦合,低价股上静默失效。
 _PRICE_MATCH_REL = 1e-4
