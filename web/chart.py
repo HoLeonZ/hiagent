@@ -14,6 +14,31 @@ import pandas as pd
 
 #: 交易方向。**SL/TP 的画法依赖它**：空头止损在上方、止盈在下方；多头相反。
 #: 若某个引擎标反，tests/test_web_chart.py 的方向判别测试会变红。
+#: `chart_payload` 会用到的成交列。**在这里对 schema 校验一次**，而不是各写各的字面量。
+#:
+#: 为什么要校验：四引擎共用 `core/trade_schema.py` 的 14 列规范，而 `web/chart.py`
+#: 直接写列名字面量。schema 改一次列名（哪怕是重命名），这里就变成运行时的
+#: `KeyError` → HTTP **500** —— 而**没有任何测试会察觉**，因为测试各自造自己的
+#: 残缺 trade（今天实测：测试里的 trade 只有 3–8 个字段，与 14 列规范无关）。
+#:
+#: 导入时即失败（§0 fail-fast）：宁可在启动时拒服务，也不要在用户点开一笔交易时给 500。
+_USED_TRADE_COLS = ("thscode", "entry_date", "exit_date",
+                    "entry_price", "exit_price", "exit_reason", "atr_pct")
+
+
+def _check_trade_columns() -> None:
+    from core.trade_schema import TRADE_COLS
+
+    missing = [c for c in _USED_TRADE_COLS if c not in TRADE_COLS]
+    if missing:
+        raise RuntimeError(
+            f"web.chart 用到了不在 core.trade_schema.TRADE_COLS 里的列: {missing}；"
+            "schema 与调用方已漂移——请一并更新（§6 单一来源）"
+        )
+
+
+_check_trade_columns()
+
 ENGINE_DIRECTION: dict[str, str] = {
     "short_reversal": "short",
     "chase_up": "long",

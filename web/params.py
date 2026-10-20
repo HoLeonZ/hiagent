@@ -342,6 +342,17 @@ def validate_overrides(engine: str, preset: str, overrides: dict[str, Any]) -> d
                 "skip validation"
             )
         want = spec.get("type")
+        # ⚠️ **缺 `type` 必须 fail-fast，不能 fail-open。**
+        # 原实现：`want` 取不到时，下面 `if want == "bool" / elif want == "float" …`
+        # **一个分支都进不去** → 任意值原样放行。
+        # 今天 0 个键缺 type，所以**还没有触发面**；但它是"新增参数时忘了写 type，
+        # 于是这个参数变成完全不校验"的静默陷阱——正是这种"现在没事、以后咬人"的形态。
+        # 门禁放这里：漏写 type 会在**第一次用到时**就报错，而不是悄悄失去校验。
+        if not want:
+            raise OverrideError(
+                f"metadata for {engine}.{key} has no \"type\" —— "
+                "PARAM_METADATA 的每一条都必须声明 type，否则该参数完全不被校验"
+            )
         if want == "bool":
             if not isinstance(value, bool):
                 raise OverrideError(

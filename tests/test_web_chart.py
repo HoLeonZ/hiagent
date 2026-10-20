@@ -385,3 +385,25 @@ def test_a_cycle_trade_payload_carries_candles_but_no_indicators():
     assert "raw_close" in d["bars"][0], "K 线是原始价"
     for col in ("ma5", "ma20", "ma60", "macd_dif", "macd_dea", "macd_bar"):
         assert col not in d["bars"][0], f"cycle 不该有 {col} —— 它没有自己的指标定义"
+
+
+def test_the_columns_the_chart_uses_exist_in_the_shared_trade_schema():
+    """**`web/chart.py` 用到的列必须来自 `core.trade_schema.TRADE_COLS`**。
+
+    四引擎共用那 14 列规范（§6），而 `chart_payload` 直接写列名字面量。schema 改一次
+    列名，这里就变成运行时的 `KeyError` → HTTP **500**，而**没有任何测试会察觉** ——
+    因为测试各自造自己的残缺 trade（实测：测试里的 trade 只有 3–8 个字段）。
+
+    `web/chart.py` 现在在导入时就校验一次（fail-fast），这里钉住那条不变式。
+    """
+    from core.trade_schema import TRADE_COLS
+
+    from web.chart import _USED_TRADE_COLS
+
+    missing = [c for c in _USED_TRADE_COLS if c not in TRADE_COLS]
+    assert not missing, (
+        f"web.chart 用到了不在共享 schema 里的列: {missing}；"
+        "schema 与调用方已漂移（§6）"
+    )
+    # 反方向：schema 的列必须是**真实存在**的（防止有人往 TRADE_COLS 里塞幽灵列）
+    assert len(TRADE_COLS) == 14, f"14 列规范变成了 {len(TRADE_COLS)} 列：{TRADE_COLS}"

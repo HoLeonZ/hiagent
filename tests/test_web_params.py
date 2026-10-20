@@ -539,3 +539,39 @@ def test_no_existing_preset_is_rejected_by_the_nested_key_check():
                 checked += 1
                 validate_overrides(eng, name, {nested: dict(v)})
     assert checked >= 20, f"只检查了 {checked} 个组合 —— 扫描范围可能没覆盖到"
+
+
+def test_every_metadata_entry_declares_a_type():
+    """**每条元数据都必须声明 `type`** —— 缺了这条，该参数就完全不被校验。
+
+    原实现里 `want = spec.get("type")` 取不到时，下面 `if want == "bool" / elif want == "float" …`
+    **一个分支都进不去** → 任意值原样放行（fail-open）。
+
+    实测（2026-10-19）：当时 0 个键缺 type，所以**还没有触发面**。
+    这条把"今天恰好没事"钉成不变式：将来新增参数忘了写 type，这里立刻红，
+    而不是等到有人用它传了个 `inf` 才发现（而那时很难想到是元数据缺了一项）。
+    """
+    from web.params import PARAM_METADATA
+
+    missing = {f"{eng}.{k}": spec
+               for eng, md in PARAM_METADATA.items()
+               for k, spec in md.items() if not spec.get("type")}
+    assert not missing, f"这些元数据没有 type（= 该参数完全不被校验）: {sorted(missing)}"
+
+
+def test_a_metadata_entry_without_a_type_is_rejected_not_widened(monkeypatch):
+    """缺 `type` 时**报错**，而不是"放行任意值"。
+
+    故意去掉某个键的 `type`，要求 `validate_overrides` 立刻拒绝并指出是元数据缺项，
+    而不是静默放行。
+    """
+    from web.params import PARAM_METADATA
+
+    CHASE_PRESET = "chase_v10_pos2_equal_atr_tp6_sl15_mh18_score16"
+    spec = PARAM_METADATA["chase_up"]["sl_pct"]
+    saved = spec.pop("type")
+    try:
+        with pytest.raises(OverrideError, match='has no "type"'):
+            validate_overrides("chase_up", CHASE_PRESET, {"sl_pct": 0.05})
+    finally:
+        spec["type"] = saved
