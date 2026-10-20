@@ -391,3 +391,44 @@ def test_the_service_refuses_to_start_with_the_test_seam_set(monkeypatch):
         create_app()
     with pytest.raises(RuntimeError, match="HIAGENT_JOBS_FAKE_SLEEP"):
         jobs_mod.assert_no_test_seam()
+
+
+def test_the_ledger_records_the_EVALUATED_window_not_the_requested_one(home, fast_child):
+    """**§5 记的是实际评估的窗口**，不是用户请求的那个。
+
+    preview 会把窗口缩到最近 N 天，于是两个不同的请求起点可能**评估同一个窗口**。
+    旧实现按请求窗口去重，把它们记成 **2 次试验** —— 可它们是**同一次迭代**
+    被评估了两遍，而 §5 管的是"试过多少配置"。
+
+    反过来，用户**改**了评估窗口**确实**是一次新迭代（§5 原文：
+    *"including changes to the evaluation window itself"*）——所以必须记**实际的**那个。
+
+    用户请求的窗口没有丢：它写在该次运行的 `job.json` 里（`meta_persisted` 能读回）。
+    两处语义不同，都刻意保留。
+    """
+    import json as _json
+
+    from web.runners import effective_window
+    from web.trials import distinct_manual_configs
+
+    end = "2026-10-16"
+    starts = ["2025-01-01", "2026-01-01"]
+    rids = []
+    for start in starts:
+        rid = jobs_mod.submit("short_reversal", "v50_slope", {"tp_pct": 0.09},
+                              start, end, "preview")
+        rids.append(rid)
+        jobs_mod.wait(rid, timeout=60)
+
+    # 两个请求起点在 preview 下确实评估同一个窗口（前提，否则本测试无意义）
+    a, b = (effective_window("preview", s, end) for s in starts)
+    assert a == b, f"前提不成立：两个请求评估的窗口不同（{a} vs {b}），本测试不适用"
+
+    assert distinct_manual_configs("short_reversal", "v50_slope") == 1, \
+        "同一次迭代被评估两遍，不该记成两次试验"
+
+    # 请求的窗口仍然留在各自的 job.json 里，没有丢
+    from web.state import run_artifact
+    for rid, start in zip(rids, starts):
+        meta = _json.loads(run_artifact(rid, "job.json").read_text(encoding="utf-8"))
+        assert meta["start"] == start, "job.json 应保留用户请求的起点"

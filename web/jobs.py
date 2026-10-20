@@ -23,7 +23,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from web.runners import RunResult
+from web.runners import RunResult, effective_window
 from web.state import run_artifact, run_dir, state_home
 from web.trials import append_trial, recent_runs
 
@@ -366,9 +366,20 @@ def submit(
     # 缝的守卫属于**服务进程**（`create_app()`），不属于"有人提交了一次作业"。
     run_id = uuid.uuid4().hex[:12]
     home = run_dir(run_id)                       # 建目录 + 断言在仓库外（§7）
+    # ⚠️ **账本记的是「实际评估的窗口」，不是用户请求的那个。**
+    # preview 会把窗口缩到最近 N 天，于是两个不同的请求起点可能**评估同一个窗口**。
+    # 实测（2026-10-19）：请求 `2025-01-01..2026-10-16` 与 `2026-01-01..2026-10-16`
+    # 都评估 `2026-03-30..2026-10-16` → 旧实现把它们记成 **2 次试验**。
+    # 可它们是**同一次迭代**被评估了两遍；§5 管的是"试过多少配置"。
+    # 反过来，若用户**改**了评估窗口，那**确实**是一次新迭代（§5 原文：
+    # "including changes to the evaluation window itself"）——所以要记**实际的**。
+    #
+    # 用户请求的窗口并没有丢：它写在该次运行的 `job.json` 里（`meta_persisted` 能读回）。
+    # 两处语义不同，都刻意保留，并在此说明。
+    eff_start, eff_end = effective_window(mode, start, end)
     trial_no = append_trial(
         run_id=run_id, engine=engine, preset=preset,
-        param_diff=dict(overrides or {}), start=start, end=end, mode=mode,
+        param_diff=dict(overrides or {}), start=eff_start, end=eff_end, mode=mode,
     )
     job = Job(run_id=run_id, engine=engine, preset=preset,
               overrides=dict(overrides or {}), start=start, end=end, mode=mode,
