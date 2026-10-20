@@ -30,7 +30,7 @@ free_cash mirrors the single cash pool until §2 settlement isolation
 (`short_reversal/replay_strategy_v3.py` 与 `cycle_price_action/portfolio.py` 的 `__init__`
 都有 free/locked/settling,并由 `settle()` 维护)。`short_reversal` 的 cash_walk 曾据此
 把 locked/settling 写死为 0,那是**产出与账本不符的数据**,已改为如实落盘 + 缺字段 fail-fast。
-(`cycle` 仍缺**组合级**逐 bar 序列 —— 那是另一条已登记的缺口,见审计 §8。)
+(`cycle` 仍缺**组合级**逐 bar 序列 —— 那是另一条已登记的缺口,见 [OPEN:CYCLE-BAR-EQUITY]。)
 """
 from __future__ import annotations
 

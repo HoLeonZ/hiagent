@@ -185,7 +185,8 @@ def test_short_reversal_backtest_json_exists_or_documented_gap() -> None:
         "§7 GAP REGISTERED: 本机 short_reversal/results/backtest.json 不存在。"
         "results/ 按 §7 必须 gitignored，fresh clone 下必然缺失 —— 这是产物边界，"
         "不是纪律违规。「short_reversal 未产出 canonical 22-metric 聚合 metrics」"
-        "属未结事项，登记于审计报告 §8。"
+        "属未结事项 —— 见 [OPEN:METRICS-22-AGG-SHORT]"
+        "（`tests/test_registered_open_items.py`）。"
     )
 
 
@@ -201,8 +202,8 @@ def test_cycle_price_action_backtest_json_exists_or_documented_gap() -> None:
     pytest.skip(
         "§7 GAP REGISTERED: 本机 cycle_price_action/results/backtest.json 不存在。"
         "results/ 按 §7 必须 gitignored，fresh clone 下必然缺失。"
-        "「cycle_price_action 未产出 canonical 22-metric 聚合 metrics」属未结事项，"
-        "登记于审计报告 §8。"
+        "「cycle_price_action 未产出 canonical 22-metric 聚合 metrics」属未结事项 —— "
+        "见 [OPEN:METRICS-22-AGG-CYCLE]（`tests/test_registered_open_items.py`）。"
     )
 
 

@@ -102,7 +102,8 @@ def test_every_engine_produces_equity_curve_csv() -> None:
             "§7 GAP REGISTERED: 本机以下引擎 results/ 下无 equity_curve.csv："
             f"{[e for e, _ in missing]}。results/ 按 §7 必须 gitignored，"
             "fresh clone 下必然缺失 —— 这是产物边界，不是纪律违规。"
-            "「缺 equity_curve.csv writer」属未结事项，登记于审计报告 §8。"
+            "「缺 equity_curve.csv writer」属未结事项 —— 见 [OPEN:EQUITY-CURVE-WRITER]"
+            "（`tests/test_registered_open_items.py`,登记含「什么条件下消失」）。"
         )
 
 
