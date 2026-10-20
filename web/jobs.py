@@ -228,7 +228,9 @@ def _persist_result(job: "Job", payload: dict) -> None:
             "overrides": job.overrides, "start": payload["start"], "end": payload["end"],
             "mode": job.mode, "trial_no": job.trial_no,
             "metrics": payload["metrics"], "trades": payload["trades"],
-            "finished_at": _dt.datetime.now().isoformat(timespec="seconds"),
+            # §0：带时区（账本那边同样改了）。naive 本地时间换台机器就漂，
+            # 事后也无法判断记的是哪个时区。
+            "finished_at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
         }, ensure_ascii=False, default=str),
         encoding="utf-8",
     )

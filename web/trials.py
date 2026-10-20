@@ -5,6 +5,7 @@ CLAUDE.md §5：任何人工迭代都递增 n_trials。本模块是这条纪律�
 from __future__ import annotations
 
 import datetime as dt
+import threading
 import json
 from typing import Any
 
@@ -55,6 +56,10 @@ def _read_all() -> list[dict[str, Any]]:
     return out
 
 
+#: 进程级锁：只护住 `append_trial` 的"读长度 + 追加"两步（见那里的说明）。
+_TRIAL_LOCK = threading.Lock()
+
+
 def _pad_if_unterminated() -> None:
     """文件尾若不是换行结尾，补一个 —— 否则下一次 append 会被粘进半行里。
 
@@ -83,28 +88,43 @@ def append_trial(
     end: str,
     mode: str,
 ) -> int:
-    """追加一条试验记录，返回这条记录的 `trial_no`（从 1 开始，全局单调）。"""
-    existing = _read_all()
-    trial_no = len(existing) + 1
-    rec = {
-        "trial_no": trial_no,
-        "run_id": run_id,
-        "engine": engine,
-        "preset": preset,
-        "param_diff": param_diff,
-        "start": start,
-        "end": end,
-        "mode": mode,
-        "at": dt.datetime.now().isoformat(timespec="seconds"),
-    }
-    # ⚠️ **追加前先确认上一行以换行结尾。**
-    # 若进程在写一半时被杀/磁盘写满，文件尾部会留下一条**没有换行的半行**；
-    # 这时直接 `open("a")` 会把新记录**粘在**它后面 —— 两行并成一行，
-    # 于是**新记录也一起废掉**（实测：`count_trials` 返回 0，而记录明明写进去了）。
-    # 补一个换行，让坏行只坏它自己。
-    _pad_if_unterminated()
-    with _path().open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
+    """追加一条试验记录，返回这条记录的 `trial_no`（从 1 开始，在**单进程内**单调）。
+
+    ⚠️ docstring 原来写的是"全局单调"，**那是假的**：原实现"先读全量长度、再追加"，
+    两步之间没有锁，两个并发提交会读到同一个长度、拿到**同一个编号**。
+    实测（2026-10-19，40 个线程并发 append）：只得到 **22 个不同编号**，
+    其中 `1` 被用了 **9 次** —— 于是 `trial_no` 不能再标识一条记录，
+    按它排序/去重的消费方（`list_runs`、`/api/compare`）全都会错。
+
+    现在"读长度 + 追加"整个包在 `_TRIAL_LOCK` 里。
+
+    **锁是进程级的**：本平台是单进程（uvicorn 单 worker），所以够用。
+    若将来多进程部署，**这个锁等于没有** —— 必须换成文件锁（`fcntl.flock`）。
+    """
+    with _TRIAL_LOCK:
+        existing = _read_all()
+        trial_no = len(existing) + 1
+        rec = {
+            "trial_no": trial_no,
+            "run_id": run_id,
+            "engine": engine,
+            "preset": preset,
+            "param_diff": param_diff,
+            "start": start,
+            "end": end,
+            "mode": mode,
+            # §0：时间戳必须是**带时区的**单一基准。naive 本地时间换台机器就漂
+            # （本机与 UTC 差 8 小时），而且事后无法判断它记的是哪个时区。
+            "at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+        }
+        # ⚠️ **追加前先确认上一行以换行结尾。**
+        # 若进程在写一半时被杀/磁盘写满，文件尾部会留下一条**没有换行的半行**；
+        # 这时直接 `open("a")` 会把新记录**粘在**它后面 —— 两行并成一行，
+        # 于是**新记录也一起废掉**（实测：`count_trials` 返回 0，而记录明明写进去了）。
+        # 补一个换行，让坏行只坏它自己。
+        _pad_if_unterminated()
+        with _path().open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
     return trial_no
 
 

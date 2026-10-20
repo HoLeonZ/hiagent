@@ -6,6 +6,7 @@ import json
 import pytest
 
 from web.trials import (
+    _read_all,
     append_trial,
     count_trials,
     distinct_manual_configs,
@@ -187,3 +188,51 @@ def test_writing_after_a_torn_line_still_works(home):
                      param_diff={"tp_pct": 0.09}, start="2024-01-01", end="2025-01-01", mode="full")
     assert n == 1, "trial_no 从可读记录数推——坏行不该把编号也算进去"
     assert count_trials("short_reversal", "v50_slope") == 1
+
+
+def test_trial_numbers_are_unique_under_concurrent_appends(home):
+    """**`trial_no` 在并发提交下也必须唯一。**
+
+    原实现是"先读全量长度、再追加"，两步之间没有锁 → 两个并发提交读到同一个长度、
+    拿到**同一个编号**。实测（修复前，40 个线程）：只得到 **22 个不同编号**，
+    其中 `1` 被用了 **9 次** —— 而 docstring 声称的是"全局单调"，那是假的。
+    于是 `trial_no` 不能再标识一条记录，按它排序/去重的消费方（`list_runs`、
+    `/api/compare`）全都会错。
+
+    锁是**进程级**的（本平台单进程 ✓）；多进程部署时这个锁等于没有，
+    docstring 里写明了，届时要换成 `fcntl.flock`。
+    """
+    import threading
+
+    got, lock = [], threading.Lock()
+
+    def worker(i):
+        n = append_trial(run_id=f"r{i}", engine="short_reversal", preset="v50_slope",
+                         param_diff={"tp_pct": round(0.05 + i * 0.001, 4)},
+                         start="2024-01-01", end="2025-01-01", mode="full")
+        with lock:
+            got.append(n)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(40)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(set(got)) == 40, f"只拿到 {len(set(got))} 个不同编号（修复前是 22）"
+    nums = [r["trial_no"] for r in _read_all()]
+    assert sorted(nums) == list(range(1, 41)), f"编号不连续/有重复：{sorted(nums)[:10]}…"
+
+
+def test_the_ledger_timestamp_carries_an_explicit_timezone(home):
+    """§0：时间戳必须是**带时区的单一基准**。
+
+    原实现用 `datetime.now()` —— naive 的**本地**时间。本机与 UTC 差 8 小时，
+    于是换一台时区不同的机器写的账本**事后无法解读**是哪一天，
+    而 §0 明确要求"normalize timestamps to a single exchange timezone"。
+    """
+    append_trial(run_id="r1", engine="short_reversal", preset="v50_slope",
+                 param_diff={"tp_pct": 0.09}, start="2024-01-01", end="2025-01-01", mode="full")
+    at = _read_all()[0]["at"]
+    assert at.endswith("+00:00") or at.endswith("Z"), \
+        f"时间戳必须带显式时区（§0），现在是 {at!r}"
