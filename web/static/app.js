@@ -437,7 +437,14 @@ function renderChart(d) {
   // 前端绝不再算一遍——那样会在原始价上算，正是 §4.6.1 那个缺陷的前端版本。
   const line = (name, key, color) => ({ name, type: "line", symbol: "none",
     data: d.bars.map((b) => b[key]), lineStyle: { width: 1, color } });
-  const macdOn = d.bars.some((b) => b.macd_dif !== null && b.macd_dif !== undefined);
+  // **只画后端真的给了的指标。**
+  // 各引擎的指标实现不同（chase_up / uptrend_pullback 的 `macd_bar` **没有 ×2**，
+  // 而 short_reversal 有），`cycle_price_action` 更是**没有指标定义，主程序也不叠任何指标**
+  //（设计 §4.5 那一行就是 `—`）。后端对后面这种情况**不下发**这些列 ——
+  // 前端就该一条线都不画，而不是拿别的引擎的公式补上（那正是 §4.6.1 要防的）。
+  const has = (k) => d.bars.some((b) => b[k] !== undefined);
+  const maKeys = ["ma5", "ma10", "ma20", "ma60"].filter(has);
+  const macdOn = has("macd_dif");
 
   // SL/TP 两条横线。**后端说没有，就一条都不画。**
   //
@@ -465,9 +472,8 @@ function renderChart(d) {
             label: { formatter: `TP ${d.tp_price.toFixed(3)}`, position: "insideEndBottom", color: "#4caf50" } },
         ],
       } } : {}) },
-    line("ma5", "ma5", "#9e9e9e"),
-    line("ma20", "ma20", "#42a5f5"),
-    line("ma60", "ma60", "#ffa726"),
+    ...maKeys.map((k) => line(k, k, { ma5: "#9e9e9e", ma10: "#bdbdbd",
+                                       ma20: "#42a5f5", ma60: "#ffa726" }[k])),
     { name: "入场", type: "scatter", symbolSize: 12,
       data: [[d.entry.date, d.entry.price]],
       itemStyle: { color: "#ffee58" } },

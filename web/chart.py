@@ -121,17 +121,48 @@ def _load_dual_bars(db_path: Path, code: str, start: str, end: str) -> pd.DataFr
     return df
 
 
-def _indicators_on_adj(bars: pd.DataFrame) -> pd.DataFrame:
-    """在**复权**域上调用引擎自己的指标定义。
+#: 各引擎**自己的**指标实现（模块名, 函数名）—— §6 单一来源。
+#:
+#: ⚠️ **不能对四个引擎都用同一份。** 实测（2026-10-19）三个引擎的 `macd_bar` 口径不同：
+#:
+#:   short_reversal   `(dif - dea) * 2`     （render_trade_detail.py:73）
+#:   chase_up         `dif - dea`           （signals.py，**没有 ×2**）
+#:   uptrend_pullback `dif - dea`           （signals.py，同样没有 ×2）
+#:
+#: 原实现硬编码 short_reversal 那一份给所有引擎，于是 chase_up / uptrend 的图上
+#: **MACD 柱是策略所见的 2 倍** —— 符号与交叉点相同，所以**看起来仍然合理**。
+#: 这正是 §4.6.1 要防的事：图要解释"策略当时看到了什么"，不是"看起来像什么"。
+#:
+#: `cycle_price_action` **不在表里**：它没有指标定义，其主程序也不叠任何指标
+#:（设计 §4.5 那一行就是 `—`）。**没有就不画**，而不是拿别人的补上。
+INDICATORS_BY_ENGINE: dict[str, tuple[str, str]] = {
+    "short_reversal": ("short_reversal.render_trade_detail", "compute_indicators"),
+    "chase_up": ("chase_up.signals", "compute_indicators"),
+    "uptrend_pullback": ("uptrend_pullback.signals", "compute_indicators"),
+}
 
-    `compute_indicators` 读的是名为 `close` 的列，所以这里把 `adj_close` 改名喂进去——
-    复用的是引擎那份实现（§6 单一来源），没有第二份指标代码。
+
+def _indicators_on_adj(engine: str, bars: pd.DataFrame) -> pd.DataFrame | None:
+    """在**复权**域上调用**该引擎自己的**指标定义；该引擎没有定义时返回 `None`。
+
+    各家的 `compute_indicators` 读的都是名为 `close` 的列，所以把 `adj_close` 改名喂进去——
+    复用的是引擎那份实现（§6），没有第二份指标代码。
     """
-    from short_reversal.render_trade_detail import compute_indicators
+    spec = INDICATORS_BY_ENGINE.get(engine)
+    if spec is None:
+        return None
+    import importlib
 
+    mod = importlib.import_module(spec[0])
     work = bars.copy()
-    work["close"] = work["adj_close"]
-    return compute_indicators(work)
+    # ⚠️ **要改名的不止 `close`。** 各引擎的 `compute_indicators` 读的是**面板命名**
+    # （`open/high/low/close/volume/amount`），chase_up / uptrend_pullback 还会用到
+    # `high`/`low`（ATR、突破）。只改 `close` 会 `KeyError: Column not found: high`（实测）。
+    # 四列都从**复权**域取 —— 域必须一致，混了就等于把两个价格域喂进同一个指标。
+    for src, dst in (("adj_open", "open"), ("adj_high", "high"),
+                     ("adj_low", "low"), ("adj_close", "close")):
+        work[dst] = work[src]
+    return getattr(mod, spec[1])(work)
 
 
 def chart_payload(engine: str, params: dict[str, Any], trade: dict[str, Any], db_path: Path) -> dict[str, Any]:
@@ -146,17 +177,23 @@ def chart_payload(engine: str, params: dict[str, Any], trade: dict[str, Any], db
         return {"bars": [], "entry": None, "exit": None,
                 "sl_price": None, "tp_price": None, "direction": direction}
 
-    ind = _indicators_on_adj(bars)
+    ind = _indicators_on_adj(engine, bars)
 
-    cols = ["date", "raw_open", "raw_high", "raw_low", "raw_close",
-            "adj_open", "adj_high", "adj_low", "adj_close", "volume",
-            "ma5", "ma10", "ma20", "ma60", "macd_dif", "macd_dea", "macd_bar"]
+    base_cols = ["raw_open", "raw_high", "raw_low", "raw_close",
+                 "adj_open", "adj_high", "adj_low", "adj_close", "volume"]
+    # 指标列**只在该引擎真的算它们时**才出现（cycle 一个都没有）。
+    # 前端据此决定画哪几条线 —— 而不是拿别的引擎的公式补上。
+    ind_cols = ["ma5", "ma10", "ma20", "ma60", "macd_dif", "macd_dea", "macd_bar"]
+    if ind is None:
+        ind_cols = []
     out_bars = []
-    for _, r in ind.iterrows():
-        out_bars.append({
-            "date": r["date"].strftime("%Y-%m-%d"),
-            **{c: (None if pd.isna(r[c]) else float(r[c])) for c in cols if c != "date"},
-        })
+    frame = ind if ind is not None else bars
+    for _, r in frame.iterrows():
+        row = {"date": r["date"].strftime("%Y-%m-%d")}
+        for c in base_cols + ind_cols:
+            if c in r.index:
+                row[c] = None if pd.isna(r[c]) else float(r[c])
+        out_bars.append(row)
 
     entry_price = float(trade["entry_price"])
     # `None` 表示**这一笔没有可画的 SL/TP 线**：引擎按 ATR 出场，或预设压根没给这两个参数。

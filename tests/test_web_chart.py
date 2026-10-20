@@ -97,7 +97,7 @@ def test_indicators_come_from_the_ADJUSTED_domain_not_raw():
         pytest.skip("该票在窗口内无 bar")
 
     # 复权域：平台实际给图表用的那一组
-    on_adj = _indicators_on_adj(bars)
+    on_adj = _indicators_on_adj("short_reversal", bars)
 
     # 原始域：既有的报告层就是这么算的（把 raw_close 当作 close 直接喂进去）
     raw_work = bars.copy()
@@ -300,3 +300,88 @@ def test_a_chase_up_trade_gets_no_sl_tp_lines_from_the_platform():
     d2 = chart_payload("chase_up", params, trade, _db())
     assert d2["sl_price"] is not None and d2["tp_price"] is not None, \
         "atr_pct 缺失时引擎走 fixed 分支，平台应当照画（否则是过度抑制）"
+
+
+def _synthetic_bars(n=80):
+    """一段合成日线（不查库）。只为让 MACD 有足够暖机。"""
+    import numpy as np
+    import pandas as pd
+
+    close = pd.Series(10.0 + np.sin(np.arange(n) / 5.0) + np.arange(n) * 0.01)
+    return pd.DataFrame({
+        "thscode": "000001.SZ",
+        "date": pd.bdate_range("2025-01-01", periods=n),
+        "raw_open": close, "raw_close": close + 0.1, "raw_low": close - 0.2, "raw_high": close + 0.3,
+        "adj_open": close, "adj_close": close + 0.1, "adj_low": close - 0.2, "adj_high": close + 0.3,
+        "volume": 1000.0, "amount": 1e6,
+    })
+
+
+def test_indicators_come_from_each_engines_OWN_definition_not_one_of_them():
+    """**按引擎分派**，不能拿 short_reversal 那一份给所有引擎。
+
+    实测（2026-10-19）三个引擎的 `macd_bar` 口径不同：
+
+      short_reversal   `(dif - dea) * 2`   （render_trade_detail.py:73）
+      chase_up         `dif - dea`         （chase_up/signals.py，**没有 ×2**）
+      uptrend_pullback `dif - dea`         （uptrend_pullback/signals.py）
+
+    原实现对四个引擎都用 short_reversal 的，于是 chase_up / uptrend 的图上
+    **MACD 柱是策略所见的 2 倍** —— 符号与交叉点相同，所以**看起来仍然合理**。
+    图要解释的是"策略当时看到了什么"（§4.6.1），不是"看起来像什么"。
+
+    判据取**两个引擎在同一段价格上的 `macd_bar` 之比**：正好 2 倍才算分派到位。
+    """
+    from web.chart import _indicators_on_adj
+
+    bars = _synthetic_bars()
+    sr = _indicators_on_adj("short_reversal", bars)
+    cu = _indicators_on_adj("chase_up", bars)
+    up = _indicators_on_adj("uptrend_pullback", bars)
+    assert sr is not None and cu is not None and up is not None
+
+    import numpy as np
+
+    a = sr["macd_bar"].dropna().to_numpy()
+    b = cu["macd_bar"].dropna().to_numpy()
+    c = up["macd_bar"].dropna().to_numpy()
+    n = min(len(a), len(b), len(c))
+    assert n > 20, "暖机不足，这条测试失去判别力"
+    # short_reversal 恰好是另两个的两倍
+    assert np.allclose(a[-n:], b[-n:] * 2.0, rtol=1e-9), "chase_up 的 macd_bar 用错了口径"
+    assert np.allclose(a[-n:], c[-n:] * 2.0, rtol=1e-9), "uptrend 的 macd_bar 用错了口径"
+    # dif/dea 三家一致（只有 bar 的口径不同）—— 别把整份实现换成两套
+    assert np.allclose(sr["macd_dif"].dropna().to_numpy()[-n:],
+                       cu["macd_dif"].dropna().to_numpy()[-n:], rtol=1e-12)
+
+
+def test_an_engine_without_its_own_indicator_definition_gets_none():
+    """`cycle_price_action` **没有指标定义** → 不下发任何指标列。
+
+    它的主程序不叠任何指标（设计 §4.5 那一行就是 `—`）。
+    原实现给它套了 short_reversal 的公式 —— 那是**凭空造一组策略从没算过的数**。
+    **没有就不画**，而不是拿别人的补上。
+    """
+    import pytest
+
+    from web.chart import INDICATORS_BY_ENGINE, _indicators_on_adj
+
+    assert "cycle_price_action" not in INDICATORS_BY_ENGINE, \
+        "cycle 一旦有了自己的指标定义，这条测试的前提就变了 —— 那时应改的是它"
+    assert _indicators_on_adj("cycle_price_action", _synthetic_bars()) is None
+
+
+@pytest.mark.skipif(_db() is None, reason=SKIP_REASON)
+def test_a_cycle_trade_payload_carries_candles_but_no_indicators():
+    """端到端：cycle 的 payload 有 K 线、**没有** ma/macd 列。"""
+    import datetime as dt
+
+    from web.chart import chart_payload
+
+    trade = {"thscode": "000001.SZ", "entry_date": "2026-03-02", "exit_date": "2026-03-10",
+             "entry_price": 12.0, "exit_price": 12.5, "exit_reason": "TP"}
+    d = chart_payload("cycle_price_action", {"sl_pct": 0.05, "tp_pct": 0.08}, trade, _db())
+    assert d["bars"], "K 线仍要有"
+    assert "raw_close" in d["bars"][0], "K 线是原始价"
+    for col in ("ma5", "ma20", "ma60", "macd_dif", "macd_dea", "macd_bar"):
+        assert col not in d["bars"][0], f"cycle 不该有 {col} —— 它没有自己的指标定义"
