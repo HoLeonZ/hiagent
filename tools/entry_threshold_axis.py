@@ -57,7 +57,7 @@ DEFAULT_KEY = "min_mom120"
 
 
 def _run(preset: dict, panel, w0: str, w1: str, key: str, value: float) -> tuple:
-    """返回 (净 Σ, 笔数, 笔数, top-3 Σ 占比)。`value is None` ⇒ 用基线值。"""
+    """返回 (净 Σ, 笔数, 笔数, top-3 Σ 占比, 盈利笔数, 逐笔中位数)。`value is None` ⇒ 用基线值。"""
     p = dict(preset)
     sig = dict(p["signal"])
     if value is not None:
@@ -68,11 +68,12 @@ def _run(preset: dict, panel, w0: str, w1: str, key: str, value: float) -> tuple
     tr = pd.DataFrame(res["trades"])
     if len(tr) and "net_pnl" in tr.columns:
         pnls = pd.to_numeric(tr["net_pnl"], errors="coerce").fillna(0.0)
-        top3 = float(pnls.nlargest(3).sum())
-        share = top3 / net if net else float("nan")
+        share = float(pnls.nlargest(3).sum()) / net if net else float("nan")
+        n_win = int((pnls > 0).sum())
+        med = float(pnls.median())
     else:
-        share = float("nan")
-    return net, len(tr), len(tr), share
+        share, n_win, med = float("nan"), 0, float("nan")
+    return net, len(tr), len(tr), share, n_win, med
 
 
 def main() -> int:
@@ -126,6 +127,15 @@ def main() -> int:
         print(row)
     print("  ⇒ 每格是「笔数 / top-3 Σ 占比」—— **占比 >100% 意味着 top-3 以外那批合计是亏的**")
 
+    print(f"\n  === 逐笔分布: 盈利笔数 / 逐笔中位数 (§13.210 P2) ===")
+    print(f"  {'窗口':<7}" + "".join(f"{v:>18.2f}" for v in vals))
+    for win, cc in per_win.items():
+        row = f"  {win:<7}"
+        for v in vals:
+            row += f"{cc[v][4]:>11} /{cc[v][5]:>6,.0f}"
+        print(row)
+    print("  ⇒ 每格是「盈利笔数 / 逐笔净额中位数(元)」—— **宽基改善应当让这两列一起上升**")
+
     print(f"\n  === 「在几个窗上严格超过基线」 ===")
     counts = {}
     for v in vals[1:]:
@@ -137,6 +147,16 @@ def main() -> int:
     best = max(len(b) for b in counts.values())
     print(f"\n  ⇒ **最大计数 = {best}/{len(per_win)}**"
           f"{'  ⚠️ 有档覆盖全部窗' if best == len(per_win) else ''}")
+    w2 = [per_win["W2"][v][0] for v in vals]
+    d2 = [b - a for a, b in zip(w2, w2[1:])]
+    n_pos = sum(1 for d in d2 if d > 0)
+    print(f"\n  === 平台 vs 尖峰 (§13.210 P1): `W2` 上逐点**相邻变动** ===")
+    print(f"  {args.key} 序列: " + " → ".join(f"{v:.2f}" for v in vals))
+    print(f"  `W2` 净 Σ : " + " → ".join(f"{x:+,.0f}" for x in w2))
+    print(f"  相邻变动 : " + " → ".join(f"{d:+,.0f}" for d in d2))
+    print(f"  ⇒ 变号次数 **{sum(1 for a, b in zip(d2, d2[1:]) if (a > 0) != (b > 0))}**"
+          f" · 上升 {n_pos}/{len(d2)}"
+          f"  ⇒ **{'平滑(无变号)' if not any((a>0)!=(b>0) for a,b in zip(d2,d2[1:])) else '**有变号 ⇒ 不是平台**'}**")
     print(f"  ⇒ `W2` 那一列: " +
           " · ".join(f"{v:.2f}→{per_win['W2'][v][0] - per_win['W2'][base_val][0]:+,.0f}" for v in vals[1:]))
     print("""  读法: 机理 (§13.208) 说"少切换帮忙"。若某档 5 窗全好 ⇒ 门槛真能通用;
