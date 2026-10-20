@@ -1678,6 +1678,31 @@
 >     ★ 这是 §13.90 那条守卫**第四次**抓我的新工具, **四次都是「提到族名 ≠ 并列族口径」**。
 >   * **§5**: `n_comparisons` **不变 (399)**; **不改引擎代码、不重生成 baseline**;
 >     唯一改动的文件是**测试**(那条豁免), 零引擎漂移。
+> * ✅ **§13.213: 最后 2 条核完 ⇒ 那张 49 条的表**全部有处置**了 —— 而它们打的是一个**死模块**。**
+>   * 两条报的是 **§4 LIMIT-UP SKIP VIOLATION** 与 **§4 TIEBREAK VIOLATION**, 打 `chase_up` 的 **Phase 2**。
+>   * ⛔ **而消息里的行号是**过期的****: `portfolio.py:300-307` 实际是 **`position_sizing='kelly'`** 校验,
+>     `:384-386` 实际是 **`_exit_fill_px` 的 docstring** ⇒ **没有一处是它声称的 §4 规则**
+>     ⇒ **测试消息是**线索**, 不是**证据**。** (本轮**第二次**栽在"不能信消息": 第一次是 §13.212 把
+>     `backtrader_engine.py:32` 记成了 `portfolio.py`。)
+>   * ✅ **读码实测: `chase_up` 的**生产路径**两条 §4 规则**都执行**** ——
+>     SL-first: 形参 `intraday_tiebreak="sl_first"` (`L277`) + **fail-fast 校验** (`L488-492`) + 判定序 `if o <= sl_p` (`L494`);
+>     涨停: `LIMIT_UP_THRESHOLD = 0.098` (`L178`) + 守卫 (`L582`, 含 prev_close 缺失回退 adj `L571-576`)。
+>     ⇒ **chase 生产路径在这两条上干净** —— 而这是**读代码**读到的, 不是抄消息。
+>     (也把 §13.211(f) 那次"chase 有没有涨停判据"的假发现**彻底钉死**: 有, 且带阈值常数与回退。)
+>   * ★★ **而这两条测试打的是一个**零消费者**的模块**: `chase_up/replay_strategy.py` **全仓无引用**
+>     (`run_backtest` 自陈 "Phase 1: pandas 自循环" ⇒ 走 `simulate_portfolio`)。
+>     ⚠️ 三个近名文件**不是一个东西**: `chase_up/replay_strategy.py` (死) ·
+>     `short_reversal/replay_strategy_v3.py` · `uptrend_pullback/replay_strategy.py` (被 uptrend 引擎用)。
+>   * ★ Phase 2 自身两个缺陷: ① **`skipped` 是**永远为 False 的死标志**** (`:33` 声明、`:44` 读、**无写点**)
+>     —— §13.175 形状的**更彻底版本**; ② 无 SL-first 排序。
+>   * **处置**: **不是活的 §4 违规** ⇒ **不删该模块** (CLAUDE.md: 看到未使用代码**指出而不删**);
+>     两条测试**永久红在死模块上** ⇒ 两个选项 (**登记待决策**):
+>     **(i)** 改靶到 Phase 1 (会成为生产路径上的**活守卫**, 且按实测会**变绿**); **(ii)** `xfail(strict)` 并写明指向死模块。
+>   * ★★ **完整表: 49 条**全部有处置**了** (20 自陈 RED · 10 钉桩漂移 · 5 cycle 非生产入口 · **2 chase 死模块** ·
+>     4 元守卫 · 6 已核因 · 2 口径决策 = **49**) ⇒ **没有一条是"来路不明的"**;
+>     **唯一需要"修"的只有那 2 条, 且修法不是改引擎。**
+>   * **§5**: `n_comparisons` **不变 (399)**; **不改引擎、不删代码、不重生成 baseline**;
+>     ⚠️ (g) 两个选项**都未执行** (属决策, 且都会改测试的红绿状态)。
 > * ⚠️ **§3.1 与 §3.2 是留档, 不是行动清单** —— 见两节各自的更正横幅。
 >   **文档的阅读顺序与结论的时间顺序相反, 所以旧节可能比新节更"乐观"。**
 ---
@@ -18400,3 +18425,76 @@ assert bar.open == 0.0      # raw NaN 时回退 adj_open 但 safe=NaN→0
   它是**守卫自己的报错消息指令的补救**, 且经注入检验证明**没有把守卫弄钝** ⇒ **零引擎漂移**;
 * ⚠️ (d) 是**决策项**不是缺陷 ⇒ **未改**; (g) 里"已核因"的 7 条**只核了报错**, 未核修复路径;
 * ⚠️ **本节最该带走的是 (b)**: **两次判据给出同一个总数, 却指着不同的 20 条。**
+
+---
+
+### 13.213 ✅ **最后 2 条核完 ⇒ 那张 49 条的表**全部有处置**了** —— 而它们打的是一个**死模块**
+
+#### (a) 目标
+§13.211(g)/§13.212 只剩 `test_chase_up_phase2_*` 两条未核。本轮核完, 那张表就**没有"未核"格**了。
+
+#### (b) 两条的断言
+```
+§4 LIMIT-UP SKIP VIOLATION: chase_up Phase 2 did not set self.skipped = True when bar 1
+  open=10.98 is at limit-up (prev_close=10.0 × 1.098 = 10.98, threshold=0.098).
+  chase_up/portfolio.py:384-386 enforces this in Phase 1; Phase 2 must match.
+§4 TIEBREAK VIOLATION: chase_up Phase 2 picked 'TP' when o == sl_p == tp_p == 10.0
+  (must be SL per CLAUDE.md §4 Pessimistic Default). chase_up/portfolio.py:300-307 uses SL-first.
+```
+
+#### (c) ⛔ **而这两条消息里的行号是**过期的** —— 所以不能拿它当依据**
+去读那两处:
+* `chase_up/portfolio.py:300-307` 实际是 **`position_sizing == "kelly"`** 的参数校验;
+* `chase_up/portfolio.py:384-386` 实际是 `_exit_fill_px` 的 **docstring** (讲出场腿冲击价)。
+> ⇒ ★★ **没有一处是它声称的 §4 规则。** ⇒ **测试消息里的行号本身已漂移** (§13.122 那种"钉了某一次的实现细节")。
+> ★ 而这是**本轮第二次**"不能信消息" (第一次: §13.212 我把 `backtrader_engine.py:32` 记成了 `portfolio.py`)。
+> ⇒ **规矩再写一次: 测试消息是**线索**, 不是**证据**; 判据只能落在**去读那段代码**上。**
+
+#### (d) ✅ **实测 (读代码): `chase_up` 的**生产路径**两条 §4 规则**都执行****
+| 规则 | Phase 1 (`chase_up/portfolio.py`) 的实测位置 |
+|---|---|
+| **SL-first 双触发** | 头部注释 `V6 (2026-09-22): SL-first` (L10/L14-15) · 形参 `intraday_tiebreak: str = "sl_first"` (L277) · **fail-fast 校验** `if intraday_tiebreak != "sl_first": raise` (L488-492) · 判定序 `if o <= sl_p:` 在 TP 之前 (L494) |
+| **涨停不成交** | `LIMIT_UP_THRESHOLD = 0.098` (L178) · 守卫 `if not np.isnan(pc) and pc > 0 and (o / pc - 1) >= LIMIT_UP_THRESHOLD:` (L582, 且 L571-576 写明 prev_close 缺失时回退 adj) |
+> ⇒ ★★ **`chase_up` 的生产路径在这两条 §4 规则上是干净的** —— 而这**不是**从测试消息抄来的, 是**读代码**读到的。
+> (顺带: 这也把 §13.211(f) 那次"`chase` 有没有涨停判据"的假发现彻底钉死 —— **有, 而且带阈值常数与回退路径**。)
+
+#### (e) ★★ **而这两条测试打的是一个**零消费者**的模块**
+**实测**: `chase_up/replay_strategy.py` (含 `ChaseUpTradeReplay`) 在全仓**没有任何消费者** ——
+* `chase_up/backtest.py` 的 `run_backtest` 自陈 **"(Phase 1: pandas 自循环)"**, 调的是 `simulate_portfolio`;
+* 全仓提到 `replay_strategy` 的其余处, 要么是 **`short_reversal/replay_strategy_v3.py`** (另一个文件),
+  要么是 **`uptrend_pullback/replay_strategy.py`** (`UpullbackTradeReplay`, 被 **uptrend 的** backtrader_engine 用), 要么是**注释**。
+> ⚠️ **三者名字相近但不是一个东西** —— `chase_up` 的这一个**没有引用者**。
+> 这与本册 2026-10-16 的记载一致: 「**只测 Phase 1**; Phase 2 的权益曲线是 Phase-1 曲线加一个平段,
+> 可以走负 —— 两个引擎在**符号与 preset 排序上都不一致**」⇒ **Phase 2 是已知不可用的部件**。
+
+#### (f) ★ Phase 2 自身的两个缺陷 (读代码实测)
+1. **`skipped` 是一个**永远为 False 的死标志****: `:33` 声明 `self.skipped: bool = False`,
+   `:44` **读**它 (`if self.skipped or self.exit_done: return`), 而**没有写点** ⇒ **它不可能变 True**;
+2. **没有 SL-first 排序** (测试报的是 TP-first)。
+> ⇒ ①是本册 §13.175 那个形状 ("值到达了代码但从不用在逻辑里") 的一个**更彻底的版本**: 连通路都没有。
+
+#### (g) 处置
+* **不是活的 §4 违规** (生产 = Phase 1, 且 Phase 1 两条都执行);
+* **不删那个模块** —— CLAUDE.md 明写「看到未使用代码, **指出它, 不删它**」;
+* 两条测试**永久红在一个死模块上** ⇒ 两个选项 (**登记待决策**):
+  * **(i)** 把它们**改靶到 Phase 1** (那时它们会变成生产路径上的**活守卫** —— 而且以 (d) 的实测, 会**变绿**);
+  * **(ii)** 给它们 `xfail(strict)` 并在理由里写明"**指向 `chase_up/replay_strategy.py`, 该模块零消费者**"。
+
+#### (h) ★★ 完整表: 49 条**全部**有处置 (本节收尾)
+| 类 | 条数 | 处置 |
+|---|---|---|
+| 自陈 RED (三词判据) | **20** | 等**决策** (§3 选 A/B); **不是缺陷** |
+| 钉桩产物漂移 | **10** | **不改** (§6 禁令) |
+| `cycle` 非生产入口缺守卫 | **5** | **测试侧** (对真实 API 写) |
+| **`chase` Phase 2 死模块** | **2** | **(g) 的两个选项** —— 登记待决策 |
+| 元守卫 / 全仓静态审计 | **4** | 「回退重跑」逐条归因 |
+| 已核因的其余 (§0 `assert`×5 · §0 不可变 · `hold_days` · SQL ORDER BY · `metrics_basis` 工具披露) | **6** | 各自独立; `metrics_basis` 那条**已在本轮修掉** |
+| 口径决策 (未改) | **2** | `dual_price` raw-NaN (0.0 vs 回退 adj) |
+| | **49** | |
+> ⇒ ★ **本册至此可以说: 全量回归的 49 条**没有一条是"来路不明的"**。**
+> 而其中**唯一需要"修"的只有 (g) 那 2 条** —— 且它们的修法**不是改引擎**。
+
+#### (i) §5 与边界
+* 不评估任何配置 ⇒ `n_comparisons` **不变 (399)**; **不改引擎代码、不删代码、不重生成 baseline**;
+* ⚠️ (b) 那两条的消息行号**已被证明过期** ⇒ 本节结论**只用 (d)/(e)/(f) 的读码结果**, 不引用消息里的行号;
+* ⚠️ **未做**: (g) 的两个选项**都未执行** (属决策, 且二者都会改测试的红/绿状态, 需先定口径)。
