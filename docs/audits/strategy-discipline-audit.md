@@ -10286,3 +10286,86 @@ dsr = deflated_sharpe_ratio(…, n_trials=n_trials, …)
 `test_claudemd_rules_are_accounted_for.py` 记的"必须声明正整数、且必须有消费者" ——
 **描述准确**(消费者确实存在);不准的只是**执行它的那条判据**。
 ⇒ 账本行本身不动,只把判据换成有牙的。
+
+---
+
+## 附一百二十二 —— 对"对账本"的再对账:**我的分级启发式假报了一条强守卫**
+
+(上一批发现账本里一行点名的守卫没牙(`n_comparisons` 的消费者判据)。本批想问:
+**其余各行有没有同形?** 结论分两半:**方法不可靠**、**抽查到的那条很强**。)
+
+### 1 · 方法:按"判据强度"给每行的守卫分级
+
+从 `RULE_COVERAGE` 取出每一行点名的守卫文件,数它里面
+
+* **弱形状**:`in src` / `in text` / `read_text(...)` 之类**文本判据**的出现次数;
+* **强形状**:`ast.parse` / `ast.walk` / `inspect.getsource` / `signature(` 之类**结构化判据**的次数。
+
+分级结果(19 行里 **6 行**是"有弱形状、无强形状"):
+
+| 规则 | 载体 |
+|---|---|
+| `Suspension & Missing-Bar Semantics` | `test_suspension_mark_and_no_fill.py` |
+| **`Exit Thresholds (TP/SL) & Target Projection`** | `test_tp_sl_are_relative_percentages.py` |
+| `Banned In-Sample Grids` | `test_single_window_selection_is_disclosed.py` |
+| `Results Stay Local` / `No Numbers in Docs` | `test_artifact_hygiene_section7.py` |
+| `Short-Side Feasibility` | `test_short_side_borrow_model_is_declared.py` |
+
+### 2 · 抽查最要紧的那条 ⇒ **它是强守卫,我的分级假报了**
+
+§4 那条("TP/SL 必须作为**相对百分比**从 Strategy 传给 Broker")是**回测正确性**上最要紧的一条 ——
+而且审计自己在 `8ab058a` 为它修过一个真缺陷(引擎把阈值算成**绝对价**存进持仓 ⇒ 除权日阈值失效)。
+
+按我的分级,它"5 处弱形状、0 处强形状" ⇒ 可疑。**但读进去**:
+
+* `test_tp_sl_are_relative_percentages.py` 查的是**声明层**(preset 里不许出现绝对价键、`tp_pct`/`sl_pct` 必须是 `(0,1]` 分数),判据用**纯函数**并**自带牙齿用例**;
+* **引擎层**的守卫在**另一个文件**(`tests/test_corporate_actions_events.py`):一条**行为式**
+  (`test_bonus_ex_date_does_not_trigger_a_stale_stop`:10送10 除权日不得被陈旧止损打出)
+  + 一条 **AST 结构式**(持仓字面量必须含 `tp_pct`/`sl_pct`、不得含 `tp`/`sl`)。
+
+**复验它的牙齿**(本批实测):把 `chase_up/portfolio.py` 的存储形态改回
+
+```python
+"tp": entry_px * (1 + tp_eff),
+"sl": entry_px * (1 - sl_eff),
+```
+
+⇒ `tests/test_corporate_actions_events.py` **5 failed / 2 passed**(含上面两条);恢复该行 ⇒ **7 passed**。
+**⇒ 这条守卫是强的,而且强在"读它才看得出来"的地方。**
+
+### 3 · 结论:**判据"盯不盯用法"不能靠 grep 分级判断**
+
+* 我的分级把"用 `read_text` 读文件"当成了弱形状 —— 而**读进来之后怎么比**才是关键;
+* 反过来也成立:一个**不含任何弱形状**的文件,判据仍可能是空转的(本会话已经见过多例)。
+* ⇒ **只有两种办法能判**:①**读那段判据**(问"改掉被检查的东西,它会红吗");②**做注入**。
+  本会话唯一真正找出来的"没牙"实例(上一批的 `has_a_consumer`),就是**读出来的**,不是扫出来的。
+
+**故本批不继续按分级清扫** —— 那会退化成"用另一个弱判据去筛弱判据"。
+**如实的产出是:分级法被证伪(至少 1/1 抽查是假报),而抽查到的那条守卫已复验为强。**
+
+### 4 · 顺带补上 附一百一十六 的最后一格:cycle 的 Phase-2 分红缺口(补 附一百一十六 的最后一格)
+
+窗口用它的 golden 单月窗 `2026-04-01..2026-05-01`(而不是上一批那个跑了 45 分钟未出结果的两年窗)。
+
+| preset | 成交 | 跨除权日 | 漏计 | 占总盈亏 | 符号翻转 |
+|---|---|---|---|---|---|
+| `cycle_price_action/v1` | **490** | **3 (0.6%)** | **22,398 元** | **2.55%** | **0** |
+
+**两处口径警告(必须一起读)**:
+
+1. **"% of 初始资金"这一列对 cycle 不适用** —— cycle 给**每只票独立 1,000,000 账户**,
+   所以"初始资金"没有单一含义;能与前几族比的是 **占总盈亏的比例(2.55%)与绝对额**;
+2. **0.6% 的跨除权日比例比全库估计(1.105%)低一半** —— 很可能因为**窗口是 4 月**,
+   而 A 股分红集中在 6–7 月。**这是窗口特性,不是"cycle 更不容易踩到除权日"的结论。**
+
+**放进四族一起看**(附一百一十六 + 本格):
+
+| preset | 跨除权日 | 漏计(占总盈亏) | 符号翻转 |
+|---|---|---|---|
+| `chase_up` 默认 | 1/87 | 8,360 元(1.24%) | 0 |
+| `uptrend` v19 / v21 | 0 | 0 | 0 |
+| `short_reversal` v50_slope | 0 | 0 | 0 |
+| `cycle_price_action` v1 | 3/490 | 22,398 元(2.55%) | 0 |
+
+⇒ **四族全部 0 例符号翻转** ⇒ 补上这一格之后,结论仍是:**该缺口不改变任何已报告的判定**;
+但它的**单笔量级**在 `chase` 与 `cycle` 上可以到"占总盈亏 1–2.5%"这一档 —— 不是可以忽略的零。
