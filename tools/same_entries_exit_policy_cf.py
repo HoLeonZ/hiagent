@@ -429,6 +429,73 @@ def _all_windows(family: str, preset_name: str, split: int = 0) -> int:
     return 0
 
 
+# `--grid` 的取值 (都是基线倍数; 1.0 那一格 = 基线, 有自检)。
+GRID_MULT = (0.5, 0.75, 1.0, 1.5, 2.0)
+
+
+def _grid(family: str, preset_name: str) -> int:
+    """★ 这条线的**最终形态问题**: 在同一批入场上, 存不存在一个**单一的** (tp, sl),
+    在**多数窗**上都比基线好?  (§13.206)
+
+    做法: 每窗跑 5×5 网格 (各为基线倍数; 1.0/1.0 = 基线, 过自检),
+    对每格数"它在几个窗上严格超过基线", **只报这个计数的分布**。
+
+    ⚠️ **只报分布, 不报"哪一格最好"** (§5: 跨窗挑出最优 = 样本内择优);
+    且 §8.1 已说样本外预算用尽 ⇒ 即便有格 ≥4/5 也**只能登记, 不能采用**。
+    ⚠️ `IND`/`IS2` 时间重叠 ⇒ 有效独立单位 ≈ 4 (§13.192)。
+    """
+    print(f"\n=== --grid: {family} / {preset_name} (5×5 (tp,sl) 网格, 同一批入场) ===")
+    per_win: dict[str, dict[tuple[float, float], float]] = {}
+    base_sig: dict[str, float] = {}
+    for win, (w0, w1) in WINDOWS.items():
+        preset, panel, res = _load(family, preset_name, w0, w1)
+        tr = pd.DataFrame(res["trades"]).copy()
+        if len(tr) == 0:
+            print(f"  {win}: 无成交 ⇒ 跳过"); continue
+        tr["entry_date"] = pd.to_datetime(tr["entry_date"])
+        tr["exit_date"] = pd.to_datetime(tr["exit_date"])
+        bars_by_code = {c: s.reset_index(drop=True)
+                        for c, s in panel.groupby("thscode", sort=False)}
+        row = _stats_row(win, "", bars_by_code, tr, preset)   # ← 这里过自检
+        if row is None:
+            print(f"  {win}: ⛔ 自检未过 ⇒ **作废**"); continue
+        _T, _S, base, _narrow, _wide, n = row
+        tp, sl, mh = float(preset["tp_pct"]), float(preset["sl_pct"]), int(preset["max_hold"])
+        cells = {}
+        for mt in GRID_MULT:
+            for ms in GRID_MULT:
+                cells[(mt, ms)] = _policy_stats(bars_by_code, tr, tp * mt, sl * ms, mh)[0]
+        # 免费内检: (1.0, 1.0) 必须**恰**等于基线
+        assert abs(cells[(1.0, 1.0)] - base) < 1.0, (win, cells[(1.0, 1.0)], base)
+        per_win[win] = cells
+        base_sig[win] = base
+        beat = sum(1 for v in cells.values() if v > base)
+        print(f"  {win:<6} n={n:>3} 基线毛 Σ={base:>+12,.0f} | "
+              f"25 格里**超过基线**的 {beat:>2} 格 · 其中毛 Σ>0 的 "
+              f"{sum(1 for v in cells.values() if v > 0):>2} 格  ✅自检过")
+
+    if len(per_win) < 2:
+        print("  ⛔ 可用窗不足 ⇒ 不作结论"); return 1
+
+    print(f"\n  === 每一格「在几个窗上严格超过基线」的分布 ===")
+    counts = []
+    for cell in [(mt, ms) for mt in GRID_MULT for ms in GRID_MULT]:
+        c = sum(1 for w_, cs in per_win.items() if cs[cell] > base_sig[w_])
+        counts.append(c)
+    from collections import Counter
+    hist = Counter(counts)
+    for k in sorted(hist):
+        print(f"    超过 {k} 个窗的格子: **{hist[k]:>2}** 个  {'#' * hist[k]}")
+    nw = len(per_win)
+    print(f"  ⇒ **最大计数 = {max(counts)}/{nw}** (有效独立单位 ≈ {nw - 1})")
+    print(f"  ⇒ 没有任何一格超过 {max(counts)} 个窗" +
+          ("" if max(counts) < nw else "  ⚠️ 存在满贯格 ⇒ 但那是**跨窗挑出来的**, 属样本内择优 (§5), "
+                                          "且 §8.1 样本外预算已用尽 ⇒ **只能登记, 不能采用**"))
+    print("""  读法: 这是**描述**, 不是选择 —— 本工具**不报**哪一格最好。
+  ⚠️ 计数的分母只有 5 个 (有效 ≈ 4); 且格与格之间**不独立** (tp/sl 网格相邻格相关)。""")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--family", default="uptrend_pullback")
@@ -441,10 +508,17 @@ def main() -> int:
                     help="在同一批入场上一次只动一根轴, 只报形状 (±1.0 那点有自检); 不报最优")
     ap.add_argument("--all-windows", action="store_true",
                     help="五个窗逐个跑: 量「尾部集中度 T」与「宽减窄 S」, 查机理预测 (同序?)")
+    ap.add_argument("--grid", action="store_true",
+                    help="★ 最终形态问题: 同一批入场上 5x5 (tp,sl) 网格, 数每格在几个窗上超过基线 "
+                         "(只报计数的分布, 不报哪一格最好)")
     ap.add_argument("--split", type=int, default=0,
                     help="配合 --all-windows: 把每窗入场按时间切成 N 个连续块, 逐块算 T/S "
                          "(零额外模拟; 用来问 S 的符号是时期性质还是成交层特异)")
     args = ap.parse_args()
+
+    if args.grid:
+        preset_name = args.preset or DEFAULTS["uptrend_pullback"][0]
+        return _grid(args.family, preset_name)
 
     if args.all_windows:
         preset_name = args.preset or DEFAULTS["uptrend_pullback"][0]
