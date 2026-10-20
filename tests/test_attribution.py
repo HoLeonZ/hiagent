@@ -138,7 +138,7 @@ def test_acknowledged_absence_is_explicit_and_fails_fast() -> None:
 
 
 def test_benchmark_data_gap_is_registered() -> None:
-    """本地行情库没有指数序列 → §5 归因当前无法计算。此测试**登记**该缺口。
+    """本地行情库没有指数序列 → §5 归因当前无法计算。此测试**登记**该缺口(`[OPEN:BENCHMARK-INDEX-SERIES]`)。
 
     登记而非跳过:一个"没人提起所以不存在"的缺口,会在下一次汇报里重新变成
     「绝对收益很好看」。基准可经 CLI 取得(`hithink-finance index history`),但

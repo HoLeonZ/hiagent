@@ -74,6 +74,12 @@ OPEN_ITEMS: dict[str, tuple[str, str, str]] = {
         "`test_cycle_price_action_backtest_json_exists_or_documented_gap` 变成真校验。",
         "",
     ),
+    "BENCHMARK-INDEX-SERIES": (
+        "本地行情库**没有指数序列** ⇒ §5 的「基准相对超额」只能用**风格篮子**代理"
+        "(`附三十四` 的实现);「选哪个基准」本身是研究决策。",
+        "库里出现指数序列(取数需联网 + 写库)⇒ `test_benchmark_data_gap_is_registered` 删除。",
+        "",
+    ),
     "CYCLE-BAR-EQUITY": (
         "`cycle_price_action` 仍缺**组合级**逐 bar 权益序列(其余三族已有)。",
         "`cycle_price_action` 的产物里出现组合级逐 bar 权益曲线 ⇒ 本条删除。",
@@ -84,9 +90,15 @@ OPEN_ITEMS: dict[str, tuple[str, str, str]] = {
 #: **未指派 owner 的条数**(只许变短:填了 owner 就把它减 1)。
 #: 存在的理由见文件头:§6 要求 "with an owner",而这个仓库的 owner 只有使用者一人 ——
 #: 与其编一个名字,不如把这个缺口做成一个**会红、且只许变短**的数。
-KNOWN_UNASSIGNED_OWNERS = 4
+KNOWN_UNASSIGNED_OWNERS = 5
 
 _CITED = re.compile(r"\[OPEN:([A-Z0-9-]+)\]")
+
+#: 「把某个文档/章节当登记册」的措辞 —— 实测全库共 3 种,零假报:
+#:   「登记于审计报告 §N」「登记于审计 §N」「**§N 未结事项**」。
+#: (另有一类正当引用是**出处**:「审计 §N #7b 复核确认」「早已登记**为**未结事项」——
+#:  用的是「复核确认」/「登记为」,故不在本判据内。)
+_BARE_DOC_REG = re.compile(r"登记于审计报告|登记于审计 §|§\s*[0-9]+(?:\.[0-9]+)?\s*未结事项")
 
 
 def _test_files() -> list[Path]:
@@ -160,7 +172,7 @@ def test_no_bare_doc_registration_without_a_token() -> None:
         for node in ast.walk(tree):
             if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
                 continue
-            if ("登记于审计报告" in node.value or "登记于审计 §" in node.value) and not _CITED.search(node.value):
+            if (_BARE_DOC_REG.search(node.value)) and not _CITED.search(node.value):
                 bad.append(f"{p.relative_to(REPO_ROOT)}:{node.lineno}  …{node.value[-40:]}")
     assert not bad, (
         "§6:以下字面量用「登记**于**<某文档>」当登记册,却没有可解析的 token —— "

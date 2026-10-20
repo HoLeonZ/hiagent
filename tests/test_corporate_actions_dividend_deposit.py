@@ -118,8 +118,8 @@ def test_dividend_cash_is_traceable_in_the_canonical_ledger_schema() -> None:
     """§3：分红现金必须**可追溯** —— 否则「总收益 = 价格收益 + 股息收益」无法分解，
     用 adj_close 的引擎会把股息悄悄折进价格里，收益率看似合理却无法审计。
 
-    注：`cycle_price_action` 目前**没有权益账本输出**（其 equity curve writer 属
-    §8 未结事项），故此处只要求"凡是输出权益账本的引擎都必须带该列"。
+    注：`cycle_price_action` 目前**没有权益账本输出**（其 equity curve writer 见
+    `[OPEN:EQUITY-CURVE-WRITER]`），故此处只要求"凡是输出权益账本的引擎都必须带该列"。
     """
     assert "cum_dividends" in EQUITY_COLS, (
         "§3 VIOLATION: 规范权益 schema core.trade_schema.EQUITY_COLS 缺 cum_dividends —— "
