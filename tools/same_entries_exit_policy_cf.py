@@ -99,6 +99,49 @@ ATR_TP_MULT, ATR_SL_MULT, ATR_MAX_HOLD = 6.0, 1.75, 18
 ATR_FLOOR, ATR_CAP = 0.01, 0.08
 MAX_LOOKAHEAD = 60      # 逐 bar 最多看这么多根 (两臂的 max_hold 都远小于它)
 
+# `--sweep` 的取值: 都以**基线倍数**给 (含 1.0 = 基线, 那一点有自检)。
+SWEEP_MULT = (0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0)
+
+
+def _sweep(bars_by_code: dict, tr: pd.DataFrame, preset: dict, axis: str) -> None:
+    """**同一批入场**上, 一次只动一根轴 (tp 或 sl), 另一根钉在基线值。
+
+    ⚠️ **只报形状 (符号 / 单调性), 不报「哪一格最好」**(§5 禁止同窗择优)。
+    ⚠️ 只有 `×1.0` 那一点有 ground truth (自检); 其余点是**纯反事实** ——
+       股数没有跟着重算, 所以**格与格之间可比**(同一把尺), 但不能读成可交易结果。
+    """
+    base_v = float(preset["tp_pct"] if axis == "tp" else preset["sl_pct"])
+    other = float(preset["sl_pct"] if axis == "tp" else preset["tp_pct"])
+    mh = int(preset["max_hold"])
+    print(f"\n=== --sweep {axis}: 同一批 {len(tr)} 个入场, 另一根轴钉在基线 "
+          f"({'sl' if axis == 'tp' else 'tp'}={other:.4f}) ===")
+    print(f"  {'x基线':>7}{axis + ' 取值':>12}{'毛 Σ P&L':>16}{'Δ vs 基线':>16}{'可重放':>9}")
+    rows = []
+    for m in SWEEP_MULT:
+        v = base_v * m
+        s, n = 0.0, 0
+        for t in tr.itertuples():
+            bars = bars_by_code.get(t.thscode)
+            if bars is None:
+                continue
+            tp_eff, sl_eff = (v, other) if axis == "tp" else (other, v)
+            r = _replay(bars, t.entry_date, float(t.entry_price), tp_eff, sl_eff, mh)
+            if r is None:
+                continue
+            s += (r[1] - float(t.entry_price)) * int(t.size)
+            n += 1
+        rows.append((m, v, s, n))
+    ref = next(s for m, _, s, _ in rows if m == 1.0)
+    for m, v, s, n in rows:
+        tag = "  <- 基线 (有自检)" if m == 1.0 else ""
+        print(f"  {m:>7.2f}{v:>12.4f}{s:>+16,.0f}{s - ref:>+16,.0f}{n:>9}{tag}")
+    ds = [s for _, _, s, _ in rows]
+    inc = all(b > a for a, b in zip(ds, ds[1:]))
+    dec = all(b < a for a, b in zip(ds, ds[1:]))
+    shape = "**单调增**" if inc else ("**单调减**" if dec else "**非单调**")
+    print(f"  => 形状: {shape} (极差 {max(ds) - min(ds):>+,.0f})")
+    print("  ⚠️ 这只说明**这根轴有没有单调方向**, 不是说某一格更好 —— 同窗择优是 §5 禁令。")
+
 
 def _load(family: str, preset_name: str, w0: str, w1: str):
     if family == "uptrend_pullback":
@@ -254,6 +297,8 @@ def main() -> int:
                     help="默认取 DEFAULTS 里的那一窗")
     ap.add_argument("--teeth", action="store_true",
                     help="注入检查: 至少一个扰动必须让自检变红 (证明自检不是死钉桩)")
+    ap.add_argument("--sweep", choices=["tp", "sl"], default=None,
+                    help="在同一批入场上一次只动一根轴, 只报形状 (±1.0 那点有自检); 不报最优")
     args = ap.parse_args()
 
     preset_name, win = DEFAULTS.get(args.family, (None, None))
@@ -284,6 +329,10 @@ def main() -> int:
     df = _build_df(bars_by_code, tr, preset)
     if not _self_check(df, "基线政策"):
         return 1
+
+    if args.sweep:
+        _sweep(bars_by_code, tr, preset, args.sweep)
+        return 0
 
     def total(col: str) -> float:
         s = 0.0
