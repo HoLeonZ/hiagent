@@ -16,7 +16,7 @@ from uptrend_pullback.data import load_panel
 from uptrend_pullback.portfolio import simulate_portfolio
 from uptrend_pullback.presets import MAX_HOLD_LIMIT, get_preset
 from uptrend_pullback.regime import compute_regime
-from uptrend_pullback.signals import compute_indicators, select_entries
+from uptrend_pullback.signals import compute_indicators, select_entries_for_preset
 from uptrend_pullback.universe import load_universe
 # §2 单源 (audit 2026-10-17): 契约键一律经 core.preset_contract 解析(缺声明即
 # fail-fast),不再用 `p.get(key, <看起来合理的默认值>)`。
@@ -191,16 +191,11 @@ def run_backtest(
     if p.get("regime"):
         reg = regime_df if regime_df is not None else compute_regime(panel_ind, **p["regime"])
 
-    if p["signal"].get("entry_mode") == "v33_long_mirror":
-        from uptrend_pullback.signals import select_entries_v33_long_mirror
-        sig_kwargs = {k: v for k, v in p["signal"].items() if k != "entry_mode"}
-        entries = select_entries_v33_long_mirror(
-            panel_ind, start_date=start, end_date=end, regime_df=reg, **sig_kwargs
-        )
-    else:
-        entries = select_entries(
-            panel_ind, start_date=start, end_date=end, regime_df=reg, **p["signal"]
-        )
+    # §6 单源 (附一百零九):分派规则收在 `signals.select_entries_for_preset` ——
+    # 此前它在这里、`backtrader_engine.py` 与 grid/render 里各有副本,而后三处**漏了分派**。
+    entries = select_entries_for_preset(
+        panel_ind, signal=p["signal"], start_date=start, end_date=end, regime_df=reg
+    )
 
     trades_df, equity_df = simulate_portfolio(
         entries,

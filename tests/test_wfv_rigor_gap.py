@@ -83,24 +83,34 @@ def test_short_reversal_grid_runner_has_walkforward() -> None:
 
 
 def test_sweep_dsr_test_coverage_catches_grid_runner() -> None:
-    """§5 Test coverage: existing sweep DSR test must extend glob to catch
-    grid_runner.py and any other IS-grid scripts.
+    """§5 Test coverage:in-sample grid 脚本必须被**某个守卫真的枚举到**。
 
-    Currently `tests/test_sweep_scripts_dsr.py` globs `**/sweep*.py` +
-    `**/wf_sweep*.py` — misses `**/grid*.py`. A script that runs an
-    IS grid under a different name would pass the existing test.
+    ⚠️ 附一百零九 重写:本用例此前的判据是
+    `re.search(r"\\*\\*?/grid\\*?\\.py", Path("tests/test_sweep_scripts_dsr.py").read_text())`
+    —— 而那个字符串在该文件里**只出现在一行注释**里(原话:
+    「额外 glob `**/grid*.py` 由 test_sweep_dsr_test_coverage_catches_grid_runner
+    单独 verify(避免与 `uptrend_pullback/grid.py` 共触发新 RED)」)。
+    ⇒ **判据认的是"提到",不是"做到"**;而"单独 verify"只钉了 `short_reversal/grid_runner.py`
+    **一个文件名**,于是 `uptrend_pullback/grid.py`(真正的 §5 缺口)两边都不在。
+
+    现在改为断言**机制**:存在一个把 `*/grid*.py` **枚举出来**的守卫,且那个集合里
+    **每一个**都在 §5 惩罚指标的判据下。判据落在一个**可枚举的类**上,而不是一段文本。
     """
-    test_path = Path("tests/test_sweep_scripts_dsr.py")
-    if not test_path.exists():
-        return  # Skip if test file removed
-    src = test_path.read_text(encoding="utf-8")
-
-    has_grid_glob = bool(re.search(r"\*\*?/grid\*?\.py", src))
-    assert has_grid_glob, (
-        "GAP CAPTURED: tests/test_sweep_scripts_dsr.py — glob misses "
-        "**/grid*.py. short_reversal/grid_runner.py (real §5 IS grid) "
-        "evades detection. GREEN fix: extend glob to **/grid*.py."
+    from tests.test_in_sample_grid_scripts_report_penalty_metric import (
+        grid_sweep_scripts,
     )
+
+    enumerated = grid_sweep_scripts()
+    on_disk = {
+        str(p.relative_to(Path(__file__).resolve().parents[1]))
+        for p in Path(__file__).resolve().parents[1].glob("*/grid*.py")
+    }
+    missing = sorted(on_disk - enumerated)
+    assert not missing, (
+        "GAP CAPTURED: 以下 `*/grid*.py` 不在 §5 惩罚指标守卫的枚举里 —— "
+        "它们跑样本内网格却没人检查是否报了 DSR/Bonferroni:\n  " + "\n  ".join(missing)
+    )
+    assert on_disk, "本仓库一个 `*/grid*.py` 都没有 —— 本用例失去对象(判据已失效)"
 
 
 def test_short_reversal_walkforward_uses_core() -> None:

@@ -154,6 +154,10 @@ SCRIPT_EXPLICIT = (
     "uptrend_pullback/iter_reverse.py",
     "cycle_price_action/walkforward.py",
     "cycle_price_action/main.py",
+    # 附一百零九: `uptrend_pullback/grid.py` 此前**不报** DSR(§5 Penalty Metrics 缺口),
+    # 本批补上后它就成了一个新的 DSR 调用点 —— 而前缀 glob `uptrend_pullback/sweep*.py`
+    # **匹配不到 `grid.py`**。是这条守卫自己把它抓出来的(它的职责正是这个)。
+    "uptrend_pullback/grid.py",
 )
 
 

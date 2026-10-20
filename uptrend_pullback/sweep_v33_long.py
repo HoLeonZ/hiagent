@@ -21,7 +21,7 @@ from uptrend_pullback.backtrader_engine import run_backtrader_backtest
 from uptrend_pullback.data import load_panel
 from uptrend_pullback.portfolio import simulate_portfolio
 from uptrend_pullback.presets import MAX_HOLD_LIMIT
-from uptrend_pullback.signals import compute_indicators, select_entries_v33_long_mirror
+from uptrend_pullback.signals import compute_indicators, select_entries_for_preset
 from dna_stats.deflated import deflated_sharpe_ratio
 from core.walkforward import window_trading_days  # §5 窗口交易日数单源 (附八十一)
 from core.sweep_axes import (  # §0 网格是否真的在扫 (附八十七)
@@ -56,11 +56,10 @@ def sweep(base: dict, grid: dict, panel_ind, universe) -> pd.DataFrame:
         if cfg["max_hold"] > MAX_HOLD_LIMIT:
             continue
 
-        entries = select_entries_v33_long_mirror(
-            panel_ind,
-            start_date=START, end_date=END,
-            regime_df=None,
-            **{k: v for k, v in cfg["signal"].items() if k != "entry_mode"},
+        # §6 单源 (附一百零九):分派与 `entry_mode` 过滤收在
+        # `signals.select_entries_for_preset` —— 此前这一段在 11 处各写一遍。
+        entries = select_entries_for_preset(
+            panel_ind, signal=cfg["signal"], start_date=START, end_date=END,
         )
         if entries.empty:
             continue

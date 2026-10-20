@@ -244,7 +244,7 @@ def run_backtrader_backtest(
     # ---------- Phase 1: portfolio.py 跑出候选 trade 列表 ----------
     from uptrend_pullback.data import load_panel
     from uptrend_pullback.regime import compute_regime
-    from uptrend_pullback.signals import compute_indicators, select_entries
+    from uptrend_pullback.signals import compute_indicators, select_entries_for_preset
     from uptrend_pullback.universe import load_universe
 
     if panel_ind is None:
@@ -266,16 +266,10 @@ def run_backtrader_backtest(
         reg = regime_df if regime_df is not None else compute_regime(panel_ind, **p["regime"])
 
     # 路由: entry_mode == "v33_long_mirror" → 走镜像信号选择器
-    if p["signal"].get("entry_mode") == "v33_long_mirror":
-        from uptrend_pullback.signals import select_entries_v33_long_mirror
-        sig_kwargs = {k: v for k, v in p["signal"].items() if k != "entry_mode"}
-        entries = select_entries_v33_long_mirror(
-            panel_ind, start_date=start, end_date=end, regime_df=reg, **sig_kwargs
-        )
-    else:
-        entries = select_entries(
-            panel_ind, start_date=start, end_date=end, regime_df=reg, **p["signal"]
-        )
+    # §6 单源 (附一百零九):同 `backtest.py`。
+    entries = select_entries_for_preset(
+        panel_ind, signal=p["signal"], start_date=start, end_date=end, regime_df=reg
+    )
 
     trades_p1, equity_p1 = simulate_portfolio(
         entries,
