@@ -26,6 +26,7 @@ Accounting),但该字段此前**被声明却无消费者**。现在 walk-forward
 """
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -61,14 +62,53 @@ def test_every_preset_declares_positive_n_comparisons() -> None:
     assert total >= 100, f"preset 总数异常({total})"
 
 
+def _really_consumes_n_comparisons(src: str) -> bool:
+    """**AST 级**:`deflated_sharpe_ratio(...)` 必须真的收到 `n_comparisons` 的**取值**。
+
+    接受**两种形态**(仓库里两种都在用):
+      ① 内联:`n_trials=int(_cfg["n_comparisons"])`;
+      ② 经局部变量:`n_trials = int(_cfg["n_comparisons"])` … `deflated_sharpe_ratio(n_trials=n_trials)`
+         —— `wf_v56_focused.py` 就是这一种(它的注释还记着"内联写法会让摘要打印一个未绑定的名字")。
+
+    ⚠️ 这条判据我写**四版**才落地,前三次都栽在"判据认的东西比要保的性质弱"上,逐条留证:
+      1. `"n_comparisons" in src`(**文本匹配**)⇒ 读取换成常数、只在**打印串**留名 ⇒ **绿**;
+      2. AST 但"任何表达式里取过值都算" ⇒ 注入版里 **`print` 的 f-string 内嵌同一个下标** ⇒ **绿**;
+      3. 收窄到"某次调用的实参" ⇒ 仍 **绿** —— **`print(...)` 本身也是调用**;
+      4. 指名到 DSR 调用的实参 ⇒ **对 `wf_v56` 误报**(它走局部变量)⇒ 补上形态②才两全。
+      ⇒ 教训(本会话第 N 次,但这次连错三次):**判据的"单位"要正好等于要保的性质**;
+        "出现过" ⊋ "某次调用用了它" ⊋ "DSR 那次调用用了它"。每一次收窄都要拿**真实文件**复验,
+        否则会在"终于有牙"和"误伤合法写法"之间反复横跳。
+    """
+    tree = ast.parse(src)
+    read = re.compile(r"""\[\s*["']n_comparisons["']\s*\]|\.get\(\s*["']n_comparisons["']""")
+
+    # 形态②:先收集"被赋值为 n_comparisons 取值的局部变量名"
+    carriers: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and read.search(ast.unparse(node.value)):
+            carriers |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        name = fn.id if isinstance(fn, ast.Name) else getattr(fn, "attr", "")
+        if "deflated" not in name.lower() and "dsr" not in name.lower():
+            continue
+        exprs = [ast.unparse(a) for a in node.args]
+        exprs += [ast.unparse(k.value) for k in node.keywords if k.arg is not None]
+        for e in exprs:
+            if read.search(e) or (e.strip() in carriers):
+                return True
+    return False
+
+
 def test_n_comparisons_has_a_consumer() -> None:
-    """该字段必须真的被 DSR 调用点消费(否则只是装饰,§6 意义上无意义)。"""
-    consumers = [
-        p for p in WF_FAMILY
-        if "n_comparisons" in p.read_text(encoding="utf-8")
-    ]
+    """该字段必须真的被 DSR 调用点**取值消费**(否则只是装饰,§6 意义上无意义)。"""
+    consumers = [p for p in WF_FAMILY if _really_consumes_n_comparisons(p.read_text(encoding="utf-8"))]
     assert len(consumers) == len(WF_FAMILY), (
-        "§5 VIOLATION: 以下 walk-forward 脚本未消费 n_comparisons: "
+        "§5 VIOLATION: 以下 walk-forward 脚本未**取值**消费 n_comparisons"
+        "(只是提到它不算 —— 见 `_really_consumes_n_comparisons` 的注释): "
         f"{[p.name for p in WF_FAMILY if p not in consumers]}"
     )
 
