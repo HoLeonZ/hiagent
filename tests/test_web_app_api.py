@@ -547,3 +547,82 @@ def test_the_metrics_table_and_the_curve_agree(client, monkeypatch):
     )
     assert abs(m["max_dd"] - max(d["value"] for d in e["drawdown"])) < 1e-9, \
         "指标表的最大回撤必须与曲线回撤序列的最大值一致"
+
+
+def _fake_run_with_window_leak():
+    """一次带"窗口外成交"的假运行 —— 用来验证各处的窗口口径一致。"""
+    from web.runners import RunResult
+
+    trades = []
+    for i, d in enumerate(("2024-12-20",   # 窗口外（早）
+                           "2025-01-05", "2025-01-15",   # 窗口内
+                           "2025-03-20")):               # 窗口外（晚）
+        trades.append({"entry_date": d, "exit_date": d, "thscode": f"00000{i}.SZ",
+                       "exit_reason": "SL", "entry_price": 1.0 + i, "exit_price": 1.1 + i,
+                       "size": 100, "hold_days": 2, "gross_pnl": 1.0, "fees": 0.1,
+                       "net_pnl": 0.9, "net_return": 0.009, "atr_pct": 0.02,
+                       "sub_signal_type": "a", "net": 0.009})
+    return RunResult("short_reversal", "v50_slope", "2025-01-01", "2025-03-01",
+                     {"trades_count": 4, "equity_curve": [
+                         {"date": "2024-12-20", "equity": 1_000_000.0},
+                         {"date": "2025-01-01", "equity": 900_000.0},
+                         {"date": "2025-03-01", "equity": 1_200_000.0},
+                         {"date": "2025-03-20", "equity": 5_000_000.0}]}, trades)
+
+
+def _submit_fake(client, monkeypatch):
+    from web import jobs as jobs_mod
+
+    _install_fake_run(monkeypatch, lambda *a, **kw: _fake_run_with_window_leak())
+    rid = client.post("/api/runs", json={
+        "engine": "short_reversal", "preset": "v50_slope", "overrides": {},
+        "start": "2025-01-01", "end": "2025-03-01", "mode": "full",
+    }).json()["run_id"]
+    jobs_mod.wait(rid, timeout=60)
+    return rid
+
+
+def test_every_surface_shows_the_same_window(client, monkeypatch):
+    """**指标表、交易表、单笔图表、CSV 导出、metrics.json 必须同一个窗口。**
+
+    实测（2026-10-21）：指标表按窗口报了 42 笔，而交易表列了 45 行 ——
+    **页面又自己跟自己矛盾了**。同一个道理，导出若比表格多出窗口外的成交，
+    用户会以为导错了；而 `{i}` 的下标若不建立在同一份列表上，
+    点第 i 行会取到**另一笔**交易。
+
+    这条把五处钉在一起。
+    """
+    rid = _submit_fake(client, monkeypatch)
+
+    m = client.get(f"/api/runs/{rid}").json()["metrics"]
+    tr = client.get(f"/api/runs/{rid}/trades").json()
+    csv = client.get(f"/api/runs/{rid}/export/trades.csv").text
+    mj = client.get(f"/api/runs/{rid}/export/metrics.json").json()
+
+    assert m["trades_count"] == 2, "指标表只应计入窗口内入场的 2 笔"
+    assert tr["total"] == 2, f"交易表列了 {tr['total']} 行 —— 与指标表的口径不一致"
+    assert len(csv.strip().splitlines()) - 1 == 2, "CSV 导出与交易表的口径不一致"
+    assert abs(mj["metrics"]["total_return"] - m["total_return"]) < 1e-12, \
+        "导出的指标与页面上看到的不是同一组数"
+    # {i} 的下标建立在**同一份列表**上：表的第 0 行就是图表的第 0 笔
+    assert tr["rows"][0]["thscode"] == "000001.SZ"
+    chart = client.get(f"/api/runs/{rid}/trades/0/chart").json()
+    assert chart["entry"]["price"] == tr["rows"][0]["entry_price"], \
+        "点第 0 行取到的不是第 0 笔"
+
+
+def test_the_engine_only_extra_column_is_not_duplicated_in_the_table(client, monkeypatch):
+    """引擎的额外字段 `net` 不该在表里另起一列。
+
+    它是 short_reversal 自己的"每笔净收益率"，与规范列 `net_return` 是同一件事，
+    **而且只有这一个引擎会产生** —— 表里会多出一列几乎一样的数，用户只会猜哪个算数。
+    §6：14 列规范（`core/trade_schema.py`）是单一来源。
+
+    ⚠️ 去掉的必须是**列**（行字典里的键），不是**行** —— 写错会让 `columns` 变成空列表。
+    """
+    rid = _submit_fake(client, monkeypatch)
+    tr = client.get(f"/api/runs/{rid}/trades").json()
+    assert "net" not in tr["columns"], "`net` 与 `net_return` 重复，不该另起一列"
+    assert tr["rows"], "去掉的是列，不是行 —— 行不能被过滤掉"
+    for c in ("net_return", "entry_date", "thscode", "sl_price", "tp_price"):
+        assert c in tr["columns"], f"规范列 {c} 不该丢"

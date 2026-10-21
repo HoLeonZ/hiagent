@@ -177,6 +177,20 @@ def window_slice(curve: list[dict], start: str, end: str) -> list[dict]:
             if r.get("date") is not None and start <= str(r["date"])[:10] <= end]
 
 
+def window_trades(trades: list[dict], start: str, end: str) -> list[dict]:
+    """只保留**在窗口内入场**的成交 —— **成交窗口切片的唯一判据**。
+
+    为什么必须是唯一判据：三处要用它，且**必须完全一致** ——
+      · 指标表的 `trades_count`；
+      · 交易明细**列出的行**；
+      · `GET /trades/{i}/chart` 的**下标 `i`**（它建立在同一份列表上，
+        列表不同则点第 i 行会取到另一笔）。
+    实测踩过：指标表按窗口报了 42，而交易表列的是 45 行 ——
+    **页面又自己跟自己矛盾了**（那正是上一轮刚修掉的那类）。
+    """
+    return [t for t in trades if start <= str(t.get("entry_date", ""))[:10] <= end]
+
+
 def _days_between(a: str, b: str) -> int:
     import datetime as dt
 
@@ -193,8 +207,7 @@ def window_metrics(result: Any) -> dict[str, Any]:
 
     start, end = result.start, result.end
     curve = window_slice(result.metrics.get("equity_curve") or [], start, end)
-    trades = [t for t in (result.trades or [])
-              if start <= str(t.get("entry_date", ""))[:10] <= end]
+    trades = window_trades(result.trades or [], start, end)
 
     out: dict[str, Any] = {k: None for k in CANONICAL_KEYS}
 
@@ -247,3 +260,43 @@ def window_metrics(result: Any) -> dict[str, Any]:
         if out["cagr"] is not None and out["max_dd"]:
             out["calmar"] = out["cagr"] / out["max_dd"]
     return out
+
+
+#: 交易明细的**中文列名**（聚宽的交易明细是中文列头）。
+#:
+#: 为什么需要：指标表已经有中文标签（`METRIC_LABELS`），而交易明细的表头却全是
+#: `entry_date`/`exit_date`/`thscode` 这些英文键 —— **同一个页面上两套语言**。
+#: 实测（2026-10-21 看真实页面）：交易明细的表头是英文的，日期还被挤成两行
+#: （`2026-03-` / `09`）。
+#:
+#: 键名来自 `core.trade_schema.TRADE_COLS`（14 列规范）**加上**平台自己补的两列
+#: （`sl_price`/`tp_price`）。`i` 是稳定下标，**不显示**。
+TRADE_LABELS: dict[str, str] = {
+    "entry_date": "买入日期",
+    "exit_date": "卖出日期",
+    "thscode": "证券代码",
+    "exit_reason": "平仓原因",
+    "entry_price": "买入价",
+    "exit_price": "卖出价",
+    "size": "数量",
+    "hold_days": "持仓天数",
+    "gross_pnl": "毛利",
+    "fees": "费用",
+    "net_pnl": "净利",
+    "net_return": "净收益率",
+    "atr_pct": "ATR占比",
+    "sub_signal_type": "子信号类型",
+    "sl_price": "止损价",
+    "tp_price": "止盈价",
+}
+
+#: 平仓原因的**中文值**。引擎写的是英文码（SL/TP/time/eod），
+#: 界面上直接显示英文码等于让用户去查文档。
+EXIT_REASON_LABELS: dict[str, str] = {
+    "SL": "止损",
+    "TP": "止盈",
+    "time": "到期",
+    "eod": "收盘平仓",
+    "take_profit": "止盈",
+    "stop_loss": "止损",
+}

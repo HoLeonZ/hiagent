@@ -22,7 +22,10 @@ from web.metrics_view import (
     CANONICAL_KEYS,
     METRIC_KINDS,
     METRIC_LABELS,
+    TRADE_LABELS,
+    EXIT_REASON_LABELS,
     window_metrics,
+    window_trades,
     window_slice,
 )
 from web.params import OverrideError, split_params, validate_overrides
@@ -307,6 +310,12 @@ def create_app() -> FastAPI:
                 k: {"label": METRIC_LABELS[k], "kind": METRIC_KINDS[k]}
                 for k in CANONICAL_KEYS
             },
+            # 交易明细的**中文列名与平仓原因中文值** —— 与 `metric_meta` 同一个模式。
+            # 没有它，页面上指标表是中文、表头是英文（实测截图确认过）。
+            "trade_meta": {
+                "labels": dict(TRADE_LABELS),
+                "exit_reasons": dict(EXIT_REASON_LABELS),
+            },
         }
 
     @app.post("/api/runs")
@@ -452,7 +461,9 @@ def create_app() -> FastAPI:
         w.writeheader()
         # 非有限数写成**空单元格**，不是字面量 `nan`：§0 要求"这个数没有意义"与
         # "这个数是 0"可区分，而 `nan` 在 CSV 里既不是数字也不是空——是一句谎。
-        for row in result.trades:
+        # 导出与页面上的交易表**同一份列表**（按窗口切）——导出比表格多出
+        # 窗口外的成交，用户会以为导错了。
+        for row in window_trades(result.trades, result.start, result.end):
             w.writerow({k: _json_safe(v) for k, v in row.items()})
         return Response(content=buf.getvalue(), media_type="text/csv",
                         headers={"Content-Disposition": f'attachment; filename="{run_id}_trades.csv"'})
@@ -543,6 +554,11 @@ def create_app() -> FastAPI:
         **空 ≠ 缺**，前端要显示"空仓"而不是空白。
         """
         result = _load_result(run_id)
+        # ⚠️ 这里**故意用全部成交**，不按窗口切。
+        # 每日持仓要回答的是"窗口内某天我持有什么"——而一个**在窗口之前建仓、
+        # 窗口内仍持有**的仓位**确实该被算进去**（你确实持有它）。
+        # 切掉它会凭空少报持仓。（交易**明细表**与**图表下标**才按窗口切，
+        # 见 `window_trades` 的说明。）
         trades = _sorted_trades(result.trades)
         curve = result.metrics.get("equity_curve") or []
         days = [str(r["date"])[:10] for r in curve
@@ -592,9 +608,21 @@ def create_app() -> FastAPI:
         if got is None:
             raise HTTPException(404, detail=f"unknown run: {run_id}")
         meta, result = got
-        rows = _sorted_trades(result.trades)
+        # 与指标表、与图表的下标**同一份列表**（见 `window_trades` 的说明）。
+        rows = _sorted_trades(window_trades(result.trades, result.start, result.end))
         params = _effective_params(meta)
-        engineered = [_with_exit_levels(i, t, meta["engine"], params)
+        # 去掉 `net`：它是 short_reversal 额外的"每笔净收益率"，**与规范列
+        # `net_return` 是同一件事**（实测只差 1.1e-06，手续费口径的末位），
+        # 而且**只有这一个引擎会产生** —— 于是表里多出一列与「净收益率」几乎一样的数，
+        # 用户只会去猜"这两个哪个算数"。
+        # 14 列规范（`core/trade_schema.py`）是单一来源（§6），引擎的额外字段
+        # 不该在平台表里另起一列。
+        # ⚠️ 去掉的是**列**（每个行字典里的那个键），不是**行** ——
+        # 写成 `if "net" not in t` 会把整行过滤掉，`columns` 于是变成空列表
+        # （实测踩过：单元测试的假成交没有 `net` 字段，所以没抓出来；
+        #   是在真服务上核对列名时才发现的）。
+        engineered = [_with_exit_levels(i, {k: v for k, v in t.items() if k != "net"},
+                                        meta["engine"], params)
                       for i, t in enumerate(rows)]
         return {
             "total": len(rows),
@@ -612,7 +640,7 @@ def create_app() -> FastAPI:
         if got is None:
             raise HTTPException(404, detail=f"unknown run: {run_id}")
         meta, result = got
-        rows = _sorted_trades(result.trades)
+        rows = _sorted_trades(window_trades(result.trades, result.start, result.end))
         if not (0 <= i < len(rows)):
             raise HTTPException(404, detail=f"trade index {i} out of range (0..{len(rows) - 1})")
         from hiagent_config import get_db_path

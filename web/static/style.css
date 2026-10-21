@@ -69,3 +69,8 @@ tbody tr:hover { background:#252525; }
 #daily-returns, #positions { max-height:32vh; display:block; overflow:auto; }
 #daily-returns thead, #positions thead { position:sticky; top:0; background:#1e1e1e; }
 tbody tr.sel { background:#2b3a4a; }
+
+/* 交易明细有 16 列，窄屏上日期会被挤成两行（`2026-03-` / `09`）——
+   实测截图确认过。**不换行 + 横向滚动**，与聚宽的交易明细一致。 */
+#trades th, #trades td { white-space: nowrap; }
+#positions th, #positions td, #daily-returns th, #daily-returns td { white-space: nowrap; }

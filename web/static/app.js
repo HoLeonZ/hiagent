@@ -7,6 +7,7 @@ async function loadCatalog() {
   HP.catalog = body.presets;
   // 指标表的中文标签与类型：**只从服务端取**，前端不另写一份（见 showResult 的说明）
   HP.metricMeta = body.metric_meta;
+  HP.tradeMeta = body.trade_meta;      // 交易明细的中文列名与平仓原因中文值
   const engines = {};
   for (const p of HP.catalog) engines[p.engine] = (engines[p.engine] || 0) + 1;
   $("engine-summary").textContent = Object.entries(engines)
@@ -20,6 +21,7 @@ const HP = { catalog: [], selected: null, runId: null, poll: null, trades: [],
              tradeIdx: -1,       // 当前正在看第几笔（-1 = 还没选）
              startedAt: null, logOffset: 0, equity: null, configs: [],
              metricMeta: {},     // 规范指标的 {label, kind}，来自 /api/catalog
+             tradeMeta: {},      // 交易明细的中文列名/平仓原因，同样来自 /api/catalog
              edits: new Map(),   // "engine/preset" -> {未提交的键: 值}
              history: [] };      // 运行历史（见审计 P1-E）
 
@@ -381,11 +383,19 @@ async function loadTrades() {
   const data = await r.json();
   HP.trades = data.rows;
   const cols = data.columns.filter((c) => c !== "i");
+  // 列头与平仓原因都走**服务端下发的**中文标签（`/api/catalog` 的 `trade_meta`）。
+  // 原先表头直接写英文键名 —— 于是同一个页面上指标表是中文、表头是英文（实测截图）。
+  const labels = (HP.tradeMeta || {}).labels || {};
+  const reasons = (HP.tradeMeta || {}).exit_reasons || {};
+  const cell = (c, v) => {
+    if (c === "exit_reason" && v != null && reasons[v]) return reasons[v];
+    return fmtCell(v, TRADE_KINDS[c]);
+  };
   $("trades").querySelector("thead").innerHTML =
-    `<tr>${cols.map((c) => `<th>${c}</th>`).join("")}</tr>`;
+    `<tr>${cols.map((c) => `<th>${labels[c] || c}</th>`).join("")}</tr>`;
   $("trades").querySelector("tbody").innerHTML = data.rows.map((row) =>
     `<tr data-i="${row.i}">${
-      cols.map((c) => `<td>${fmtCell(row[c], TRADE_KINDS[c])}</td>`).join("")
+      cols.map((c) => `<td>${cell(c, row[c])}</td>`).join("")
     }</tr>`
   ).join("");
   // 新一次运行：清掉上一笔的选中与位置

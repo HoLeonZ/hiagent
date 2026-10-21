@@ -249,3 +249,31 @@ console.log(JSON.stringify(cases.map(([v, k, want]) => [v, k, fmtCell(v, k), wan
         for v, k, got, want in results if got != want
     ]
     assert not bad, "交易表单元格格式化错了：\n  " + "\n  ".join(bad)
+
+
+def test_the_trade_table_headers_come_from_the_server_not_from_english_keys():
+    """**交易明细的表头必须用服务端下发的中文标签。**
+
+    实测（2026-10-21 看真实页面截图）：指标表已经是中文，而交易明细的表头
+    却是 `entry_date`/`exit_date`/`thscode` 这些英文键 —— **同一个页面上两套语言**。
+    聚宽的交易明细是中文列头。
+
+    标签与平仓原因的中文值都由 `/api/catalog` 的 `trade_meta` 下发，
+    前端**不得自备一份**（两份必然漂移，而漂移的表现是"某一列表头变英文了"，
+    不会有人注意到）。
+    """
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "tradeMeta" in js, "app.js 必须从 /api/catalog 取 trade_meta"
+    assert "labels[c] || c" in js, "表头应当用服务端标签，取不到时才退回键名"
+
+    from web.metrics_view import EXIT_REASON_LABELS, TRADE_LABELS
+
+    # 14 列规范 + 平台补的两列，**每一列都要有中文名**
+    from core.trade_schema import TRADE_COLS
+
+    for c in list(TRADE_COLS) + ["sl_price", "tp_price"]:
+        assert c in TRADE_LABELS, f"交易列 {c} 没有中文表头"
+        assert TRADE_LABELS[c], f"交易列 {c} 的中文表头是空的"
+    # 平仓原因的英文码要有中文值
+    for code in ("SL", "TP", "time", "eod"):
+        assert code in EXIT_REASON_LABELS, f"平仓原因 {code} 没有中文值"
