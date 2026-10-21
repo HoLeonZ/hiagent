@@ -230,7 +230,7 @@ class Phase3V3Strategy(bt.Strategy):
         min_commission=MIN_COMMISSION,
         initial_capital=1_000_000.0,
         lot_size=100,
-        # Round 14 (2026-09-28, CLAUDE.md §2): 现金闸门阈值。
+# Round 14 (2026-09-28, CLAUDE.md §2): 现金闸门阈值。
         # v81.2 (2026-10-14 审计 S1 修复): 默认由 None 改为 0.05 (与 engine.py 对齐)。
         # 原 None 设计意图是 fail-fast, 但 scan_signals.py / lookahead_trade_trace.py
         # 两个生产调用方漏传 → 生产路径 TypeError 崩溃 (实测触发 10 处测试失败)。
@@ -241,7 +241,9 @@ class Phase3V3Strategy(bt.Strategy):
         nav_gate_ratio=None,
         # V5' (2026-09-22, CLAUDE.md §4): ATR-aware slippage (R5 mirror)。
         # 当 atr_slip_scale > 0, 在 entry 时 slippage = atr_pct × participation × scale
-        # (做空方向: slippage 上调 entry_price, 即扣更少 sale proceeds = 悲观假设)。
+        # (做空方向: entry 是**卖出**, 冲击让成交价**更低** ⇒ 收到的 proceeds 更少 =
+        #  悲观假设。§0/§4 见 _fill_pending_entries 里那一处的完整说明 —— 此处原写
+        #  "上调 entry_price, 即扣更少 sale proceeds" 与实现互相矛盾, 已按符号更正)。
         # 当 atr_slip_scale = 0, 沿用 R3 默认无 slippage (保持 v33 baseline parity)。
         atr_slip_scale=0.0,
         atr_period=14,
@@ -319,6 +321,20 @@ class Phase3V3Strategy(bt.Strategy):
         # 注意: 此改动会改变 _fill_pending_entries 的 sizing 公式,
         # 通过 self.p.max_positions 路由, 其它模块不变。
         max_positions=1,
+        # L 条件 (2026-10-16): 收盘价相对当日 VWAP 的位置。opt-in, 默认关闭。
+        # close_vwap_buffer: 允许 close 高出 VWAP 的比例 (0.0 = 必须不高于 VWAP;
+        # 负值 = 必须低于 VWAP 若干)。
+        require_close_below_vwap=False,
+        close_vwap_buffer=0.0,
+        # M 条件 (2026-10-17): 信号日隔夜跳空上限 (None = 关闭)。
+        signal_gap_max=None,
+        # §4 做空可行性 (2026-10-17): **逐 bar** 的不可融券检查 (opt-in)。
+        # ST / 风险警示股涨跌停 ±5% 且不在融资融券名单 ⇒ 不可做空。静态宇宙过滤
+        # 只剔掉约 2% 的成交 (该状态在窗口内随时间变化), 故必须逐 bar 判定。
+        # 判据: 信号日之前 `st_lookback_bars` 根 bar 内出现过"封死 ±5%"
+        # (|涨跌幅| ≈ 5% 且 high == low)。只用已发生的 bar ⇒ PIT 安全。
+        require_shortable_st_filter=False,
+        st_lookback_bars=60,
         # v65 (2026-10-13): 浮动止损 (trailing stop, short-side, opt-in)。
         # 假设: 固定 SL 在入场时锁定风险上界, 但不锁定利润。死猫跳反弹后
         # 继续下跌时, 若能把止损位随最低价 trailing 下移, 可锁住已获浮盈
@@ -343,6 +359,12 @@ class Phase3V3Strategy(bt.Strategy):
         # CLAUDE.md §2: 并发信号 MUST 按统计信心排序后依次填充 (single-bullet)。
         # 'first' (默认) = datas 顺序 (thscode 字母序, v50 兼容的任意 tie-breaker)。
         # 'steepest_slope' = 按 MA20 斜率升序 (最负 = 最陡下降 = 最高空头信心)。
+        # ⚠️ 2026-10-20 合并: 本分支另有一个同义的旋钮 `fill_order`
+        #   ('code'/'slope'/'vwap') —— 两者是**同一个** §2 single-bullet 排序,
+        #   留两个键会让同一个 preset 声明在不同地方含义不同。已统一到本键
+        #   (main 的), 对应关系: `fill_order='slope'` ≡ `entry_selection='steepest_slope'`。
+        #   本分支的 'vwap' 度量 (按 收盘/VWAP 排序) 未一并保留 —— 它是**未接线**的
+        #   候选度量, 而 'code' 默认行为与本键的 'first' 等价。
         entry_selection="first",
         # v81 (2026-10-14, CLAUDE.md §3): 信号价格域开关。
         # 'adj' (默认, §3 合规): A/B/C 条件用 adj_close (v_daily_hfq 复权价),
@@ -385,6 +407,10 @@ class Phase3V3Strategy(bt.Strategy):
                 f"(只有 {ALL_IN!r} 到达单腿策略)。"
             )
         # §2 (audit 2026-10-15): NAV 闸门比例必须由 preset 声明注入。
+        # ⚠️ 2026-10-20 合并: 本分支另有一个**同义的旧参数名**(Round 14 引入:
+        # 默认 None 是 fail-fast 哨兵, 不是"关闭闸门"的开关 —— 闸门语义两分支一致,
+        # 只是名字不同)。§2 要求一个概念只有一个名字, 故旧名随参数一并删除,
+        # 全文件不再出现(含注释 —— §2 守卫是按源码文本判的)。
         if self.p.nav_gate_ratio is None:
             raise ValueError(
                 "§2: nav_gate_ratio 必须由 Control Plane 从 preset 声明解析后注入"
@@ -404,8 +430,23 @@ class Phase3V3Strategy(bt.Strategy):
         # per-data 指标字典（避免多 data 共享 indicator）
         self.indi: dict[str, dict] = {}
         # v57 J 条件状态: 最近一次 SL 出场的 exit_date, 用于冷却检查。
-        # 全局 (per-strategy, not per-symbol) — 因为 max_positions=1。
+        # 全局 (per-strategy, not per-symbol) — 该形状**只在 max_positions=1 时成立**:
+        # 单仓时"某只票止损出场"与"整个组合止损出场"是同一件事, 于是"拒绝所有入场"
+        # 才是自然语义。max_positions 可配之后 (v58/v69) 这个前提不再成立 ——
+        # N>1 时全局冷却会让**任意一只票的止损**冻住整个组合的入场, 那是没人设计过、
+        # 也没人会预期的行为。§0「Do not silently bypass」: 该组合显式拒绝, 不静默套用。
+        # 全局检查见 __init__ 末尾的 fail-fast。
         self._last_sl_date: "datetime.date | None" = None
+        # §0 Fail-Fast: J 条件的状态形状只在单仓下成立 (见上)。启用 J 且 N>1 时,
+        # 引擎会给出一个无设计、无预期的语义 ⇒ 显式拒绝, 而不是静默套用。
+        if self.p.sl_cooldown_days > 0 and self.p.max_positions > 1:
+            raise ValueError(
+                f"sl_cooldown_days={self.p.sl_cooldown_days} 与 "
+                f"max_positions={self.p.max_positions} 不兼容: 冷却期状态是"
+                f"全局单变量 (为 max_positions=1 设计), N>1 时任意一只票的止损会"
+                f"冻住整个组合的入场。要么设 sl_cooldown_days=0, 要么把冷却改成"
+                f"per-symbol 语义 (需先设计并声明)。"
+            )
         # 关键：只迭代 data feed，不迭代后续 __init__ 期间被加进来的 indicator
         # backtrader 的 Lines_LineSeries __slots__ 不允许任意属性注入
         for d in self.datas:
@@ -513,7 +554,7 @@ class Phase3V3Strategy(bt.Strategy):
         # code -> {'entry_price', 'size', 'entry_bar'}
         self._holds: dict[str, dict] = {}
         # code -> True（T+1 待成交）
-        self.pending_entries: dict[str, bool] = {}
+        self.pending_entries: dict[str, float] = {}
         # 已成交 trades
         self.trades: list[dict] = []
         # 风险指标
@@ -612,6 +653,9 @@ class Phase3V3Strategy(bt.Strategy):
                 self._check_exit(d)
             elif code not in self.pending_entries:
                 if regime_ok and self._in_window(d) and self._all_conditions(d):
+                    # §2 (audit 2026-10-16): 并发信号的排序键交给
+                    # `entry_selection` / `_conviction_key`(下述 _fill_pending_entries),
+                    # 这里只登记"有信号"。
                     self.pending_entries[code] = True
 
         # 4) 更新回撤（NAV-based：cash + 持仓 mark-to-market 浮盈）
@@ -717,6 +761,35 @@ class Phase3V3Strategy(bt.Strategy):
 
     # ------------------------------------------------------------- entry/exit
 
+    def _suspected_st_now(self, d) -> bool:
+        """信号日之前 `st_lookback_bars` 根 bar 内该股是否呈 ±5% 涨跌停特征。
+
+        ST / 风险警示股停板幅度是 ±5% (主板 ±10%), 且不在融资融券名单 ⇒ 不可做空。
+        判据: 出现 |单日涨跌幅| ≈ 5% 且 `high == low` (全天一个价 = 封死停板)。
+        非风险警示的主板股几乎不可能出现 `high == low`, 故该判据信噪比很高。
+
+        PIT: 只回看**已发生**的 bar (偏移 -1 到 -lookback), 不使用当日及未来信息。
+        不可得 (bar 不足) 时返回 False —— 无证据不排除, 与"宁可少做"相比这里的
+        取舍是: 新上市票本来就会被其他条件挡住。
+        """
+        look = self.p.st_lookback_bars
+        if len(d) < 2:
+            return False
+        upper = min(look, len(d) - 1)
+        for i in range(1, upper + 1):
+            try:
+                hi = float(d.high[-i])
+                lo = float(d.low[-i])
+                cl = float(d.close[-i])
+                pc = float(d.close[-i - 1])
+            except (IndexError, TypeError, ValueError):
+                continue
+            if not (hi > 0 and lo > 0 and cl > 0 and pc > 0):
+                continue
+            if hi == lo and abs(abs(cl / pc - 1.0) - 0.05) < 0.0015:
+                return True
+        return False
+
     def _fill_pending_entries(self) -> None:
         """T+1 日 open 成交。
 
@@ -810,11 +883,25 @@ class Phase3V3Strategy(bt.Strategy):
                 self.pending_entries.pop(code, None)
                 continue
             entry_price = float(d.open[0])
-            # 防穿仓 (R5, 2026-09-22, CLAUDE.md §4): ATR-aware slippage。
-            # short 仓的 entry_price 是 sell price, slippage 上调 sell price
-            # (即收到的 sale proceeds 减少) —— pessimistic 假设"卖得更贵"。
+            # §4/§0 (2026-10-17 修正): ATR-aware slippage, short 仓方向取**负号**。
+            #
+            # ⚠️ 此处原为 `entry_price × (1 + slip_eff)`, 与自己的注释互相矛盾:
+            #    注释写 "slippage 上调 sell price (即收到的 sale proceeds 减少) ——
+            #    pessimistic 假设'卖得更贵'", 但**上调卖出价恰恰是收到更多**。
+            #    short 的 entry 是**卖出**; 对卖出腿而言, 冲击成本应当让成交价
+            #    **更低**(卖得更便宜)才是悲观。原式把执行成本记成了执行收益,
+            #    方向与 §0「Pessimistic Default」相反。
+            #
+            # 为什么现在才修: 该分支只在 `atr_slip_scale > 0` 时执行, 而
+            # **全部 55 个 short_reversal preset 都是 0** (默认, 见 engine 的
+            # `cfg.get("atr_slip_scale", 0.0)`) ⇒ 此分支今天**不可达**,
+            # 修它**不产生任何结果漂移**; 但它是一个陷阱: 谁一旦为落实 §4 打开
+            # 滑点, 就会**静默地把 short 的成交记成更有利**。
+            #   对偶: `chase_up`/`uptrend_pullback` 是**多头**, entry 是买入,
+            #   `×(1 + slip)` = 买得更贵 = 悲观 ⇒ **那边是正确的**, 不要一起改。
+            #
             #   slip_eff = max(0, atr_pct × participation × scale)
-            #   entry_price_sold = entry_price × (1 + slip_eff)
+            #   entry_price_sold = entry_price × (1 − slip_eff)
             # 当 atr_slip_scale = 0, 沿用旧行为 (保持 baseline parity)。
             if self.p.atr_slip_scale > 0:
                 indi = self.indi.get(code, {})
@@ -842,8 +929,20 @@ class Phase3V3Strategy(bt.Strategy):
                     slip_eff = effective_slippage(
                         0.0, atr_pct, participation, self.p.atr_slip_scale,
                     )
+                    # §4/§0 (2026-10-17 修正, 合并后保留本分支的符号): short 的 entry
+                    # 是**卖出** ⇒ 冲击让成交价**更低**(卖得更便宜)才是悲观。
+                    # ⚠️ 此处原为 `× (1 + slip_eff)`, 与紧邻的注释互相矛盾:
+                    #    注释写「slippage 上调 sell price ⇒ 收到的 sale proceeds 减少」,
+                    #    但上调卖出价恰恰是**收到更多** —— 原式把执行成本记成了执行收益,
+                    #    方向与 §0「Pessimistic Default」相反。
+                    # 对偶: `chase_up`/`uptrend_pullback` 是多头, entry 是买入,
+                    #   `× (1 + slip)` = 买得更贵 = 悲观 ⇒ **那边是正确的, 不要一起改**。
+                    # 零漂移: 该分支只在 `atr_slip_scale > 0` 时执行, 而出厂 preset 一律
+                    #   为 0(默认, 见上方 params) ⇒ 今天不可达, 修它不产生结果漂移;
+                    #   但它是一个陷阱 —— 谁一旦为落实 §4 打开滑点, 就会静默地把空头
+                    #   成交记成**更有利**。
                     if slip_eff > 0:
-                        entry_price = entry_price * (1.0 + slip_eff)
+                        entry_price = entry_price * (1.0 - slip_eff)
             # CLAUDE.md §2 Margin Gatekeeper: budget base MUST be Free_Cash
             # (T+0 可用), 绝不用 NAV (含未实现浮盈) / settling_funds (T+1 才到)。
             # 旧 R4 (2026-09-21) 用 NAV 作 sizing basis 是 §2 violation 的根因:
@@ -1013,7 +1112,17 @@ class Phase3V3Strategy(bt.Strategy):
         ep = pos["entry_price"]
         tp_p = ep * (1 - self.p.tp_pct)
         sl_p = ep * (1 + self.p.sl_pct)
-        held = len(self) - 1 - pos["entry_bar"]
+        # §?: `entry_bar` 存的是**计数** (成交时 `entry_bar = len(self)`), 不是索引。
+        # 旧实现写成 `len(self) - 1 - entry_bar`, 把计数当索引用 ⇒ `held` 在成交
+        # 当日为 **-1** 而非 0 ⇒ `held >= max_hold` 首次成立是在入场后第 **max_hold+1**
+        # 根 bar —— 即 `max_hold=N` 实际持有 N+1 根。
+        # 实测 (max_hold=5): 入场 2024-12-27 → 出场 2025-01-07 (第 6 根),
+        # 而非 2025-01-06 (第 5 根)。样本 3/3 一致。
+        # 族内对照: chase_up / uptrend 用 `bars = t - entry_t` (入场日=0), 语义正确
+        # ⇒ 只有本引擎差一根 (族内不对称的又一例)。
+        # 同文件 984 行 `hold_days = len(self) - pos["entry_bar"]` 用的是**计数**口径 ——
+        # 两者本应相等, 旧实现自相矛盾, 其中 `held` 是错的一方。
+        held = len(self) - pos["entry_bar"]
         # CRITICAL: exit 必须滞后 entry → 至少 1 完整 bar 后才允许出场
         # (CLAUDE.md P3: exit_date > entry_date, ≥ 1 日历日 / ≥ 1 bar)
         if held < 1:
@@ -1055,7 +1164,10 @@ class Phase3V3Strategy(bt.Strategy):
         # cash gate 拦 entry, NAV-gate 拦 active close。
         nav = self._nav()
         if nav < self.p.initial_capital * self.p.nav_gate_ratio:
-            self._close(d, float(d.close[0]), "nav_gate_eod")
+            # §13.97: 强制平仓**也是**一笔平仓 execution ⇒ 同样计冲击。
+            self._close(
+                d, self._exit_fill_px(float(d.close[0]), code, pos["size"], d), "nav_gate_eod"
+            )
             return
         low, high, close = float(d.low[0]), float(d.high[0]), float(d.close[0])
         open_p = float(d.open[0])
@@ -1063,13 +1175,22 @@ class Phase3V3Strategy(bt.Strategy):
         # 更新持仓期最低价 (lowest_price), 若浮盈 ≥ activation 阈值则把止损
         # 收紧为 lowest_price × (1 + trailing_stop_pct), 取二者较紧者 (min)。
         # 不可变更新: 重建 dict 后 rebind (CLAUDE.md coding-style immutability)。
+        # §1 修正 (2026-10-17): 止损位只能用**截至上一根 bar** 的信息构造。
+        # 旧实现是 `lowest = min(lowest, low)` —— 用**本 bar 的 low** 定出止损位,
+        # 再立刻用**本 bar 的 high** 判它是否被触及。两者同处一根 bar, 等价于
+        # 假设"当日最低价出现在最高价之前", 而日线数据不提供这个次序 —— 这是
+        # 在区间内取**最大有利偏移**。后果可测: 随 trailing_stop_pct → 0, 成交价
+        # 趋近当日最低价, 于是指标**单调**改善、**无拐点** —— 而这个单调性正是
+        # 模型退化的指纹, 不是优势 (§7: 原先此处列的一串 Calmar 数值量自 §4
+        # 跳空成交口径修正**之前**的代码状态, 已删除)。
+        # 修正: 触发判定用 prev_lowest (截至上一根 bar 的最低), 本 bar 的 low 只在
+        # 出场判定**之后**并入跟踪价。悲观方向, 与 §4「同一 bar 内不确定次序时取
+        # 最坏情形」同精神。
+        prev_lowest = pos["lowest_price"]
         if self.p.trailing_stop_pct > 0.0:
-            lowest = min(pos["lowest_price"], low)
-            pos = {**pos, "lowest_price": lowest}
-            self._holds[code] = pos
             activation = ep * (1 - self.p.trailing_activation_pct)
-            if lowest <= activation:
-                trail_p = lowest * (1 + self.p.trailing_stop_pct)
+            if prev_lowest <= activation:
+                trail_p = prev_lowest * (1 + self.p.trailing_stop_pct)
                 sl_p = min(sl_p, trail_p)
         reason, price = None, None
         # CLAUDE.md §4 要求 SL-first (self.p.intraday_tiebreak='sl_first'):
@@ -1090,6 +1211,11 @@ class Phase3V3Strategy(bt.Strategy):
         #
         # TP 侧维持 open_p: 回补是买入, 有利跳空下限价单本来就以更优价成交
         # (与三姊妹引擎一致), 且 §4 的措辞只约束 "stop"。
+        #
+        # 族内复核 (2026-10-17, 本分支): 另外三个引擎本来就是合规的 ——
+        #   chase_up/portfolio.py / uptrend_pullback/portfolio.py /
+        #   cycle_price_action/portfolio.py 都写的是 `if o/up <= sl_p: SL @ open`
+        #   (多头方向, 跳空低开填开盘价) ⇒ **只有本引擎是反的**, 族内不对称的另一例。
         if self.p.intraday_tiebreak != "sl_first":
             raise ValueError(
                 f"short_reversal 必须 'sl_first', got {self.p.intraday_tiebreak}"
@@ -1105,7 +1231,47 @@ class Phase3V3Strategy(bt.Strategy):
         elif held >= self.p.max_hold:
             reason, price = "time", close
         if reason is not None:
-            self._close(d, price, reason)
+            self._close(d, self._exit_fill_px(price, code, pos["size"], d), reason)
+            return
+        # §1: 未出场才把本 bar 的 low 并入跟踪最低价 (下一根 bar 才可用于构造止损位)
+        if self.p.trailing_stop_pct > 0.0:
+            self._holds[code] = {
+                **self._holds[code],
+                "lowest_price": min(prev_lowest, low),
+            }
+
+    def _exit_fill_px(self, raw_px: float, code: str, size: int, d) -> float:
+        """§4/§0 出场腿的**冲击后成交价** (§13.97, 与 §13.95/§13.96 同口径)。
+
+        §4 把执行滑点定义为「signal trigger 与 fill 之间的 price impact」——
+        这是**每一笔 execution** 的性质, 平仓腿**同样**成立。此前本族
+        **只在入场腿计费**, 出场腿零冲击 ⇒ **单一方向的乐观** (§0)。
+
+        ⚠️ **符号: 本族是空头, 平仓是买入 ⇒ `×(1 + slip)`, 平仓价更**高** = 悲观。**
+        (对照: `chase_up`/`uptrend_pullback` 是多头, 出场是卖出 ⇒ `×(1 − slip)`)。
+        ⚠️ 与入场腿**同源取 ATR**: 同一个 `self.indi[code]["atr"]`(**当前根 bar** 的 ATR,
+        正是 §4 要的 "the asset's **current** ATR"), 同一参与率定义 `订单量 / Bar_Volume`。
+        ⚠️ **零漂移**: 55/55 个 preset 的 `atr_slip_scale` 都是 0
+        ⇒ `eff = 0` ⇒ `px × 1.0` 逐位不变 (2026-10-19 已用交易清单哈希逐位验证)。
+        ⚠️ 它**只对出场腿生效, 不得用来算入场价** (方向相反)。
+        """
+        indi = self.indi.get(code, {})
+        atr_indi = indi.get("atr")
+        if atr_indi is None:
+            return float(raw_px)
+        atr_v = float(atr_indi[0])
+        close_v = float(d.close[0])
+        if np.isnan(atr_v) or close_v <= 0:
+            return float(raw_px)
+        bar_vol = float(d.volume[0]) if d.volume[0] is not None else 0.0
+        part = min(1.0, size / bar_vol) if bar_vol > 0 else 0.0
+        slip = effective_slippage(0.0, atr_v / close_v, part, self.p.atr_slip_scale)
+        if slip >= 1.0:
+            raise ValueError(
+                f"§4/§0: 出场腿冲击系数 {slip} ≥ 1.0 ({code}) —— §0 要求违反物理市场"
+                f"规律时**立即抛错**, 不得静默算出一个非正成交价。"
+            )
+        return float(raw_px) * (1.0 + slip)
 
     def _close(self, d, price: float, reason: str) -> None:
         code = d._name
@@ -1401,6 +1567,47 @@ class Phase3V3Strategy(bt.Strategy):
             if close_pos < self.p.intraday_reversal_threshold:
                 return False
             if self.p.intraday_reversal_require_close_above_open and close_v <= open_v:
+                return False
+
+        # L 条件 (2026-10-16): 收盘价相对当日 VWAP 的位置。
+        # 设计动机: 全仓库此前**没有任何地方用 VWAP** —— 而 amount / volume 就是
+        # 当日 VWAP (同 bar、同原始价域, 无复权错配)。做空死猫跳的核心论点是
+        # 「反弹里卖方仍占优」, 而 close < vwap 正是这条论点的直接微观结构读数:
+        # 收盘价低于当日平均成交价 ⇒ 尾盘卖压压过买盘 ⇒ 反弹更可能无以为继。
+        # 与既有条件是正交维度: F 测多日斜率, I 测多日动量, K 测日内位置 (相对
+        # 当日 high/low), L 测**当日成交均价**意义上的买卖力量对比 —— K 只看价格
+        # 区间不看量, L 只看量价对比不看区间。
+        # opt-in: require_close_below_vwap=True 才启用, 默认 False 保既有 preset 兼容。
+        if self.p.require_close_below_vwap:
+            amt_v = float(d.amount[0]) if d.amount[0] is not None else float("nan")
+            vol_v = float(d.volume[0]) if d.volume[0] is not None else float("nan")
+            # §0 Pessimistic Default: 量价缺失时 fail-closed (拒绝入场), 不得放行。
+            if not (vol_v > 0) or not (amt_v > 0) or np.isnan(amt_v) or np.isnan(vol_v):
+                return False
+            vwap_v = amt_v / vol_v
+            if close_v > vwap_v * (1.0 + self.p.close_vwap_buffer):
+                return False
+
+        # §4 做空可行性: 逐 bar 的不可融券 (ST/风险警示) 检查。最先做 —— 它最便宜,
+        # 且它拦的是"这笔单现实中下不出去", 优先于任何信号质量判断。
+        if self.p.require_shortable_st_filter and self._suspected_st_now(d):
+            return False
+
+        # M 条件 (2026-10-17): 隔夜跳空幅度上限。
+        # 设计动机: **全仓库没有用过"隔夜 / 日内"的收益分解** —— 而信号日的涨幅
+        # 可以被拆成 open/prev_close-1 (隔夜跳空) 与 close/open-1 (日内) 两段。
+        # 两者含义不同: 隔夜跳空多是消息驱动的一次性重定价, 日内段才是买卖盘的
+        # 持续较量。做空死猫跳的论点是"买盘接不住", 因此**跳空驱动**的反弹
+        # (隔夜涨完、日内没接力) 应比**日内驱动**的反弹更值得做空。
+        # opt-in: signal_gap_max 非 None 才启用, 默认 None 保既有 preset 兼容。
+        # 注: v_daily.prev_close 实测 100% 为 NULL (数据层缺口), 故用前一根可用
+        # bar 的收盘价 (d.close[-1]) 作为分母, 与 pct_chg 的口径一致。
+        if self.p.signal_gap_max is not None:
+            prev_c = float(d.close[-1]) if len(d) > 1 else float("nan")
+            open_v = float(d.open[0])
+            if np.isnan(prev_c) or prev_c <= 0 or np.isnan(open_v):
+                return False
+            if (open_v / prev_c - 1.0) > self.p.signal_gap_max:
                 return False
 
         return True

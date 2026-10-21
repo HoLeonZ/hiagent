@@ -127,11 +127,9 @@ DECLARATION_ONLY_KEYS = frozenset({
 #: 每一项写清「现在是什么样」+「接上需要做什么」;**接上之后必须删掉本项**
 #: (`test_unconsumed_declared_keys_registry_is_not_stale` 会红)。
 UNCONSUMED_DECLARED_KEYS: dict[tuple[str, str], str] = {
-    ("cycle_price_action", "periods"): (
-        "PRESET_V1['periods'] 与 cycle.py::DEFAULT_PERIODS **逐位相同**(都是 (3,5,8,13,21)),"
-        "而引擎只读后者 ⇒ 改 preset 不会有任何效果。"
-        "接上要把 periods 穿进 signals.phase_score —— 那会改变信号计算,属研究改动,故登记未做。"
-    ),
+    # ("cycle_price_action", "periods") 已于 2026-10-20 合并 main 后**删除** ——
+    # 本分支的 cycle 引擎已真正消费 `periods`(写进 engine params 并由它派生
+    # `_accepted`),缺口被接上;按本表规矩(见上:接上之后必须删掉本项)移除。
     ("cycle_price_action", "universe"): (
         "PRESET_V1['universe']='mainboard_only' 与 load_universe_data 里**写死的** "
         "is_main_board 过滤一致,但引擎从不读这个键 ⇒ 改成别的值不会有任何效果、也不报错。"

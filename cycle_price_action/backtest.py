@@ -11,9 +11,12 @@ import duckdb
 import pandas as pd
 
 from cycle_price_action.backtrader_engine import CyclePriceActionStrategy
+from cycle_price_action.cycle import DEFAULT_PERIODS, phase_score
 from cycle_price_action.data_feed import ReplayDataProvider, load_universe_data
 from cycle_price_action.metrics import TradeRecord, compute_metrics
 from cycle_price_action.presets import PRESET_V1, resolve_score_weights
+from cycle_price_action.signals import detect_k_patterns, k_line_score
+from cycle_price_action.time_windows import calendar_score
 from cycle_price_action.feed_bt import CyclePandasData
 from cycle_price_action.portfolio import Portfolio
 from core.dual_price import resolve_atr_slip_scale  # §4 (audit P1-B2)
@@ -64,6 +67,38 @@ def _extract_trades(
     return out
 
 
+def _precompute_scores(
+    df: pd.DataFrame,
+    periods: tuple[int, ...] | None = None,
+) -> dict[date, tuple[float, float, float]]:
+    """每只票一次性算出每根 bar 的信号三元组 (§6: Control Plane 负责派发)。
+
+    与"逐 bar 对至今为止的 bar 重算"**逐位等价** —— 三个函数都只看当前及
+    之前的 bar:
+      * `detect_k_patterns` / `k_line_score`: 全为 rolling/shift 的后向窗口,
+        在前缀 `df.iloc[:i+1]` 的第 i 行与在全表第 i 行取值相同;
+      * `calendar_score`: 纯日期函数 (锚点是自然日历月末/季报日, 不是切片端点);
+      * `phase_score`: 只用到序列**长度**的 `np.arange(n)`, 第 i 位与 n 无关 ——
+        唯一例外是 `len < max(periods)` 时整体返回 0, 故此处显式复刻该分支。
+
+    旧路径是 O(n²): 2990 只票 × ~235 bar 的一年窗口实测 86 分钟, 其中 87%
+    花在这个重算上。零漂移由 /tmp 的 40 只票对照脚本 (trades sha256) 锁定。
+    """
+    patterns = detect_k_patterns(df)
+    ks = k_line_score(df, patterns)
+    cy = phase_score(df["date"], periods=periods)
+    cal = calendar_score(df["date"])
+
+    min_bars = max(periods or DEFAULT_PERIODS)
+    out: dict[date, tuple[float, float, float]] = {}
+    for i, d in enumerate(df["date"]):
+        cyc = 0.0 if (i + 1) < min_bars else float(cy.iloc[i])
+        out[pd.Timestamp(d).date()] = (
+            float(ks.iloc[i]), cyc, float(cal.iloc[i]),
+        )
+    return out
+
+
 def run_backtest(
     db_path: str,
     start: date,
@@ -77,17 +112,30 @@ def run_backtest(
     # (not `end`) — 避免 post-hoc constituents 入选。
     universe = load_universe_data(db_path, start, end, asof_date=start)
     all_trades: list[TradeRecord] = []
-    # Filter preset to keys CyclePriceActionStrategy.params accepts.
-    # Round 15 (2026-09-28, CLAUDE.md §4): intraday_tiebreak added to the
-    # accepted whitelist so cycle preset declarations flow preset → strategy
-    # params → Portfolio.__init__ (Tick 39 plumbing)。
-    # 2026-10-15 (audit §0/§6): 此处曾记着「weight_kline / weight_cycle /
-    # weight_calendar / periods / max_volume_participation live in PRESET_V1 but
-    # are not in the strategy params tuple」—— 那句话是在**登记缺口**: 这四项
-    # (外加 position_* / max_positions / price_source_for_execution)被声明却
-    # 无人读取。现在除 `periods`(已由 signals.phase_score 内部按周期长度加权,
-    # 非 preset 可调)外,全部经 core.preset_contract 解析后显式注入。
-    _accepted = {"threshold", "min_dim", "max_hold", "atr_period", "atr_sl_mult", "tp_pct", "sl_pct", "initial_capital", "intraday_tiebreak", "atr_slip_scale"}
+    # ⚠️ 2026-10-19 (§13.98): 这里**原来是一份手工白名单** —— 与
+    # `CyclePriceActionStrategy.params` 重复维护, 于是**任何新加的 param 都会
+    # 被静默丢掉**, 而注释还写着 "preset-overridable"。实测它已经吃掉了一个:
+    # `limit_up_threshold` 在 params 里、不在白名单里 ⇒ 声明它**无效**。
+    # (本文件自己的注释就记着 Round 15 修过一次同类事故 —— 修的是**实例**,
+    #  没修**机制**。)
+    # ⇒ 改为**从 params 派生**: 不存在"忘了同步"这回事。
+    # `_INJECTED` 是 Control Plane 显式传的, 不得出现在 **strategy_kwargs 里
+    # (否则 `addstrategy` 收到重复关键字 ⇒ TypeError)。
+    # §0/§2/§3/§4 (audit 2026-10-15, 与分支合并): 下列键同样由 Control Plane
+    # 逐名注入 —— 八项需要 `resolve_*` 解析 (weight_* / position_* / max_positions
+    # / max_volume_participation / price_source_for_execution / atr_slip_scale),
+    # 两项由本函数自己构造 (data_provider / precomputed_signals)。它们都必须排除
+    # 在派生集合之外: 否则 preset 的**原值**会先进入 strategy_kwargs ——
+    # 值虽与被解析后相同, 但"声明 → 落点"之间会多出一条看不见的路径
+    # (§13.98 的同一形状: 两处各持一半真相)。
+    _INJECTED = {
+        "data_provider", "precomputed_signals",
+        "atr_slip_scale",
+        "weight_kline", "weight_cycle", "weight_calendar",
+        "position_fraction", "position_sizing", "max_positions",
+        "max_volume_participation", "price_source_for_execution",
+    }
+    _accepted = set(CyclePriceActionStrategy.params._getkeys()) - _INJECTED
     strategy_kwargs = {k: v for k, v in preset.items() if k in _accepted}
     preset_name = preset.get("name", "cycle_price_action")
     # §4 (audit P1-B2): 滑点标定值必须显式声明,缺声明 fail-fast。
@@ -118,41 +166,51 @@ def run_backtest(
         preset, preset_name, supported=frozenset({EXECUTION_PRICE_SOURCE})
     )
 
-    for code, slice in universe.items():
-        try:
-            cerebro = bt.Cerebro(stdstats=False)
-            feed_df = slice.df.set_index(pd.to_datetime(slice.df["date"]))
-            # §3 (audit P2-10, 2026-10-15): 改用携带事件列的自定义 feed
-            feed = CyclePandasData(
-                dataname=feed_df,
-                open="open", high="high", low="low",
-                close="close", volume="volume",
-                openinterest=-1,
-            )
-            cerebro.adddata(feed, name=code)
-            # Tick 49 (2026-09-28, CLAUDE.md §6): Control Plane owns DuckDB I/O.
-            # Construct ReplayDataProvider here and inject into Strategy —
-            # Strategy no longer accepts db_path directly.
-            data_provider = ReplayDataProvider(db_path)
-            cerebro.addstrategy(
-                CyclePriceActionStrategy,
-                data_provider=data_provider,
-                **strategy_kwargs,
-            )
-            cerebro.broker.setcash(cash)
-            results = cerebro.run()
-        except (duckdb.Error, ValueError, KeyError) as e:
-            # §0 Fail-Fast: per-stock failure MUST propagate, not silently
-            # bypass. Scan/grid loops (per prior # noqa: BLE001 patterns)
-            # allow warn-log + continue; here in cycle_price_action the
-            # outer caller depends on full coverage.
-            raise RuntimeError(
-                f"backtest failed for {code}: {e}"
-            ) from e
-        strat = results[0]
-        # _extract_trades is intentionally outside the try/except: decision-
-        # extraction bugs must fail loudly rather than be silently skipped.
-        all_trades.extend(_extract_trades(strat))
+    # Tick 49 (2026-09-28, CLAUDE.md §6): Control Plane owns DuckDB I/O.
+    # 一条连接服务整个回测 (旧实现每只票新建一条 → 实测每次 connect+execute+close
+    # 约 21 ms, 占满 cycle 回测耗时的六成)。provider 在循环外构造、在 finally 里
+    # 关闭 —— 与 precomputed_signals 同属本层派发的 PIT 数据 (§6)。
+    data_provider = ReplayDataProvider(db_path)
+    try:
+        for code, slice in universe.items():
+            try:
+                cerebro = bt.Cerebro(stdstats=False)
+                feed_df = slice.df.set_index(pd.to_datetime(slice.df["date"]))
+                # §3 (audit P2-10, 2026-10-15): 改用携带事件列的自定义 feed
+                feed = CyclePandasData(
+                    dataname=feed_df,
+                    open="open", high="high", low="low",
+                    close="close", volume="volume",
+                    openinterest=-1,
+                )
+                cerebro.adddata(feed, name=code)
+                cerebro.addstrategy(
+                    CyclePriceActionStrategy,
+                    data_provider=data_provider,
+                    # 信号三元组每只票预计算一次 (逐 bar 重算是 O(n²), 实测占
+                    # cycle 回测总耗时的 87%)。periods 只此一个来源: 与
+                    # strategy_kwargs 里流下去的是**同一个值**。
+                    precomputed_signals=_precompute_scores(
+                        slice.df, periods=strategy_kwargs.get("periods"),
+                    ),
+                    **strategy_kwargs,
+                )
+                cerebro.broker.setcash(cash)
+                results = cerebro.run()
+            except (duckdb.Error, ValueError, KeyError) as e:
+                # §0 Fail-Fast: per-stock failure MUST propagate, not silently
+                # bypass. Scan/grid loops (per prior # noqa: BLE001 patterns)
+                # allow warn-log + continue; here in cycle_price_action the
+                # outer caller depends on full coverage.
+                raise RuntimeError(
+                    f"backtest failed for {code}: {e}"
+                ) from e
+            strat = results[0]
+            # _extract_trades is intentionally outside the try/except: decision-
+            # extraction bugs must fail loudly rather than be silently skipped.
+            all_trades.extend(_extract_trades(strat))
+    finally:
+        data_provider.close()
 
     # §2 (audit 2026-10-15): 账户数 = **universe 成员数**,不是成交过的股票数 ——
     # 每个成员都开了一个账户(即使那笔账户一笔未成交),故"本金"分母是前者。

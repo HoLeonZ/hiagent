@@ -85,23 +85,41 @@ class ReplayDataProvider:
 
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
+        # 单条只读连接, 首次查询时才建立, 之后整个回测复用 (§6: Control Plane
+        # 拥有 I/O)。旧实现每次查一根 bar 都新开一条连接 —— 实测
+        # connect+execute+close 约 21 ms, 占满 cycle 回测耗时的六成。
+        # 延迟到首次查询 (而不是 __init__) 是为了保持"构造 provider 不触达 DB"
+        # 的既有契约 —— 测试会把 db_path 传成占位值, 靠 strategy 层抛错。
+        self._con: duckdb.DuckDBPyConnection | None = None
+
+    def _conn(self) -> duckdb.DuckDBPyConnection:
+        if self._con is None:
+            self._con = duckdb.connect(self._db_path, read_only=True)
+        return self._con
 
     @property
     def db_path(self) -> str:
         return self._db_path
 
+    def close(self) -> None:
+        if self._con is not None:
+            self._con.close()
+            self._con = None
+
+    def __enter__(self) -> "ReplayDataProvider":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
     def next_trading_date(self, after: date) -> date:
-        con = duckdb.connect(self._db_path, read_only=True)
-        try:
-            row = con.execute(
-                "SELECT MIN(date) FROM v_daily WHERE date > ?",
-                [after],
-            ).fetchone()
-            if row is None or row[0] is None:
-                raise RuntimeError(f"no trading date after {after}")
-            return row[0]
-        finally:
-            con.close()
+        row = self._conn().execute(
+            "SELECT MIN(date) FROM v_daily WHERE date > ?",
+            [after],
+        ).fetchone()
+        if row is None or row[0] is None:
+            raise RuntimeError(f"no trading date after {after}")
+        return row[0]
 
     def has_any_bar(self, thscode: str) -> bool:
         """该标的在库中是否**存在任何** bar。
@@ -145,26 +163,22 @@ class ReplayDataProvider:
         `open_price` 用 `has_any_bar` 区分。
         存在但字段非法的 bar 仍然 fail-fast(ExecutionBar 不变量不受影响)。
         """
-        con = duckdb.connect(self._db_path, read_only=True)
-        try:
-            row = con.execute(
-                # Tick 68 (2026-09-28, CLAUDE.md §1): explicit ORDER BY
-                # for cross-run reproducibility by construction. The WHERE
-                # composite-key (thscode, date) returns at most 1 row so
-                # ORDER BY is semantically a no-op but documents intent
-                # and satisfies the auditor.
-                "SELECT open, high, low, close FROM v_daily "
-                "WHERE thscode = ? AND date = ? "
-                "ORDER BY thscode, date",
-                [thscode, on_date],
-            ).fetchone()
-            if row is None:
-                return None
-            # Keep None as None; _safe() in core.dual_price converts to 0.0.
-            bar_row = {"open": row[0], "high": row[1],
-                       "low": row[2], "close": row[3]}
-        finally:
-            con.close()
+        row = self._conn().execute(
+            # Tick 68 (2026-09-28, CLAUDE.md §1): explicit ORDER BY
+            # for cross-run reproducibility by construction. The WHERE
+            # composite-key (thscode, date) returns at most 1 row so
+            # ORDER BY is semantically a no-op but documents intent
+            # and satisfies the auditor.
+            "SELECT open, high, low, close FROM v_daily "
+            "WHERE thscode = ? AND date = ? "
+            "ORDER BY thscode, date",
+            [thscode, on_date],
+        ).fetchone()
+        if row is None:
+            return None
+        # Keep None as None; _safe() in core.dual_price converts to 0.0.
+        bar_row = {"open": row[0], "high": row[1],
+                   "low": row[2], "close": row[3]}
         # extract_execution_bar enforces ExecutionBar invariants (close <= 0
         # when open > 0 → ValueError). Discard the wrapper; caller only needs
         # the validated scalar fields.
@@ -198,6 +212,27 @@ class ReplayDataProvider:
                 )
             return None
         return bar["open"]
+
+    def next_bar_date(self, thscode: str, after: date) -> date | None:
+        """该股**自身**的下一根 K 线日期, 无则 None。
+
+        §1 停牌语义: 停牌产生 missing bar。成交必须发生在该股下一根可交易
+        bar 的开盘 (§1「positions in suspended names ... MUST NOT generate
+        fills until trading resumes」), 而**不是**全市场下一交易日 —— 后者在
+        个股停牌时指向一根不存在的 bar, 会让 open_bar 抛 RuntimeError,
+        连"顺延到复牌"这条合法路径都走不到。
+
+        与 chase_up / uptrend_pullback / short_reversal 同口径: 那三个引擎
+        用个股自己的 backtrader feed, "下一根 bar" 天然就是该股下一根可交易
+        bar。cycle 是按股票逐个 adddata 的, 同样应只认自己的 bar 序列。
+        """
+        row = self._conn().execute(
+            "SELECT MIN(date) FROM v_daily WHERE thscode = ? AND date > ?",
+            [thscode, after],
+        ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        return row[0]
 
 
 def load_universe_data(
@@ -297,7 +332,9 @@ def load_universe_data(
                 "ORDER BY thscode, date"
             ).format(codes_sql=codes_sql, asof=_asof_sql)
         ).fetchdf()
-        liquid = apply_liquidity_filter(liquidity_codes, min_avg_turnover=5e7, lookback=60)
+        liquid = apply_liquidity_filter(
+            liquidity_codes, min_avg_turnover=5e7, min_history_days=60
+        )
         final_codes = main_board & liquid
 
         universe: dict[str, StockSlice] = {}

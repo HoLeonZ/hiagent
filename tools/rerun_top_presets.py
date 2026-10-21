@@ -174,6 +174,21 @@ def main() -> int:
 
     ranked = rank_presets(all_rows)
     top5 = ranked[:5]
+    # §13.90: 先说清口径 —— 这张榜**不具备跨策略可比性** (四量定义不同, 年化常数 243 vs 252)。
+    # ⚠️ 四个 import 必须**逐族都在**: 判据是「提到哪个族, 就得披露哪个族」
+    #    (`tests/test_metrics_basis_table_is_pinned.py::
+    #      test_every_cross_family_tool_discloses_basis_or_is_exempt`) ——
+    #    只留一处正是 §13.90(g) 记的那次「任一处匹配即满足」的注入失灵。
+    from chase_up.backtest import METRICS_BASIS as _B_CU
+    from uptrend_pullback.backtest import METRICS_BASIS as _B_UP
+    from short_reversal.engine import METRICS_BASIS as _B_SR
+    from cycle_price_action.allocator import METRICS_BASIS as _B_CY
+    print("\n[口径] 本榜跨族**不可比** (§13.13/§13.90):")
+    for _f, _b in (("chase_up", _B_CU), ("uptrend_pullback", _B_UP),
+                   ("short_reversal", _B_SR), ("cycle_price_action", _B_CY)):
+        print(f"   {_f:18s} {_b}")
+    # 表头/量纲/数据版本由 format_top5 统一产出(`_TOP5_CAVEAT[0]` 是可机检的声称行,
+    # 由 tests/test_report_self_consistency.py 解析并与实际顺序比对)。
     for line in format_top5(top5, chase_rows, up_rows, short_rows, cycle_rows):
         print(line, flush=True)
 

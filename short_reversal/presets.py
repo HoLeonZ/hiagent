@@ -46,11 +46,15 @@ UniverseMode = Literal["mainboard_only", "exclude_hs300_zhongtou_finance"]
 #    回测数字是"可融券且仅按 8.6% 年化计费"的上界, 不构成可执行预期。
 BORROW_ASSUMPTION: dict = {
     "availability": "assumed_unlimited",
-    "borrow_cost_model": "annualized_margin_rate",  # engine charges 8.6%/yr
+    "borrow_cost_model": "annualized_margin_rate, 8.6%/yr charged daily",
     "borrow_cost_rate": BORROW_RATE_ANNUAL,  # §4: core 单源 (audit P2-11)
 }
 
 PRESETS: dict[str, dict] = {
+    # ⛔ 2026-10-18 (本分支): 本族 preset 的**历史扫描数字不可复现** —— 至少两处
+    #    系统性虚增已被推翻 (跳空穿越止损的成交价、CAGR 的分母口径), 见
+    #    `docs/strategy_mining_log.md` §4 与 §6.3。按 §7 本文件已清除数值;
+    #    要引用任何结论请用当前代码重算, 不要引用历史副本。
     # ⚠️ 2026-09-22 preset 库重组 ⚠️
     # 7 个破产/失败 preset 已删除 (v33×2 / v34 / v37 / v39_pctchg_04_09 / v41 / v47):
     #   - v33×2 + v47_d_strict: cash gate 触发时 NAV 透支 6-100 倍, paper-trading 幻影
@@ -93,7 +97,11 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
-        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 「walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni」 —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
+        # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
         # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
         # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
@@ -155,7 +163,11 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
-        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 「walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni」 —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
+        # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
         # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
         # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
@@ -211,7 +223,11 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
-        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 「walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni」 —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
+        # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
         # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
         # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
@@ -268,7 +284,11 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
-        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 「walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni」 —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
+        # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
         # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
         # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
@@ -327,7 +347,11 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
-        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 「walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni」 —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
+        # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
         # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
         # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
@@ -372,7 +396,11 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
-        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 「walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni」 —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
+        # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
         # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
         # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
@@ -432,7 +460,11 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
-        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 「walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni」 —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
+        # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
         # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
         # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
@@ -487,7 +519,11 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
-        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 「walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni」 —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
+        # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
         # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
         # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
@@ -561,7 +597,11 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
-        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 「walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni」 —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
+        # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
         # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
         # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
@@ -625,7 +665,11 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
-        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 「walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni」 —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
+        # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
         # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
         # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
@@ -1330,7 +1374,11 @@ PRESETS: dict[str, dict] = {
         # V7 (2026-09-22, CLAUDE.md §5): Statistical Rigor — sweep size。
         # short_reversal 11 preset 是 v33/v34/v37/v39_04_09/v41/v47 顺序 sweep
         # (虽 v37/v39/v41 已删除但 sweep 历史保留), 总比较数 ≈ 11 × 邻域大小。
-        # walkforward 输出走 dna_stats.walkforward_report 自动套 DSR+Bonferroni。
+        # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats
+        # ⚠️ §13.83: 此处原写 「walkforward 输出走 dna_stats.walkforward_report 自动套
+        # DSR+Bonferroni」 —— **那一句是假的**: 全仓**只有** uptrend_pullback/wfv_eval.py
+        # 调用它, 本族的 walkforward.py **0 处引用**。本族真正的 §5 惩罚指标在 **sweep
+        # 脚本** (grid_runner.py / wf_*_focused.py) 的 deflated_sharpe_ratio 调用里。
         "n_comparisons": 11,
         # §2 (CLAUDE.md All-In Sizing Policy): 显式声明, 表明预设遵循 §2。
         # ⚠️ 附九十: 旧注释写「Engine `replay_strategy_v3.py:47` hardcodes
@@ -2917,6 +2965,437 @@ PRESETS: dict[str, dict] = {
         "below_ratio_60": 0.2,
         "close_ma60_buffer": 0.07,
         "signal_price_domain": "adj",
+    },
+    # ⚠️ 2026-10-20 合并注记 (§5 版本号冲突, 待 owner 裁决): v67–v73 这一段编号在本仓库的
+    #    两条研究线上**各被用过一次** —— 本分支用 v67_mp2_bounce1 / v68_liq_wide /
+    #    v69_liq_wide_n4 / v70_pct_wide / v71_dmode_strict / v72_tp_default / v73_trailing,
+    #    main 线用 v67_broad / v68_conviction / v69_donly / v69_widec / v70_lowratio /
+    #    v70_nob / v71_buf15 / v71_liqwide / v72_tp05 / v72_tp12 / v73_mh10 / v73_nosl。
+    #  **字典键不冲突**(上面那些名字两两不同), 所以合并是机械可行的; 但「v67」这个编号
+    #    现在指两套参数, §5 的 n_comparisons / DSR 试验计数会把同一个版本号拌到两个实验上。
+    #  重编号是**研究记录**决定(要同步扫描日志), 故此处保留原名, 由 owner 裁决。
+    #  另注: 下面 8 个 preset 的支持性测量取自**另一套引擎状态**(容量闸门修复之前/之后混合),
+    #    在当前合并后的引擎上**不会复现**注释里的结论 —— 仅作"试过哪些轴"的留档。
+
+    # v58_mp_4 (2026-10-16): 容量维度外推 —— max_positions 1/2/3/4/5/6 六点扫描。
+    #
+    # 由来: v58_mp_2 / v58_mp_3 的「多仓无效」是在容量闸门有缺陷时测的 (声明 N 实开
+    # 24/33, 见 abe7dc7); 修好后它们反超 v50_slope ⇒ 这条维度其实**从未被真正开采**,
+    # 只试过 1/2/3。本 preset 把扫描补到 6 点。
+    #
+    # 三窗口 (W2 2024-10~2026-09 / IND 2022-10~2024-09 / IS1 2021-10~2022-09) 实测:
+    #   Sharpe 在三个窗口都于 N=2 见顶; Calmar 在三个窗口都于 N=4 见顶;
+    #   CAGR 随 N 单调下降。即风险调整后 N=1 最差, N∈{2,4} 全面优于它。
+    # 曲线形状 (先升后降的单峰) 来自分散化本身, 不是单点侥幸。
+    #
+    # §5 Iterative-Tuning Accounting: n_comparisons = 37 + 9
+    #   (v58 自报 37; 本轮新增 N=4/5/6 × 三个窗口 = 9 次评估)
+    # 本节不记数字 (§7)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    "v58_mp_4": {
+        "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+        "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 46,
+        "position_sizing": "all_in",
+        "max_positions": 4,
+        "position_fraction": 1.0,   # 仍 all-in 总仓位, 引擎除以 max_positions
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "ma20_slope_period": 5,
+    },
+    # v67_mp2_bounce1 (2026-10-17): 把 B 条件的连涨下限从 3 放宽到 1。
+    #
+    # 由来: 本轮做了一次**参数使用审计** —— 枚举引擎读取的 48 个 param, 找出
+    # 从未被任何 preset 设置过的那些。`up_streak_low/high` 与 `liq_low/high`
+    # 就在其中: 三个条件 (B 连涨 / E 流动性) 的**取值范围**从来没被调过, 一直
+    # 用引擎默认。这否证了上一轮「入口条件空间已穷尽」的表述 —— 条件本身都试过,
+    # 但三个条件的**参数**没试过。
+    #
+    # 实测 (四个窗口, 对 v58_mp_2): CAGR 与 Calmar 多数窗口更高, 其中 Calmar 优势
+    # 在多数窗口显著; Sharpe / MaxDD 互有胜负。即风险调整口径出现了一个跨窗口一致
+    # 的改进 —— 这是本次挖掘里除了容量维度之外唯一一个。
+    #
+    # 机理: `up_streak >= 1` 其实已被 C 条件 (信号日涨 3%~10% ⇒ 必为上涨日)
+    # 近乎蕴含, 所以把下限设到 1 等价于**释放 B 条件**, 只额外放行「只涨了
+    # 1~2 天」的反弹。数据说明这类短反弹比「连涨 ≥3 天」的更值得做空 —— 与
+    # 「等反弹确立」的直觉相反, 与 F 条件 (要求 MA20 仍在下降) 并不冲突。
+    # 注: `up_streak_high` 实测**惰性** —— 没有任何信号连涨超过 10 天。
+    #
+    # §5 Iterative-Tuning Accounting: n_comparisons = 46 + 6
+    #   (46 = v58_mp_4 累计; 本轮新增 3 个 cascade_price 变体 + 3 个 up_streak 取值)
+    # 本节不记数字 (§7)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    "v67_mp2_bounce1": {
+        "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+        "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 52,
+        "position_sizing": "all_in",
+        "max_positions": 2,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "ma20_slope_period": 5,
+        "up_streak_low": 1,
+    },
+    # v68_liq_wide (2026-10-17): v67 + E 条件流动性上界 3e8 → 1e9。
+    #
+    # 由来: 与 v67 同一次**参数使用审计** —— `liq_low` / `liq_high` (E 条件的
+    # 流动性带) 从未被任何 preset 设置过, 一直走引擎默认 3e7 ~ 3e8。
+    #
+    # 两个方向都试过:
+    #   liq_low 3e7 → 1e8 (剔除小票): 只在 W2 上更好, IND/IS1/IS2 三处 Calmar
+    #     全线下降 ⇒ **窗口特异, 否定**。
+    #   liq_high 3e8 → 1e9 (放行大票): CAGR / Calmar / Sharpe / MaxDD 多数窗口改善 ⇒ 采纳。
+    #
+    # **独立 holdout 验证** (2019-10-01..2021-09-30, 该窗口未参与本轮任何选择):
+    #   v58_mp_2 (原最优) → v67 → v68 四级指标逐级改善, Calmar 逐级翻倍。
+    #   即两级改动都不是窗口特异的产物。
+    #
+    # 机理: 上界 3e8 把日成交额 3 亿以上的票整类排除掉了。对大市值票做空死猫跳
+    # 并不比中票差, 而排除它们只是白白丢掉一批信号 —— 与 v67 的结论同向
+    # (原条件里「多余的限制」比「不够严」更伤)。
+    #
+    # §5 Iterative-Tuning Accounting: n_comparisons = 52 + 12
+    #   (52 = v67 累计; 本轮 3 个 W2 流动性探针 + 3 个 liq_low 跨窗口
+    #    + 3 个 liq_high 跨窗口 + 3 个 holdout = 12)
+    # 本节不记数字 (§7)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    "v68_liq_wide": {
+        "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+        "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 64,
+        "position_sizing": "all_in",
+        "max_positions": 2,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "ma20_slope_period": 5,
+        "up_streak_low": 1,
+        "liq_high": 1000000000.0,
+    },
+    # v69_liq_wide_n4 (2026-10-17): v68 + max_positions 2 → 4。
+    #
+    # 由来: v67/v68 把信号集扩大了数倍 (命中笔数大幅上升), 而**容量维度的最优点
+    # 依赖于信号集** —— v50_slope 的信号集下 Calmar 峰值在 N=4, 换到 v68 的信号集
+    # 就必须重扫, 不能沿用。重扫结果: Calmar 峰值仍落在 N=4~5, 且 N=4 明显优于
+    # v68 自带的 N=2。
+    #
+    # 五个窗口 (四个常用窗口 + 一个全新 holdout 2019-10-01..2021-09-30):
+    #   Calmar 五个窗口全部更高, 其中四个窗口优势显著; MaxDD 五个窗口全部更低;
+    #   CAGR / Sharpe 互有胜负但差距都很小。
+    # ⇒ 这是一次纯粹的风险调整改进, 代价是极小的收益与 Sharpe。
+    #
+    # 方法论注记: 这一步是「换了信号集就必须重扫依赖它的维度」的直接应用。
+    # 此前本仓库把 max_positions 当成信号无关的常数, 是错的 —— 容量与信号集交互
+    # (名额饱和度 = 信号数 / 席位数), 信号集变了饱和度就变了。
+    #
+    # §5 Iterative-Tuning Accounting: n_comparisons = 64 + 8
+    #   (64 = v68 累计; 本轮 N=3/4/5 在 W2 + N=4 在 IND/IS1/IS2/HOLD + N=2 在 HOLD)
+    # 本节不记数字 (§7)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    "v69_liq_wide_n4": {
+        "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+        "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 72,
+        "position_sizing": "all_in",
+        "max_positions": 4,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.10,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "ma20_slope_period": 5,
+        "up_streak_low": 1,
+        "liq_high": 1000000000.0,
+    },
+    # v70_pct_wide (2026-10-17): v69 + C 条件单日涨幅上界 0.10 → 0.15。
+    #
+    # 由来: 沿「继续问每个生效条件 —— 它排除掉的那一批真的更差吗」这条线逐个查。
+    # 这一轮同时试了三个**松绑**方向 (前两次成功都是松绑, 所以优先试松绑):
+    #   close_ma60_buffer 0.07 → 0.15 : 基本无变化
+    #   below_ratio_60    0.20 → 0.05 : 基本无变化
+    #   pct_chg_high      0.10 → 0.15 : 四项指标同时改善 ⇒ 采纳
+    #
+    # 五个窗口 (W2 / IND / IS1 / IS2 + 全新 holdout 2019-10-01..2021-09-30):
+    #   CAGR 五个窗口更高; Sharpe 五个窗口更高; Calmar 4/5 更高 (holdout 上基本持平)。
+    #   是「逐个查条件」以来命中面最广的一次。
+    #
+    # 机理 (2026-10-17 审计后更新): 0.15 与 0.20 实测给出**完全相同**的结果
+    # (同笔数、同指标) ⇒ 该上界在 0.15 以上已不生效。审计查明被 0.10 排除的到底是
+    # 什么: 主板内复权收益 >10% 的 bar 里, 绝大多数落在 (10.0%, 10.5%] ——
+    # 即**涨停日**因四舍五入把收益率顶到 10% 之上; (10.5%, 15%] 与 >15% 各只有个位数。
+    # (这也解释了 0.15 与 0.20 的逐位相同。)
+    # 所以本 preset 的真实含义是: **该上界把「封死涨停」的反弹日整类排除了,
+    # 而排除它们是有害的** —— 最极端的死猫跳 (直接涨停) 恰恰是最好做空的,
+    # 与该策略的论点完全一致。这比原先写的「上界冗余」更强、也更有意义。
+    # (可行性: 做空是卖出, 涨停日买盘充足, 卖得出去; 且成交在 T+1 开盘, 不在涨停日当天。)
+    #
+    # §5 n_comparisons = 80 (= 72 + 3 个 W2 松绑探针 + 4 个跨窗口 + 1 个 0.20 对照)
+    # 本节不记数字 (§7)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    "v70_pct_wide": {
+        "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+        "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 80,
+        "position_sizing": "all_in",
+        "max_positions": 4,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.15,
+        "d_mode": "converge_strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "ma20_slope_period": 5,
+        "up_streak_low": 1,
+        "liq_high": 1000000000.0,
+    },
+    # v71_dmode_strict (2026-10-17): v70 + d_mode converge_strict → strict。
+    #
+    # 由来: 逐个查生效条件的最后一站 —— `d_mode` 是仅剩的一条**从未被单变量松绑过**
+    # 的收紧型条件。三个取值试完:
+    #   converge_strict (旧, = v70): |bar| < |prev_bar| × 0.5
+    #   d_only          (最松)     : 只要 DIF < 0
+    #   strict          (中间)     : DIF<0 & DEA<0 & |bar| < |prev_bar|
+    #
+    # 五个窗口 (W2 / IND / IS1 / IS2 + 全新 holdout 2019-10-01..2021-09-30):
+    #   Calmar strict 五个窗口全部更高且幅度大; MaxDD 五个窗口更低;
+    #   CAGR / Sharpe 多数窗口更高 ⇒ 本次挖掘里单项幅度最大的一处改进。
+    #
+    # 且 `d_only` 也优于 `converge_strict` ⇒ 两个方向都比旧值好, 说明错的不是
+    # 「多严」, 而是**具体那条 ×0.5 的收紧**。DEA<0 与柱收敛这两半仍有价值。
+    #
+    # 值得记一笔: `strict` 本来就是**引擎的默认值** —— 2026-09-21 引入
+    # `converge_strict` 作为「v36 候选」时, 是在没有跨窗口证据的情况下把一个更好的
+    # 默认值换掉了。这是「调参调坏」的一个干净实例, 而且它的判别只需要拿默认值
+    # 本身做对照 —— 代价极低, 却被跳过了十几轮。
+    #
+    # §5 n_comparisons = 86 (= 80 + 2 个 W2 取值 + 4 个跨窗口)
+    # 本节不记数字 (§7)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.08
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    "v71_dmode_strict": {
+        "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+        "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 86,
+        "position_sizing": "all_in",
+        "max_positions": 4,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.08,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.15,
+        "d_mode": "strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "ma20_slope_period": 5,
+        "up_streak_low": 1,
+        "liq_high": 1000000000.0,
+    },
+    # v72_tp_default (2026-10-17): v71 + tp_pct 0.08 → 0.06 (引擎默认值)。
+    #
+    # 由来: 把当前最优 preset 与**引擎默认值**做全量 diff —— 9 个参数与默认不同。
+    # 逐个做回退测试后, 其中两个是「改坏了」:
+    #   d_mode   converge_strict → strict (= 默认)  : 已在 v71 采纳
+    #   tp_pct   0.08 → 0.06 (= 默认)               : 本 preset
+    # 其余 7 个覆盖经回退测试**站得住** (回退后更差), 与 d_mode/tp_pct 不同型。
+    #
+    # 五个窗口 (W2 / IND / IS1 / IS2 + 全新 holdout 2019-10-01..2021-09-30):
+    #   **CAGR / Sharpe / MaxDD / Calmar 四项, 五个窗口全部更好。**
+    # 这是本次挖掘里唯一一次**严格占优**(零权衡) 的改进 —— 不是用收益换风险,
+    # 也不是用风险换收益, 而是把一条纯有害的覆盖撤掉。
+    #
+    # 机理: tp_pct 是止盈宽度。这个策略的钱主要来自 TP 命中 (少数成交贡献了
+    # 绝大部分盈亏), 而收窄止盈会**同时**提高命中率与降低单笔盈利 —— 实测前者胜出。
+    # 注: 0.08 是 2026-10-12 用 v40_tp_07 / v40_tp_08 两个单窗对照选出来的;
+    # 与 v71 的 d_mode 一样, 那次选择没有跨窗口证据, 且从未与默认值对照过。
+    #
+    # §5 n_comparisons = 95 (= 86 + 5 个回退探针 + 4 个跨窗口)
+    # 本节不记数字 (§7)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.06
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    "v72_tp_default": {
+        "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+        "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 95,
+        "position_sizing": "all_in",
+        "max_positions": 4,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.06,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.15,
+        "d_mode": "strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "ma20_slope_period": 5,
+        "up_streak_low": 1,
+        "liq_high": 1000000000.0,
+    },
+    # v73_trailing (2026-10-17): v72 + 浮动止损 2% (激活阈值 2%)。
+    #
+    # 由来: 全 preset 库在当前引擎下重扫时, 逐条查「哪些**机制**从未在新配置上试过」。
+    # `trailing_stop_pct` 是 v65 (2026-10-13) 引入的, 当年被判 「WFV-failed」 ——
+    # 但那一次与 v58 的多仓判决同期, 都在容量闸门有缺陷、出口参数未修正的配置下做的。
+    #
+    # ⚠️ 本 preset 上线时曾报出「幅度最大的一次改进」。随后发现该数字**被一个 §1 缺陷
+    # 虚增**: 旧实现用**本 bar 的 low** 定出止损位, 又立刻用**本 bar 的 high** 判触发 ——
+    # 等价于假设当日最低价出现在最高价之前。证据是它随 trailing_stop_pct → 0 而**单调**
+    # 改善且**无拐点**, 这是在区间内取最大有利偏移的指纹, 不是优势。
+    # 已修 (触发判定改用截至上一根 bar 的最低价, 本 bar 的 low 只在出场判定之后并入),
+    # 见 tests/test_short_reversal_trailing_no_lookahead.py (双向验证)。
+    #
+    # **修正后**的五窗口 (W2 / IND / IS1 / IS2 + holdout 2019-10-01..2021-09-30),
+    # 对 v72: CAGR 与 Sharpe 五个窗口全部更高; Calmar 4/5 更高 (幅度温和, 非此前报出的
+    # 量级); 仅 holdout 的 Calmar 略低。⇒ 仍然采纳, 但描述改为「温和而一致」。
+    #
+    # 机理: 少数 TP 命中贡献了绝大部分盈亏, 且多数成交以止损出场、止损腿几乎免费。
+    # 浮动止损在浮盈之后收紧出场位, 锁的是右尾里「先赚后吐」的部分 —— 动的是收益
+    # 来源而非风控。
+    #
+    # §5 n_comparisons = 109 + 12 (= 95 基线 + 本轮库重扫 6 + W2 探针 9 + 跨窗口 13,
+    # 保守计) ⇒ 121。本节不记数字 (§7)。
+    # CLAUDE.md §4 TP/SL compliance header
+    # exit_policy: fixed
+    # sl_pct: 0.0005
+    # tp_pct: 0.06
+    # max_hold: 5
+    # Note: 由 preset 现有取值生成 (2026-10-19, §13.32) —— 仅文档, 不改行为。
+    "v73_trailing": {
+        "atr_slip_scale": SLIP_NONE_ACKNOWLEDGED,  # §4 显式声明(见文件头说明)
+        "nav_gate_ratio": NAV_GATE_ACKNOWLEDGED,  # §2 显式声明(见 core.preset_contract.resolve_nav_gate_ratio)
+        "universe": "mainboard_only",
+        "intraday_tiebreak": "sl_first",
+        "max_volume_participation": 0.10,
+        "price_source_for_signal": "adj_close",
+        "price_source_for_execution": "raw_close",
+        "n_comparisons": 121,
+        "position_sizing": "all_in",
+        "max_positions": 4,
+        "position_fraction": 1.0,
+        "MAX_POSITION_PCT": 1.0,
+        "tp_pct": 0.06,
+        "sl_pct": 0.0005,
+        "max_hold": 5,
+        "pct_chg_low": 0.03,
+        "pct_chg_high": 0.15,
+        "d_mode": "strict",
+        "below_ratio_60": 0.2,
+        "close_ma60_buffer": 0.07,
+        "require_ma20_slope_neg": True,
+        "ma20_slope_period": 5,
+        "up_streak_low": 1,
+        "liq_high": 1000000000.0,
+        "trailing_stop_pct": 0.02,
+        "trailing_activation_pct": 0.02,
     },
 }
 

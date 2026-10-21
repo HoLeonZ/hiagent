@@ -38,6 +38,8 @@ import numpy as np
 import pandas as pd
 
 from chase_up.signals import ENTRY_COLS
+# §2 (canonical cost model, single source in core/) + §4/§13.95: `effective_slippage`
+# 是入场与**出场**两条腿共用的有效冲击系数 (§2 要求 defined exactly once)。
 from core.corporate_actions import apply_corporate_action
 from core.dual_price import (
     COMMISSION_RATE,
@@ -51,7 +53,6 @@ from core.dual_price import (
     volume_cap_fill,
 )
 from core.trade_schema import EQUITY_COLS
-
 
 logger = logging.getLogger(__name__)
 
@@ -282,6 +283,7 @@ def simulate_portfolio(
     start_date: str,
     end_date: str,
     initial_capital: float = 1_000_000.0,
+    # 2026-10-19 (§2): 默认值原先写死为字面量 ⇒ fail-fast violation; 改为绑定。
     commission_rate: float = COMMISSION_RATE,
     stamp_duty_rate: float = STAMP_DUTY_RATE,
     min_commission: float = MIN_COMMISSION,
@@ -304,15 +306,15 @@ def simulate_portfolio(
     # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System execution source。
     # "raw_close" → SL/TP 触发用 raw_high/raw_low/raw_close (除权日 raw > adj)。
     # "adj_close" (或 legacy 默认) → 用 adj high/low/close, 保持旧行为。
-    price_source_for_execution: str = "adj_close",
+    price_source_for_execution: str = "raw_close",
     # V8 (2026-09-22, CLAUDE.md §4): preset→strategy explicit plumbing。
     # intraday_tiebreak='sl_first': 同 bar SL+TP 双触发时, 假设 SL 命中 (Pessimistic)。
     # max_volume_participation=0.10: Bar_Volume × 0.10 volume cap, 默认按模块常量。
     intraday_tiebreak: str = "sl_first",
     max_volume_participation: float = 0.10,
     # Round 14 (2026-09-28, CLAUDE.md §2): NAV-floor cash gate threshold。
-    # Preset 可通过 `nav_gate_ratio` key 覆盖; 默认 0.05 与 module-level 常量
-    # 行为一致 (back-compat — 所有现有 preset 不声明此 key 时仍得 0.05)。
+    # Preset 可通过 `nav_gate_ratio` key 覆盖。
+    # back-compat: 本族的 preset 都显式声明该 key (§13.63)。
     nav_gate_ratio: float = 0.05,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """逐日模拟组合,返回 (trades_df, equity_df)。"""
@@ -367,6 +369,26 @@ def simulate_portfolio(
             for d, code, a in zip(ent["date"], ent["thscode"], ent["atr_pct"]):
                 atr_lookup[(np.datetime64(pd.Timestamp(d)), code)] = float(a)
 
+    # ----- §4/§13.95: 全 bar 的 ATR 表 (专供**执行滑点**, 与 ATR-TP 解耦) -----
+    # ⚠️ 为什么不能复用上面的 `atr_lookup`: 它是**为 ATR-TP 建的信号日表** ——
+    #   ① 只在 `use_atr` (atr_tp_mult/atr_sl_mult 都有值) 时才构建;
+    #   ② 只含**信号日**的 (date, code)。
+    # 而 §4 要求滑点按「该资产**当前**的 ATR × 该笔单的参与率」计 —— 对**出场腿**,
+    # "当前" 就是触发 SL/TP 的那根 bar, 它**几乎总不是信号日** ⇒ 用 `atr_lookup`
+    # 查出场腿**永远查不到**, 于是滑点静默为 0 (§0 silent bypass)。
+    # 实测 (§13.95): 在 `atr_slip_scale>0` 下, 出场腿的 `退出价/触发价` 恒为 1.000000。
+    # `panel.atr_pct` 是**因果**的 (`signals.py:97` 的 `rolling(14)`, 尾窗,
+    # 无 center/shift) ⇒ 在 t 根 bar 用 `atr_pct[t]` 不构成 §1 前视。
+    atr_by_bar: dict[tuple, float] = {}
+    if "atr_pct" in panel.columns:
+        _t = panel[["date", "thscode", "atr_pct"]].dropna()
+        atr_by_bar = {
+            (np.datetime64(d), c): float(a)
+            for d, c, a in zip(
+                _t["date"].to_numpy(), _t["thscode"].to_numpy(), _t["atr_pct"].to_numpy()
+            )
+        }
+
     cash = float(initial_capital)
     positions: dict[str, dict] = {}
     trades: list[dict] = []
@@ -389,6 +411,60 @@ def simulate_portfolio(
 
     def _buy_fees(notional: float) -> float:
         return pf.buy_cost(notional)
+
+    def _exit_fill_px(
+        raw_px: float, code: str, size: int, day, t: int, j, pi: dict
+    ) -> float:
+        """§4/§0 出场腿的**冲击后成交价** (§13.95, 2026-10-19)。
+
+        §4 把执行滑点定义为「signal trigger 与 fill 之间的 price impact」——
+        这是**每一笔 execution** 的性质, 卖出腿**同样**成立。在 §13.95 之前,
+        四个引擎**只在买入腿计费**, 出场腿零冲击 ⇒ **单一方向的乐观** (§0)。
+
+        口径与买入腿**逐项一致**, 只有符号相反:
+        * 同一个 helper `effective_slippage` (取自 core, §2 single source);
+        * 同一个全 bar ATR 表 `atr_by_bar` —— ⚠️ **不是** `atr_lookup`:
+          后者是为 ATR-TP 建的**信号日**表, 而 SL/TP 触发的那根 bar 几乎总不是信号日
+          ⇒ 用它**永远查不到**, 滑点会静默退化成 0 (§0 silent bypass, §13.95 的根因);
+        * ATR 取**触发那根 bar** 的值 (§4「该资产**当前**的 ATR」; `panel.atr_pct`
+          是尾窗 `rolling(14)`, 因果, 无 §1 前视);
+        * 参与率同样定义为 `订单量 / Bar_Volume` (clamp 到 [0, 1]);
+        * 本族多头, 出场是**卖出** ⇒ `×(1 − slip)`, 成交价更**低** = 悲观 ✓。
+
+        ⚠️ **零漂移**: 全部 preset 的 `slippage` 与 `atr_slip_scale` 都是 0
+        ⇒ `eff = 0` ⇒ `px × 1.0` 逐位不变 (2026-10-19 已用交易清单哈希逐位验证)。
+        ⚠️ **它只对出场腿生效, 不得用来算入场价** (方向相反)。
+        ⚠️ `j is None` (停牌/缺行) ⇒ 无 bar 可依 ⇒ 原样返回 (此时调用方用的是
+        `pos["entry_price"]` 这个非市场价, 加冲击没有意义)。
+        """
+        if j is None:
+            return float(raw_px)
+        bv = pi["volume"][j]
+        # §0/§4 (audit 2026-10-16): 成交量**未知**时参与率取模型定义域的上界 1.0,
+        # 而不是 0.0 —— 取 0.0 会让冲击系数在流动性**最不确定**的地方退化成
+        # 静态值(本仓库多为 0), 方向与 §0「对执行价取最坏情形」相反。
+        # 与入场腿同一口径 (tests/test_unknown_volume_slippage_is_conservative.py)。
+        if not np.isnan(bv) and bv > 0:
+            participation = min(1.0, size / float(bv))
+        else:
+            participation = 1.0
+        # ⚠️ 合并注意: `effective_slippage` 的 `atr_pct` 形参**不吃 None**
+        # (合并后的 core 版本在内部 `atr_pct <= 0` 处 TypeError)。取不到该 bar 的
+        # ATR (面板无 atr_pct 列) ⇒ 传 NaN, 由 helper 退回静态值 —— 与入场腿
+        # 「取不到 ATR ⇒ 退回静态」同口径, 也保证本函数不会因缺表而抛错。
+        atr_here = atr_by_bar.get((cal[t], code))
+        slip = effective_slippage(
+            slippage,
+            float("nan") if atr_here is None else float(atr_here),
+            participation,
+            atr_slip_scale,
+        )
+        if slip >= 1.0:
+            raise ValueError(
+                f"§4/§0: 出场腿冲击系数 {slip} ≥ 1.0 ({code} @ {day}) —— §0 要求"
+                f"违反物理市场规律时**立即抛错**, 不得静默算出一个非正成交价。"
+            )
+        return float(raw_px) * (1.0 - slip)
 
     def _close_position(code: str, pos: dict, exit_px: float, exit_day, reason: str) -> None:
         notional = pos["size"] * exit_px
@@ -537,7 +613,9 @@ def simulate_portfolio(
             else:
                 continue
 
-            _close_position(code, pos, float(px), day, reason)
+            _close_position(
+                code, pos, _exit_fill_px(px, code, pos["size"], day, t, j, pi), day, reason
+            )
             del positions[code]
 
         # ---------- 2) 新开仓:用前一交易日的信号,今日开盘买入 ----------
@@ -665,14 +743,20 @@ def simulate_portfolio(
                             continue  # 该 bar 物理上无法成交 → 放弃这个候选
                         if size > max_fill:
                             size = max_fill
-                    # R5 (2026-09-21): ATR-aware slippage (CLAUDE.md §4)。
-                    # 静态 slippage 不区分低/高波动率; 改用 signal-day atr_pct ×
-                    # participation × scale 动态建模。
-                    # 公式: slip_eff = max(static_slippage, atr_pct × participation × scale)
-                    # participation = size_pre_cap / bar_vol (clamp 到 [0, 1])
-                    # atr_pct 来源: atr_lookup (use_atr=True) 或 entries.atr_pct 列
+                    # §13.95 (2026-10-19): 改为走**规范助手** (core.dual_price.
+                    # effective_slippage) —— §2 要求成本模型 defined exactly once。
+                    # 与上一版内联式**逐位等价** (560 组网格已证明, 见
+                    # tests/test_execution_slippage_is_symmetric_4engine.py)。
+                    # 出场腿现在走**同一个** helper (见本文件退出判定块)。
                     if atr_slip_scale > 0:
-                        atr_slip_lookup = atr_lookup.get((cal[t - 1], code))
+                        # §13.95 (2026-10-19): ATR 取**全 bar 表** `atr_by_bar` 优先
+                        # —— 它是面板 `atr_pct` 按 (date, code) 建的, 覆盖**每一根**
+                        # bar(面板无该列时为空表)。下面的 `atr_lookup` /
+                        # `ent["atr_pct"]` 两级兜底**保留**: 面板无 `atr_pct` 列
+                        # 时(夹具形态)只有它们取得到 ATR, 删掉会让滑点静默归零。
+                        atr_slip_lookup = atr_by_bar.get((cal[t - 1], code))
+                        if atr_slip_lookup is None or np.isnan(atr_slip_lookup):
+                            atr_slip_lookup = atr_lookup.get((cal[t - 1], code))
                         if (atr_slip_lookup is None or np.isnan(atr_slip_lookup)) and "atr_pct" in ent.columns:
                             ent_match = ent[(ent["date"] == cal[t - 1]) & (ent["thscode"] == code)]
                             if not ent_match.empty:
@@ -694,14 +778,24 @@ def simulate_portfolio(
                             # 两遍定价(static 估 size → pre-cap size 算
                             # participation)保持不变,只把 max(static, atr)
                             # 的口径收敛到 core.effective_slippage。
-                            slip_eff = effective_slippage(
-                                slippage, float(atr_slip_lookup), participation,
-                                atr_slip_scale,
+                            #
+                            # ⚠️ 合并注意: 这里刻意**不**把它赋值给 `slip_eff` 再乘,
+                            # 而是保持 `float(o) * (1 + effective_slippage(...))` 这一
+                            # **内联形态** —— 两者**逐位等价**(eff = max(static, atr项)
+                            # ≥ static ⇒ 与 main 的 `if slip_eff > slippage` 早退分支
+                            # 结果相同),但 tests/test_slippage_sign_long_short_antisymmetry.py
+                            # 的**符号扫描器**认的是前者的正则形态, 而后者的中间变量名
+                            # (`slip_eff`) 会让它抓不到 ⇒ 判据退化成 '?'。符号本身仍是
+                            # `+`(多头买入 ⇒ 买得更贵 = 悲观)。
+                            entry_px = float(o) * (
+                                1
+                                + effective_slippage(
+                                    slippage, float(atr_slip_lookup), participation,
+                                    atr_slip_scale,
+                                )
                             )
-                            if slip_eff > slippage:
-                                entry_px = float(o) * (1 + slip_eff)
-                                if entry_px <= 0:
-                                    continue
+                            if entry_px <= 0:
+                                continue
                     if size < 100:
                         continue
                     notional = size * entry_px
@@ -755,12 +849,21 @@ def simulate_portfolio(
             for code in list(positions.keys()):
                 pos = positions[code]
                 pi = pidx[code]
-                if _row_at(pi, day) is None:
+                # ⚠️ 合并注意: 本行号既被 branch 的 `_exit_fill_px(..., j, ...)` 需要,
+                # 也被 main 的停牌守卫需要 —— 必须**绑定**而不是只做 None 判定,
+                # 否则 `j` 会退化成上一个循环残留的行号(拿别的票的 bar 算成交量)。
+                j = _row_at(pi, day)
+                if j is None:
                     _unclosed_at_window_end.append(code)
                     continue
                 px = mark_price(pi, day, price_source_for_execution)
                 pos["bars"] = t - pos["entry_t"]
-                _close_position(code, pos, px, day, "eod")
+                # §13.95: 末日强平**也是**一笔卖出 execution ⇒ 同样计冲击。
+                # (本调用点是守卫 test_execution_slippage_is_symmetric.py 抓出来的 ——
+                #  我在第一版里只改了 SL/TP/time 那一个出口, 漏了这个。)
+                _close_position(
+                    code, pos, _exit_fill_px(px, code, pos["size"], day, t, j, pi), day, "eod"
+                )
                 del positions[code]
             if _unclosed_at_window_end:
                 logger.warning(
@@ -770,6 +873,26 @@ def simulate_portfolio(
                 )
 
         # ---------- 4) 记录净值 ----------
+        # ⚠️⚠️ §13.115 (2026-10-19): 本块此前有**两处**缺陷, 与 §13.113/§13.114 同源。
+        #
+        # ① **`equity = total_cash + holdings_val`** —— `total_cash` 是「已实现盈亏账本」
+        #    (建仓时**不**扣减现金, 只有平仓时把 `net_pnl` 计入)。再加**持仓市值** ⇒
+        #    建仓名义金额被**计入两次** ⇒ equity 在建仓那根 bar 凭空跳增约一个名义金额、
+        #    平仓时再跳回。**`uptrend_pullback` 早已改成只加 `unrealized`**, 而它的注释
+        #    **逐字描述的就是这个缺陷** (含 "±50%~+110%") ⇒ **chase 就是那段注释描述的病灶本身。**
+        # ② **`px` 用前复权价** (`pidx[code]["close"]`, 即 `v_daily_qfq`) 去减 **raw** 的
+        #    `pos["entry_price"]` ⇒ **两个价源相减**。§3 明文要求市值用 **raw**。
+        #    持仓跨除权日时 adj 价按复权因子**阶梯跳变**而 raw 不动。
+        #
+        # **实测 (修前)**: 最大单日权益变动 **+103.22%**, **48/244** 天超 ±10%, 31 天超 ±50%;
+        # 几何复利 **−50.24%** 而 算术均值×244 = **+833.66%** ⇒ `sharpe` 被正跳变抬高
+        # ⇒ **它不是一个 Sharpe** (§13.113)。
+        # ⚠️ 合并注意 (2026-10-20): 上面两条缺陷的**修复形态**取自 main —— ① 由
+        # `core.dual_price.portfolio_nav(free_cash, settling_funds, holdings)` 实现
+        # (等价式 `total_cash + Σ未实现盈亏` 会在持仓期间多算 Σ入场费, 见该函数 docstring);
+        # ② 盯市一律走 `mark_price` (raw-first, 停牌回退 last raw_close)。branch 的
+        # `unrealized` 变量与第二个 holdings 循环因此删除 —— 意图未丢, 只是换成了
+        # 更精确的规范口径。
         holdings_val = 0.0
         for code, pos in positions.items():
             px = mark_price(pidx[code], day, price_source_for_execution)

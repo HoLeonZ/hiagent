@@ -2754,7 +2754,7 @@ sr = observed_sharpe / math.sqrt(trading_days_per_year)
 它的查询只是 `WHERE date <= ?`,于是**一只 2018 年就退市的票在 2026 年的窗口里
 依然在宇宙中**。§3 的 PIT Mandate 明确要求「Delisted assets must remain in the
 simulation **until their physical delisting date**」—— 即退市日**之后**必须剔除。
-数据集实测覆盖 **2016-09-02 .. 2026-09-30**,故这不是空谈。
+数据集实测覆盖 **2016-10-20 .. 2026-10-20**(2026-10-20 数据刷新后;原为 `2016-09-02 .. 2026-09-30`),故这不是空谈。
 
 两个方向合起来说明:同一个 §3 语义在三个引擎里各写一份,于是**一边把停牌当退市、
 另一边退市都不算**。

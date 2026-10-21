@@ -43,11 +43,16 @@ D. **Why this matters**:
      - Backtest shows phantom gains funded by phantom capital
      - Live trading would result in actual margin call
 
-E. **Coverage**:
+E. **Coverage** — ⚠️ §13.68 更正:
    - chase_up/portfolio.py:try_enter — should have cost > cash rejection
    - uptrend_pullback/portfolio.py:try_enter — should have cost > cash rejection
-   - short_reversal/portfolio.py:try_enter — should have cost > cash rejection
-   - cycle_price_action: uses cerebro (different pattern, skip)
+   - short_reversal/replay_strategy_v3.py (+ engine.py) — ✅ 真实引擎
+   - ~~short_reversal/portfolio.py:try_enter~~ — **该路径从来不存在** (短仓的引擎是
+     `replay_strategy_v3.py`), 它一直躺在扫描集里被 `if not path.exists(): continue`
+     **静默跳过**。已删, 并加了存在性断言。
+   - ~~cycle_price_action: uses cerebro (different pattern, skip)~~ —— **这句话是错的**:
+     `cycle_price_action/portfolio.py:170` 就是 `if cost > free_cash + epsilon:`,
+     且该类**有** `Portfolio`。⇒ 一整族**因此从未被这条 §2 守卫检查过**。已纳入。
 
 F. **AST detection strategy**:
    - Look for: comparison `cost > cash` (or `size * entry_price > cash`)
@@ -71,13 +76,23 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-PORTFOLIO_FILES = [
-    REPO_ROOT / "chase_up" / "portfolio.py",
-    REPO_ROOT / "uptrend_pullback" / "portfolio.py",
-    REPO_ROOT / "short_reversal" / "portfolio.py",
+# ⚠️ §13.68: 此处原为**手写清单**, 里面 `short_reversal/portfolio.py` **从来不存在**
+# (短仓引擎是 `replay_strategy_v3.py`), 于是被扫描器里的
+# `if not path.exists(): continue` **静默跳过**; 而 `cycle_price_action` **根本不在清单里**
+# (依据是文件头那句错的 "uses cerebro, skip") ⇒ **一整族从未被这条守卫检查过**。
+# ⇒ 改为**发现式**; 另有两条断言 (§13.66 的形状) 保证: 每个候选路径都存在、每个族都被扫到。
+PORTFOLIO_FILES = sorted(REPO_ROOT.glob("*/portfolio.py")) + [
     REPO_ROOT / "short_reversal" / "replay_strategy_v3.py",
     REPO_ROOT / "short_reversal" / "engine.py",
 ]
+
+# 族 → 该族的引擎入口 (用于"每个族都被扫到"的断言)
+FAMILY_ENGINES = {
+    "chase_up": ["chase_up/portfolio.py"],
+    "uptrend_pullback": ["uptrend_pullback/portfolio.py"],
+    "short_reversal": ["short_reversal/replay_strategy_v3.py", "short_reversal/engine.py"],
+    "cycle_price_action": ["cycle_price_action/portfolio.py"],
+}
 
 
 def _scan_cost_cash_rejection() -> dict[str, dict[str, object]]:
@@ -302,8 +317,10 @@ def test_short_reversal_rejects_cost_greater_than_cash() -> None:
     results = _scan_cost_cash_rejection()
 
     # Look across all short_reversal entry points
+    # ⚠️ §13.71: 这里原还留着 `"short_reversal/portfolio.py"` —— **那个路径不存在**
+    # (短仓引擎是 replay_strategy_v3.py)。它在下方 `if k in results` 被过滤掉 ⇒ **惰性**,
+    # 但正是 §13.66/§13.68 那个形状的残留文本。已删。
     short_keys = [
-        "short_reversal/portfolio.py",
         "short_reversal/replay_strategy_v3.py",
         "short_reversal/engine.py",
     ]
@@ -321,3 +338,48 @@ def test_short_reversal_rejects_cost_greater_than_cash() -> None:
         "short_reversal must enforce this even for SHORT positions "
         "(margin on short side still requires capital backing)."
     )
+
+
+# ---------------------------------------------------------------------------
+# §13.68: cycle_price_action —— 此前**一整族**被漏掉 (依据是文件头那句错的前提)
+# ---------------------------------------------------------------------------
+
+
+def test_cycle_price_action_rejects_cost_greater_than_cash() -> None:
+    """§2: cycle_price_action 必须有 `cost > cash → reject` 守卫。
+
+    ⚠️ §13.68: 本族此前**从未被这条守卫检查过** —— 文件头断言
+    "cycle_price_action: uses cerebro (different pattern, skip)", 而那句话是**错的**:
+    `cycle_price_action/portfolio.py` 里就有 `class Portfolio` (第 69 行),
+    且第 170 行就是 `if cost > free_cash + epsilon:`。
+    **一个未被核实的前提, 让一整族失明** (与 §13.66(c) 同源, 这是它在第二个文件里的复现)。
+    """
+    results = _scan_cost_cash_rejection()
+    cyc = results.get("cycle_price_action/portfolio.py", {})
+    assert cyc, "cycle_price_action/portfolio.py 不在扫描结果里 —— 发现式清单又漏了它"
+    assert cyc.get("has_rejection_guard"), (
+        "§2 NO-LEVERAGE GUARD MISSING: cycle_price_action/portfolio.py 没有 "
+        "`cost > cash → reject` 形态。\n"
+        "§2 Capital conservation: 每一笔持仓都必须有实物现金支撑。"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 反空转断言 (§13.66 的形状): 扫描清单本身必须是真的
+# ---------------------------------------------------------------------------
+
+
+def test_scanned_paths_all_exist() -> None:
+    """每个候选路径都必须存在 —— 不存在的会被 `if not path.exists(): continue`
+    **静默跳过**, 于是受它保护的那个族静默失明 (§13.68 的根因之一)。"""
+    missing = [str(p.relative_to(REPO_ROOT)) for p in PORTFOLIO_FILES if not p.exists()]
+    assert not missing, f"扫描清单里有不存在的路径: {missing} —— 它们会被静默跳过"
+
+
+def test_every_family_engine_is_scanned() -> None:
+    """**每个族的引擎入口**都必须真的在扫描清单里 (§13.68 的根因之二)。"""
+    scanned = {p.relative_to(REPO_ROOT).as_posix() for p in PORTFOLIO_FILES}
+    blind = {fam: [f for f in files if f not in scanned]
+             for fam, files in FAMILY_ENGINES.items()
+             if any(f not in scanned for f in files)}
+    assert not blind, f"这些族的引擎入口**不在**扫描清单里, 守卫对它们失明: {blind}"

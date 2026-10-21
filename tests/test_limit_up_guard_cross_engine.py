@@ -47,6 +47,8 @@ import importlib
 import re
 from pathlib import Path
 
+ROOT = Path(__file__).parent.parent
+
 
 # ---------------------------------------------------------------------------
 # RED: cycle_price_action has NO limit-up guard
@@ -194,19 +196,27 @@ def test_short_reversal_no_limit_up_imports() -> None:
 
 
 def test_chase_up_limit_up_guard_integrated() -> None:
-    """§4 PASS baseline: chase_up FULLY integrated limit-up guard.
+    """§4 PASS baseline: chase_up 的入场路径**确实**有涨停守卫 (性质, 不查写法)。
 
-    chase_up/portfolio.py:35 imports is_limit_up
-    chase_up/portfolio.py:54 defines LIMIT_UP_THRESHOLD = 0.098
-    chase_up/portfolio.py:384-385 — entry-time check
+    2026-10-19 (§13.28): 原实现断言 `"is_limit_up" in src` —— 而 chase_up 把判定
+    **内联**写的 (用模块级 `LIMIT_UP_THRESHOLD`), 从不 import `is_limit_up`。
+    ⇒ **守卫是集成了的, 只是形式不同** ⇒ 这条红灯是**形式钉桩**, 不是缺陷。
+    (同一个文件里 `test_cycle_price_action_no_limit_up_imports` 是**真 gap** ——
+     cycle 的 `try_enter` 完全没有守卫。**一真一假, 长得一样。**)
+
+    改为断言**性质**: 入场路径必须存在 `(open / prev_close - 1) >= <阈值>` 形态的
+    判定, 且阈值必须真被定义。
     """
-    src = Path("chase_up/portfolio.py").read_text(encoding="utf-8")
+    src = (ROOT / "chase_up" / "portfolio.py").read_text(encoding="utf-8")
 
-    assert "is_limit_up" in src, (
-        "Regression: chase_up/portfolio.py no longer imports is_limit_up"
+    assert re.search(r"^\s*LIMIT_UP_THRESHOLD\s*=\s*0?\.0*\d+", src, re.M), (
+        "Regression: chase_up/portfolio.py 不再定义 LIMIT_UP_THRESHOLD"
     )
-    assert "LIMIT_UP_THRESHOLD" in src, (
-        "Regression: chase_up/portfolio.py no longer defines LIMIT_UP_THRESHOLD"
+    assert re.search(
+        r"\)\s*>=\s*LIMIT_UP_THRESHOLD", src
+    ) or re.search(r"is_limit_up\s*\(", src), (
+        "Regression: chase_up/portfolio.py 的入场路径里找不到涨停判定 —— "
+        "守卫被删了 (无论写成内联比较还是调用 core.dual_price.is_limit_up)"
     )
 
 

@@ -179,6 +179,9 @@ class TestWalkforwardContractPinning:
             test_months=3,
             roll_months=3,
         )
+        # 2026-10-19 (§13.57): 本文件另一处 `windows` 断言 (上方 :54 附近) **有**
+        # `assert len(windows) >= 4`, 而这一处**没有** —— 同文件内的族内不对称。补上。
+        assert windows, "windows 不得为空 —— 否则下面的循环一次都不执行 (空转)"
         for w in windows:
             assert w.train_end < w.test_start, (
                 f"WFV out-of-sample 违反: train_end={w.train_end} ≥ test_start={w.test_start}"

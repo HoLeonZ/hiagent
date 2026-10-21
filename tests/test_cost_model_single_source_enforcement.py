@@ -372,6 +372,53 @@ def test_chase_up_uptrend_cost_constants_are_single_sourced() -> None:
     )
 
 
+def test_chase_up_uptrend_have_correct_commission_rate_values() -> None:
+    """§0/§3 PASS baseline: chase_up + uptrend 的**生效**默认值必须是规范佣金率。
+
+    2026-10-19 (§13.22): 原实现查的是**文本** ——
+        `if "commission_rate: float = 0.00025" not in source: 违规`
+    本轮把这两处的字面量上收为 `COMMISSION_RATE` (取自 `core.dual_price`) 之后,
+    这条立刻变红 —— **而值一个字节都没变**。
+    ⇒ 与 §13.13 同一条判据: **用"名字/写法"代替了"性质"**。
+      它钉的是"这行字长什么样", 而不是"生效的费率是多少"。
+
+    改为读**函数签名里解析后的默认值**, 直接与规范值比:
+    无论写成字面量、还是绑定到 core, 都得到正确判定;
+    而**只有真的改了值**才会红。
+
+    与上一条 `..._are_single_sourced` 是**两条互补**的断言, 故意不合并:
+    上一条问"常量是不是只有一个来源"(结构), 本条问"生效的费率是不是那个数"
+    (取值)。合并会让"值被改"和"常量被复制"两种故障共用一条消息, 无法分诊。
+    """
+    import inspect
+
+    from chase_up.portfolio import simulate_portfolio as chase_sp
+    from core.dual_price import COMMISSION_RATE
+    from uptrend_pullback.portfolio import simulate_portfolio as up_sp
+
+    targets = (
+        ("chase_up/portfolio.py", chase_sp),
+        ("uptrend_pullback/portfolio.py", up_sp),
+    )
+    violations: list[str] = []
+    for label, fn in targets:
+        # params.get 而非下标: 引擎侧若重命名/移除该参数, 应是**可读的 FAIL**
+        # 而不是 KeyError —— 后者读起来像"测试自己坏了"。
+        param = inspect.signature(fn).parameters.get("commission_rate")
+        if param is None:
+            violations.append(f"{label}: simulate_portfolio 已无 commission_rate 参数")
+            continue
+        if param.default != COMMISSION_RATE:
+            violations.append(
+                f"{label}: 生效默认 commission_rate={param.default!r} != canonical {COMMISSION_RATE!r}"
+            )
+
+    assert not violations, (
+        "Regression: chase_up/uptrend 的生效佣金率偏离规范值:\n"
+        + "\n".join(f"  {v}" for v in violations)
+    )
+
+
 def test_core_dual_price_exists_as_canonical_for_layout_and_limit_up() -> None:
     """§0/§3 PASS baseline: core/dual_price.py exists as canonical source.
 

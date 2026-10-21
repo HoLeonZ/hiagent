@@ -22,8 +22,31 @@ Per-engine impact:
 """
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
+
+
+def _fn_string_literals(src: str, fn_name: str) -> str | None:
+    """返回该函数体内**可执行的字符串字面量**的拼接。
+
+    ⚠️ §13.78: 原判据是 `re.search` 抓函数体的**文本**, 再做 `in` 判断 ⇒
+    **注释也算数**。注入实证: 把真正的 PIT 查询换成无过滤的旧查询, 只在**注释**里留下
+    `WHERE date <=` ⇒ `has_select=True, has_where_date=True` ⇒ 本文件 **7 passed 不响**。
+    ⇒ 改用 AST: 注释天然不在 `ast.Constant` 里, 所以"写在注释里"不再能冒充"写在 SQL 里"。
+
+    ⚠️ 已知的粗度 (登记, 未修): `has_select` 可能来自 `asof_date is None` 那条**旧分支**,
+    而 `has_where_date` 来自 PIT 分支 ⇒ 两串**来自不同分支**也能同时成立。
+    要做成"逐分支"需要按 `if/else` 切子树, 属未做 (见 §13.78)。
+    """
+    tree = ast.parse(src)
+    for n in ast.walk(tree):
+        if isinstance(n, ast.FunctionDef) and n.name == fn_name:
+            return "\n".join(
+                x.value for x in ast.walk(n)
+                if isinstance(x, ast.Constant) and isinstance(x.value, str)
+            )
+    return None
 
 def test_chase_up_load_universe_accepts_asof_date() -> None:
     """§3 RED: chase_up.load_universe must accept asof_date parameter.
@@ -83,13 +106,11 @@ def test_chase_up_all_thscodes_has_no_date_filter() -> None:
     mod = importlib.import_module("chase_up.universe")
     src = Path(mod.__file__).read_text(encoding="utf-8")
 
-    m = re.search(
-        r"def _all_thscodes\(.*?\):.*?(?=\ndef |\Z)",
-        src,
-        re.DOTALL,
-    )
-    assert m is not None, "Could not find _all_thscodes function in chase_up/universe.py"
-    fn_body = m.group(0)
+    # ⚠️ §13.78: 改用 **AST 取可执行字符串字面量** —— 注释不再算数。
+    # (原判据是 re.search 抓函数体**文本**再 in 判断; 注入实证: 真正的 PIT 过滤拿掉、
+    #  只在注释里留 `WHERE date <=` ⇒ 仍然 7 passed。)
+    fn_body = _fn_string_literals(src, "_all_thscodes")
+    assert fn_body is not None, "Could not find _all_thscodes function (AST)"
     has_select = "SELECT DISTINCT thscode" in fn_body
     has_where_date = "WHERE date <=" in fn_body or "WHERE date <" in fn_body
 
@@ -116,13 +137,11 @@ def test_uptrend_pullback_all_thscodes_has_no_date_filter() -> None:
     mod = importlib.import_module("uptrend_pullback.universe")
     src = Path(mod.__file__).read_text(encoding="utf-8")
 
-    m = re.search(
-        r"def _all_thscodes\(.*?\):.*?(?=\ndef |\Z)",
-        src,
-        re.DOTALL,
-    )
-    assert m is not None, "Could not find _all_thscodes"
-    fn_body = m.group(0)
+    # ⚠️ §13.78: 改用 **AST 取可执行字符串字面量** —— 注释不再算数。
+    # (原判据是 re.search 抓函数体**文本**再 in 判断; 注入实证: 真正的 PIT 过滤拿掉、
+    #  只在注释里留 `WHERE date <=` ⇒ 仍然 7 passed。)
+    fn_body = _fn_string_literals(src, "_all_thscodes")
+    assert fn_body is not None, "Could not find _all_thscodes function (AST)"
     has_select = "SELECT DISTINCT thscode" in fn_body
     has_where_date = "WHERE date <=" in fn_body or "WHERE date <" in fn_body
 

@@ -11,9 +11,16 @@
   4. 算每类的 PnL 贡献（sum net × size × entry_price 的近似 = 仓位现金 = 实际 nav）
   5. 估算去污染后 CAGR
 
-PnL 模型：cerebro broker 不记账,strategy 用 NAV-based 记账:
-  cash_final = cash_initial + sum_over_trades( net_per_share × entry_price × size )
-  net_per_share = (entry - exit)/entry - commission_rate
+PnL 模型：cerebro broker 不记账, strategy 用 NAV-based 记账:
+  cash_final = cash_initial + sum_over_trades( notional_pnl )        ← **精确**
+  notional_pnl = canonical 记录里的 `net_pnl` (**双边费用后**的净额)
+
+⚠️ 2026-10-19 (§13.52 / §13.62): 本文件**曾经**写的是
+    cash_final = cash_initial + sum_over_trades( net_per_share × entry_price × size )
+    net_per_share = (entry - exit)/entry - commission_rate
+**那两行都已过期** —— `TraceStrategy` 不再自己算 net, 而是从 canonical 记录取
+`net_pnl` / `net_return` (§13.52 把两个覆写从"分叉"改成了"包装")。
+`net_return` 的分母含 `buy_commission` ⇒ 上面那个**乘法恒等式只是近似**; 精确的是用 `notional_pnl`。
 """
 from __future__ import annotations
 
@@ -57,6 +64,7 @@ class TraceStrategy(Phase3V3Strategy):
     def __init__(self):
         super().__init__()
         self.traces: list[dict] = []
+        self._entry_meta: dict[str, dict] = {}
 
     # §6 (audit, 2026-10-15): 两个 override 改为**薄包装**，委托生产实现，
     # 只做观测。
@@ -75,9 +83,15 @@ class TraceStrategy(Phase3V3Strategy):
     # 现在改为委托，harness 与生产同源。
 
     def _fill_pending_entries(self) -> None:
+        """**包装**父类: 先让它做真正的工作 (含结算/保证金状态机), 再记录新开的仓。
+
+        2026-10-19 (§13.52): 此前这里是一份**父类逻辑的分叉** —— 而且用的是**早期的
+        sizing 公式** `self.cash * position_fraction`, 没有 §2 的保证金闸门。
+        它绕开父类状态机 ⇒ `locked_margin` 恒为 0 ⇒ 父类的 `_charge_margin_fees` 一查就抛。
+        **分叉产出的 trace 描述的不是"产出那些 metrics 的那个引擎"。** 改为包装。
+        """
         before = set(self._holds)
         super()._fill_pending_entries()
-        self._entry_meta = getattr(self, "_entry_meta", {})
         for code in set(self._holds) - before:
             pos = self._holds[code]
             self._entry_meta[code] = {
@@ -88,52 +102,39 @@ class TraceStrategy(Phase3V3Strategy):
             }
 
     def _close(self, d, price: float, reason: str) -> None:
-        code = d._name
-        # 生产实现会 pop 掉持仓，故先取快照
-        pos = dict(self._holds.get(code, {}))
+        """**包装**父类: 先出场, 再从父类刚写下的 canonical 记录里取字段做 trace。
+
+        沿用 §13.51 的诊断: **不从父类复制一份逻辑**, 只**观察**它的结果。
+
+        ⚠️ 两个字段的**口径随本次修复而变**(这是有意的, 因为要让 trace 描述当前引擎):
+          * `net_per_share` 现在取 canonical 的 `net_return` (而不是分叉里自算的 `net`);
+          * `notional_pnl` 现在取 canonical 的 `net_pnl`。
+        """
+        n0 = len(self.trades)
         super()._close(d, price, reason)
-        if not pos:
-            return
-        ep = float(pos["entry_price"])
-        size = float(pos["size"])
-        exit_px = float(price)
-        pnl = (ep - exit_px) * size
-        exit_fee = max(self.p.min_commission, size * exit_px * self.p.commission_rate)
-        entry_fee = float(pos.get("entry_fee", 0.0))
-        # Round 24 (canonical Round 19 同款): 总费率含 exit commission 与
-        # stamp_duty，避免系统性高估每笔 net。
-        gross_pct = (ep - exit_px) / ep
-        total_fee_ratio = (
-            (self.p.commission_rate + self.p.stamp_duty_rate)
-            + self.p.commission_rate * (exit_px / ep)
-        )
-        net = gross_pct - total_fee_ratio
-        try:
-            exit_date = pd.Timestamp(d.datetime.date(0)).date()
-        except (ValueError, TypeError, AttributeError):
-            exit_date = None
-        meta = getattr(self, "_entry_meta", {}).pop(code, {})
-        entry_date = meta.get("entry_date")
-        self.traces.append(
-            {
-                "thscode": code,
-                "entry_bar": meta.get("entry_bar", pos.get("entry_bar")),
-                "entry_date": (
-                    entry_date.isoformat() if entry_date is not None else None
-                ),
-                "entry_price": ep,
-                "exit_bar": len(self),
-                "exit_date": exit_date.isoformat() if exit_date is not None else None,
-                "exit_price": exit_px,
-                "exit_reason": reason,
-                "size": size,
-                "hold_days": len(self) - int(pos.get("entry_bar", len(self))),
-                "net_per_share": float(net),
-                # metric 字段（非 cash walk）：round-trip 全成本摊到该笔，
-                # 使 trace 报告的窗口内外 P&L 口径真实。
-                "notional_pnl": float(pnl - exit_fee - entry_fee),
-            }
-        )
+        if len(self.trades) == n0:
+            return                      # 父类没有产出记录 (例如被拒)
+        t = self.trades[-1]
+        meta = self._entry_meta.pop(d._name, {})
+
+        def _iso(v):
+            return v.isoformat() if hasattr(v, "isoformat") else v
+
+        ep_ = t.get("exit_price")
+        self.traces.append({
+            "thscode": d._name,
+            "entry_bar": meta.get("entry_bar"),
+            "entry_date": _iso(meta.get("entry_date")),
+            "entry_price": t.get("entry_price"),
+            "exit_bar": len(self),
+            "exit_date": _iso(t.get("exit_date")),
+            "exit_price": float(ep_) if ep_ is not None else None,
+            "exit_reason": t.get("exit_reason"),
+            "size": t.get("size"),
+            "hold_days": t.get("hold_days"),
+            "net_per_share": float(t.get("net_return") or 0.0),
+            "notional_pnl": float(t.get("net_pnl") or 0.0),
+        })
 
 
 # -------------------------------------------------------------------- run

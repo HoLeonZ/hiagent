@@ -245,38 +245,67 @@ def atr_slippage(
     - participation: 实际下单量 / Bar_Volume ∈ [0, 1]
     - scale: 策略级参数, 默认 1.0; V33 baseline parity 时 = 0 → 无 slippage。
 
-    用于 chase_up (long): entry_price = raw_open × (1 + slip)
-    用于 short_reversal (short): entry_price = raw_open × (1 + slip)
-        (做空方向 slip 上调 sell price = 收到更少 sale proceeds = 悲观)
+    ⚠️⚠️ **2026-10-19 (§13.120): 此处原文写「用于 chase_up (long) / 用于 short_reversal (short)」
+    —— 两句都**不成立**, 出于一个精确扫描 (`tools/scan_unused_core_imports.py`)。**
+    * `chase_up/portfolio.py` / `uptrend_pullback/portfolio.py` **根本不 import 本函数**
+      —— 它们把同一公式**内联重写**了 (见 §13.95);
+    * `short_reversal/replay_strategy_v3.py` **import 了它 (别名 `dual_atr_slippage`) 却从不调用**
+      (§13.95)。⇒ **本函数在写下这句话时, 全仓零个真实消费者。**
+    ⇒ 真正两条腿都用的是 `effective_slippage` (§13.95 新增, 它负责"与静态值取较大者")。
+    **本函数今天仍无消费者** —— 保留是因为它是 ATR 项的**唯一公式来源**,
+    但**不要按这段话去找它的调用者。**
+
+    **符号 (多头 / 空头必须相反 —— 这是 §4/§0 的铁律)**:
+    * **买入腿** (任何族的多头 entry): `entry_price = raw_open × (1 + slip)` —— 更贵 = 悲观 ✓
+    * **卖出腿** (空头 entry, 或多头出场): `price = raw_open × (1 − slip)` —— 更低 = 悲观 ✓
+    ⚠️ 本函数**只管 ATR 项的大小**, 不管符号; 符号由**调用方**按腿的方向决定。
+    (2026-10-19 §13.120 更正: 这句话我上一版改写时**删掉过**, 而
+     `tests/test_slippage_sign_long_short_antisymmetry.py` 正是断言它在这里 ——
+     **又一次"改注释踩响一条文本钉桩"**, 与 §13.64 同形。)
+
+    ⚠️ 2026-10-17 修正: 此处原文写 `short: × (1 + slip)` 并注为"悲观",
+    是**自相矛盾**的 —— 上调卖出价是收到**更多**。short 的 entry 是卖出,
+    取负号才悲观。该分支当时因 `atr_slip_scale=0` 全部 preset 而不可达,
+    故修正无结果漂移; 详见 short_reversal/replay_strategy_v3.py 的对应注释。
     """
     if atr_pct <= 0 or participation <= 0 or scale <= 0:
         return 0.0
     return atr_pct * participation * scale
 
-
 def effective_slippage(
-    static_slippage: float,
-    atr_pct: float,
-    participation: float,
-    scale: float,
+    static_slip: float = 0.0,
+    atr_pct: float | None = None,
+    participation: float = 0.0,
+    scale: float = 0.0,
 ) -> float:
-    """§4 统一滑点策略 —— **唯一口径**。audit P1-B (2026-10-15)。
+    """一笔成交的**有效**冲击系数 —— **entry 与 exit 都必须走这里** (§4, §13.95)。
 
-        slip_eff = max(static_slippage, atr_pct × participation × scale)
+    规则: ``eff = max(static_slip, atr_pct × participation × scale)``
 
-    背景:四个引擎各自内联重算过这一行(且 `short_reversal` 漏了与 static 取
-    max 的分支),而本模块已提供的 `atr_slippage()` **从未被任何引擎调用** ——
-    条款"已实现但不可达",§6 单源形同虚设。现在四处一律经本函数取滑点。
+    ## 为什么需要它 (§13.95)
+    §4 把执行滑点定义为「signal trigger 与 fill 之间的 price impact」——
+    这是**每一笔 execution** 的性质, **买入腿与卖出腿同样成立**。
+    但在 §13.95 之前, 这条规则在四个引擎里**各写了一遍, 且全部只作用于买入腿**
+    ⇒ 卖出腿零冲击 = **单一方向的乐观** (§0 Pessimistic Default)。
+    把「取较大者」收成唯一一处, 是为了让「两条腿用同一个模型」**可被断言**。
 
-    与既有行为逐点等价:
-      - chase_up / uptrend_pullback:两遍定价(先用 static 估 size_pre_cap,
-        再用 pre-cap size 算 participation),等价于 max(static, atr)。
-      - cycle_price_action:`max(static_slip, atr)`。
-      - short_reversal:无 static 滑点参数,等价于 max(0, atr) = atr。
-    `atr_slippage()` 在任一输入 ≤ 0 时返回 0.0,故退化情形与旧逻辑一致。
+    ## 与 `atr_slippage` 的分工
+    `atr_slippage` 只算 ATR 那一项; 本函数负责「与静态值**取较大者**」。
+    静态 `slippage` 是历史遗留的 flat 项: §4 禁止把它当**唯一**模型,
+    但作为下限保留 (取 max 而不是相加 —— 相加会把历史 flat 值叠加进去)。
+
+    ## ⚠️ NaN / None 语义 (这一条是照抄内联式最容易写错的地方)
+    `atr_pct` 为 ``None`` / NaN / ≤0 ⇒ 退回 `static_slip`, **不参与 max**。
+    旧的内联写法靠 ``not np.isnan(...)`` 显式跳过; 若改写成裸 ``max()``,
+    NaN 虽然因 ``NaN > x`` 恒假而"碰巧"取到 x, 语义已经坏了 ——
+    且 `atr_pct <= 0` 对 NaN 也是 False, 会**静默传播**。故此处显式判 。
     """
-    return max(float(static_slippage), atr_slippage(atr_pct, participation, scale))
-
+    if atr_pct is None or participation <= 0 or scale <= 0:
+        return float(static_slip)
+    atr = float(atr_pct)
+    if atr != atr or atr <= 0:  # NaN 或非正 ⇒ 该腿退回静态值
+        return float(static_slip)
+    return max(float(static_slip), atr * float(participation) * float(scale))
 
 
 class SlippagePolicyUndeclared(ValueError):
@@ -506,6 +535,7 @@ __all__ = [
     "extract_execution_bar",
     "is_limit_up",
     "atr_slippage",
+    "effective_slippage",
     "PRICE_SOURCE_RAW",
     "PRICE_SOURCE_ADJ",
     "validate_price_source",

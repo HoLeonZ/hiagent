@@ -259,7 +259,7 @@ def test_p8_a_universe_snapshot_at_decision_date_excludes_recent_ipo():
               + list(pd.date_range("2024-01-01", periods=100, freq="B")),
         "amount": [1e8] * 130,
     })
-    eligible = apply_liquidity_filter(df, min_avg_turnover=5e7, lookback=60)
+    eligible = apply_liquidity_filter(df, min_avg_turnover=5e7, min_history_days=60)
     assert "600000.SH" not in eligible   # has < lookback history
     assert "000001.SZ" in eligible
 
@@ -267,7 +267,7 @@ def test_p8_a_universe_snapshot_at_decision_date_excludes_recent_ipo():
 def test_p8_b_universe_skips_non_main_board():
     """apply_liquidity_filter alone does NOT exclude non-main-board;
     composite universe must intersect with is_main_board."""
-    # Default lookback=60 — need ≥60 unique dates per thscode. Use three
+    # Default min_history_days=60 — need ≥60 unique dates per thscode. Use three
     # distinct date ranges so each stock has its own 60-bar history.
     df = pd.DataFrame({
         "thscode": (["300750.SZ"] * 60) + (["688981.SH"] * 60) + (["600000.SH"] * 60),

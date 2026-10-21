@@ -128,48 +128,59 @@ RANDOM_FUNCTIONS = (
 )
 
 
-def _is_np_random_leaf(call: ast.Call) -> bool:
-    """Check if Call is np.random.X(...) where X is a random function."""
+def _collect_random_aliases(tree: ast.AST) -> tuple[set[str], set[str]]:
+    """按**该文件的导入**收集别名 → (绑定 numpy 的名字, 绑定 numpy.random / random 的名字)。
+
+    ⚠️ §13.72: 原判据把接收者写死成**字面 `np`** 与**字面 `random`** ⇒
+    把 `import numpy as np` 换成 `import numpy` + `numpy.random.choice(...)` 就**完全失明**
+    (注入实证: 前者 RED, 后者 4 passed)。这与 §13.66/§13.68/§13.70/§13.71 同族 ——
+    **性质被查成了"某一种拼法"。** seed 那一侧同理 (拼法变了 ⇒ 误判成"没 seed")。
+    """
+    np_names: set[str] = set()
+    rd_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                if a.name == "numpy":
+                    np_names.add(a.asname or "numpy")
+                elif a.name in ("numpy.random", "random"):
+                    rd_names.add(a.asname or "random")
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == "numpy":
+                for a in node.names:
+                    if a.name == "random":
+                        rd_names.add(a.asname or "random")
+                    elif a.name == "numpy":
+                        np_names.add(a.asname or "numpy")
+            elif node.module == "random":
+                for a in node.names:
+                    rd_names.add(a.asname or a.name)
+    return np_names, rd_names
+
+
+def _is_random_leaf(call: ast.Call, np_names: set[str], rd_names: set[str]) -> bool:
+    """是否是一次随机抽样调用 —— **别名感知**的 `X.f(...)` 或 `Y.random.f(...)`。"""
     func = call.func
-    if isinstance(func, ast.Attribute):
-        # Pattern: np.random.choice / np.random.randint / ...
-        if func.attr in RANDOM_FUNCTIONS:
-            # Verify receiver is np.random (Attribute chain: np → random)
-            receiver = func.value
-            if isinstance(receiver, ast.Attribute):
-                if receiver.attr == "random":
-                    if isinstance(receiver.value, ast.Name):
-                        if receiver.value.id == "np":
-                            return True
+    if not isinstance(func, ast.Attribute) or func.attr not in RANDOM_FUNCTIONS:
+        return False
+    recv = func.value
+    if isinstance(recv, ast.Name):                      # random.choice(...) / R.choice(...)
+        return recv.id in rd_names
+    if isinstance(recv, ast.Attribute) and recv.attr == "random":
+        return isinstance(recv.value, ast.Name) and recv.value.id in np_names
     return False
 
 
-def _is_random_leaf(call: ast.Call) -> bool:
-    """Check if Call is random.X(...) (stdlib random module)."""
+def _is_seed_call(call: ast.Call, np_names: set[str], rd_names: set[str]) -> bool:
+    """是否是 `X.seed(...)` (X 为 numpy / numpy.random / random 的任一别名)。"""
     func = call.func
-    if isinstance(func, ast.Attribute):
-        if func.attr in RANDOM_FUNCTIONS:
-            receiver = func.value
-            if isinstance(receiver, ast.Name):
-                if receiver.id == "random":
-                    return True
-    return False
-
-
-def _is_seed_call(call: ast.Call) -> bool:
-    """Check if Call is np.random.seed(N) or random.seed(N)."""
-    func = call.func
-    if isinstance(func, ast.Attribute):
-        if func.attr == "seed":
-            receiver = func.value
-            if isinstance(receiver, ast.Attribute):
-                if receiver.attr == "random":
-                    if isinstance(receiver.value, ast.Name):
-                        if receiver.value.id == "np":
-                            return True
-            if isinstance(receiver, ast.Name):
-                if receiver.id == "random":
-                    return True
+    if not isinstance(func, ast.Attribute) or func.attr != "seed":
+        return False
+    recv = func.value
+    if isinstance(recv, ast.Name):
+        return recv.id in rd_names or recv.id in np_names
+    if isinstance(recv, ast.Attribute) and recv.attr == "random":
+        return isinstance(recv.value, ast.Name) and recv.value.id in np_names
     return False
 
 
@@ -194,6 +205,8 @@ def _scan_random_calls() -> dict[str, list[tuple[str, int, str]]]:
             except (SyntaxError, OSError, UnicodeDecodeError):
                 continue
 
+            np_names, rd_names = _collect_random_aliases(tree)
+
             # First pass: collect seed calls (module-level + nested)
             seed_lines: set[int] = set()
             random_call_lines: list[tuple[int, str]] = []
@@ -202,9 +215,9 @@ def _scan_random_calls() -> dict[str, list[tuple[str, int, str]]]:
                 if not hasattr(node, "lineno"):
                     continue
                 if isinstance(node, ast.Call):
-                    if _is_seed_call(node):
+                    if _is_seed_call(node, np_names, rd_names):
                         seed_lines.add(node.lineno)
-                    elif _is_np_random_leaf(node) or _is_random_leaf(node):
+                    elif _is_random_leaf(node, np_names, rd_names):
                         snippet = (
                             source_lines[node.lineno - 1].strip()
                             if node.lineno <= len(source_lines)

@@ -63,7 +63,10 @@ def main() -> None:
 
     # ---------- 一次性加载 + 计算 entries ----------
     print(f"加载 panel + 算 entries...", flush=True)
-    universe = set(load_universe(p["universe"], DB_PATH))
+    # §3 PIT Mandate (§13.123): 本脚本**自己**建 panel 再直接喂 simulate_portfolio,
+    # 所以引擎不会替它取 PIT universe —— 调用方必须自己按**窗口起点**做。
+    # 此前是无 `asof_date` 的 post-hoc 全集 (survivorship-biased)。
+    universe = set(load_universe(p["universe"], DB_PATH, asof_date=START))
     panel = load_panel(DB_PATH, START, END, universe=universe)
     panel_ind = compute_indicators(panel)
     reg = compute_regime(panel_ind, **p["regime"]) if p.get("regime") else None

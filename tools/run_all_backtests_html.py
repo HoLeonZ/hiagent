@@ -618,24 +618,67 @@ def _render_cross_strategy(report: dict[str, Any]) -> str:
 
     return (
         "<section class='strategy'><h2>🏆 跨策略排名(TOP-8)</h2>"
-        "<p class='desc'>⚠ 跨策略可比性(2026-10-15 更正):"
-        "① short_reversal 的 CAGR 量级不同(数千%),CAGR/Sharpe 榜会被其包揽;"
-        "② <b>Sharpe 在三个引擎里不是同一个量</b> —— chase_up / uptrend_pullback 是"
+        "<p class='desc'>⛔ <b>本榜不具备跨策略可比性</b> (§13.13/§13.90, 2026-10-15 更正):"
+        "① <code>cagr</code>/<code>sharpe</code>/<code>max_dd</code>/<code>win_rate</code>"
+        " 四个量在四族<b>定义不同</b>;"
+        "② short_reversal 的 CAGR 量级不同(数千%),CAGR/Sharpe 榜会被其包揽;"
+        "③ <b>Sharpe 在三个引擎里不是同一个量</b> —— chase_up / uptrend_pullback 是"
         "<code>daily_returns_annualized</code>(日收益年化),short_reversal 是"
         "<code>per_trade_ratio_approx</code>(逐笔比率);"
         "故「按 Sharpe 排序」<b>跨策略没有意义</b>,只在同一策略内可比"
         "(每行的 Sharpe 格上已直接渲染量纲标注,悬停可见 <code>sharpe_kind</code> 全名);"
-        "③ cycle_price_action 的 Sharpe / CAGR / max_dd 是<b>无法定义</b>"
-        "(横截面研究,按每股独立账户),显示为 — 且不参与排名。"
-        "回撤榜(max_dd 降序,回撤最小在前)在策略间可比性最好。"
+        "④ 年化常数 chase/uptrend=<b>243</b>, short/cycle=<b>252</b> ⇒ 同一份日收益序列的"
+        " sharpe 相差 <b>1.84%</b>,按 sharpe 排序时 252 的两族被系统性抬高;"
+        "⑤ cycle_price_action 的 Sharpe / CAGR / max_dd 是<b>无法定义</b>"
+        "(横截面研究,按每股独立账户),显示为 — 且不参与排名;"
+        "⑥ 回撤榜(<code>max_dd</code> 降序,回撤最小在前)在这几族间口径一致 ——"
+        " chase_up / uptrend_pullback / short_reversal 同为 <code>nav_mtm</code>(净值盯市),"
+        "cycle 为 <code>realized_no_mtm</code>(已实现、不盯市);"
+        "⚠️ 但这<b>不是</b>「四族可比」: short_reversal 的 v63 ensemble 路径取最坏子窗。"
+        "原写「max_dd <b>升序</b>榜更有跨策略可比性」的一句是错的 —— max_dd 是负数,"
+        "升序会把回撤<b>最大</b>的排在 #1(榜单方向已更正为降序)。"
+        "逐族口径见下表与每族 metrics 里的 <code>metrics_basis</code> 自披露。"
         "</p>"
-        "<h3 style='margin:14px 0 4px;font-size:14px;color:#475569;'>按 CAGR 排序</h3>"
+        # §13.90: 口径**从引擎导入**, 不再手打 —— 这段表格就是四族的 `metrics_basis`。
+        + _basis_table_html()
+        + "<h3 style='margin:14px 0 4px;font-size:14px;color:#475569;'>按 CAGR 排序</h3>"
         + cagr_top +
         "<h3 style='margin:18px 0 4px;font-size:14px;color:#475569;'>按 Sharpe 排序</h3>"
         + sharpe_top +
         "<h3 style='margin:18px 0 4px;font-size:14px;color:#475569;'>按 max_dd (降序,回撤最小在前) 排序</h3>"
         + dd_best +
         "</section>"
+    )
+
+
+# §13.90: 口径自披露 —— 直接从各族引擎导入, **不手打**
+from chase_up.backtest import METRICS_BASIS as _BASIS_CHASE            # noqa: E402
+from uptrend_pullback.backtest import METRICS_BASIS as _BASIS_UPTREND  # noqa: E402
+from short_reversal.engine import METRICS_BASIS as _BASIS_SHORT        # noqa: E402
+from cycle_price_action.allocator import METRICS_BASIS as _BASIS_CYCLE  # noqa: E402
+
+_FAMILY_BASIS = {
+    "chase_up": _BASIS_CHASE,
+    "uptrend_pullback": _BASIS_UPTREND,
+    "short_reversal": _BASIS_SHORT,
+    "cycle_price_action": _BASIS_CYCLE,
+}
+
+
+def _basis_table_html() -> str:
+    """把四族**自己报出的**口径渲染成一张小表。"""
+    rows = []
+    keys = sorted({k for b in _FAMILY_BASIS.values() for k in b})
+    head = "".join(f"<th style='padding:2px 8px;'>{k}</th>" for k in keys)
+    for fam in ("chase_up", "uptrend_pullback", "short_reversal", "cycle_price_action"):
+        b = _FAMILY_BASIS[fam]
+        cells = "".join(
+            f"<td style='padding:2px 8px;'>{b.get(k, '—')}</td>" for k in keys
+        )
+        rows.append(f"<tr><td style='padding:2px 8px;'><b>{fam}</b></td>{cells}</tr>")
+    return (
+        "<table style='border-collapse:collapse;font-size:12px;margin:6px 0;'>"
+        f"<tr><th style='padding:2px 8px;'>族</th>{head}</tr>" + "".join(rows) + "</table>"
     )
 
 

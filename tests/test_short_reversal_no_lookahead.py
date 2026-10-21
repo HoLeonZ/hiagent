@@ -108,23 +108,36 @@ def test_no_post_window_entries(trace_report):
     ENTRY 是真正的 look-ahead。代码当前通过 indicator NaN gate 隐式拒绝;
     此测试固化这一不变量。
     """
-    # 计算 entry_date > end 的 trades
+    # ================= 2026-10-19 (§13.53) 重写 =================
+    # 本测试此前**什么都没断言**: 它 (i) 重复了上一条测试的
+    # `pre_window_entry_trades_count == 0`, 并 (ii) 断言 `post_exits >= 0` —— **恒真**,
+    # 注释自己都写着"仅记录"。而它**已经算出了** `post_window_entries` 这个列表**却从未用它**。
+    #
+    # ⚠️ 更关键的是: 它的 docstring 说 "post-window ENTRY 是真正的 look-ahead, 代码当前通过
+    # indicator NaN gate **隐式拒绝**" —— **那句话已经过时**。
+    # 引擎的实测期**本来就可以显著偏离请求窗**(见 `engine.py::_evaluated_days` 的 docstring:
+    # 请求 `2018-01-01..2020-12-31` 实测成 `2019-02-18..2021-03-01`), 而面板的
+    # `PANEL_POST_BUFFER_DAYS=60` 正是为在途平仓而设的 (见 `_panel_loader.py:80`)。
+    # ⇒ **实测确认存在 post-window entry** (本窗 2 笔: end+9 天与 end+12 天) —— 那是**已披露的
+    # 设计后果**, 不是未察觉的越界。
+    #
+    # ⇒ 改为钉住**当前**契约: post-window entry **必须落在声明的后置缓冲之内**。
+    from short_reversal._panel_loader import PANEL_POST_BUFFER_DAYS
+
     end_dt = pd.Timestamp(END).date()
+    buffer_end = end_dt + pd.Timedelta(days=PANEL_POST_BUFFER_DAYS)
     post_window_entries = [
         t for t in trace_report.get("post_window_exit_trades_samples", [])
         if t.get("entry_date") and pd.Timestamp(t["entry_date"]).date() > end_dt
     ]
-    # 完整 traces 在 summary 里被截断,所以检查 raw count 与 post-exit 数量
-    # post-window exits 是允许的,但应该全部来自 in-window entry
-    post_exits = trace_report["post_window_exit_trades_count"]
-    # 如果结构上 post-window entries 出现,pre_window_entry_trades_count 会 > 0
-    # (因为 entry_date > end 仍晚于 in-window entry 检查)
-    assert trace_report["pre_window_entry_trades_count"] == 0, (
-        "若 pre_window_entry > 0,说明有 entry 落在 [end+1, panel_end],"
-        "即 post-window entry 污染"
+    beyond = [
+        t for t in post_window_entries
+        if pd.Timestamp(t["entry_date"]).date() > buffer_end
+    ]
+    assert not beyond, (
+        f"{len(beyond)} 笔 entry 落在**后置缓冲之外** (> end + {PANEL_POST_BUFFER_DAYS} 天) —— "
+        f"这超出了「仅为在途平仓而设」的面板范围。样本: {beyond[:3]}"
     )
-    # 这个数字可能 > 0 (允许),但应该全部来自 in-window entry
-    assert post_exits >= 0  # 仅记录;post-exit 是 in-flight close 约定
 
 
 # ---------- LAHEAD-002 quantitative proof: DELETED ---------------------------
@@ -400,13 +413,8 @@ def test_nav_gate_rejects_new_short_when_cash_below_threshold():
         f"NAV-gate 应触发 active close, 但 exit_reason={trades[0]['exit_reason']!r}"
     )
 
-def test_volume_participation_cap_enforced_for_short_entry():
-    """R8 (2026-09-21): 做空单笔成交量必须 ≤ Bar_Volume × MAX_VOL_PARTICIPATION (CLAUDE.md §4)。
-
-    复刻"小票砸穿"场景: bar volume = 1000 (10 lots), all-in @ NAV=100k → 理论可
-    short 10000 股, 但 vol cap = 100 股 (1 lot) 才是 max_fill。
-    """
-    from short_reversal.replay_strategy_v3 import MAX_VOL_PARTICIPATION
+def _run_vol_cap_probe(volume: float, max_hold: int = 5) -> list[dict]:
+    """跑一次"小票砸穿"场景, 返回**已平仓**的成交。`volume` 控制 bar 成交量 ⇒ 控制 §4 上限。"""
     n = 210
     dates = pd.date_range("2025-01-01", periods=n, freq="B")
     rows = []
@@ -416,32 +424,26 @@ def test_volume_participation_cap_enforced_for_short_entry():
         elif i < 195:
             p = 20.0 + 0.05 * 130 - 0.05 * (i - 130)
         elif i == 195:
-            p = 22.0
+            p = 22.0                              # 大幅 DROP
         elif i < 200:
-            p = 22.0 + 0.05 * (i - 195)
-        elif i < 202:
-            p = 22.20
+            p = 22.0 + 0.05 * (i - 195)           # 4 根 UP ⇒ 凑 cascade
         else:
             p = 22.20
         rows.append({
-            "thscode": "600000.SH",
-            "date": d,
+            "thscode": "600000.SH", "date": d,
             "open": p, "high": p + 0.0001, "low": p - 0.0001, "close": p,
-            # bar volume = 1000 (微量流通, 触发 vol cap)
-            "amount": 5e7, "volume": 1000,
+            "amount": 5e7, "volume": float(volume),
         })
     panel = pd.DataFrame(rows)
-
-    cerebro = bt.Cerebro(stdstats=False)
     initial = 100_000.0
+    cerebro = bt.Cerebro(stdstats=False)
     cerebro.broker.setcash(initial)
     cerebro.broker.setcommission(commission=0.0)
-    feed = AShareData(dataname=panel, plot=False)
-    cerebro.adddata(feed, name="600000.SH")
+    cerebro.adddata(AShareData(dataname=panel, plot=False), name="600000.SH")
     holder: dict = {"cash": initial, "trades": [], "max_dd": 0.0}
     cerebro.addstrategy(
         Phase3V3Strategy,
-        tp_pct=0.06, sl_pct=0.10, max_hold=20,
+        tp_pct=0.06, sl_pct=0.10, max_hold=max_hold,
         position_fraction=1.0,
         # §2 (audit 2026-10-15): NAV 闸门比例现由 preset 声明注入(生产路径经
         # engine.run_backtest_v3 → core.preset_contract.resolve_nav_gate_ratio)。
@@ -455,12 +457,40 @@ def test_volume_participation_cap_enforced_for_short_entry():
         result_holder=holder,
     )
     cerebro.run()
-    trades = holder["trades"]
-    # 由于 vol cap 把所有入场全砍光 (1000 * 0.10 = 100 股, 但 cascade 路径可能也未触发),
-    # 至少应不崩溃。如果有 trade,size 必须 ≤ 100 (1 lot)。
-    max_fill = int(1000 * MAX_VOL_PARTICIPATION / 100) * 100
-    for t in trades:
-        assert t["size"] <= max_fill, (
-            f"做空 size={t['size']} 应被 volume cap 限制到 ≤ {max_fill} "
-            f"(bar_volume=1000 × MAX_VOL_PARTICIPATION={MAX_VOL_PARTICIPATION})"
-        )
+    return holder["trades"]
+
+
+def test_volume_participation_cap_enforced_for_short_entry():
+    """§4: 做空单笔成交量必须 ≤ Bar_Volume × MAX_VOL_PARTICIPATION, **且该上限确实咬住**。
+
+    ⚠️ 2026-10-19 (§13.55): 本条此前**什么都没断言** —— 断言体是 `for t in trades: ...`,
+    而**实测该场景的成交数为 0** ⇒ 循环零次 ⇒ 恒通过。
+    而**原因不是旧注释里写的"vol cap 把所有入场全砍光"**: 实测 `max_hold=20` 配上 210 根面板时,
+    入场在 bar≈200, 仓位**在数据结束前无法平仓** ⇒ 不产生"已平仓"记录。
+    改成 `max_hold=5` 后产出 1 笔 ⇒ 断言才有对象。
+
+    两点式: **小成交量**(上限咬住) + **大成交量**(上限不再约束, 作对照) ⇒
+    既断言"≤ 上限", 又断言"上限确实在起作用"。
+    """
+    from short_reversal.replay_strategy_v3 import MAX_VOL_PARTICIPATION
+
+    floor_vol = 1_000.0
+    cap = int(floor_vol * MAX_VOL_PARTICIPATION / 100) * 100          # = 100 股 (1 手)
+    small = _run_vol_cap_probe(floor_vol)
+    assert small, (
+        "本场景必须产生**已平仓**成交 —— 否则下面的循环一次都不执行 (这正是本条此前的毛病)"
+    )
+    s_small = small[0]["size"]
+    assert s_small <= cap, (
+        f"做空 size={s_small} 应被 volume cap 限制到 ≤ {cap} "
+        f"(bar_volume={floor_vol:.0f} × MAX_VOL_PARTICIPATION={MAX_VOL_PARTICIPATION})"
+    )
+    # ⚠️ 2026-10-19 (§13.55): 这里**最初**写的是 `s_small < big[0]["size"]`(大小 bar 对比)。
+    # **注入实测证明它不是判据**: 把参与率关掉 (max_volume_participation=1.0) 之后,
+    # 小 bar 的 size 变成 1000 —— 那被 **bar 成交量本身**限住, 仍 < 大 bar 的 4500
+    # ⇒ 那条断言在"有 cap"与"没 cap"两个世界里**都成立**。
+    # 真正的判据是 **size 恰等于 cap**: 那才说明成交由**参与率规则**决定, 而不是由成交量决定。
+    assert s_small == cap, (
+        f"volume cap 没有咬住: 小 bar 的 size={s_small} 应恰等于 cap={cap} "
+        f"(由参与率规则决定); 更大则说明是被 bar 成交量限的, 不是被 §4 上限限的"
+    )

@@ -83,6 +83,23 @@ def test_blacklist_is_gated_on_the_exclusion_mode() -> None:
     ), "以「排除」命名的模式必须真的应用黑名单 —— 模式名是契约,不是装饰。"
 
 
+def test_exclusion_mode_actually_excludes_a_nonempty_set() -> None:
+    """以「排除」命名的模式必须真的排除 —— 模式名不是装饰, 名单不是空文件。
+
+    (「解析到一个路径」≠「真的排除了」: 路径解析对了、名单却读回空集, 正是旧
+    缺陷躲过守卫的形态 —— 断言必须落在**非空集**这个前提上。)
+    """
+    from short_reversal.universe import _load_exclude, _resolve_exclude_path
+
+    path = _resolve_exclude_path("exclude_hs300_zhongtou_finance", None)
+    assert path is not None, (
+        "exclude_hs300_zhongtou_finance 模式必须解析到黑名单路径"
+    )
+    assert len(_load_exclude(path)) > 0, (
+        "exclude_hs300_zhongtou_finance 模式排除了 0 只 —— 名单没被真的加载"
+    )
+
+
 def test_explicit_path_always_wins() -> None:
     """调用方显式传入路径 → 一律生效(它明说了要排除),不受模式门控影响。"""
     from short_reversal.universe import _resolve_exclude_path

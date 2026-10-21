@@ -33,17 +33,27 @@ def is_main_board(thscode: str) -> bool:
 def apply_liquidity_filter(
     df: pd.DataFrame,
     min_avg_turnover: float = 5e7,
-    lookback: int = 60,
+    min_history_days: int = 60,
 ) -> set[str]:
-    """Return thscodes meeting: history ≥ lookback AND avg turnover ≥ floor.
+    """Return thscodes meeting: history ≥ `min_history_days` AND avg turnover ≥ floor.
 
-    Default lookback=60 matches the project's "Recent IPOs (< 60 trading days
-    history) must not be selected" rule — codes with fewer than 60 unique
-    trading dates in the panel cannot build a stable turnover baseline and
-    are excluded by default.
+    ⚠️⚠️ **2026-10-19 (§13.107) 本函数的描述与实现长期不符 —— 两处。**
+    * 参数原名 `lookback` —— 它**不是一个回看窗口**, 实现里用作
+      `counts[counts >= lookback]` = 「**面板里至少有这么多个不同交易日**」的**入场门槛**。
+      ⇒ 名不副实, 已改名 `min_history_days`。("Recent IPOs (< 60 trading days history)
+      must not be selected" 这条**规则**是真的, 只是"lookback"这个词把它说成了窗口。)
+    * 周转额用的是 `df.groupby("thscode")["amount"].mean()` ——
+      **对 `df` 里**全部行的均值, **没有 `rolling`、也没有"60 天"**。
+      而 `data_feed.py` 传进来的那个面板**没有日期边界** (注释自称 "needs full history")
+      ⇒ 实际是**全历史均值**。§13.27 记过这一点; 本函数此前**没有任何地方说清**。
+    ⇒ **"60d rolling mean of amount" 这个说法从未成立过**
+      (`tests/test_cycle_survivorship_bias.py` 的两处描述已一并更正)。
+
+    ⚠️ 口径仍未定 (**§1 要求 as-of**: "as-of 当日往前滚动 60 日" vs "as-of 之前全部历史"),
+    ⇒ §13.27 的处置是**登记不修** (改它属结果变更, 且口径未决)。**本函数今天的行为一字未动。**
     """
     counts = df.groupby("thscode")["date"].nunique()
-    eligible_history = counts[counts >= lookback].index
+    eligible_history = counts[counts >= min_history_days].index
 
     avg_turn = (
         df.groupby("thscode")["amount"].mean()

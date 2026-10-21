@@ -66,6 +66,27 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+# ⚠️ 2026-10-19 (§13.47): **本文件的扫描范围是刻意保守的, 不要为"整齐"而放宽。**
+#
+# 与 §13.42/§13.45/§13.46 那三处不同 —— 那三处的手写列表是**漏掉了本该覆盖的**,
+# 放宽后要么抓到真违反、要么第一次证明那部分是干净的。**这一处不一样**:
+#
+#   实测把 `tools/` 与 `dna_data/` 加进来, 会新增 **7** 处命中, **全部是 `tools/` 下的
+#   批处理脚本**, 而它们**全都是"逐项容错、记录后继续"**:
+#     tools/rerun_top_presets.py            逐 preset 循环, 失败打印 ERROR 后继续
+#     tools/run_all_backtests_html.py       `error_count += 1` (**并已标 `# noqa: BLE001`**)
+#     tools/update_db_direct.py             `last_err = e` / `errors += 1`
+#     tools/render_top5_presets_html.py     打印 ERROR + traceback 后继续
+#   §0 明写 "Scan/grid loops allow warn-log + continue" ⇒ **对它们而言这是合规写法**,
+#   而本审计的标准(具体异常类型)是针对**生产路径**的。
+#
+# ⚠️ **而且后果不是"多一条红", 是"吃掉余量"**: 本测试是**阈值**测试
+#   (`if len(sites) >= 10: raise`), 当前范围内 **2** 处;放宽后是 **9** 处 ——
+#   **仍不至于红, 但会从"余量很大"变成"只差一处就红"**, 而那 7 处是合法写法。
+#   ⇒ 那条阈值此后量的就不再是"生产路径的 fail-fast", 而是"开发者工具的整洁度"。
+#
+# ⇒ **结论: 不放宽。** 本审计的范围 = 生产路径; `tools/`(开发者工具)不入内。
+#   (将来若要给 `tools/` 立标准, 应当**另开一条**判据与阈值, 而不是把它塞进这一条。)
 SCAN_DIRS = [
     "chase_up",
     "uptrend_pullback",

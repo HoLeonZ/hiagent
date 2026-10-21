@@ -173,6 +173,8 @@ class TestUpStreak:
         streak_b = s.ind_b.lines.up_streak
         # 两个完全独立的 count
         n_bars = len(s)
+        # 2026-10-19 (§13.57): `n_bars == 0` 时 zip 为空 ⇒ 循环零次 ⇒ 恒通过。补守卫。
+        assert n_bars > 0, "n_bars 必须 > 0 —— 否则 zip 为空, 下面的断言一次都不执行"
         for v_a, v_b in zip(streak_a.array[-n_bars:], streak_b.array[-n_bars:]):
             assert v_a == v_b
 

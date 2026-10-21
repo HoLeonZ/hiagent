@@ -31,6 +31,7 @@ import backtrader as bt
 import numpy as np
 import pandas as pd
 
+from core.equity_invariants import assert_equity_curve_is_physical
 from uptrend_pullback.backtest import INITIAL_CAPITAL, compute_metrics
 from uptrend_pullback.portfolio import TRADE_COLS, simulate_portfolio
 from uptrend_pullback.presets import MAX_HOLD_LIMIT, get_preset
@@ -47,6 +48,7 @@ from core.preset_contract import (
     resolve_volume_participation,
 )
 
+# §2 Canonical Cost Model: 成本常量只在 core/ 定义一次, 引擎必须**导入**而非重写。
 from core.dual_price import (  # §2 单源 (audit P2-11, 2026-10-15)
     resolve_atr_slip_scale,
     COMMISSION_RATE,
@@ -109,7 +111,7 @@ def _verify_trade_with_backtrader(
     tp_price: float,
     sl_price: float,
     max_hold: int,
-    price_source_for_execution: str = "adj_close",
+    price_source_for_execution: str = "raw_close",
 ) -> tuple[float, float, pd.Timestamp | None]:
     """对单笔交易跑 backtrader，返回 (net_pnl, exit_price_actual, exit_date_actual)。
 
@@ -297,13 +299,14 @@ def run_backtrader_backtest(
         # (commission/stamp/floor) + ATR-aware slippage from preset。
         # Defaults preserve pre-R15 behavior (legacy presets 无 key 时仍得
         # canonical 0.00025+0.0005+5.0 与 0.0 slippage)。
+        # 2026-10-19 (§2): 三个默认值原先写死为字面量 ⇒ fail-fast violation; 改为绑定。
         commission_rate=p.get("commission_rate", COMMISSION_RATE),
         stamp_duty_rate=p.get("stamp_duty_rate", STAMP_DUTY_RATE),
         min_commission=p.get("min_commission", MIN_COMMISSION),
         slippage=p.get("slippage", 0.0),
         atr_slip_scale=resolve_atr_slip_scale(p, p.get("_name", "uptrend_pullback")),
         # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System execution source。
-        price_source_for_execution=p.get("price_source_for_execution", "adj_close"),
+        price_source_for_execution=p.get("price_source_for_execution", "raw_close"),
         # V8 (2026-09-22, CLAUDE.md §4): preset→strategy explicit plumbing。
         intraday_tiebreak=p.get("intraday_tiebreak", "sl_first"),
         max_volume_participation=resolve_volume_participation(
@@ -358,7 +361,7 @@ def run_backtrader_backtest(
         net_pnl_bt, exit_px_bt, exit_date_bt = _verify_trade_with_backtrader(
             panel, t.thscode, pd.Timestamp(t.entry_date),
             entry_price, size, tp_p, sl_p, max_hold,
-            price_source_for_execution=p.get("price_source_for_execution", "adj_close"),
+            price_source_for_execution=p.get("price_source_for_execution", "raw_close"),
         )
         phase1_pnl = float(t.net_pnl)
         # warning 路径（exit_px == entry_price 且 exit_date is None）意味着 backtrader
@@ -421,6 +424,13 @@ def run_backtrader_backtest(
         equity_p2["cash"] = equity_p2["cash"] + equity_delta
     else:
         equity_p2 = equity_p1
+
+    # §2/§0: "Phase-1 复利曲线 + 累计常数 delta" 不是有效的权益重建
+    # (delta 按逐笔固定规模算, 量纲与复利曲线不匹配), 会产出负权益。
+    # 与 chase_up 同口径 —— 拒绝发布物理上不可能的曲线。
+    assert_equity_curve_is_physical(
+        equity_p2, engine="uptrend_pullback", preset=str(preset),
+    )
 
     metrics = compute_metrics(
         trades_p2, equity_p2,

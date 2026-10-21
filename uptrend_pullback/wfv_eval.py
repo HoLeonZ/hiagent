@@ -7,6 +7,13 @@
 > 本工具没有;它有的是"操作者自己换 `--start-month/--end-month`"的人工约定。
 > 因此现在:**`--window-role` 是必需参数**(iteration / holdout)并写进产物,
 > 好让搜索日志能分清哪一行是结论期的;而"要不要把划分做进代码"是待你定的**口径**问题。
+>
+> ⚠️ 2026-10-19 更正(§13.104):下面的示例此前教人传 `--n-trials 1` / `12` ——
+> **两个都不是该 preset 的累积暴露**。§5 要求这个数 = "到此为止累计试过的配置数"
+> (含手动试错与评估窗口的改动), 本族一路把它记在 preset 的 `n_comparisons` 上
+> (v19=19 → v20=100 → v21=121 → **v22=162**)⇒ 照抄旧示例会**低估 k**, 进而**高估** DSR
+> ——正是 §5 惩罚指标要防的方向。⇒ 示例改为真实累积值;解析出的值与**来源**会打印出来
+> 并落进产物的 `n_trials_source` 字段, 不得静默。
 
 把「某个 candidate 到底比现有 preset 好不好」变成一条可复现命令:
 
@@ -23,17 +30,21 @@
   - holdout 窗口不参与任何迭代, 只在最终下结论时跑一次。
 
 用法:
-  # 单一 preset
-  python3 -m uptrend_pullback.wfv_eval --preset v33_long_reverse_v19 --n-trials 1
+  # 单一 preset —— n_trials 用**该 preset 的累积暴露**(§13.104: v22 的 n_comparisons=162),
+  # 不是"本轮试了几个"
+  python3 -m uptrend_pullback.wfv_eval --preset v33_long_reverse_v22 \\
+      --n-trials 162 --window-role iteration
 
   # 由 base preset 派生 candidate (因子下钻用: 只写增量)
+  # 累积暴露 = base 的 n_comparisons + 本轮新增的评估次数
   python3 -m uptrend_pullback.wfv_eval --base v33_long_reverse_v19 \\
       --overrides '{"tp_pct": 0.28, "signal.min_mom120": 0.20}' \\
-      --label cand_mom020 --n-trials 12
+      --label cand_mom020 --n-trials 19 --window-role iteration
 
   # 指定窗口范围 (迭代期 用 train 段; 最终结论 用 holdout 段)
-  python3 -m uptrend_pullback.wfv_eval --preset v33_long_reverse_v19 \\
-      --start-month 2024-09 --end-month 2026-03 --n-trials 1
+  python3 -m uptrend_pullback.wfv_eval --preset v33_long_reverse_v22 \\
+      --start-month 2024-09 --end-month 2026-03 \\
+      --n-trials 162 --window-role holdout
 
 输出: 一行 JSON 到 stdout (末行), 前面是人类可读摘要。
 """
@@ -71,6 +82,27 @@ def _apply_overrides(cfg: dict, overrides: dict[str, object]) -> dict:
         else:
             out[path] = val
     return out
+
+
+def _resolve_n_trials(cli_value: int | None, cfg: dict) -> tuple[int, str]:
+    """§13.104: 决定 DSR 的选择偏差折算用哪个 `n_trials`, 并**报出来源**。
+
+    §5 的 Iterative-Tuning Accounting 要求这个数 = **到此为止累计试过的配置数**。
+    本 preset 把它记在自己的 `n_comparisons` 里 (v19=19, v20=100, v21=121, **v22=162**)
+    —— 这正是 §13.82 记的那处: "`n_comparisons` 是只写字段, 没有任何消费者"。
+
+    ⚠️ 与本文件两个**必需**声明参数的关系(`--n-trials` / `--window-role`):
+    命令行**仍然**要求显式传 `--n-trials`(附七十四:§5 的"迭代计数"与"样本外"两半
+    都落在"调用方必须显式声明"上, `docs/uptrend_pullback_preset_search.md` 的示例
+    也已经这么写)⇒ **生产路径上 `cli_value` 恒非 None**;`cli_value is None` 这一支
+    现在只由守卫测试(`tests/test_wfv_eval_n_trials_accounting.py`)覆盖, 它是 §13.104
+    登记的方向("缺省时回落到 preset 的累积暴露")——**在 CLI 上尚不可达**, 如实记在这里,
+    不假装它是活的默认。
+    """
+    if cli_value is not None:
+        return int(cli_value), "CLI --n-trials (显式覆盖)"
+    n = int(cfg.get("n_comparisons", 1))
+    return n, "preset 的 n_comparisons (§5 累积暴露)"
 
 
 def _summarize(df) -> dict:
@@ -116,7 +148,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="这段区间扮演什么角色:iteration(迭代期,可以反复看)或 holdout(结论期)",
     )
     ap.add_argument("--n-trials", type=int, required=True,
-                    help="§5 累计试过的配置数 (含本次); DSR 的选择偏差折算用")
+                    help="§5 累计试过的配置数 (含本次); DSR 的选择偏差折算用。"
+                         "应等于该 preset 的累积暴露 (见其 n_comparisons), 不是本轮试了几个")
     ap.add_argument("--start-month", default=DEFAULT_START_MONTH)
     ap.add_argument("--end-month", default=DEFAULT_END_MONTH)
     ap.add_argument("--engine", default="simulate", choices=("simulate", "backtrader"))
@@ -144,6 +177,10 @@ def main(argv: list[str] | None = None) -> None:
     df = run_windows(cfg, windows, db, engine=args.engine)
     stats = _summarize(df)
 
+    # §13.104: 喂给报告器的 k 与它的**来源**都要报出来(不得静默)。
+    n_trials, n_src = _resolve_n_trials(args.n_trials, cfg)
+    logger.warning("§13.104: n_trials = %d (来源: %s)", n_trials, n_src)
+
     print(f"[{args.label or base_name}] {args.start_month}..{args.end_month} "
           f"({len(windows)} windows, engine={args.engine}) "
           f"role={args.window_role}")
@@ -160,7 +197,12 @@ def main(argv: list[str] | None = None) -> None:
     print(f"  ⚠ 窗口为滚动**无划分**(默认 2 月窗 / 1 月步 ⇒ 重叠 50%)⇒ 本次是"
           f"**样本内**评估:{_role_note}。§5 的 OOS 要求靠**操作者声明角色**+"
           f"角色随产物落盘来守,不靠注释里的约定。")
-    print(format_walkforward_stats(df, n_comparisons=args.n_trials))
+    # §5 (附六十四): 观察数 T 由**报告器**从引擎发布的 `n_daily_returns` 列取各窗均值
+    # (见 uptrend_pullback/walkforward.py 的 RESULT_COLS) —— 本工具不再自己数一遍
+    # (旧路径 `_trading_days_per_window` 用 DB 的 COUNT(DISTINCT date) 另算一个数,
+    #  与引擎发布的口径分叉)。年化常数也由报告器单源到 core.trade_schema (243),
+    # 与本族的引擎同源。
+    print(format_walkforward_stats(df, n_comparisons=n_trials))
     print(df.to_string(index=False))
 
     record = {
@@ -170,7 +212,9 @@ def main(argv: list[str] | None = None) -> None:
         "start_month": args.start_month,
         "end_month": args.end_month,
         "engine": args.engine,
-        "n_trials": args.n_trials,
+        "n_trials": n_trials,
+        # §13.104: 来源随产物落盘 —— 事后能看出这个 k 是操作者声明的还是 preset 的账。
+        "n_trials_source": n_src,
         # §5 (附七十四): 角色随产物落盘 —— 搜索日志里从此能分出哪一行是 holdout。
         "window_role": args.window_role,
         "stats": stats,

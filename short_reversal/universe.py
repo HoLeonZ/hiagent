@@ -111,11 +111,57 @@ def _load_exclude(path: Path | None) -> set[str]:
     }
 
 
+#: §4 做空可行性 (2026-10-17): ST / 风险警示股涨跌停为 ±5% (主板 ±10%), 且
+#: **不在融资融券标的名单里 ⇒ 现实中不可做空**。本库没有名称列 (v_symbol.name /
+#: dim_symbol.name 均 0 行非空), 故用**价格行为代理**判定:
+#:   某 bar 满足 |涨跌幅| ≈ 5% 且 high == low (全天一个价 = 封死停板);
+#:   截至 asof 出现 ≥ _ST_MIN_SEALED 次即判为 5% 涨跌停品种。
+#: 判定窗口取 **asof 前 180 天** —— 反映"截至该时点是否是风险警示股", 避免把早年
+#: 曾警示、如今已摘帽的票误排除。
+#: 说明: 这是**代理**, 不是精确名单 —— 它会漏掉停牌多、波动小因而从未封板的风险
+#: 警示股。作为"宁可少做也不做假成交"的方向性过滤使用是保守的。
+_ST_LIMIT_BAND = 0.05
+_ST_BAND_TOL = 0.0015
+_ST_MIN_SEALED = 3
+
+
+def _suspected_five_pct_limit_codes(db_path: Path, asof_date: str) -> set[str]:
+    """返回截至 asof_date 疑似 ±5% 涨跌停 (风险警示类) 的代码集合。
+
+    PIT: 只用 `date <= asof_date` 的 bar —— 不用未来信息。
+    """
+    con = duckdb.connect(str(db_path), read_only=True)
+    try:
+        rows = con.execute(
+            """
+            WITH d AS (
+              SELECT thscode, high, low,
+                     close / LAG(close) OVER (PARTITION BY thscode ORDER BY date) - 1 AS ret
+              FROM v_daily WHERE date <= ? AND date > (?::DATE - INTERVAL 180 DAY)
+            )
+            SELECT thscode FROM d
+            WHERE ret IS NOT NULL
+              AND abs(abs(ret) - ?) < ? AND high = low
+            GROUP BY 1 HAVING count(*) >= ?
+            -- §1 (§13.73): 显式顶层 ORDER BY —— 结果集行序必须确定 (§0 可复现性)。
+            -- 消费者把它折成 set (见下方 return), 故此句**零结果漂移**。
+            ORDER BY 1
+            """,
+            [asof_date, asof_date, _ST_LIMIT_BAND, _ST_BAND_TOL, _ST_MIN_SEALED],
+        ).fetchall()
+    except duckdb.Error as e:
+        raise ShortReversalError(f"DuckDB read failed: {e}") from e
+    finally:
+        con.close()
+    return {r[0] for r in rows}
+
+
 def load_universe_asof(
     mode: str,
     asof_date: str,
     db_path: Path,
     exclude_path: Path | None = None,
+    exclude_suspected_st: bool = False,
 ) -> list[str]:
     """返回 asof_date 之前已上市 + 黑名单过滤 + mode 分类的代码列表。
 
@@ -128,6 +174,8 @@ def load_universe_asof(
       exclude_path: 黑名单文件路径。显式传入则一律生效;**缺省时仅
                     `exclude_hs300_zhongtou_finance` 模式使用共享黑名单**
                     (`<repo_root>/data/exclude_thscodes.txt`)。
+      exclude_suspected_st: 是否并入 §4 的"疑似 ±5% 封板(ST/风险警示)"代理集合。
+                    默认 False(行为中性)。
 
     Raises:
       ValueError: mode 未知
@@ -173,6 +221,12 @@ def load_universe_asof(
         con.close()
 
     all_codes = [r[0] for r in rows]
+    if exclude_suspected_st:
+        # §4 (2026-10-17, branch): ST / 风险警示类 ±5% 封板代理 —— 该类标的
+        # 不在融资融券名单里, 现实中不可做空。默认关闭, 仅显式声明时生效。
+        # 必须在下方空宇宙 fail-fast **之前**并入, 否则"全被 ST 代理滤掉"
+        # 会再次退化成静默的 0 笔交易。
+        excluded = excluded | _suspected_five_pct_limit_codes(db_path, asof_date)
     if mode == "broad_only":
         filtered = [
             c for c in all_codes

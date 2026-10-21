@@ -13,6 +13,7 @@ import backtrader as bt
 import numpy as np
 import pandas as pd
 
+from core.equity_invariants import assert_equity_curve_is_physical
 from chase_up.backtest import INITIAL_CAPITAL, compute_metrics
 from chase_up.data import load_panel
 from chase_up.portfolio import TRADE_COLS, simulate_portfolio
@@ -127,7 +128,7 @@ def _verify_trade_with_backtrader(
     tp_price: float,
     sl_price: float,
     max_hold: int,
-    price_source_for_execution: str = "adj_close",
+    price_source_for_execution: str = "raw_close",
 ) -> tuple[float, float, pd.Timestamp | None]:
     """对单笔交易跑 backtrader,返回 (net_pnl, exit_price_actual, exit_date_actual)。
 
@@ -232,13 +233,14 @@ def run_backtrader_backtest(
         # (commission/stamp/floor) + ATR-aware slippage from preset。
         # Defaults preserve pre-R15 behavior (legacy presets 无 key 时仍得
         # canonical 0.00025+0.0005+5.0 与 0.0 slippage)。
+        # 2026-10-19 (§2): 默认值原先写死为字面量 ⇒ fail-fast violation。改为绑定。
         commission_rate=p.get("commission_rate", COMMISSION_RATE),
         stamp_duty_rate=p.get("stamp_duty_rate", STAMP_DUTY_RATE),
         min_commission=p.get("min_commission", MIN_COMMISSION),
         slippage=p.get("slippage", 0.0),
         atr_slip_scale=resolve_atr_slip_scale(p, p.get("_name", "chase_up")),
         # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System execution source。
-        price_source_for_execution=p.get("price_source_for_execution", "adj_close"),
+        price_source_for_execution=p.get("price_source_for_execution", "raw_close"),
         # V8 (2026-09-22, CLAUDE.md §4): preset→strategy explicit plumbing。
         intraday_tiebreak=p.get("intraday_tiebreak", "sl_first"),
         max_volume_participation=resolve_volume_participation(
@@ -291,7 +293,7 @@ def run_backtrader_backtest(
             # V3a+ (2026-09-22, CLAUDE.md §3): feed 必须与 portfolio.py Phase 1
             # 同价格域, 否则 backtrader strategy 跑在 qfq 域 → phantom SL/TP
             # (audit 揭露 v3 backtrader output: 4/59 SL phantom, exit_px ≈ qfq_open)。
-            price_source_for_execution=p.get("price_source_for_execution", "adj_close"),
+            price_source_for_execution=p.get("price_source_for_execution", "raw_close"),
         )
         phase1_pnl = float(t.net_pnl)
         # Round 29c (2026-09-28, CLAUDE.md §0): sentinel `exit_px_bt ==
@@ -393,6 +395,13 @@ def run_backtrader_backtest(
         equity_p2["equity"] = eq_arr
     else:
         equity_p2 = equity_p1
+
+    # §2/§0: 上面这个"Phase-1 复利曲线 + 累计常数 delta"的构造不是有效的权益
+    # 重建 (delta 按逐笔固定规模算, 量纲与复利曲线不匹配), 会产出负权益。
+    # 拒绝发布物理上不可能的曲线, 而不是照抄成 headline 数字。
+    assert_equity_curve_is_physical(
+        equity_p2, engine="chase_up", preset=str(preset),
+    )
 
     metrics = compute_metrics(
         trades_p2, equity_p2,

@@ -35,7 +35,7 @@ def test_apply_liquidity_filter_drops_low_turnover():
         for d in dates:
             rows.append((code, d, amt))
     df = pd.DataFrame(rows, columns=["thscode", "date", "amount"])
-    out = apply_liquidity_filter(df, min_avg_turnover=5e7, lookback=20)
+    out = apply_liquidity_filter(df, min_avg_turnover=5e7, min_history_days=20)
     assert "600000.SH" in out
     assert "603000.SH" not in out
 

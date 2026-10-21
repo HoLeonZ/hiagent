@@ -18,6 +18,7 @@ cerebro feeds, not portfolio.simulate_portfolio), this test verifies:
 from __future__ import annotations
 
 import math
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -150,10 +151,12 @@ def test_engine_left_join_query_shape(monkeypatch):
     def fake_connect(*args, **kwargs):
         return FakeCon()
 
-    # 2026-10-15: duckdb 的生命周期已按 §6 从 strategy 层收到数据层 ——
-    # `short_reversal.engine` 不再 import duckdb(它只留一个转发给
-    # `_panel_loader` 的 `_load_panel` 薄包装),故旧的
-    # `eng.duckdb.connect` 补丁目标已不存在。改为补丁真正的连接点。
+    # 2026-10-15 (§6) / 2026-10-19 (§13.28-§13.29): duckdb 的生命周期已按 §6 从
+    # strategy 层收到数据层 —— `short_reversal.engine` 不再 import duckdb(它只留一个
+    # 转发给 `_panel_loader` 的 `_load_panel` 薄包装),故旧的 `eng.duckdb.connect`
+    # 补丁目标已不存在。旧写法会报
+    # `AttributeError: module 'short_reversal.engine' has no attribute 'duckdb'`
+    # —— **测试自己崩了**, 不是缺陷。改为补丁真正的连接点。
     from short_reversal import _panel_loader
 
     monkeypatch.setattr(_panel_loader.duckdb, "connect", fake_connect)
@@ -162,7 +165,11 @@ def test_engine_left_join_query_shape(monkeypatch):
     sql = captured["sql"]
     assert sql is not None
     assert "LEFT JOIN v_daily_hfq" in sql, "V3a: engine must LEFT JOIN v_daily_hfq"
-    assert "adj_open" in sql and "adj_close" in sql, "V3a: SQL must select adj_*"
+    # ⚠️ 用 `\b` 词边界, 不用裸子串 —— 裸 `"adj_close" in sql` 会被
+    # `adj_close_x` 这种改名**意外满足** (§13.18 记过的空转模式; §13.29 注入实测)。
+    assert re.search(r"\badj_open\b", sql) and re.search(r"\badj_close\b", sql), (
+        "V3a: SQL must select adj_* as whole column aliases"
+    )
     assert "date BETWEEN" in sql
     # Confirm returned df has adj_* columns
     assert "adj_close" in df.columns

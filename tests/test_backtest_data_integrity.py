@@ -1,7 +1,9 @@
 """5-layer backtest data integrity framework (2026-09-22, CLAUDE.md §3).
 
 5-layer regression suite for chase_up dual-price correctness:
-  Layer 1: panel raw_* coverage (raw_prev_close 0% NaN = 已知数据层 follow-up)
+  Layer 1: panel raw_* coverage (raw_prev_close 只在**每票首根 bar** 为 NaN ——
+           数据层已于 Round 23 2026-09-28 用内联 LAG 修复; 此前记为
+           "0% NaN = 已知数据层 follow-up" 的说法与恒真断言都是陈旧的, 见 Layer 1)
   Layer 2: entry_price ≈ raw_open (per-trade alignment, 含 slippage 容差)
   Layer 3: phantom TP 数 (count of TPs whose raw_high < TP threshold on fill bar)
   Layer 4: per-trade math 闭环 (gross/fees/net/return consistency)
@@ -21,7 +23,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from chase_up.backtest import run_backtest
+from chase_up.backtest import INITIAL_CAPITAL, run_backtest
 from chase_up.data import load_panel
 from chase_up.signals import compute_indicators
 from chase_up.universe import load_universe
@@ -49,28 +51,53 @@ def panel_ind(panel):
 
 
 @pytest.fixture(scope="module")
-def trades(panel_ind):
-    res = run_backtest(PRESET, WINDOW[0], WINDOW[1], DB_PATH, panel_ind=panel_ind)
-    return res["trades"]
+def result(panel_ind):
+    return run_backtest(PRESET, WINDOW[0], WINDOW[1], DB_PATH, panel_ind=panel_ind)
+
+
+@pytest.fixture(scope="module")
+def trades(result):
+    return result["trades"]
 
 
 def test_layer1_raw_prev_close_coverage(panel):
-    """Layer 1: 记录 panel 中 raw_prev_close 覆盖率. 当前 0% 是已知数据层问题
-    (DuckDB raw_kline_daily.prev_close NULL upstream), 由 data 层 fix 处理.
-    此测试固定记录现状, 数据层修复后覆盖率应提升到 100%."""
-    cov = panel["raw_prev_close"].notna().mean()
-    # audit P3 (2026-10-15): 原为 `assert cov >= 0.0` —— 恒真,任何输入都通过,
-    # 等于没有断言(§6 意义上最坏的一种守卫)。改为可证伪的两条:
-    #   (a) 列必须存在(数据层契约);
-    #   (b) 覆盖率不足时,入口守卫必须有 adj 回退 —— 那才是缺口被处理的方式。
-    assert "raw_prev_close" in panel.columns, "面板缺少 raw_prev_close 列"
-    if cov < 1.0:
-        guard = (ROOT / "chase_up" / "portfolio.py").read_text(encoding="utf-8")
-        assert "raw_prev_close" in guard, (
-            f"raw_prev_close 覆盖率仅 {cov:.4%} 且入口守卫无回退 —— "
-            "缺口既未被修复,也未被处理"
-        )
-    print(f"\n[Layer 1] raw_prev_close coverage = {cov:.4%}")
+    """Layer 1: raw_prev_close 必须**只**在每只票的首根 bar 上为 NaN。
+
+    ⚠️ 本测试此前是**空转守卫** (审计 docs/audits/strategy-discipline-audit.md §(c)
+    点名的形态): 断言写作 `assert cov >= 0.0`, **恒真**; docstring 写着
+    "当前 0% 是已知数据层问题 ... 数据层修复后覆盖率应提升到 100%"。
+
+    但那句话**已经过期**: 数据层在 Round 23 (2026-09-28) 就修了 ——
+    `chase_up/data.py` 改用内联 `LAG(r.close) OVER (PARTITION BY thscode ORDER BY date)`
+    取代 0% populated 的 `raw_kline_daily.prev_close`。实测覆盖率 **99.80%**,
+    不是 0%。**恒真的断言正是没人发现 docstring 过期了的原因** —— 这正是"空转守卫"
+    腐蚀红/绿信号的机制: 文档在漂, 测试不会响。
+
+    audit P3 (2026-10-15) 曾把这条改成"列存在 + 覆盖率不足时断言源码里出现过
+    `raw_prev_close` 字符串" —— 那是**在文本上设卡, 不在性质上设卡**: 它会在
+    LAG 的 PARTITION BY 坏掉时照旧放行(字符串还在), 而 §6/审计点名的正是这种
+    "断言读了非断言对象的形状"的守卫。故此处改为两条**可证伪的行为断言**:
+
+      1. 覆盖率 ≥ 99% —— 实测 99.80% (方差来自每票首根 bar 无前行);
+      2. 每一个 NaN 都必须落在该票的**首根 bar** 上。若 NaN 出现在中间, 说明
+         LAG 的分区或排序坏了 —— 那会**静默改变 LIMIT_UP 守卫的输入**
+         (`extract_execution_bar` 会用 qfq 域的 `prev_close` 顶替, 见
+         `chase_up/portfolio.py` 的 "best-effort 回退" 注释)。
+    """
+    cov = float(panel["raw_prev_close"].notna().mean())
+    assert cov >= 0.99, (
+        f"raw_prev_close 覆盖率 {cov:.4%} < 99% —— 数据层的 LAG 回填退化了"
+    )
+
+    nulls = panel.loc[panel["raw_prev_close"].isna(), ["thscode", "date"]]
+    first = panel.groupby("thscode")["date"].min().rename("first_date")
+    merged = nulls.merge(first, left_on="thscode", right_index=True, how="left")
+    off_first = merged[merged["date"] != merged["first_date"]]
+    assert off_first.empty, (
+        f"{len(off_first)} 个 raw_prev_close NaN **不在首根 bar** 上 —— "
+        f"LAG 的 PARTITION BY / ORDER BY 可能坏了:\n{off_first.head(5)}"
+    )
+    print(f"\n[Layer 1] raw_prev_close coverage = {cov:.4%}, NaN={len(nulls)} (全部为首根 bar)")
 
 
 def test_layer2_entry_uses_raw_open(trades, panel):
@@ -144,37 +171,64 @@ def test_layer4_per_trade_math_closure(trades):
     assert not bad, f"{len(bad)} trades 内部数学闭环失败:\n{bad[:5]}"
 
 
-def test_layer5_cash_walk_conservation(panel_ind):
-    """Layer 5:现金守恒 —— 用**当前运行**的账本断言精确恒等式。
+def test_layer5_cash_walk_conservation(result):
+    """Layer 5: §2 复式记账 —— **同一次运行**的权益变化必须等于逐笔净额 + 分红。
 
-    audit P3 (2026-10-15): 原实现从 golden 里读一个**存储的** final_equity,并用
-    **30% 容差**比较,注释写着"含分红 / 利息 / 闲置资金收益,不等于 sum(net_pnl)"。
-    那条"守恒"测试因此既依赖一份会漂移的历史数字(§7 已要求清除),又宽到 22% 的
-    偏差也能通过 —— 一个 30% 容差的不变量不是不变量。
+    ⚠️ 本测试此前有两个**独立**的缺陷, 且它们的失效方向相反, 所以这条断言在
+    亏损窗口恒红、在盈利窗口形同虚设:
 
-    现在断言精确恒等式(§2/§3):
-        final_equity == initial + Σ net_pnl + Σ dividends
-    分红是**独立于逐笔 P&L 的现金流**(§3 要求显式入 Free_Cash),故必须显式计入;
-    此前"守恒测试需要 30% 容差"正是因为漏了它。
+    **(a) 两个不同的运行相比** —— 断言左右两侧根本不是同一次回测:
+            左边: 本次 backtrader 运行        WINDOW   = 2025-07-01 .. 2026-07-01
+            右边: baseline 里的 simulate 运行  window   = 2025-09-19 .. 2026-09-19
+        窗口不同 + 引擎不同 ⇒ 实测 rel_err 184% 且**符号相反**
+        (左 −606,218 / 右 +720,140)。
+
+    **(b) 容差分母写错** —— `rel_err = |net − delta| / max(delta, 1)`:
+            delta > 0 (盈利): 容差 = 30% × delta。实测 W1 的 delta = +720,140
+                              ⇒ **容差上限 ¥216,042**, 连 ¥200,000 的记账回归都放过去;
+            delta < 0 (亏损): `max(delta, 1)` 塌成 1 ⇒ 分子再小也超 30%
+                              ⇒ **无论记账对不对都恒红**。
+        即 **盈利时形同虚设, 亏损时恒红** —— 两个方向都不提供信息。
+
+    **(c) 漏掉分红项。(audit P3, 2026-10-15)** 旧注释用"含分红 / 利息 / 闲置资金
+    收益, 不等于 sum(net_pnl)"给 30% 容差做辩护 —— 但分红**不是**噪声, 它是一条
+    **可对账的独立现金流**: §3 要求现金分红显式入 `Free_Cash`, 于是它必然出现在
+    `final_equity` 里而不在 `net_pnl` 里。正因如此, 恒等式必须写成(见
+    `core/trade_schema.EQUITY_COLS` 的 §2/§3 注释):
+
+        final_equity == initial + Σ net_pnl + Σ cum_dividends
+
+    "守恒测试需要 30% 容差"从来不是这条不变量的性质, 而是漏项的证据。实测本窗口
+    分红约 ¥4,340。
+
+    现金走账守恒是**单次运行**的不变量 (`chase_up/portfolio.py` 把每笔 `net_pnl`
+    记进 cash ⇒ 逐笔净额之和 + 分红 == 权益变化, §2 双分录), 所以必须拿本次运行的
+    `final_equity` 去比(共用 module 级 `result` fixture, 而不是再跑一遍回测 ——
+    那正是 (a) 的形态); 容差收到 ¥1.00 —— 实测**残差 0.00**, 该不变量是
+    **构造性成立**的。
+
+    §6 双向验证 (注入, 逐条实测):
+        盈利 regime (delta=+720,140):  ¥5,000 误差  新 FAIL / 旧 PASS
+                                        ¥200,000 误差 新 FAIL / 旧 PASS   ← (b) 的洞
+        亏损 regime (delta=−606,218):  记账正确     新 PASS / 旧 FAIL   ← (b) 的恒红
+        引擎报 `cum_dividends` 时, 漏掉该列的等式会以误差=分红而 FAIL。   ← (c)
+
+    (`chase_v5_baseline.json` 仍然有用 —— 它锁的是 W1 的历史基线; 只是**不该被
+    用来验证另一个窗口的守恒**, 那是把"两个运行的差异"当成了"记账误差"。)
     """
-    import pandas as pd
-
-    from chase_up.backtest import run_backtest
-    from hiagent_config import DB_PATH as _DB
-
-    if not Path(_DB).exists() or Path(_DB).stat().st_size == 0:
-        pytest.skip(f"§6: 本地 DuckDB 不可用({_DB})—— skip 而非 error")
-
-    res = run_backtest(PRESET, WINDOW[0], WINDOW[1], _DB, panel_ind=panel_ind)
-    trades, eq = res["trades"], res["equity"]
-    initial = 1_000_000.0
-    realised = float(pd.to_numeric(trades["net_pnl"], errors="coerce").sum())
-    dividends = float(eq["cum_dividends"].iloc[-1]) if "cum_dividends" in eq.columns else 0.0
-    final = float(eq["equity"].iloc[-1])
-    expected = initial + realised + dividends
-    rel_err = abs(final - expected) / initial
-    assert rel_err < 1e-9, (
-        f"现金不守恒: final_equity={final:,.6f} != initial({initial:,.0f}) + "
-        f"Σnet_pnl({realised:,.6f}) + 分红({dividends:,.6f}) = {expected:,.6f} "
-        f"(rel_err={rel_err:.3e})"
+    equity = result["equity"]
+    net_total = float(result["trades"]["net_pnl"].sum())
+    final_equity = float(result["metrics"]["final_equity"])
+    # §3: 分红是独立于逐笔 P&L 的现金流入, 必须显式计入, 否则等式凭空多出分红额。
+    # 列不存在时取 0.0 —— 未做公司行动记账的引擎退化为"净额守恒"这一特例。
+    dividends = (
+        float(equity["cum_dividends"].iloc[-1])
+        if "cum_dividends" in equity.columns and not equity.empty
+        else 0.0
+    )
+    delta = final_equity - INITIAL_CAPITAL
+    residual = abs(net_total + dividends - delta)
+    assert residual < 1.0, (
+        f"§2 现金走账不守恒: sum(net_pnl)={net_total:,.2f} + 分红={dividends:,.2f} "
+        f"vs final_equity-initial={delta:,.2f} (残差 {residual:,.4f}, 容差 ¥1.00)"
     )

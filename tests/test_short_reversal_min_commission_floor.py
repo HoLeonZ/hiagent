@@ -123,59 +123,57 @@ def test_exit_fee_enforces_min_commission_floor_small_notional() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_trace_entry_fee_comes_from_production_path_with_floor() -> None:
-    """§0 MEDIUM: trace 的 entry_fee 必须取自生产路径(含 MIN_COMMISSION floor)。
+def test_trace_entry_fee_inherits_the_min_commission_floor() -> None:
+    """§0: TraceStrategy 的入场费必须与父类**同一份逻辑** (因此必然含 ¥5 下限)。
 
-    审计 P3 (2026-10-15): 原用例对 `TraceStrategy._fill_pending_entries` 做源码
-    正则,找 `max(min_commission, ...)`。但该方法当时是生产入场逻辑的**分叉
-    副本** —— 正因为它自己重算了一遍,才需要自己实现 floor(也正因为它分叉,
-    `reserve_for_entry` 没被调用,导致 `locked_margin` 恒为 0、引擎在每笔建仓后
-    被融券费 fail-fast 打死,三个窗口不变量用例常年 ERROR)。
+    ⚠️ 2026-10-19 (§13.59): 本条此前是**源码文本钉桩** —— 它要求
+    `TraceStrategy._fill_pending_entries` 的**方法体内**出现 `max(self.p.min_commission, …)`。
+    §13.52 把该覆写改成**包装**(调 `super()` 后只做记录) ⇒ 那段文本搬回了父类 ⇒ 本条变红。
+    **而性质并没有丢**: 覆写不再自己算费用 ⇒ **不可能**与父类不一致。
+    ⇒ 改为断言**"委派"这个事实**(它正是性质成立的原因), 并确认父类确实含下限。
 
-    该方法现已改为**薄包装**:委托 `super()._fill_pending_entries()`,入场费由
-    生产路径计算并写入持仓字典,floor 由生产实现负责;trace 只读取。因此断言
-    落在真实位置上:
-      (a) trace 必须委托生产实现(不得再有副本);
-      (b) trace 读取的 `entry_fee` 来自持仓字典(即生产写入的那个值);
-      (c) 生产实现本身确实施加 floor。
+    审计 P3 (2026-10-15) 的另一半也在本条的断言里: 覆写**不得**再自行重算
+    `entry_fee` —— 正因为旧实现在这里分叉, `reserve_for_entry` 才没被调用
+    (`locked_margin` 恒为 0 ⇒ 引擎在每笔建仓后被融券费 fail-fast 打死),
+    于是"trace 测的不是生产行为"。故断言只落在**委派**与**父类含 floor** 两处,
+    不绑定任一版 `_close` 的实现细节。
     """
     from short_reversal.lookahead_trade_trace import TraceStrategy
+    from short_reversal.replay_strategy_v3 import Phase3V3Strategy
 
-    block = _method_source_block(TraceStrategy, "_fill_pending_entries")
-    assert "super()._fill_pending_entries()" in block, (
-        "§6 VIOLATION: TraceStrategy._fill_pending_entries 必须委托生产实现,"
-        "不得再是分叉副本(副本会导致 harness 测的不是生产行为)。"
+    override = _method_source_block(TraceStrategy, "_fill_pending_entries")
+    assert "super()._fill_pending_entries()" in override, (
+        "TraceStrategy._fill_pending_entries 必须**委派**给父类 —— 一旦它自己重算费用, "
+        "就会与父类分叉 (§13.51 记过的那次分叉正是这样发生的)"
     )
-    assert not re.search(
-        r"entry_fee\s*=\s*\(", block
-    ), "§6 VIOLATION: TraceStrategy 仍在自行重算 entry_fee"
-
-    close_block = _method_source_block(TraceStrategy, "_close")
-    assert re.search(r"pos\.get\(\s*[\"']entry_fee[\"']", close_block), (
-        "§0/§3: trace 的 entry_fee 必须取自持仓字典(生产路径写入),"
-        "而不是自行重算 —— 否则脱离 MIN_COMMISSION floor 与 stamp duty 口径。"
+    assert not re.search(r"entry_fee\s*=\s*\(", override), (
+        "§6 VIOLATION: TraceStrategy 仍在自行重算 entry_fee —— 分叉副本会让 harness "
+        "测的不是生产行为(旧分叉正是这样让三个窗口不变量用例常年 ERROR 的)"
     )
-
-    prod_block = _method_source_block(Phase3V3Strategy, "_fill_pending_entries")
-    assert re.search(
-        r"max\s*\(\s*(?:self\.p\.min_commission|MIN_COMMISSION)", prod_block
-    ), (
-        "§0/§3 VIOLATION: 生产入场路径 entry_fee 未施加 MIN_COMMISSION floor。"
+    parent = _method_source_block(Phase3V3Strategy, "_fill_pending_entries")
+    assert re.search(r"max\s*\(\s*(?:self\.p\.min_commission|MIN_COMMISSION)", parent), (
+        "§0/§3 VIOLATION: 父类 Phase3V3Strategy._fill_pending_entries 未含 ¥5 最低佣金下限 "
+        "—— 那么 trace 的入场费也会随之失去下限"
     )
 
 
-def test_trace_exit_fee_enforces_min_commission_floor() -> None:
-    """§0 MEDIUM: TraceStrategy._close inherits the floor gap."""
+def test_trace_exit_fee_inherits_the_min_commission_floor() -> None:
+    """§0: TraceStrategy 的出场费必须与父类**同一份逻辑** (因此必然含 ¥5 下限)。
+
+    见上一条 (§13.59) 的说明 —— 同一处文本钉桩、同一次重构 (§13.52)、同一个改法。
+    """
     from short_reversal.lookahead_trade_trace import TraceStrategy
-    block = _method_source_block(TraceStrategy, "_close")
-    has_floor = bool(re.search(
-        r"max\s*\(\s*(?:self\.p\.min_commission|MIN_COMMISSION)",
-        block,
-    ))
-    assert has_floor, (
-        "§0/§3 VIOLATION: lookahead_trade_trace.TraceStrategy._close exit_fee "
-        "does NOT enforce MIN_COMMISSION floor. Trace report `notional_pnl` "
-        "systematically overstates per-trade PnL by ¥2.50-5.00."
+    from short_reversal.replay_strategy_v3 import Phase3V3Strategy
+
+    override = _method_source_block(TraceStrategy, "_close")
+    assert "super()._close(" in override, (
+        "TraceStrategy._close 必须**委派**给父类 —— 一旦它自己重算费用/PnL, "
+        "就会与父类分叉 (§13.51 记过的那次分叉正是这样发生的)"
+    )
+    parent = _method_source_block(Phase3V3Strategy, "_close")
+    assert re.search(r"max\s*\(\s*(?:self\.p\.min_commission|MIN_COMMISSION)", parent), (
+        "§0/§3 VIOLATION: 父类 Phase3V3Strategy._close 未含 ¥5 最低佣金下限 "
+        "—— 那么 trace 的 `notional_pnl` 也会随之高估小额成交的净利"
     )
 
 

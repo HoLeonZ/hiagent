@@ -73,8 +73,16 @@ def test_short_reversal_labels_its_sharpe_as_a_per_trade_ratio() -> None:
         # §2: 合成 holder 也要带 final_nav(无未平仓 → nav == cash)
         "final_nav": INITIAL_CAPITAL * 1.05,
         "max_dd": 0.01,
-        "trades": [{"net": 0.01, "hold_days": 3, "exit_reason": "TP"},
-                   {"net": -0.004, "hold_days": 2, "exit_reason": "SL"}],
+        # §2 (2026-10-20 合并后): 胜率/均值/Sharpe 已从遗留 `net` 字段迁到规范的
+        # `net_pnl` / `net_return`(真实引擎经 `_canonical_trade_record` 总是带齐),
+        # 故合成样本也必须给全 —— 否则测的是"缺字段时怎么退化", 不是口径本身。
+        # 保持 `net` 一并给出: 它是迁移动机(两种基数并存)的历史字段。
+        "trades": [
+            {"net": 0.01, "net_pnl": 10.0, "net_return": 0.01,
+             "entry_price": 10.0, "size": 100, "hold_days": 3, "exit_reason": "TP"},
+            {"net": -0.004, "net_pnl": -4.0, "net_return": -0.004,
+             "entry_price": 10.0, "size": 100, "hold_days": 2, "exit_reason": "SL"},
+        ],
     }
     m = _metrics_from_holder(
         holder, "2025-01-01", "2025-02-01", {"_name": "synthetic"}, n_trading_days=20

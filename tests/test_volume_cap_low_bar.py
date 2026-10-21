@@ -149,19 +149,27 @@ def test_volume_cap_rounding_constant_pin_short_reversal() -> None:
 
 
 def test_volume_cap_rounding_constant_pin_cycle() -> None:
-    """Pin (GREEN, 2026-10-15): cycle_price_action 已 wire 到 volume_cap_fill。
+    """§4 **GREEN 态**: cycle 的量比上限必须走 `core.dual_price.volume_cap_fill`。
 
-    此处原为「out-of-scope」红灯 pin,钉的是 round-to-0 公式仍在。该缺陷已修:
-    cycle 改走 `core.dual_price.volume_cap_fill`,与 chase_up / uptrend_pullback /
-    short_reversal 同口径 —— 薄量 bar 上至少返回 1 lot,而不是取整到 0 后**跳过
-    整个守卫**(下单完全不受约束)。
+    2026-10-19 (§13.28): 本测试**原先 pin 的是缺陷态** —— 断言 cycle 里还留着
+    `int(bar_volume * self.MAX_VOL_PARTICIPATION // 100) * 100`, 理由写的是
+    "cycle 的修复不在本 agent 任务范围内", 并自带一句指示:
+    > "若已 wire 到 volume_cap_fill, **请更新此 pin 测试以匹配 GREEN 状态**"
+    **本轮正是那一刻** —— cycle 已改走规范函数 (那是全库最后一个内联式)。
+    ⇒ 按它自己的指示翻转, 与同级测试 (short_reversal 那条) 同形:
+       正面: 必须**真的调用** `volume_cap_fill(` (不是只 import 了不用);
+       反面: 不得回退到 `// 100 * 100` 的 round-to-0 模式。
+
+    ⚠️ 正面判据刻意查**调用**而不是"名字出现过": §13.28(d) 记过
+    `"name" in src` 会被**调用点**意外满足 (删掉 import 也照样通过)。
     """
     src = Path("cycle_price_action/portfolio.py").read_text(encoding="utf-8")
-    assert "volume_cap_fill" in src, (
-        "§4 regression: cycle_price_action/portfolio.py 不再使用规范 "
-        "volume_cap_fill 助手。"
+
+    assert "volume_cap_fill(" in src, (
+        "N6 regression: cycle_price_action/portfolio.py 不再**调用** "
+        "volume_cap_fill helper (core.dual_price)。"
     )
-    assert "// 100) * 100" not in src, (
-        "§4 regression: cycle_price_action/portfolio.py 重新引入了 "
-        "round-to-0 公式 —— 薄量 bar 上守卫会被跳过。"
+    assert "int(bar_volume * self.MAX_VOL_PARTICIPATION // 100) * 100" not in src, (
+        "N6 regression: cycle 又回退到 `// 100 * 100` —— bar 量 < 1000 股时取整成 0, "
+        "而调用处因此静默跳过量比上限、全量成交 (round-to-0 bypass)。"
     )

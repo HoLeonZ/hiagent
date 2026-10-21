@@ -89,7 +89,10 @@ class UpullbackTradeReplay(bt.Strategy):
         # 在 bar 0 预判 (§1), 故在此复核。涨停开盘 = 物理上买不进 → 置 skipped,
         # 由 orchestrator 丢弃该 trade (backtrader_engine.py:165)。口径与 Phase 1
         # portfolio.py 里的对应处一致, 共用 core.dual_price.is_limit_up 单一来源。
-# ⚠️ 附九十: 旧注释引的 portfolio.py 第 474-476 行与 `is_limit_up` 无关(实际在 :560/:564)。
+        # ⚠️ 2026-10-19 (§13.120): "共用单一来源"成立, 但**阈值不同** —— Phase 1
+        # (portfolio.py)显式传它自己的本地 `LIMIT_UP_THRESHOLD = 0.098`, 本文件
+        # 不传 threshold ⇒ 走 core 默认的 0.095。同一个谓词、两个阈值
+        # (阈值分歧已在 §13.120 登记)。
         if not self.entry_done and is_limit_up(
             float(self.data.close[-1]),
             float(self.data.open[0]),

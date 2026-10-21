@@ -30,11 +30,14 @@ C. **cycle_price_action portfolio.LAYOUT_CYCLE_PRICE differs from
 """
 from __future__ import annotations
 
+import ast
 import inspect
+import re
 from pathlib import Path
 
 import pytest
 
+ROOT = Path(__file__).parent.parent
 
 def test_cycle_intraday_tiebreak_is_parameter() -> None:
     """§4 RED: cycle_price_action Portfolio must accept intraday_tiebreak
@@ -62,73 +65,128 @@ def test_cycle_intraday_tiebreak_is_parameter() -> None:
     )
 
 
-def test_cycle_intraday_declaration_reaches_the_execution_layer() -> None:
-    """§4: cycle preset 声明的 `intraday_tiebreak='sl_first'` 必须有**引擎效果**。
+def test_cycle_preset_intraday_declared_has_engine_effect() -> None:
+    """§4: cycle preset 的 `intraday_tiebreak` 声明必须**真的有效果**。
 
-    原版判据是「`run_backtest` 的**函数签名**里没有 `intraday_tiebreak`」——这个判据
-    本身就是错的:该键经 preset 白名单 → strategy params → Portfolio 三层流动
-    (见 `backtest.py` 的 `_accepted`),不必是 `run_backtest` 的形参。于是 Round 15
-    修好接线之后,这条用例仍在报旧结论 —— **判据选错,修复也会被报成缺口**。
+    2026-10-19 (§13.28): 原实现查的是 `run_backtest` 的**签名**
+    (`"intraday_tiebreak" in inspect.signature(cycle_run).parameters`) ——
+    而 `run_backtest` 本来就不需要这个参数: 它从 **preset dict** 走。
+    接线**已经存在**: `backtest.py:110` 的白名单 `_accepted` 含它 ⇒ 转发到
+    `CyclePriceActionStrategy` → `Portfolio.__init__` → 出场路径**强制校验**。
+    ⇒ **这条红灯是"代码修好了、测试没跟上"**, 不是真 gap。
+    (与同文件 `test_all_engines_route_volume_cap_through_core` 同一根因:
+     **查形式, 不查性质**。)
 
-    现在的判据是「声明真的到执行层,而且会被强制」:Portfolio 拒绝任何非
-    'sl_first' 的值(§4 强制 SL-first 悲观口径 —— 同 bar 双触及时假设先止损),
-    故该声明是一条**可被违反、违反即失败**的契约,而不是装饰。
+    改为断言**效果**:
+      1. `Portfolio` 必须**记住**传入的值 (不是忽略);
+      2. 非 `sl_first` 的值必须在出场路径 **fail-fast** (这就是"engine effect");
+      3. 策略必须声明该参数 (否则 preset 的值无处落地);
+      4. 转发白名单必须包含它 (否则 preset 的值根本到不了策略)。
     """
-    from cycle_price_action.backtrader_engine import CyclePriceActionStrategy
-    from cycle_price_action.portfolio import Portfolio
-
-    # (a) 三层接线都在:preset 白名单 → strategy params → Portfolio 形参
-    backtest_src = Path("cycle_price_action/backtest.py").read_text(encoding="utf-8")
-    assert "intraday_tiebreak" in backtest_src, (
-        "§4 VIOLATION: cycle 的 preset 白名单不再放行 intraday_tiebreak"
-    )
-    assert hasattr(CyclePriceActionStrategy.params, "intraday_tiebreak"), (
-        "§4 VIOLATION: CyclePriceActionStrategy.params 缺 intraday_tiebreak"
-    )
-    assert "intraday_tiebreak" in inspect.signature(Portfolio.__init__).parameters, (
-        "§4 VIOLATION: Portfolio 不接受 intraday_tiebreak(声明到不了执行层)"
-    )
-
-    # (b) 声明被**强制**:非 sl_first → 出场判定 fail-fast(而不是静默按 sl_first 跑完)。
-    #     校验点就在出场决策里 —— 正是"同 bar 双触发时假设先止损"这条悲观口径的入口。
     from datetime import date
 
-    pf = Portfolio(cash=100_000.0, intraday_tiebreak="tp_first")
-    assert pf.try_enter("600000.SH", 10.0, date(2024, 6, 3), {"k_line_score": 1.0})
-    with pytest.raises(ValueError, match="intraday_tiebreak"):
+    from cycle_price_action.portfolio import Portfolio
+
+    # 1 + 2: 参数被记住、且**真的有后果** —— 这就是"engine effect"
+    pf = Portfolio(cash=1_000_000.0, intraday_tiebreak="tp_first")
+    assert pf.intraday_tiebreak == "tp_first", "Portfolio 忽略了这个参数 (silently dropped)"
+    pf.try_enter(
+        "600000.SH", 10.0, date(2025, 1, 2),
+        {"k_line_score": 1.0, "phase_score": 1.0, "calendar_score": 1.0},
+        bar_volume=1e7,
+    )
+    with pytest.raises(ValueError, match="sl_first"):
         pf.try_exit_with_intraday_check(
-            exit_date=date(2024, 6, 4),
-            open_price=10.0, high=11.0, low=9.0, close=10.0,
-            tp_pct=0.06, sl_pct=0.05,
+            date(2025, 1, 3), 11.0, 11.0, 9.0, 10.5, 0.06, 0.05
         )
 
+    # 3: 策略必须声明该参数 (preset 的值要有地方落)
+    from cycle_price_action.backtrader_engine import CyclePriceActionStrategy
 
-#: §4 成交量上限的四条接线点 —— 必须全部经**规范助手**,而不是各写一份字面公式。
-VOLUME_CAP_SITES = (
-    "chase_up/portfolio.py",
-    "uptrend_pullback/portfolio.py",
-    "short_reversal/replay_strategy_v3.py",
-    "cycle_price_action/portfolio.py",
-)
+    assert "intraday_tiebreak" in CyclePriceActionStrategy.params._getkeys(), (
+        "策略没有声明 intraday_tiebreak ⇒ preset 的值无处落地"
+    )
+
+    # 4: 转发闸门 (preset → strategy 的闸门) 必须放行它
+    # 闸门有两种**都成立**的写法, 本条两种都认(它们都靠"策略确实声明了该参数",
+    # 即上一条断言, 来保证该键在集合里):
+    #   (a) 字面 `_accepted = {..., "intraday_tiebreak", ...}`;
+    #   (b) 从 `CyclePriceActionStrategy.params._getkeys()` **派生**(不存在
+    #       "加了 param 忘了同步白名单"这种漏键)。
+    # 反之, 若闸门变成一份**不含该键的手工名单**, 两种写法都不成立 ⇒ 本条照红。
+    src = (ROOT / "cycle_price_action" / "backtest.py").read_text(encoding="utf-8")
+    gate_literal = re.search(r"_accepted\s*=\s*\{[^}]*intraday_tiebreak", src, re.S)
+    gate_derived = re.search(
+        r"_accepted\s*=\s*set\(\s*CyclePriceActionStrategy\.params\._getkeys\(\)",
+        src,
+    )
+    assert gate_literal or gate_derived, (
+        "转发闸门 `_accepted` 不含 intraday_tiebreak(也不是从 params 派生) "
+        "⇒ preset 的声明在转发处被丢弃"
+    )
 
 
-def test_all_engines_route_the_volume_cap_through_the_canonical_helper() -> None:
-    """§4: 四个引擎的成交量上限必须走**同一个**规范助手 `volume_cap_fill`。
+def _imports_from_core_dual_price(src: str, name: str) -> bool:
+    """该源码是否**确实**从 `core.dual_price` 导入了 `name` (AST, 识别别名)。"""
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "core.dual_price":
+            for alias in node.names:
+                if alias.name == name:
+                    return True
+    return False
 
-    原版钉的是四条**字面公式**(其中三条自带 round-to-0 缺陷)。chase_up /
-    uptrend_pullback 改用规范助手之后,它反而报「回归,§4 审计必须重跑」——
-    **把修复当成破坏**。钉住缺陷的字面量,是在为缺陷投保。
 
-    规范助手的关键性质:薄量 bar 上至少返回 1 lot 而非 0。旧公式取整到 0 时
-    `max_fill > 0` 守卫被跳过,下单**完全不受约束**(liquidity illusion)。
+def test_all_engines_route_volume_cap_through_core() -> None:
+    """§4: 量比上限必须**全部**走 `core.dual_price.volume_cap_fill` (单一来源)。
+
+    2026-10-19 (§13.28): 原实现是**文本钉桩** —— 断言四个文件里各出现一个
+    **内联公式字符串** (`int(bar_vol * max_volume_participation // 100) * 100` 等)。
+    它这次变红的理由是: **三族被正确地改走规范函数了** ——
+    **代码变好了, 钉桩没跟上 ⇒ 它红着, 却什么也没在守。**
+    (与 §13.22(g) 修掉的那条同一族: 用"写法"代替"性质"。)
+
+    改为断言**性质**, 且**发现式** (不写死文件列表 —— §13.22/§13.23 的教训):
+      * 正面: 任何出现 `MAX_VOL_PARTICIPATION` 的族内模块, 必须导入 `volume_cap_fill`;
+      * 反面: 不得再出现内联的量比取整式。
+    这样"把定义删掉"或"抄一份新的内联式"都会红。
     """
-    for rel in VOLUME_CAP_SITES:
-        src = Path(rel).read_text(encoding="utf-8")
-        assert "volume_cap_fill" in src, (
-            f"§4 VIOLATION: {rel} 未使用规范 volume_cap_fill —— "
-            "自行实现的 `int(bar_vol * pct // 100) * 100` 在 `bar_vol × pct < 100` "
-            "时取整到 0,守卫随之被跳过,薄量 bar 上产生无上限的幻影成交。"
-        )
+    hits_ok, hits_bad = [], []
+    for p in sorted(ROOT.glob("*/**/*.py")):
+        if p.parts[0] in ("core", "tests") or p.name.startswith("test_"):
+            continue
+        src = p.read_text(encoding="utf-8")
+        if "MAX_VOL_PARTICIPATION" not in src and "max_volume_participation" not in src:
+            continue
+        rel = str(p.relative_to(ROOT))
+        # 正面判据必须查**绑定**, 不能只查"字符串出现过" ——
+        # 初稿写的是 `"volume_cap_fill" in src`, 而**去掉 import 之后调用点仍在**,
+        # 断言照样通过 (§6 注入 B 实测: 该写法**不咬**)。这就是 §13.19/§13.20
+        # 那种"看着在守、其实恒真"的形态, 又一次。
+        # 用 **AST** 而不是正则: 导入块里带括号的注释会把 `[^)]*` 提前截断
+        # (第二版就是这么假的 —— 还原态也报红)。AST 对别名也一并识别。
+        if _imports_from_core_dual_price(src, "volume_cap_fill"):
+            hits_ok.append(rel)
+        # 反面: 内联的量比取整 (`* MAX_VOL... // 100) * 100`)
+        for i, line in enumerate(src.splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            if re.search(r"VOL_PARTICIPATION\s*//\s*100", line) or re.search(
+                r"max_volume_participation\s*//\s*100", line
+            ):
+                hits_bad.append(f"{rel}:{i}")
+
+    assert not hits_bad, (
+        "§4 量比上限又出现了**内联取整式** —— 必须走 core.dual_price.volume_cap_fill:\n  "
+        + "\n  ".join(hits_bad)
+    )
+    assert len(hits_ok) >= 4, (
+        f"只有 {len(hits_ok)} 个模块走规范量比上限 ({hits_ok}) —— 预期四族各一。"
+        f"若某族改用了别的写法, 本条会漏掉它。"
+    )
 
 
 def test_all_engines_atr_slip_scale_opt_in() -> None:

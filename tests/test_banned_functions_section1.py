@@ -60,22 +60,15 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# Directories to scan for §1 violations
-# 2026-10-15 (audit 附十五): 此前漏掉 `dna_data` 与 `tools` —— 而 `dna_data` 正是
-# **产出引擎所消费的 panel** 的那一层:`bfill` / `shift(-1)` 出现在那里,会把前视
-# 注入到下游**每一个**回测里,而守卫看不到(它只看引擎、core、dna_stats)。
-# 覆盖缺口是静默的:它不会报错,只会让"没被扫到的地方"与"合规"看起来一样。
-# `sql/` 未纳入:AstScanner 是 Python AST 实现,SQL 需要另一套检查(已登记)。
-SCAN_DIRS = [
-    "chase_up",
-    "uptrend_pullback",
-    "short_reversal",
-    "cycle_price_action",
-    "core",
-    "dna_stats",
-    "dna_data",
-    "tools",
-]
+# ⚠️ 2026-10-19 (§13.45): 这里原先是一张手写的 `SCAN_DIRS`(6 个目录), 且消费处形如
+#     for d in SCAN_DIRS:
+#         if not (REPO_ROOT / d).exists(): continue     # ← 静默跳过 (§13.43 记过的形态)
+# ⇒ 它漏掉 `tools/` 与 `dna_data/`; 而且"目录列表 + rglob"这种写法**结构上覆盖不到
+#   仓库根的散文件**(`hiagent_config.py` / `run_sizing_comparison.py`)。
+# ⇒ 改为**遍历仓库**: 把"要扫哪些"换成"只排除哪些"。
+SCAN_EXCLUDE_DIRS = {
+    "tests", "__pycache__", ".git", ".claude", "node_modules", "results", "worktrees",
+}
 
 # Excluded subdirs (tests, __pycache__, etc.)
 EXCLUDE_DIR_NAMES = {
@@ -87,20 +80,18 @@ EXCLUDE_DIR_NAMES = {
 
 
 def _iter_python_files() -> list[Path]:
-    """Yield all .py files in SCAN_DIRS, excluding tests + cache dirs."""
+    """**发现式**: 遍历仓库里所有 `.py`, 只按目录排除 (2026-10-19, §13.45)。
+
+    与 §13.42 对 ORDER BY 守卫做的是同一件事: **把"要扫哪些"换成"只排除哪些"**。
+    覆盖面因此从 6 个目录扩到**整仓**, 并且第一次覆盖到仓库根的散文件。
+    """
     files: list[Path] = []
-    for scan_dir in SCAN_DIRS:
-        base = REPO_ROOT / scan_dir
-        if not base.exists():
+    for path in sorted(REPO_ROOT.rglob("*.py")):
+        if any(part in SCAN_EXCLUDE_DIRS or part in EXCLUDE_DIR_NAMES for part in path.parts):
             continue
-        for path in base.rglob("*.py"):
-            # Skip excluded dirs
-            if any(part in EXCLUDE_DIR_NAMES for part in path.parts):
-                continue
-            # Skip test files (test_*.py)
-            if path.name.startswith("test_"):
-                continue
-            files.append(path)
+        if path.name.startswith("test_"):
+            continue
+        files.append(path)
     return files
 
 
@@ -283,4 +274,35 @@ def test_section1_no_lookahead_test_files_exist_per_engine() -> None:
     missing = [p for p in expected if not (REPO_ROOT / p).exists()]
     assert not missing, (
         f"Regression: missing §1 no_lookahead test files: {missing}"
+    )
+
+# ---------------------------------------------------------------------------
+# 反空转对照 (§13.45): §1 扫描必须是**发现式**的, 且必须够得到散文件
+# ---------------------------------------------------------------------------
+
+
+def test_section1_scan_is_discovery_based_and_reaches_root_files() -> None:
+    """§1 扫描必须覆盖旧手写清单**之外**的位置 —— 否则"放宽覆盖面"是句空话。
+
+    ⚠️ 2026-10-19 (§13.45): 本文件原先用 `SCAN_DIRS`(6 个目录) + `rglob` 枚举。
+    那种写法**结构上覆盖不到仓库根的散文件**(目录列表里放不进一个文件)。
+    改为遍历仓库后, 实测覆盖 **106 → 119** 个文件, 多出的 13 个里有:
+    `tools/cross_section/*`(§13.41 从 `/tmp` 抢救进来的 §7 复现脚本)、
+    `dna_data/*`(§9 说的共享双价层)、以及两个根目录散文件。
+    """
+    files = _iter_python_files()
+    rels = {f.relative_to(REPO_ROOT).as_posix() for f in files}
+    old_scope = {"chase_up", "uptrend_pullback", "short_reversal",
+                 "cycle_price_action", "core", "dna_stats"}
+    outside = {r for r in rels if r.split("/")[0] not in old_scope}
+    assert outside, (
+        "扫描范围没有越出旧的那 6 个目录 ⇒ 它退化成了手写清单, 覆盖面并未真的放宽。"
+    )
+    # 散文件 —— 旧机制**结构上**够不到的那一类
+    root_files = {r for r in rels if "/" not in r}
+    assert root_files, (
+        f"扫描够不到仓库根的散文件 ⇒ 目录列表 + rglob 的老问题还在。实际: {sorted(rels)[:5]}"
+    )
+    assert "tools/cross_section/cs_holdout.py" in rels, (
+        "§13.41 抢救进来的 §7 复现脚本必须落在 §1 扫描范围内"
     )

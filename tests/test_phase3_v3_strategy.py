@@ -134,15 +134,43 @@ def test_cascade_triggers_entry_and_exits():
     assert t["net"] >= -0.1  # 容忍小亏（印花税等成本）
 
 
+def _build_post_entry_fall_panel(n: int = 220, fall: float = 0.01,
+                                 tail_from: int = 201) -> pd.DataFrame:
+    """在 `_build_monotonic_down_panel` 之上, 把**入场之后**的 bars 改成持续下跌。
+
+    2026-10-19 (§13.54): 原 `test_tp_exit` 用的是 `_build_monotonic_down_panel`,
+    而那个 fixture 的 docstring 自己写着:
+
+    > "bars 200+ 维持 close 在入场价附近 (high/low 极窄), **避免 TP/SL**,
+    >  让 max_hold 触发 time exit。"
+
+    ⇒ **TP 在那个 fixture 上按构造不可达**。于是那条测试只能写
+    `exit_reason in ("TP", "time")` 来绕过自己的 fixture ——
+    **一个叫 `test_tp_exit` 的测试, 从不测 TP。**
+    本函数把入场后的价格改成持续下跌 (短仓 ⇒ 盈利 ⇒ 触发 TP)。
+    """
+    panel = _build_monotonic_down_panel(n=n).copy()
+    p = float(panel.loc[tail_from - 1, "close"])
+    for i in range(tail_from, len(panel)):
+        p = p * (1.0 - fall)
+        panel.loc[i, ["open", "high", "low", "close"]] = [p, p * 1.0005, p * 0.9995, p]
+    return panel
+
+
 def test_tp_exit():
-    """tp_pct 设很大 → 应该 TP 出场（价格跌穿 tp_pct 阈值）。"""
-    panel = _build_monotonic_down_panel(n=220)
-    h = _run_strategy(panel, tp_pct=0.50, sl_pct=0.001, max_hold=20,
-                      a_condition="cascade_price")
-    if h["trades"]:
-        t = h["trades"][0]
-        # tp_pct=0.50 太大不容易触发，但如果有出场应该是 time
-        assert t["exit_reason"] in ("TP", "time")
+    """TP 出场: 入场后价格持续下跌 (短仓 ⇒ 盈利) ⇒ `exit_reason == "TP"` 且净收益为正。
+
+    2026-10-19 (§13.54): 本条**此前测不到 TP**(见 `_build_post_entry_fall_panel` 的说明),
+    靠 `in ("TP", "time")` 这个**包含退化结果的析取**通过。现在断言的是**精确**的出场原因。
+    """
+    h = _run_strategy(_build_post_entry_fall_panel(), tp_pct=0.02, sl_pct=0.10,
+                      max_hold=20, a_condition="cascade_price")
+    assert h["trades"], "本场景必须产生成交, 否则本条断言是空转的"
+    t = h["trades"][0]
+    assert t["exit_reason"] == "TP", (
+        f"入场后价格持续下跌 (短仓盈利) 却以 {t['exit_reason']!r} 出场 —— TP 路径没有按预期工作"
+    )
+    assert t["net"] > 0, f"TP 出场应为盈利, 实得 net={t['net']:.5f}"
 
 
 def test_time_exit_when_hold_exceeds_max():

@@ -740,13 +740,33 @@ def main():
     summary_html = '<div class="summary"><h2>回测摘要</h2><table>'
     summary_html += (
         f'<tr><td>preset</td><td>{m["preset"]}</td></tr>'
-        f'<tr><td>区间</td><td>{m["start"]} → {m["end"]}</td></tr>'
+        f'<tr><td>请求区间</td><td>{m["start"]} → {m["end"]}</td></tr>'
+        # §7 (2026-10-17, 第 8 处): 报"区间"却印请求窗会**误导** —— 实测期可以偏离
+        # 请求窗数月到数年 (v58_mp_2: 请求 3.00 年, 实跑 1.96 年)。凡印窗口的地方
+        # 必须印实测期, 请求窗只作为对照。
+        f'<tr><td>实测区间</td><td>'
+        + (
+            f'{m["evaluated_start"]} → {m["evaluated_end"]}'
+            f'（{m["evaluated_years"]:.2f} 年，来源 {m.get("evaluated_period_source", "?")}）'
+            if m.get("evaluated_start")
+            else '<b>未记录</b>（本次运行的 metrics 缺 evaluated_start）'
+        )
+        + '</td></tr>'
         f'<tr><td>展示笔数</td><td>{len(trades)} / {m["trades_count"]}</td></tr>'
         f'<tr><td>胜率</td><td>{m["win_rate"] * 100:.1f}%</td></tr>'
         f'<tr><td>期末资金</td><td>¥{m["final_capital"]:,.2f}</td></tr>'
         f'<tr><td>总收益</td><td>{m["total_yield"] * 100:+.2f}%</td></tr>'
         f'<tr><td>CAGR</td><td>{m["cagr"] * 100:+.2f}%</td></tr>'
-        f'<tr><td>Sharpe</td><td>{m["sharpe"]:.2f}</td></tr>'
+        # §5/§6 (2026-10-17, 第 9 处): 报告的 Sharpe 是**逐笔口径**; 姊妹引擎是**日权益
+        # 口径**。两者是不同的统计量, 不可跨族比较 ⇒ 这里必须同时给出, 否则读者会拿
+        # 一个 per-trade IR 去和 uptrend/chase_up 的日 Sharpe 比高低。
+        f'<tr><td>Sharpe</td><td>{m["sharpe"]:.2f}'
+        + (
+            f'（日权益口径 {m["sharpe_equity_basis"]:.2f}）'
+            if m.get("sharpe_equity_basis") is not None
+            else '（日权益口径 <b>未记录</b>）'
+        )
+        + '</td></tr>'
         f'<tr><td>最大回撤</td><td>{m["max_dd"] * 100:.2f}%</td></tr>'
         f'<tr><td>TP/SL/time</td><td>{m["tp_count"]} / {m["sl_count"]} / {m["time_count"]}</td></tr>'
     )

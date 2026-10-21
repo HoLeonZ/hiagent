@@ -20,8 +20,8 @@ from datetime import date
 from typing import Optional
 
 from core.dual_price import (
-    COMMISSION_RATE,
-    MIN_COMMISSION,
+    COMMISSION_RATE,  # §2: canonical 万2.5
+    MIN_COMMISSION,  # §2: canonical ¥5 floor
     STAMP_DUTY_RATE,  # Round 9 (2026-09-28): canonical 万5 sell-only stamp duty
     # 附八十一: `_fee()` 在 `atr_slip_scale > 0` 的分支里调用它,而这个名字**此前没被 import**
     # ⇒ 一旦打开 ATR 滑点(§4 原则上有此要求,现为待决口径:全库 preset 的 atr_slip_scale
@@ -55,9 +55,24 @@ class ReplayBroker:
         self.atr_slip_scale = atr_slip_scale
         self._open_positions: dict[str, int] = {}
 
-    def _next_trading_date(self, after: date) -> date:
-        # Tick 49: delegate to Control Plane data_provider (DB-free broker).
-        return self._data_provider.next_trading_date(after)
+    def _next_bar_date(self, thscode: str, after: date) -> date:
+        """该股自身下一根可交易 bar 的日期 (§1 停牌语义)。
+
+        旧实现用全市场日历 next_trading_date: 个股停牌时它指向一根不存在的
+        bar, open_bar 直接抛 RuntimeError —— 既没有"顺延到复牌成交",也没有
+        "不成交",而是把整个回测打断。改用个股自身 bar 序列后, 停牌期间的
+        成交顺延到复牌首日开盘, 与 chase_up / uptrend / short_reversal 一致。
+
+        None (数据尾部之外, 非停牌) 仍然是 fail-fast —— 那是数据覆盖缺口,
+        不是停牌, 不得静默成交。
+        """
+        d = self._data_provider.next_bar_date(thscode, after)
+        if d is None:
+            raise RuntimeError(
+                f"no next bar for {thscode} after {after} — data coverage gap "
+                f"(not a suspension); refusing to fabricate a fill date"
+            )
+        return d
 
     def _open_price(self, thscode: str, on_date: date) -> float | None:
         # Tick 49 + N3: delegate to data_provider.open_price which routes
@@ -75,8 +90,24 @@ class ReplayBroker:
         (实测 000639.SZ)。该顺序问题在 `submit_buy` 改成"停牌返回 None"之后
         才暴露出来。
         未知标的(库中完全无 bar)仍由 `_open_price` fail-fast 抛错。
+
+        合并口径(2026-10-20, §1): 候选成交日与 `submit_buy` **同源** —— 取
+        该股**自身**的下一根可交易 bar,而不是全市场日历。两条路径必须给同一个
+        答案: `submit_buy` 现在会把停牌期间的买入顺延到复牌首日成交,若预检仍
+        按市场日历(复牌日之前那根并不存在的 bar)判 False,引擎会静默跳过一笔
+        它本来能成交的入场 —— 那是"两处规则各自演化"。
+        "完全没有下一根 bar"(数据尾部之外)返回 False 而**不**抛错: 预检的职责
+        是"该信号不得进入交易清单"(§4),不是把整轮回测打断(§1: 缺 bar 不得
+        中止引擎);该情形留一条告警,以区别于"未知标的"的数据完整性问题。
         """
-        return self._open_price(thscode, self._next_trading_date(decision_date)) is not None
+        fill_date = self._data_provider.next_bar_date(thscode, decision_date)
+        if fill_date is None:
+            logger.warning(
+                "[coverage] %s 在 %s 之后没有任何 bar —— 该信号无法成交, 跳过入场",
+                thscode, decision_date,
+            )
+            return False
+        return self._open_price(thscode, fill_date) is not None
 
     def _fee(
         self,
@@ -89,6 +120,9 @@ class ReplayBroker:
     ) -> float:
         notional = qty * price
         # §2 (audit P2-11, 2026-10-15): core 单源
+        # 2026-10-19 (§2): 原先这里写死 `max(5.0, notional * 0.00025)` —— 而**同一个
+        # 函数的下一行**已经正确地用了 `STAMP_DUTY_RATE`。**一个函数内部的不对称**:
+        # 三个成本常量里两个是字面量, 一个是绑定。改为绑定 ⇒ 取值逐字节未变。
         commission = max(MIN_COMMISSION, notional * COMMISSION_RATE)
         # Round 9 (2026-09-28, CLAUDE.md §0/§3): canonical STAMP_DUTY_RATE (万5
         # post-Aug2023); was 0.001 = 万10 pre-Aug2023 historical.
@@ -119,7 +153,7 @@ class ReplayBroker:
     ) -> Optional[TradeFill]:
         if qty <= 0 or qty % 100 != 0:
             raise ValueError("qty must be positive multiple of 100")
-        fill_date = self._next_trading_date(decision_date)
+        fill_date = self._next_bar_date(thscode, decision_date)
         price = self._open_price(thscode, fill_date)
         if price is None:
             # §1 (audit, 2026-10-15): 停牌(当日缺 bar)→ **本次不成交**。
@@ -177,7 +211,10 @@ class ReplayBroker:
                 "[odd-lot] 全仓卖出含零股 %s qty=%d(送股/配股产生;A 股允许整笔卖出)",
                 thscode, qty,
             )
-        fill_date = self._next_trading_date(decision_date)
+        # §1 停牌语义(合并口径): fill_date 取**该股自身**的下一根可交易 bar
+        # (与 submit_buy 同源),停牌期间的卖出顺延到复牌首日开盘;数据尾部之外
+        # (非停牌)仍由 `_next_bar_date` fail-fast,不得合成成交日。
+        fill_date = self._next_bar_date(thscode, decision_date)
         price = self._open_price(thscode, fill_date)
         if price is None:
             # §1 (audit, 2026-10-15): 停牌无法卖出 → 持仓**必须保留**,

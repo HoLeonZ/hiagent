@@ -12,6 +12,12 @@ from chase_up.data import load_panel
 from chase_up.portfolio import simulate_portfolio
 from chase_up.presets import MAX_HOLD_LIMIT, get_preset
 from chase_up.signals import compute_indicators, select_entries
+# §2 Canonical Cost Model: 成本常量只在 core/ 定义一次, 引擎必须**导入**而非重写。
+# ⚠️ 合并注意: 本行**必须**保持"单行 import + COMMISSION_RATE"这一形态 ——
+# tests/test_cost_constants_bound_to_core.py 的正向绑定判据是
+# `from core\.dual_price import .*COMMISSION_RATE` 的单行正则, 而下面
+# core.dual_price 的括号式多行 import 匹配不到它。
+from core.dual_price import COMMISSION_RATE, MIN_COMMISSION, STAMP_DUTY_RATE
 from chase_up.universe import load_universe
 
 from core.dual_price import (  # §2 单源 (audit P2-11, 2026-10-15)
@@ -38,6 +44,16 @@ INITIAL_CAPITAL = 1_000_000.0
 #: (日历日 vs 交易日会让同一窗口的 CAGR 差 8%~26%)。此处保留旧名以兼容调用方。
 TRADING_DAYS = TRADING_DAYS_PER_YEAR
 
+# §13.89: 口径**自披露**的单一来源 —— 与 metrics 里报出的 `metrics_basis` 同源,
+# 也与 §13.13 的对照表同源 (§13.87 钉住的那张表)。
+METRICS_BASIS = {
+    "trading_days": TRADING_DAYS,
+    "sharpe": "equity",
+    "cagr_denominator": "evaluated_days",
+    "win_rate_field": "net",
+    "max_dd": "nav_mtm",
+}
+
 
 def compute_metrics(
     trades_df: pd.DataFrame,
@@ -54,6 +70,7 @@ def compute_metrics(
             "avg_hold_days": 0.0, "max_hold_days": 0, "overrun_count": 0,
             "tp_count": 0, "sl_count": 0, "time_count": 0, "eod_count": 0,
             "avg_net_return": 0.0, "profit_factor": 0.0, "exposure": 0.0,
+            "metrics_basis": dict(METRICS_BASIS),
         }
 
     eq = equity_df["equity"].to_numpy(dtype=float)
@@ -109,6 +126,9 @@ def compute_metrics(
 
     return {
         "trades": int(len(trades_df)),
+        # §13.89: 口径自披露 —— 让"各族同名指标定义不同"这件事**从产出里可读**,
+        # 而不是只写在注释里 (全仓此前只有 short_reversal 报 `sharpe_equity_basis`)。
+        "metrics_basis": dict(METRICS_BASIS),
         "win_rate": float((net > 0).mean()),
         "final_equity": final_equity,
         # §5 (audit 2026-10-16): 观察数**随产物发布**。DSR 的 `n_returns` 参数是
@@ -195,7 +215,7 @@ def run_backtest(
         ),
         kelly_fraction=p.get("kelly_fraction"),
         # V3a (2026-09-22, CLAUDE.md §3): Dual-Price System execution source。
-        price_source_for_execution=p.get("price_source_for_execution", "adj_close"),
+        price_source_for_execution=p.get("price_source_for_execution", "raw_close"),
         # V8 (2026-09-22, CLAUDE.md §4): preset→strategy explicit plumbing。
         intraday_tiebreak=p.get("intraday_tiebreak", "sl_first"),
         max_volume_participation=resolve_volume_participation(
@@ -208,6 +228,10 @@ def run_backtest(
         # Round 15 (2026-09-28) 在 portfolio.py:247-254 引入 ATR-aware slippage 与成本参数。
         # 当前 0/22 preset 声明这些 key, 函数默认 0.00025/0.0005/5.0/0.0/0.0 与 backtrader_engine.py p.get 默认完全一致 (R5 nav_gate_ratio 同模式)。
         # 显式 plumb 防止未来 preset override 时两引擎 drift。
+        # 2026-10-19 (§2): 以下三个默认值**原先写死为字面量** ⇒ 违反
+        # "constants are defined exactly once (in core/) … redefining fee constants
+        # inside an engine is a fail-fast violation"。取值与规范值逐字节相同,
+        # 改为绑定 ⇒ **零结果漂移**; 而以后 core 改值时这里会跟着走, 不再静默分叉。
         commission_rate=p.get("commission_rate", COMMISSION_RATE),
         stamp_duty_rate=p.get("stamp_duty_rate", STAMP_DUTY_RATE),
         min_commission=p.get("min_commission", MIN_COMMISSION),

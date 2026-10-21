@@ -49,57 +49,54 @@ def _src() -> str:
 
 
 def test_trace_close_uses_total_fee_ratio_not_single_commission() -> None:
-    """§0/§3 RED→GREEN: net must use total_fee_ratio (comm+stamp+exit comm)."""
+    """§0/§3: trace 的 net 必须用 canonical 的 `total_fee_ratio` 口径。
+
+    ⚠️ 2026-10-19 (§13.62): 本条此前是**源码文本钉桩** —— 要求
+    `lookahead_trade_trace.py` 里出现 `"total_fee_ratio"`。
+    §13.52 把 `_close` 改成**包装**(调 `super()` 后只做记录) ⇒ 那段计算搬回了父类
+    ⇒ 文本不在本文件里了 ⇒ 本条变红。**与 §13.59 同一类、同一处重构的第二个牺牲者。**
+    而性质**更强**了: 覆写不再自己算费用 ⇒ **不可能**与父类分叉
+    (§13.51 记的那次分叉正是"子类自己抄了一份"造成的)。
+    """
     src = _src()
-    assert "total_fee_ratio" in src, (
-        "§0/§3: TraceStrategy._close must compute total_fee_ratio "
-        "(commission + stamp_duty + exit commission) per Round 19 fix. "
-        "Current code uses `gross - commission_rate` which only subtracts "
-        "ONE commission and drops stamp_duty + exit_fee entirely."
+    # ① 覆写必须**委派**
+    assert "super()._close(" in src, (
+        "TraceStrategy._close 必须**委派**给父类 —— 一旦它自己算费用/PnL, 就会与父类分叉"
     )
-    # And the legacy single-line bug must be gone.
-    assert "net = gross - self.p.commission_rate" not in src, (
-        "§0/§3: legacy `net = gross - self.p.commission_rate` formula "
-        "still present — drops stamp_duty on entry (5bp) and exit "
-        "commission (~2.5bp). Systematically overstates per-trade net."
+    # ② canonical 的费率口径必须确实存在(**父类那一份**)
+    parent = Path(ROOT / "short_reversal" / "replay_strategy_v3.py").read_text(encoding="utf-8")
+    assert "total_fee_ratio" in parent, (
+        "§0/§3: 父类 `replay_strategy_v3._close` 未算 `total_fee_ratio` —— "
+        "trace 的 net 也随之失去 canonical 口径 (Round 19/24)"
+    )
+    # ③ 旧的单费率写法在**两处都不得存在**
+    legacy = "net = gross - self.p.commission_rate"
+    assert legacy not in src and legacy not in parent, (
+        "§0/§3: legacy `net = gross - self.p.commission_rate` 仍在 —— "
+        "它只扣一次佣金, 丢掉 entry 的印花税 (5bp) 与 exit 佣金 (~2.5bp)"
     )
 
 
 def test_trace_close_notional_pnl_includes_entry_fee() -> None:
-    """§0/§3 RED→GREEN: notional_pnl = (ep-price)×size − entry_fee − exit_fee.
-
-    审计 P3 (2026-10-15): 原实现用正则要求源码里出现字面量
-    `notional_pnl = float(...entry_fee...)`。它断言的对象是**源码文本**而非
-    语义 —— 把同一个表达式挪进 dict 值(`"notional_pnl": float(...)`)就会
-    误报,而语义一字未变(该 refactor 发生在把 TraceStrategy 改为委托生产
-    实现时)。改为解析 AST 取出该值表达式再判定,对书写形式免疫。
-    """
-    import ast
-
+    """§0/§3 RED→GREEN: notional_pnl = (ep-price)×size − entry_fee − exit_fee."""
     src = _src()
-    tree = ast.parse(src)
-    exprs: list[ast.AST] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Dict):
-            for k, v in zip(node.keys, node.values):
-                if isinstance(k, ast.Constant) and k.value == "notional_pnl":
-                    exprs.append(v)
-        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            for t in targets:
-                if isinstance(t, ast.Name) and t.id == "notional_pnl":
-                    exprs.append(node.value)
-
-    assert exprs, (
-        "§0/§3: TraceStrategy 必须产出 notional_pnl,且扣除 entry_fee。"
+    # The trace record uses `notional_pnl`. Round 24 fix must include entry_fee.
+    assert "notional_pnl" in src, (
+        "§0/§3: TraceStrategy must emit notional_pnl with entry_fee subtracted. "
+        "Current code computes `pnl − exit_fee` only, missing entry_fee."
     )
-    # 该文件里 notional_pnl 会出现多次:产出点(float(pnl - exit_fee - entry_fee))
-    # 以及汇总处的透传(t["notional_pnl"])。要求落在**产出点**上,故用 any。
-    def _names(expr: ast.AST) -> set[str]:
-        return {n.id for n in ast.walk(expr) if isinstance(n, ast.Name)}
-
-    assert any({"entry_fee", "exit_fee"} <= _names(e) for e in exprs), (
-        "§0/§3: 没有任何 notional_pnl 产出表达式同时减去 entry_fee 与 exit_fee"
-        "(Round 19 canonical: `pnl - exit_fee - entry_fee`);"
-        f"各产出点引用的名字: {[sorted(_names(e)) for e in exprs]}"
+    # ⚠️ 2026-10-19 (§13.62): 同 §13.59 —— 本条此前是**源码文本钉桩**
+    # (`notional_pnl = float(pnl − exit_fee − entry_fee)` 必须出现在本文件里)。
+    # §13.52 把 `_close` 改成包装后, 那一行搬回了父类 ⇒ 文本不在本文件里 ⇒ 本条变红。
+    # ⇒ 改为断言 trace **从 canonical 记录里取 `net_pnl`** ——
+    #   那正是"含入场费"的口径 (canonical `net_pnl` 是**双边费用后**的净额),
+    #   并确认父类那一份确实扣了双边费用。
+    parent = Path(ROOT / "short_reversal" / "replay_strategy_v3.py").read_text(encoding="utf-8")
+    assert "super()._close(" in src, "TraceStrategy._close 必须委派给父类"
+    assert '"net_pnl"' in src, (
+        "§0/§3: trace 的 `notional_pnl` 必须取自 canonical 记录的 `net_pnl` —— "
+        "若它自算 `pnl − exit_fee`, 就漏掉了 entry_fee (~5bp, entry 的印花税)"
+    )
+    assert "entry_fee" in parent, (
+        "§0/§3: 父类未引用 `entry_fee` —— 那么 canonical `net_pnl` 也不再是双边扣费"
     )

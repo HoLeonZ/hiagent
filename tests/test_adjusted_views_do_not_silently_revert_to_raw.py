@@ -144,6 +144,9 @@ def test_the_gap_is_a_pure_tail() -> None:
         ).fetchone()
     finally:
         con.close()
+    # ⚠️ 2026-10-20: 数据刷新后缺口为 **0 行** ⇒ `sum()` 在空集上返回 NULL。
+    # 这不是"退化成 None 比较", 而是本判据的**理想态**; 归一成 0 再比。
+    after = int(after or 0)
     assert total == after, f"缺口不全是尾部:{total} 行缺因子,其中只有 {after} 行晚于 {factor_max}"
 
 
@@ -280,7 +283,12 @@ def test_the_engine_refuses_a_window_with_uncovered_trading_days() -> None:
 
     # ② **周末当终点** ⇒ 放行:窗口里没有任何未覆盖的**交易日**
     #    (这条正是第一版判据的漏洞:字面上 end > coverage,但没有数据)
-    weekend = coverage + timedelta(days=1)
+    # ⚠️ 2026-10-20 修复夹具:原写法是 `coverage + 1 天` 并断言它是周末 ——
+    #    那只在因子表**恰好止于周五**时成立(它当时止于 2026-09-18 Fri)。
+    #    因子表刷新到周二(2026-10-20)后,coverage+1 变成周三,夹具自破。
+    #    改为**按星期推算 coverage 之后最近的周六**。
+    days_ahead = (5 - coverage.weekday()) % 7 or 7
+    weekend = coverage + timedelta(days=days_ahead)
     assert weekend.weekday() >= 5, f"夹具失效:{weekend} 不是周末"
     con = _con()
     try:

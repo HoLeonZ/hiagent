@@ -40,6 +40,18 @@ def resolve_score_weights(preset: dict, preset_name: str) -> tuple[float, float,
         )
     return tuple(float(preset[k]) for k in SCORE_WEIGHT_KEYS)  # type: ignore[return-value]
 
+
+# §4 TP/SL: **固定百分比** —— 出场完全由 `tp_pct` / `sl_pct` 决定
+# (exit 路径见 cycle_price_action/portfolio.py:377-378: tp_p = entry×(1+tp_pct),
+#  sl_p = entry×(1−sl_pct); intraday tiebreak 走 sl_first)。
+# ⚠️ **2026-10-20 (§13.175) 更正**: 本行此前写的是
+#   「hybrid —— tp_pct/sl_pct 为固定基准, **atr_sl_mult 提供 ATR 自适应**」
+#   —— **那是错的**: `atr_sl_mult` 在本族**从来没有被读过**
+#   (`grep -rn "self.p.atr_sl_mult" cycle_price_action/*.py` ⇒ **一处也没有**)。
+#   ⇒ 本族的止损**不 ATR 自适应**。该键已按 §13.145① 登记为惰性键;
+#   **接不接它属结果变更** ⇒ 只登记, 不擅改。
+# §13.75: 这一行此前缺失, 而守卫查不到它 —— 因为该族的 preset 是**调用形态**,
+# 而旧扫描器只遍历字面量 dict ⇒ 那条守卫结构上不可能失败。
 PRESET_V1 = dict(
     atr_slip_scale=SLIP_NONE_ACKNOWLEDGED,
     threshold=2.0,
@@ -83,6 +95,10 @@ PRESET_V1 = dict(
     # 而是把矛盾显式记在案上,并把本 preset 登记进
     # `tests/test_research_scripts_reference_live_presets.py::
     # KNOWN_UNRECORDED_TRIAL_COUNTS`,直到迭代记录补齐。
+    # §5 惩罚指标: 本族**不走** dna_stats.walkforward_report.format_walkforward_stats。
+    # ⚠️ §13.83: 此处原写 "walkforward 输出走 … 自动套 DSR + Bonferroni 校正" —— **那是假的**:
+    # 全仓**只有** uptrend_pullback/wfv_eval.py 调用它, 本族 walkforward.py **0 处引用**。
+    # 本族真正的 §5 惩罚在 sweep_thresholds.py / main.py 的 deflated_sharpe_ratio 调用里。
     n_comparisons=1,
     # §2 (2026-09-22, CLAUDE.md All-In Sizing Policy):
     # Engine 里确有类常量 `MAX_POSITION_PCT = 1.0`(§2 政策常量);显式声明如下。

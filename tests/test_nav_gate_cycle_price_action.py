@@ -293,21 +293,30 @@ def test_cycle_try_enter_skips_when_nav_below_threshold() -> None:
 
 
 def test_cycle_backtest_accepts_initial_capital() -> None:
-    """Round 10 GREEN: cycle_price_action/backtest.py _accepted whitelist 含 initial_capital。
+    """Round 10 GREEN → §13.122 改钉**机制**: `_accepted` 必须**从 params 派生**。
 
-    防止 preset 中声明的 initial_capital 被 _accepted 过滤掉, 导致
-    backtrader_engine.params 拿不到 (AttributeError on self.p.initial_capital)。
+    要保的性质 (Round 10 的原始意图, 未变): preset 里声明的 `initial_capital`
+    不得被 `_accepted` 静默过滤掉 —— 否则 strategy 拿不到, NAV gate 锚点失效。
+
+    ⚠️ 本断言此前钉的是 `backtest.py` 里必须出现**字面量** `"initial_capital"`
+    (那是当时的**手工白名单**)。§13.98 把白名单换成
+    `set(CyclePriceActionStrategy.params._getkeys()) - _INJECTED` ——
+    派生之后那个字面量**合法地**消失了, 于是这条断言变成**死钉桩**
+    (`.index`/`in` 永不命中 ⇒ 永不可能通过), 由 §13.122 的普查抓到。
+
+    现在改钉**机制**而不是**某一次的字面量**:
+      * `_accepted` 必须是**派生**的 ⇒ 「忘了同步白名单」这类事故在机制上消失;
+      * 参数确实进了 strategy 的 params —— 由同文件的
+        `test_cycle_strategy_passes_initial_capital` 覆盖 (不重复钉)。
     """
     src = Path("cycle_price_action/backtest.py").read_text(encoding="utf-8")
 
-    assert "initial_capital" in src, (
-        "cycle_price_action/backtest.py 缺 initial_capital — preset 声明的 "
-        "initial_capital 会被静默丢弃"
+    assert "_accepted = set(" in src, (
+        "cycle_price_action/backtest.py 的 `_accepted` 不再是**派生集合** —— "
+        "退回手工白名单会让新加的 preset 键被静默丢弃 (§13.98)"
     )
-    # 进一步确认 _accepted set 包含该 key (而非仅注释/docstring 提及)
-    assert '"initial_capital"' in src, (
-        "cycle_price_action/backtest.py _accepted set 不含 'initial_capital' "
-        "字符串字面量 — preset key 会因 _accepted 过滤被丢弃"
+    assert "CyclePriceActionStrategy.params._getkeys()" in src, (
+        "`_accepted` 必须从 CyclePriceActionStrategy.params 派生, 而不是手抄一份"
     )
 
 

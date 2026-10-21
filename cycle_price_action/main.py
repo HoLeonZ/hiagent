@@ -125,10 +125,8 @@ def _write_equity_curve(
     proper 3-pool settlement, `free_cash` mirrors the single cash pool
     and `locked_margin` + `settling_funds` default to 0.
     """
-    EQUITY_CURVE_COLS = ("date", "cash", "position_value",
-                         "total_equity", "drawdown")
-    CASH_WALK_COLS = ("date", "free_cash", "locked_margin",
-                      "settling_funds", "nav", "total_equity")
+    # 2026-10-19: 上收至 core.trade_schema (单一来源)。
+    from core.trade_schema import CASH_WALK_COLS, EQUITY_CURVE_COLS
     with equity_path.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(EQUITY_CURVE_COLS))
         w.writeheader()

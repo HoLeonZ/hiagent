@@ -8,55 +8,46 @@ CLAUDE.md §2 (verbatim, 2026-09-21 update):
    layer (per-trade ATR-based SL + TP), not at the *entry* layer
    via a pre-trade cash buffer."
 
-**核心发现 (FRESH 2026-09-23):**
+**核心发现 (FRESH 2026-09-23):** `position_fraction` 若被引擎静默忽略,
+`1.0` 的 preset 靠巧合仍然对, 而 `0.5` 的半仓会**静默变满仓** ⇒ 实际风险 2×。
 
-A. **§2 All-In sizing MUST use position_fraction = 1.0**:
-   - Per preset: `position_fraction = 1.0` (or 0.x for partial sizing)
-   - Each engine's Portfolio.try_enter() must divide cash by
-     position_fraction to determine order size
-   - Catches: position_fraction silently dropped from call site
-     (per [[preset-engine-api-conformance-gap]] 175 dropped keys)
+---------------------------------------------------------------------------
+⛔ 2026-10-19 (§13.66): 本文件此前**三个族里有三个是空转的** —— 已重写
+---------------------------------------------------------------------------
+原版把引擎路径**手写死**为:
+    chase_up/portfolio.py / uptrend_pullback/portfolio.py / short_reversal/portfolio.py
+三处问题, 全部由**缺陷注入**暴露 (注入 `replay_strategy_v3.py:792` 去掉
+`position_fraction`, 本文件**毫无反应**):
 
-B. **Expected formula pattern (LONG position)**:
-   ```python
-   size = int(cash * position_fraction / entry_price / 100) * 100
-   ```
-   Or:
-   ```python
-   budget = cash * position_fraction  # all-in = 1.0
-   size = int(budget / entry_price // 100) * 100
-   ```
+1. **`short_reversal/portfolio.py` 根本不存在** —— short_reversal 的引擎是
+   `short_reversal/replay_strategy_v3.py`。不存在的路径 ⇒ `has_portfolio_class=False`
+   ⇒ 那条测试 **early-return, 空转**; 而**真正的引擎文件从未被扫过**。
+   (文件头 D 节把它写成 `short_reversal/portfolio.py:try_enter` —— 那个路径从来没有过。)
+2. **`cycle_price_action` 不在清单里**, 一条测试都没有。原因是文件头 D 节断言
+   "cycle_price_action: no Portfolio class (uses cerebro), skip" —— **而那句话是错的**:
+   `cycle_price_action/portfolio.py:69` 就是 `class Portfolio`。**一个未被核实的前提,
+   让一整族失明。**
+3. **AST 扫描只断言"文件里出现过 `position_fraction`"**。同文件 245 行的行为式守卫
+   自己就写明了这一点: "上面那几个 AST 扫描只断言源码里「出现」标识符 ——
+   一条 fail-fast 断言也能满足它"。而那条行为式守卫**只给 uptrend 补了**。
 
-C. **Anti-patterns to detect**:
-   - `size = int(cash / entry_price)` (missing position_fraction)
-   - `size = int(cash * 0.5 / entry_price)` (hardcoded fraction)
-   - `size = int(initial_capital / entry_price)` (uses initial, not cash)
+### 修法 (三处, 都是"让空转变响", 不改任何生产代码)
+* **发现式取文件** + **断言每个路径存在** + **断言每个族都被扫到** (§13.43/§13.45 的同一手段);
+* 断言改为**路径感知**: `position_fraction` 必须出现在**赋值给 sizing 变量**的表达式里,
+  而不是文件里任意一处;
+* `chase_up` / `cycle_price_action` 的"**preset 声明了、引擎不读**"登记为
+  **自失效豁免** (§13.24 的形状): 债还清 ⇒ 立刻红, 提示删掉豁免。
 
-D. **Coverage**:
-   - chase_up/portfolio.py:try_enter — verify position_fraction used
-   - uptrend_pullback/portfolio.py:try_enter — verify position_fraction used
-   - short_reversal/portfolio.py:try_enter — verify position_fraction used
-   - cycle_price_action: no Portfolio class (uses cerebro), skip
+### 实测结论 (重写后)
+| 族 | preset 声明 | 引擎的 sizing 表达式里读到 | 判定 |
+|---|---|---|---|
+| `uptrend_pullback` | ✅ | ✅ `slot_value *= position_fraction` | 通过 (+ 行为式守卫) |
+| `short_reversal` | ✅ | ✅ `target_value = free_cash * position_fraction` | 通过 |
+| `chase_up` | **22/22** | ❌ **无** | **登记在案的 §2 违反** |
+| `cycle_price_action` | **21/21** | ❌ **无** | **登记在案的 §2 违反** |
 
-E. **Why this matters**:
-   - If position_fraction is silently dropped:
-     - position_fraction=1.0 (all-in) works by coincidence (1.0 × x = x)
-     - position_fraction=0.5 (half-in) silently becomes all-in (1.0 × x = x)
-     - **Half-position presets become all-in** — silent position doubling
-   - §2 All-In policy relies on this being enforced correctly
-   - If position_fraction=0.5 is the strategy but engine ignores it,
-     real portfolio risk is 2× intended
-
-F. **AST-based detection**:
-   - Find Portfolio classes with try_enter methods
-   - Look for division chain: `cash / price` or `cash * position_fraction / price`
-   - Verify position_fraction reference exists
-   - Forward-defense: future engines that drop position_fraction RED
-
-G. **Test results (Tick 63 expected)**:
-   - chase_up + uptrend: position_fraction found in size calc
-   - short_reversal: position_fraction may be missing (RED)
-   - cycle_price_action: no Portfolio class (skip / different pattern)
+⇒ 两族是"**声明了却不被读**": §2 要求 preset 显式声明 (它们做到了), 但引擎不消费它 ——
+**声明本身因此不携带信息**。
 """
 
 # ⚠️ 附九十八: 上面引用的 §2 All-In Sizing Policy (2026-09-21) 条款**已被提交 2260ba1 替换**(现行文本见 CLAUDE.md,
@@ -67,182 +58,195 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# Engine-specific portfolio entry points
-PORTFOLIO_FILES = [
-    REPO_ROOT / "chase_up" / "portfolio.py",
-    REPO_ROOT / "uptrend_pullback" / "portfolio.py",
-    REPO_ROOT / "short_reversal" / "portfolio.py",
-]
+# 预算类变量的名字 —— 每一处对它们的赋值都必须引用 position_fraction 或 max_positions
+#: 2026-10-20 合并 main 后补入 `"lots"`: cycle_price_action 的 sizing 表达式是
+#: `lots = int(self.free_cash * self.position_fraction // (price * 100))`
+#: (cycle_price_action/portfolio.py:363) —— 它是该族**唯一**读 `position_fraction`
+#: 的赋值形态, 而原名单认不出它, 于是守卫对整族"无内容"。
+#: 实测全仓仅此一处 `lots =`, 故不会波及其他族。
+BUDGET_TARGETS = {"target_value", "slot_value", "budget", "budget_value", "target_qty", "lots"}
+
+# §2 允许的**替代**: N 槽等额 (max_positions > 1 时每笔 = free_cash / N)。
+# 因此"这条预算赋值没有 position_fraction"本身不算违反 —— 除非它连 max_positions 也没有。
+ALTERNATIVE_ALLOWED = {"max_positions"}
+
+# ⛔ 登记的债 (§13.66): 这些族的 preset **声明了** position_fraction, 而引擎**不读**它。
+# **修好后必须删掉对应那一行** —— 下面的断言会在债还清时立刻变红。
+#: ✅ 2026-10-20 合并 main 后**清空** —— 两笔债都已由 main 的引擎改动还清:
+#: * `chase_up`: `simulate_portfolio` 现在**真的读** `position_fraction`;
+#: * `cycle_price_action`: `Portfolio.__init__` 现在**接受** `position_fraction`。
+#: 按本表规矩(豁免不得继续挂着)两条都已删除;其结果漂移登记于
+#: `docs/strategy_mining_log.md` §13.215(§13.66/§13.67 的债还清)。
+REGISTERED_DEBT: dict[str, str] = {}
 
 
-def _scan_position_fraction_usage() -> dict[str, dict[str, object]]:
-    """Scan Portfolio files for position_fraction usage in size calc.
+def _families() -> list[str]:
+    """发现式: 任何含 `presets.py` 的目录都是一个族 (§13.22/§13.23 的教训)。"""
+    return sorted(p.parent.name for p in REPO_ROOT.glob("*/presets.py"))
 
-    Returns dict[file_rel → {
-        "has_portfolio_class": bool,
-        "has_try_enter": bool,
-        "uses_position_fraction": bool,
-        "position_fraction_lines": list[int],
-        "size_calc_lines": list[int],
-    }]
+
+def _engine_files() -> list[Path]:
+    """**发现式**取引擎文件 —— 不再手写清单。
+
+    `*/portfolio.py` 覆盖三个族 (含此前被漏掉的 `cycle_price_action`);
+    `short_reversal` 的引擎是 `replay_strategy_v3.py`, 单列 (§13.66: 此前手写的
+    `short_reversal/portfolio.py` 根本不存在)。
     """
-    results: dict[str, dict[str, object]] = {}
+    files = sorted(REPO_ROOT.glob("*/portfolio.py"))
+    extra = REPO_ROOT / "short_reversal" / "replay_strategy_v3.py"
+    if extra.exists():
+        files.append(extra)
+    return files
 
-    for path in PORTFOLIO_FILES:
-        if not path.exists():
-            results[str(path.relative_to(REPO_ROOT))] = {
-                "has_portfolio_class": False,
-                "has_try_enter": False,
-                "uses_position_fraction": False,
-                "position_fraction_lines": [],
-                "size_calc_lines": [],
-            }
-            continue
 
+def _mentions(node: ast.AST, name: str) -> bool:
+    for n in ast.walk(node):
+        if isinstance(n, ast.Attribute) and n.attr == name:
+            return True
+        if isinstance(n, ast.Name) and n.id == name:
+            return True
+    return False
+
+
+def _budget_assignments(tree: ast.AST) -> list[tuple[int, bool, bool]]:
+    """★ 路径感知: 所有赋值给**预算类变量**的语句 → [(行号, 含 position_fraction, 含 max_positions)]。
+
+    为什么不能只问"文件里出现过 position_fraction" (§13.66 的注入实证):
+    `short_reversal/replay_strategy_v3.py` 有**两处** budget 赋值读它 (768 的 atr 分支、
+    792 的常规分支)。只要求"有一处"⇒ 把 792 改成常数**照样绿**。
+
+    ⇒ 正确的不变式是**逐处**的: 每一处预算赋值都必须引用 `position_fraction`
+      **或** `max_positions` (§2 认可的 N 槽等额形态)。这样任何一处退化成常数都会红。
+    """
+    out: list[tuple[int, bool, bool]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for tgt in node.targets:
+                if isinstance(tgt, ast.Name) and tgt.id in BUDGET_TARGETS:
+                    out.append((node.lineno, _mentions(node.value, "position_fraction"),
+                                any(_mentions(node.value, a) for a in ALTERNATIVE_ALLOWED)))
+        elif isinstance(node, ast.AugAssign):
+            if isinstance(node.target, ast.Name) and node.target.id in BUDGET_TARGETS:
+                out.append((node.lineno, _mentions(node.value, "position_fraction"),
+                            any(_mentions(node.value, a) for a in ALTERNATIVE_ALLOWED)))
+    return out
+
+
+def _scan() -> dict[str, dict[str, object]]:
+    out: dict[str, dict[str, object]] = {}
+    for path in _engine_files():
+        rel = path.relative_to(REPO_ROOT)
         try:
-            source = path.read_text(encoding="utf-8")
-            tree = ast.parse(source)
+            tree = ast.parse(path.read_text(encoding="utf-8"))
         except (SyntaxError, OSError, UnicodeDecodeError):
             continue
-
-        rel = path.relative_to(REPO_ROOT)
-        has_portfolio = False
-        has_try_enter = False
-        uses_pf = False
-        pf_lines: list[int] = []
-        size_calc_lines: list[int] = []
-
-        for node in ast.walk(tree):
-            if not hasattr(node, "lineno"):
-                continue
-            line = node.lineno
-
-            # Find class definitions
-            if isinstance(node, ast.ClassDef):
-                if "Portfolio" in node.name or "portfolio" in node.name.lower():
-                    has_portfolio = True
-
-            # Find try_enter methods
-            if isinstance(node, ast.FunctionDef):
-                if "try_enter" in node.name or "enter" in node.name.lower():
-                    if has_portfolio:
-                        has_try_enter = True
-
-            # Find position_fraction references
-            if isinstance(node, ast.Name) and node.id == "position_fraction":
-                uses_pf = True
-                pf_lines.append(line)
-            if isinstance(node, ast.Attribute) and node.attr == "position_fraction":
-                uses_pf = True
-                pf_lines.append(line)
-
-            # Find size calculation patterns
-            if isinstance(node, ast.Assign):
-                for target in node.targets:
-                    if isinstance(target, ast.Name) and target.id in {
-                        "size", "order_size", "qty", "quantity"
-                    }:
-                        size_calc_lines.append(line)
-
-        results[str(rel)] = {
-            "has_portfolio_class": has_portfolio,
-            "has_try_enter": has_try_enter,
-            "uses_position_fraction": uses_pf,
-            "position_fraction_lines": pf_lines,
-            "size_calc_lines": size_calc_lines,
+        out[rel.as_posix()] = {
+            "family": rel.parts[0],
+            "budget_assignments": _budget_assignments(tree),
         }
-
-    return results
+    return out
 
 
 # ---------------------------------------------------------------------------
-# PASS baselines: each engine uses position_fraction
+# 反空转守卫 (§13.66): 扫描本身必须是真的
 # ---------------------------------------------------------------------------
 
 
-def test_chase_up_uses_position_fraction_in_sizing() -> None:
-    """§2 PASS baseline: chase_up Portfolio uses position_fraction.
+def test_engine_file_list_is_discovery_based_and_all_paths_exist() -> None:
+    """每个被扫的路径都必须**存在** —— 不存在的路径会让那条测试静默 early-return。
 
-    Forward-defense: if someone removes position_fraction from
-    chase_up/portfolio.py size calc, this test fails.
+    §13.66 的根因之一: 手写的 `short_reversal/portfolio.py` 从来不存在,
+    于是 short_reversal 那条测试**空转了不知道多久**。
     """
-    results = _scan_position_fraction_usage()
-    chase = results.get("chase_up/portfolio.py", {})
-
-    if not chase.get("has_portfolio_class"):
-        return  # no Portfolio class, skip
-
-    if not chase.get("uses_position_fraction"):
-        raise AssertionError(
-            "§2 POSITION_FRACTION DROPPED: chase_up/portfolio.py "
-            "Portfolio class does NOT reference position_fraction.\n"
-            "Per CLAUDE.md §2 (2026-09-21): every entry is sized at "
-            "position_fraction of available cash.\n"
-            "If position_fraction is silently dropped, partial-position "
-            "presets (e.g., position_fraction=0.5) silently become all-in "
-            "(real risk 2× intended)."
-        )
+    files = _engine_files()
+    missing = [str(p.relative_to(REPO_ROOT)) for p in files if not p.exists()]
+    assert not missing, f"扫描清单里有不存在的路径: {missing} —— 那些测试会静默空转"
+    assert len(files) >= 4, f"只取到 {len(files)} 个引擎文件: {files}"
 
 
-def test_uptrend_pullback_uses_position_fraction_in_sizing() -> None:
-    """§2 PASS baseline: uptrend_pullback Portfolio uses position_fraction."""
-    results = _scan_position_fraction_usage()
-    uptrend = results.get("uptrend_pullback/portfolio.py", {})
+def test_every_family_is_scanned() -> None:
+    """**每个族**都必须至少有一个被扫到的引擎文件 —— 防"一整族失明"。
 
-    if not uptrend.get("has_portfolio_class"):
-        return
-
-    if not uptrend.get("uses_position_fraction"):
-        raise AssertionError(
-            "§2 POSITION_FRACTION DROPPED: uptrend_pullback/portfolio.py "
-            "Portfolio class does NOT reference position_fraction.\n"
-            "Per CLAUDE.md §2 (2026-09-21): every entry is sized at "
-            "position_fraction of available cash.\n"
-            "If position_fraction is silently dropped, partial-position "
-            "presets (e.g., position_fraction=0.5) silently become all-in "
-            "(real risk 2× intended)."
-        )
-
-
-# ---------------------------------------------------------------------------
-# RED: short_reversal missing position_fraction (likely)
-# ---------------------------------------------------------------------------
-
-
-def test_short_reversal_uses_position_fraction_in_sizing() -> None:
-    """§2 RED forward-defense: short_reversal Portfolio uses position_fraction.
-
-    Per [[preset-engine-api-conformance-gap]]: 174 preset keys silently
-    dropped across engines. position_fraction may be one of them.
-
-    If short_reversal's Portfolio doesn't reference position_fraction,
-    flag the bug.
+    §13.66 的根因之二: 文件头断言 "cycle_price_action: no Portfolio class, skip"
+    —— 而 `cycle_price_action/portfolio.py:69` 就是 `class Portfolio`。
+    **一个未被核实的前提让一整族没有被检查过。**
     """
-    results = _scan_position_fraction_usage()
-    short = results.get("short_reversal/portfolio.py", {})
-
-    if not short.get("has_portfolio_class"):
-        # short_reversal may not have a Portfolio class
-        # Skip if no Portfolio class found
-        return
-
-    if not short.get("uses_position_fraction"):
-        raise AssertionError(
-            "§2 POSITION_FRACTION DROPPED: short_reversal/portfolio.py "
-            "Portfolio class does NOT reference position_fraction.\n"
-            "Per CLAUDE.md §2 (2026-09-21): every entry is sized at "
-            "position_fraction of available cash.\n"
-            "short_reversal presets may include position_fraction=0.x "
-            "for partial-position sizing. If silently dropped, all "
-            "positions become all-in regardless of preset intent."
-        )
+    scanned = {p.relative_to(REPO_ROOT).parts[0] for p in _engine_files()}
+    blind = [f for f in _families() if f not in scanned]
+    assert not blind, f"这些族**没有任何**引擎文件被扫到, 守卫对它们失明: {blind}"
 
 
 # ---------------------------------------------------------------------------
-# Behavioral (not source-scan) guard: the declaration must actually scale size
+# §2: 每个族的 sizing 表达式必须**真的**读到 position_fraction
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("fam", _families())
+def test_sizing_expression_uses_position_fraction(fam: str) -> None:
+    """§2: **每一处**预算赋值都必须引用 `position_fraction`, 或 §2 认可的 `max_positions`。
+
+    判据是**逐处路径感知**的, 不是"文件里出现过" —— 见 §13.66 的注入实证:
+    只要求"有一处"会让"另一处退化成常数"完全隐身。
+    """
+    hits = {k: v for k, v in _scan().items() if v["family"] == fam}
+    if not hits:
+        pytest.skip(f"{fam}: 没有扫到引擎文件 (由 test_every_family_is_scanned 负责报警)")
+
+    entries = [e for v in hits.values() for e in v["budget_assignments"]]  # type: ignore[index]
+    any_pf = any(has_pf for _, has_pf, _ in entries)
+    where = ", ".join(f"{k}:{[e[0] for e in v['budget_assignments']]}"  # type: ignore[index]
+                      for k, v in hits.items())
+
+    ok = bool(entries) and any_pf
+
+    if fam in REGISTERED_DEBT:
+        assert not ok, (
+            f"{fam} 现在**已经**在预算表达式里读 position_fraction 了 ({where}) —— "
+            f"说明 §13.66 那笔登记的债已经还清。请把 REGISTERED_DEBT 里 `{fam}` 这一条删掉 "
+            f"(豁免不得继续挂着), 并在 docs/strategy_mining_log.md §13.66 记下结果漂移。"
+            f"\n债的原文: {REGISTERED_DEBT[fam]}"
+        )
+        pytest.xfail(f"{fam}: 登记在案的 §2 违反 —— {REGISTERED_DEBT[fam]}")
+
+    assert entries, (
+        f"§2: {fam} 里**找不到任何**预算赋值 (赋值给 {sorted(BUDGET_TARGETS)}) —— "
+        f"守卫对这一族的 sizing 无内容, 必须先让扫描认出它的形态。"
+    )
+    assert any_pf, (
+        f"§2: {fam} 的预算赋值**没有一处**读 position_fraction: {where}\n"
+        f"⇒ preset 里声明的 position_fraction 被引擎静默忽略。"
+    )
+
+
+# ---------------------------------------------------------------------------
+# ⛔ 本守卫**做不到**什么 (§13.66 实测, 不是推断)
+# ---------------------------------------------------------------------------
+# 注入实证 (2026-10-19): 把 `short_reversal/replay_strategy_v3.py` 的
+#   792 行 `target_value = self.free_cash * self.p.position_fraction` 改成 `* 1.0`
+# 本文件**不会变红** —— 因为 768 行 (atr 分支) 也读 position_fraction,
+# "至少有一处" 仍然成立。
+#
+# 试过更严的规则「**每一处**预算赋值都必须引用 position_fraction 或 max_positions」:
+# **它抓得到那两次注入, 但产生 5 处假报** —— 全是合法形态:
+#   `slot_value = cash_only`                        (all_in 分支, 分数恒为 1.0)
+#   `slot_value = cash_only * kelly_fraction`        (kelly 分支, §2 认可的另一种模式)
+#   `budget = min(slot_value, pf.free_cash)`         (下游钳制; 那个 `pf` 是**持仓对象**, 同名巧合)
+# ⇒ **假报的守卫与不响的守卫是同一回事** (§13.19/§13.58 的同一病) ⇒ 该规则已收回。
+#
+# ⇒ **结论 (实测): AST 无法证明 §2 这条性质** —— 它只能证明"某处用到"。
+#   真正能证明的是**行为式**守卫 (`test_uptrend_pullback_position_fraction_scales_order_size`),
+#   而**四族里只有 uptrend 有**。
+#   **未做 (下一轮的入口)**: 给 `short_reversal` / `cycle_price_action` / `chase_up`
+#   各补一条同强度的行为式守卫 (三者引擎接口不同: 前者 backtrader, 中者 backtrader,
+#   后者 pandas) ⇒ 需要各写一份 fixture。
+
+
+# ---------------------------------------------------------------------------
+# 行为式守卫: 声明必须真的缩放**下单规模** (只给 uptrend 有 —— 见下)
 # ---------------------------------------------------------------------------
 
 
@@ -252,6 +256,11 @@ def test_uptrend_pullback_position_fraction_scales_order_size() -> None:
     上面那几个 AST 扫描只断言源码里「出现」标识符 —— 一条 fail-fast 断言也能
     满足它。这里跑行为: 同一组输入在 position_fraction=1.0 / 0.5 下各下一次单,
     断言规模按比例缩放 (fixture 特意把 volume cap 调高, 使预算而非成交量成为约束)。
+
+    ⚠️ §13.66: **四族里只有这一族有行为式守卫。** 其余三族的引擎接口不同
+    (`chase_up`/`uptrend` 是 pandas `simulate_portfolio(entries, panel, …)`;
+    `short_reversal`/`cycle` 走 backtrader) ⇒ 同样强度的行为式守卫需要另写三份。
+    **这是本册唯一能真正证明"声明→规模"的手段 ⇒ 记为未做, 不是已否。**
     """
     import pandas as pd
 
@@ -287,4 +296,135 @@ def test_uptrend_pullback_position_fraction_scales_order_size() -> None:
         f"§2 POSITION_FRACTION IGNORED: position_fraction=0.5 应下 500 股, "
         f"实际 {half} (1.0 时为 {full})。等值说明该 preset 键被引擎静默忽略 —— "
         f"半仓变全仓, 实际风险 2× 于 preset 声明。"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 行为式守卫 (backtrader 族) —— §13.66: 本族此前只有**空转的 AST 断言**
+# ---------------------------------------------------------------------------
+
+
+def test_short_reversal_position_fraction_scales_order_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§2 行为式: short_reversal 必须真正按 position_fraction 缩放下单规模。
+
+    **为什么必须有这一条** (§13.66): 本族此前的守卫扫的是 `short_reversal/portfolio.py`
+    —— **一个不存在的路径** ⇒ 那条断言一直在空转。而 AST 补不上来 (同文件末尾的说明:
+    792 行改常数仍绿, 因为 768 行的 atr 分支也读它)。**只有行为能证明。**
+
+    fixture 手法与 `test_short_reversal_limit_down_guard.py` 同源:
+    monkeypatch `_all_conditions` 使其**只在第一次 next() 时为真** ⇒ 恰好开一笔 ⇒ 规模可比。
+    """
+    import backtrader as bt
+    import pandas as pd
+
+    from short_reversal.feed_bt import AShareData
+    from short_reversal.replay_strategy_v3 import Phase3V3Strategy
+
+    def _panel() -> pd.DataFrame:
+        dates = pd.date_range("2025-09-01", periods=80, freq="B")
+        return pd.DataFrame([
+            {"thscode": "600000.SH", "date": d, "open": 10.0, "high": 10.001,
+             "low": 9.999, "close": 10.0, "volume": 1e6, "amount": 5e7}
+            for d in dates
+        ])
+
+    state = {"called": False}
+
+    def _first_bar_only(self, d):  # noqa: ANN001
+        if not state["called"]:
+            state["called"] = True
+            return True
+        return False
+
+    monkeypatch.setattr(Phase3V3Strategy, "_all_conditions", _first_bar_only)
+
+    def _size(position_fraction: float) -> int:
+        state["called"] = False          # 每次重置, 否则第二次跑不会开仓
+        cerebro = bt.Cerebro(stdstats=False)
+        cerebro.broker.setcash(100_000.0)
+        cerebro.broker.setcommission(commission=0.0)
+        cerebro.adddata(AShareData(dataname=_panel(), plot=False), name="600000.SH")
+        holder: dict = {"cash": 100_000.0, "trades": [], "max_dd": 0.0}
+        cerebro.addstrategy(
+            Phase3V3Strategy, result_holder=holder, nav_gate_ratio=0.05,
+            position_fraction=position_fraction, max_positions=1,
+        )
+        cerebro.run()
+        assert holder["trades"], (
+            f"fixture 未开出任何仓位 (position_fraction={position_fraction}) —— "
+            f"本测试会空转, 必须先修 fixture。"
+        )
+        return int(holder["trades"][0]["size"])
+
+    full, half = _size(1.0), _size(0.5)
+
+    # ⚠️ 满仓那一侧**不会**恰好是半仓的两倍 —— 差**一手**: 满仓时
+    # `Target_Qty × price` 恰好用光 free_cash, 加手续费就超了, 于是 §2 的
+    # Margin Gatekeeper 削掉一手 (§2 明文: "reject or downsize by 1 share to
+    # prevent margin borrowing")。半仓时有余量, 不受此影响。
+    # ⇒ 不变式是"**差不超过一手**", 不是"精确 2 倍"。第一版断言写成精确 2 倍,
+    #   量到 99900 / 50000 后**先怀疑了自己的断言**, 而不是先怀疑引擎。
+    LOT = 100
+    assert full > 0, f"满仓规模为 {full} —— fixture 不对"
+    assert abs(full - 2 * half) <= LOT, (
+        f"§2 POSITION_FRACTION IGNORED (short_reversal): position_fraction=0.5 下 "
+        f"{half} 股, 1.0 下 {full} 股 —— 相差 {abs(full - 2 * half)}, 超过一手 ({LOT})。\n"
+        f"⇒ half-position preset 会**静默变满仓**, 实际风险 2× 于声明。"
+    )
+    assert half == 50_000, (
+        f"§2: position_fraction=0.5 应为 initial_capital×0.5/10 取整到一手 = 50000 股, "
+        f"实际 {half} —— 绝对值不对说明 sizing 的**基准**变了 (不只是比例)。"
+    )
+
+
+# ---------------------------------------------------------------------------
+# §13.67: 引擎**收不收得到**这个参数 —— 与"收到了但不用"是两件事
+# ---------------------------------------------------------------------------
+
+# 每族的引擎入口 + 取形参名的方式。**签名里没有** ⇒ preset 的那个键在
+# preset→engine 边界上就被**静默丢弃**了 (属 [[preset-engine-api-conformance-gap]]) ——
+# 这比"参数收到了但没用在 sizing 上"更早一层。
+def _engine_params(fam: str) -> set[str] | None:
+    import inspect
+
+    if fam in ("chase_up", "uptrend_pullback"):
+        mod = __import__(f"{fam}.portfolio", fromlist=["simulate_portfolio"])
+        return set(inspect.signature(mod.simulate_portfolio).parameters)
+    if fam == "short_reversal":
+        from short_reversal.replay_strategy_v3 import Phase3V3Strategy
+        return set(Phase3V3Strategy.params._getkeys())
+    if fam == "cycle_price_action":
+        import cycle_price_action.portfolio as cp
+        return set(inspect.signature(cp.Portfolio.__init__).parameters)
+    return None
+
+
+@pytest.mark.parametrize("fam", _families())
+def test_engine_api_accepts_position_fraction(fam: str) -> None:
+    """§13.67: 引擎要么**收得到** position_fraction, 要么在 REGISTERED_DEBT 里具名。
+
+    为什么需要这条 (而不是只靠上面的 AST / 行为式): 对 `chase_up` 与
+    `cycle_price_action`, **行为式守卫根本无法构造** —— 引擎签名里没有该参数,
+    传进去就是 `TypeError`。而它们的 preset **都声明了**它 ⇒
+    这个键在 preset→engine 边界上被静默丢弃。
+    ⇒ 本节把"收得到但不用"与"根本收不到"**分成两条断言**, 免得后者藏在前者里。
+    """
+    params = _engine_params(fam)
+    if params is None:
+        pytest.skip(f"{fam}: 未登记引擎入口 —— 请在本文件补一条分派")
+
+    accepts = "position_fraction" in params
+
+    if fam in REGISTERED_DEBT:
+        assert not accepts, (
+            f"{fam} 现在**已经收得到** position_fraction 了 —— 说明那笔登记的债已还清。"
+            f"请把 REGISTERED_DEBT 里 `{fam}` 这一条删掉, 并在 §13.67 记下结果漂移。"
+        )
+        pytest.xfail(f"{fam}: 登记在案 —— {REGISTERED_DEBT[fam]}")
+
+    assert accepts, (
+        f"§13.67: {fam} 的本族 preset 声明了 position_fraction, 但引擎入口 "
+        f"**签名里没有这个形参** ⇒ 该键在 preset→engine 边界被静默丢弃。"
     )

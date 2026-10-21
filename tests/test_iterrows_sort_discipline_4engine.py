@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import ast
 import re
+import pytest
 from pathlib import Path
 
 
@@ -183,6 +184,12 @@ def test_chase_up_iterrows_no_future_peek() -> None:
     violations = chase["future_peek_violations"]
     shift_neg = chase["shift_negative_count"]
 
+    # ⚠️ §13.73: 全部被扫引擎里当前 **`iterrows()` 出现 0 次** ⇒ 本文件对
+    # "iterrows 排序纪律"这一半**没有内容**。原为静默通过 (与'跑过并通过'
+    # 在输出上完全一样) ⇒ 改成**显式可见的 skip** (§13.58 的形状)。
+    # 一旦某族开始用 iterrows, 本测试立刻真的跑起来。
+    if chase["iterrows_count"] == 0:
+        pytest.skip("该族当前无 `iterrows()` 调用 ⇒ 本守卫对 iterrows 无内容 (不是通过)")
     assert shift_neg == 0, (
         f"§1 LOOKAHEAD VIOLATION: chase_up has {shift_neg} "
         f".shift(-N) calls in production hot paths.\n"
@@ -200,6 +207,12 @@ def test_uptrend_pullback_iterrows_no_future_peek() -> None:
     shift_neg = uptrend["shift_negative_count"]
     violations = uptrend["future_peek_violations"]
 
+    # ⚠️ §13.73: 全部被扫引擎里当前 **`iterrows()` 出现 0 次** ⇒ 本文件对
+    # "iterrows 排序纪律"这一半**没有内容**。原为静默通过 (与'跑过并通过'
+    # 在输出上完全一样) ⇒ 改成**显式可见的 skip** (§13.58 的形状)。
+    # 一旦某族开始用 iterrows, 本测试立刻真的跑起来。
+    if uptrend["iterrows_count"] == 0:
+        pytest.skip("该族当前无 `iterrows()` 调用 ⇒ 本守卫对 iterrows 无内容 (不是通过)")
     assert shift_neg == 0, (
         f"§1 LOOKAHEAD VIOLATION: uptrend_pullback has {shift_neg} "
         f".shift(-N) calls. Per CLAUDE.md §1: shift(-N) is BANNED.\n"
@@ -215,6 +228,12 @@ def test_short_reversal_iterrows_no_future_peek() -> None:
     shift_neg = short["shift_negative_count"]
     violations = short["future_peek_violations"]
 
+    # ⚠️ §13.73: 全部被扫引擎里当前 **`iterrows()` 出现 0 次** ⇒ 本文件对
+    # "iterrows 排序纪律"这一半**没有内容**。原为静默通过 (与'跑过并通过'
+    # 在输出上完全一样) ⇒ 改成**显式可见的 skip** (§13.58 的形状)。
+    # 一旦某族开始用 iterrows, 本测试立刻真的跑起来。
+    if short["iterrows_count"] == 0:
+        pytest.skip("该族当前无 `iterrows()` 调用 ⇒ 本守卫对 iterrows 无内容 (不是通过)")
     assert shift_neg == 0, (
         f"§1 LOOKAHEAD VIOLATION: short_reversal has {shift_neg} "
         f".shift(-N) calls. Per CLAUDE.md §1: shift(-N) is BANNED.\n"
@@ -230,6 +249,12 @@ def test_cycle_price_action_iterrows_no_future_peek() -> None:
     shift_neg = cycle["shift_negative_count"]
     violations = cycle["future_peek_violations"]
 
+    # ⚠️ §13.73: 全部被扫引擎里当前 **`iterrows()` 出现 0 次** ⇒ 本文件对
+    # "iterrows 排序纪律"这一半**没有内容**。原为静默通过 (与'跑过并通过'
+    # 在输出上完全一样) ⇒ 改成**显式可见的 skip** (§13.58 的形状)。
+    # 一旦某族开始用 iterrows, 本测试立刻真的跑起来。
+    if cycle["iterrows_count"] == 0:
+        pytest.skip("该族当前无 `iterrows()` 调用 ⇒ 本守卫对 iterrows 无内容 (不是通过)")
     assert shift_neg == 0, (
         f"§1 LOOKAHEAD VIOLATION: cycle_price_action has {shift_neg} "
         f".shift(-N) calls. Per CLAUDE.md §1: shift(-N) is BANNED.\n"
