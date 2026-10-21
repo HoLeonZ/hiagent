@@ -158,7 +158,7 @@ def test_the_frontend_does_not_reformat_metrics_with_a_fixed_precision():
     原写法会把 `trades_count` 渲染成 `74.0000`、`final_capital` 渲染成 `1500000.0000`。
     """
     js = (STATIC / "app.js").read_text(encoding="utf-8")
-    assert "fmtMetric" in js, "指标必须走按 kind 分支的格式化函数"
+    assert "fmtValue" in js, "指标必须走按 kind 分支的格式化函数"
     assert "toFixed(4)" not in js, "不得对指标用固定四位小数，应按 kind 渲染"
 
 
@@ -172,7 +172,7 @@ def test_the_trade_table_formats_by_unit_instead_of_dumping_raw_floats():
     """
     js = (STATIC / "app.js").read_text(encoding="utf-8")
     assert "TRADE_KINDS" in js, "交易表必须按列声明单位"
-    assert "fmtCell" in js, "交易表必须走按单位分支的格式化函数"
+    assert "fmtValue" in js, "交易表必须走按单位分支的格式化函数"
     # 查的是**渲染表达式**，不是随便出现这个词——注释里提到旧写法不该被误伤。
     import re
 
@@ -191,15 +191,15 @@ def test_the_trade_table_keeps_stop_and_target_visually_distinct():
     assert 'tp_price: "price3"' in js, "止盈要用 3 位小数"
 
 
-def test_fmtCell_behaves_correctly_when_actually_executed():
-    """**真正执行 `fmtCell`**，而不是检查它的名字在不在文件里。
+def test_fmtValue_behaves_correctly_when_actually_executed():
+    """**真正执行 `fmtValue`**，而不是检查它的名字在不在文件里。
 
     为什么需要这一条：契约测试原先全是**字符串存在性**检查。我按它们把
-    `TRADE_KINDS` / `fmtCell` 加进去之后，那些检查**全绿**，
+    `TRADE_KINDS` / `fmtValue` 加进去之后，那些检查**全绿**，
     而页面上每一列日期、代码、退出原因都显示成了 `—` —— 因为
     `Number("2026-03-09")` 是 `NaN`，被"非数就 —"那条分支提前拦掉了。
     **只有真的看一眼浏览器才发现。** 所以这里真的把 app.js 加载进一个
-    最小的 DOM 桩、调 `fmtCell`、断言输出。
+    最小的 DOM 桩、调 `fmtValue`、断言输出。
 
     （判定条件里也有教训：一条只查"函数名在不在"的契约测试，
     在函数写错时是**不可能**红的。）
@@ -221,7 +221,7 @@ const el = { addEventListener(){}, style:{}, classList:{add(){},remove(){}},
 global.document = { getElementById: () => el, querySelector: () => el,
   querySelectorAll: () => [], createElement: () => el, addEventListener(){} };
 global.window = { addEventListener(){} };
-// 让应用的初始化挂起：我们只关心 fmtCell，不想让它真去拉 catalog
+// 让应用的初始化挂起：我们只关心 fmtValue，不想让它真去拉 catalog
 global.fetch = () => new Promise(() => {});
 eval(fs.readFileSync(process.argv[1], "utf8"));
 const cases = [
@@ -234,18 +234,24 @@ const cases = [
   [8.014,    "price",  "8.01"],
   [124700,   "int",    "124700"],
   [null,     "pct",    "\\u2014"],
+  // ↓ ratio / days：**这两个分支曾是缺口**。原实现有两个格式化函数
+  //   （`fmtMetric` 给指标、`fmtCell` 给交易），而 `fmtCell` **没有** ratio/days ——
+  //   把 `fmtCell` 用到指标上（对比面板）后，`夏普比率` 掉进兜底分支，
+  //   输出 `3.3891465183413962`（实测截图发现）。合并为一个函数后补上这两条。
+  [3.3891465183413962, "ratio", "3.39"],
+  [2.35714, "days", "2.4 天"],
   // 负零：-0.0015 在两位小数下是 "-0.00"，读起来像 bug；规范成 "0.00"
   [-0.0015,  "money",  "0.00"],
   [-1234.5,  "money",  "-1,234.50"],   // 真负数必须保留符号
 ];
-console.log(JSON.stringify(cases.map(([v, k, want]) => [v, k, fmtCell(v, k), want])));
+console.log(JSON.stringify(cases.map(([v, k, want]) => [v, k, fmtValue(v, k), want])));
 """
     r = subprocess.run([node, "-e", harness, str(STATIC / "app.js")],
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, f"加载 app.js 失败：{r.stderr[-400:]}"
     results = json.loads(r.stdout.strip().splitlines()[-1])
     bad = [
-        f"fmtCell({v!r}, {k!r}) = {got!r}，应为 {want!r}"
+        f"fmtValue({v!r}, {k!r}) = {got!r}，应为 {want!r}"
         for v, k, got, want in results if got != want
     ]
     assert not bad, "交易表单元格格式化错了：\n  " + "\n  ".join(bad)

@@ -248,7 +248,7 @@ async function showResult(job) {
   $("metrics").innerHTML = order.map((k) => {
     const m = meta[k];
     const v = (job.metrics || {})[k];
-    const cell = fmtMetric(v, m.kind);
+    const cell = fmtValue(v, m.kind);
     return `<div class="m${cell === "—" ? " absent" : ""}">${m.label}<br><b>${cell}</b></div>`;
   }).join("");
   await loadTrades();
@@ -259,13 +259,57 @@ async function showResult(job) {
 // 按**单位**渲染，而不是一把梭套固定小数位。
 // `kind` 来自服务端的 METRIC_KINDS；未知 kind 退化成 ratio，
 // 这样"加了指标却忘了声明类型"表现为**数字格式有点怪**，而不是整页崩掉。
-function fmtMetric(v, kind) {
-  if (v === null || v === undefined) return "—";       // 缺失：如实显示，不是 0
-  if (kind === "pct") return (v * 100).toFixed(2) + "%";
-  if (kind === "money") return v.toLocaleString("zh-CN", { maximumFractionDigits: 0 });
-  if (kind === "count") return String(v);
-  if (kind === "days") return v.toFixed(1) + " 天";
-  return v.toFixed(2);                                  // ratio（夏普、盈亏比）
+// 交易表各列的**单位**。表列名来自 14 列 schema（后端单一来源），但 schema 只说列名、
+// 不说单位——于是前端原先直接 `${row[c]}` 把原始浮点倒出来，界面上是
+// `-499.42349999992143`、`-0.001499000749437843` 这种东西。
+// **单位是数据的一部分**，按列声明一次，别让每列自己决定怎么显示。
+//
+// 单位是查出来的，不是猜的：
+//   · `atr_pct = atr14 / close`（chase_up/signals.py:91，取值范围 [0.03, 0.10]）→ **比例**
+//   · `net_return` 同样是比例（-0.0015 = -0.15%）
+//   · 价格是元
+const TRADE_KINDS = {
+  entry_price: "price", exit_price: "price",
+  // 止损/止盈是**推出来的价位**，用 3 位小数：
+  // 本预设 sl_pct=0.0005，8.01 的止损是 8.014 —— 两位小数会显示成 8.01，
+  // **与入场价一模一样**，读表的人会以为止损画在了入场价上。
+  sl_price: "price3", tp_price: "price3",
+  size: "int", hold_days: "int",
+  gross_pnl: "money", fees: "money", net_pnl: "money", net: "money",
+  net_return: "pct", atr_pct: "pct",
+};
+
+// **唯一的数值格式化函数** —— 指标表、交易表、对比面板全用它。
+//
+// 为什么必须只有一个：原先有两个（`fmtMetric` 给指标、`fmtCell` 给交易），
+// 而两者**覆盖面不同** —— `fmtMetric` 有 ratio/days 分支，`fmtCell` 没有。
+// 于是一旦把 `fmtCell` 用到指标上（对比面板就是这么干的），
+// `夏普比率` 会掉进兜底分支、输出 `3.3891465183413962`（实测）。
+// **两份实现必然漂移**，而漂移的表现是"某一格格式不对"，不会有人注意到。
+//
+// `kind` 来自**服务端**（指标的 `metric_meta`、交易列的 `TRADE_KINDS`），
+// 前端只应用、不决定单位。
+function fmtValue(v, kind) {
+  if (v === null || v === undefined || v === "") return "—";   // 缺失：如实显示，不是 0
+  // ⚠️ **没声明单位的列必须原样返回。**
+  // 写成"拿 Number(v) 判有限性、否则 —"会把**所有文本列**变成 `—`：
+  // `Number("2026-03-09")` 是 NaN，于是日期、代码、退出原因全成了破折号，
+  // 而字符串层面的契约测试**照样全绿**（它们只查函数名在不在）。只有看页面才发现。
+  if (!kind) return String(v);
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(v);   // 声明了单位却给了非数——如实显示，不静默变 —
+  if (kind === "pct") return (n * 100).toFixed(2) + "%";
+  if (kind === "money") {
+    // `-0.0015` 在两位小数下是 `-0.00`，而 `-0.00` 读起来像 bug。
+    // 两位精度下诚实的显示就是 `0.00`——把负零规范掉，不是把数抹掉。
+    const m = n.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return m === "-0.00" ? "0.00" : m;
+  }
+  if (kind === "count" || kind === "int") return String(Math.round(n));
+  if (kind === "days") return n.toFixed(1) + " 天";
+  if (kind === "price") return n.toFixed(2);
+  if (kind === "price3") return n.toFixed(3);
+  return n.toFixed(2);                          // ratio（夏普、盈亏比、Calmar）
 }
 
 async function loadDailyTables() {
@@ -334,50 +378,6 @@ async function loadEquity() {
     ],
   });
 }
-
-// 交易表各列的**单位**。表列名来自 14 列 schema（后端单一来源），但 schema 只说列名、
-// 不说单位——于是前端原先直接 `${row[c]}` 把原始浮点倒出来，界面上是
-// `-499.42349999992143`、`-0.001499000749437843` 这种东西。
-// **单位是数据的一部分**，按列声明一次，别让每列自己决定怎么显示。
-//
-// 单位是查出来的，不是猜的：
-//   · `atr_pct = atr14 / close`（chase_up/signals.py:91，取值范围 [0.03, 0.10]）→ **比例**
-//   · `net_return` 同样是比例（-0.0015 = -0.15%）
-//   · 价格是元
-const TRADE_KINDS = {
-  entry_price: "price", exit_price: "price",
-  // 止损/止盈是**推出来的价位**，用 3 位小数：
-  // 本预设 sl_pct=0.0005，8.01 的止损是 8.014 —— 两位小数会显示成 8.01，
-  // **与入场价一模一样**，读表的人会以为止损画在了入场价上。
-  sl_price: "price3", tp_price: "price3",
-  size: "int", hold_days: "int",
-  gross_pnl: "money", fees: "money", net_pnl: "money", net: "money",
-  net_return: "pct", atr_pct: "pct",
-};
-
-function fmtCell(v, kind) {
-  if (v === null || v === undefined || v === "") return "—";
-  // ⚠️ **没声明单位的列必须原样返回。**
-  // 写成"拿 Number(v) 判有限性、否则 —"会把**所有文本列**变成 `—`：
-  // `Number("2026-03-09")` 是 NaN，于是日期、代码、退出原因全成了破折号，
-  // 而字符串层面的契约测试**照样全绿**（它们只查 `TRADE_KINDS`/`fmtCell` 在不在）。
-  // 只有真在浏览器里看一眼才发现。
-  if (!kind) return String(v);
-  const n = Number(v);
-  if (!Number.isFinite(n)) return String(v);   // 声明了单位却给了非数——如实显示，不静默变 —
-  if (kind === "price") return n.toFixed(2);
-  if (kind === "price3") return n.toFixed(3);
-  if (kind === "int") return String(Math.round(n));
-  if (kind === "money") {
-    // `-0.0015` 在两位小数下是 `-0.00`，而 `-0.00` 读起来像 bug。
-    // 两位精度下诚实的显示就是 `0.00`——把负零规范掉，不是把数抹掉。
-    const m = n.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    return m === "-0.00" ? "0.00" : m;
-  }
-  if (kind === "pct") return (n * 100).toFixed(2) + "%";
-  return String(v);
-}
-
 async function loadTrades() {
   const r = await fetch(`/api/runs/${HP.runId}/trades`);
   const data = await r.json();
@@ -389,7 +389,7 @@ async function loadTrades() {
   const reasons = (HP.tradeMeta || {}).exit_reasons || {};
   const cell = (c, v) => {
     if (c === "exit_reason" && v != null && reasons[v]) return reasons[v];
-    return fmtCell(v, TRADE_KINDS[c]);
+    return fmtValue(v, TRADE_KINDS[c]);
   };
   $("trades").querySelector("thead").innerHTML =
     `<tr>${cols.map((c) => `<th>${labels[c] || c}</th>`).join("")}</tr>`;
@@ -674,10 +674,18 @@ async function compareSelected() {
   if (!r.ok) { out.textContent = (await r.json()).detail; return; }
   const d = await r.json();
   // 缺的指标渲染成 "—"（**不是 0**）：0 是"真的零"，— 是"这个引擎不产出该指标"
+  // 行标题用**中文标签**、单元格按**单位**格式化 —— 与结果页的指标表同一套。
+  // 原实现直接倒原始值：`total_return` 显示成 `1.1502863790988918`
+  // （**会被读成 1.15%**）、`final_capital` 显示 `2142419.9359554164`，
+  // 行标题还是英文的 `trades_count`。实测截图确认过。
+  // 缺失的指标仍然是 "—"（**不是 0**）：0 是"真的零"，— 是"这个引擎不产出该指标"。
+  // 标签与单位都取**服务端下发的** `HP.metricMeta`（与结果页的指标表同一份来源），
+  // 前端不自备副本 —— 两份必然漂移。
+  const meta = HP.metricMeta || {};
   out.innerHTML = `<table><thead><tr><th>指标</th>${d.rows.map((x) =>
       `<th>${x.preset}<br><span class="hint">${x.run_id} · ${x.mode ?? ""}</span></th>`).join("")}</tr></thead>`
-    + `<tbody>${d.keys.map((k) => `<tr><td>${k}</td>${d.rows.map((x) =>
-      `<td>${x.metrics[k] === null || x.metrics[k] === undefined ? "—" : x.metrics[k]}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+    + `<tbody>${d.keys.map((k) => `<tr><td>${(meta[k] || {}).label || k}</td>${d.rows.map((x) =>
+      `<td>${fmtValue(x.metrics[k], (meta[k] || {}).kind)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
 }
 
 $("filter").addEventListener("input", (e) => renderCatalog(e.target.value));
