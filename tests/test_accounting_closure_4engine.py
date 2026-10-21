@@ -116,3 +116,45 @@ def test_final_equity_equals_the_equity_curve_tail(fam: str, preset: str) -> Non
         f"§2 口径不一致: {fam}/{preset} 报告的 final={fin:,.2f},而权益曲线末值={tail:,.2f} "
         f"(差 {fin - tail:,.2f}) —— 同一次运行的两份输出必须同源。"
     )
+
+
+#: 各族在 `net_return` 分母上的**方向**(附一百三十):入场是"买"还是"卖"。
+#: 空头(short_reversal)的入场是**卖** ⇒ 入场成本里**含印花税**(`core.dual_price.STAMP_DUTY_SIDE="sell"`)。
+#: ⚠️ `core/trade_schema.py` 的旧措辞把这条不变式写成**通用**形式,而它是从**多头**推出来的:
+#: 拿通用形式去对 short_reversal 会得到 **12/12 笔"违反"**(假警报)。本表把方向写明。
+ENTRY_IS_A_SALE: dict[str, bool] = {
+    "chase_up": False,
+    "uptrend_pullback": False,
+    "short_reversal": True,
+    "cycle_price_action": False,   # 无 net_return 列,见下
+}
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("fam,preset", CASES, ids=[c[0] for c in CASES])
+def test_net_return_closure_holds(fam: str, preset: str) -> None:
+    """§2/§3:`net_return == net_pnl / 入场成本`,而**入场成本随方向而不同**。
+
+    多头:名义额 + 买入佣金;空头:名义额 + 佣金 + **印花税**(它的入场就是卖出)。
+    费率一律从 `core.dual_price` 取(单一来源),不写字面量。
+    """
+    require_market_db()
+    from core.dual_price import COMMISSION_RATE, MIN_COMMISSION, STAMP_DUTY_RATE
+
+    tr, _fin, _eq = _run(fam, preset)
+    if "net_return" not in tr.columns:
+        pytest.skip(f"{fam} 的成交记录没有 `net_return` 列 ⇒ 本条对它无对象")
+    assert len(tr) > 0, f"{fam}/{preset} 在 {_STD[fam]} 上没有成交 ⇒ 本条空转"
+
+    notional = tr["entry_price"] * tr["size"]
+    buy_comm = (notional * COMMISSION_RATE).clip(lower=MIN_COMMISSION)
+    entry_cost = notional + buy_comm
+    if ENTRY_IS_A_SALE[fam]:
+        entry_cost = entry_cost + notional * STAMP_DUTY_RATE
+    d = (tr["net_return"] - tr["net_pnl"] / entry_cost).abs()
+    bad = tr[d > 1e-9]
+    assert bad.empty, (
+        f"§2/§3 net_return 闭合: {fam}/{preset} 有 {len(bad)} 笔不满足 "
+        f"`net_return == net_pnl / 入场成本`(入场是{'卖' if ENTRY_IS_A_SALE[fam] else '买'})——\n"
+        f"  {bad[['thscode', 'net_return', 'net_pnl']].head(5).to_dict('records')}"
+    )
