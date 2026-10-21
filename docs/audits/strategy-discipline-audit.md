@@ -3,7 +3,7 @@
 > ## ⚠️ 状态头(2026-10-19)—— 读 §0 之前先看这里
 >
 > 本报告 §0–§8 的判定是**对 `main @ 94ca15d`(2026-10-14 快照)** 的:**不合规(NO-GO)**。
-> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **144 条附录**(计法:正文里带编号的 `## 附N` 标题数;编号自 `附二` 起、连续无洞、无重号 ——
+> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **145 条附录**(计法:正文里带编号的 `## 附N` 标题数;编号自 `附二` 起、连续无洞、无重号 ——
 >   `## 附:修复进展` 那条**无编号**,不计),
 > **§0 列的 11 个 BLOCKER 族全部已处置**(修 / 登记 / 待口径决策,逐条见附七十九 §1)。
 >
@@ -22,7 +22,7 @@
 >   `test_attribution.py::test_the_dormant_module_is_not_wired_is_registered`(**不在 ①② 里**)。
 >   ⚠️ 这一类与 ①② **方向相反**:它们断言"缺口**仍在**",**接好反而变红**(提示更新登记)——
 >   故 ①② 的"只许变短"**不适用于**它们;引用未结清单时不要把它们漏掉。
-> * 最新增补见**附一百四十五**。
+> * 最新增补见**附一百四十六**。
 > * ⚠️ 本状态头会被判据盯着:`tests/test_audit_doc_head_is_current.py`(**与本报告同批落地**)
 >   —— 它断言「这里的条数 == 正文里**带编号** `## 附N` 标题的条数」且「'最新增补见附X' 那个 X
 >   真的存在,且就是**最后**一条」。**文首漂移是本仓库栽过两次的形态,故给它一道门禁。**
@@ -12006,3 +12006,52 @@ A:阴性判据此前会被一句「别再用它」的注释判红。B:它此前*
   (各自单跑 7 passed;相邻守卫 40 passed)。**下一次全量会覆盖** —— 这一句必须写,
   否则"全量绿"会被读成"含本批";
 * Q1/Q2 都**只动测试文件**,未动生产代码。
+
+---
+
+## 附一百四十六 —— §2 的 preset 声明契约此前**只在"跑到那个 preset"时才成立**
+
+### 1 · §2 原文与实测
+
+> Every preset MUST explicitly declare `max_positions` and `position_fraction` —
+> a preset that leaves them implicit is a contract violation.
+
+实测(先量后改):
+
+| 项 | 结果 |
+|---|---|
+| `core/preset_contract.py::_declared()` 缺键 | **抛** `PresetDeclarationMissing` ⇒ 机制是对的 ✓ |
+| 四族是否**消费**这两个解析器 | **都消费**(`chase_up/backtrader_engine`、`uptrend/backtest` + `backtrader_engine`、`short_reversal/engine`、`cycle/backtest`)⇒ 声明**载重** ✓ |
+| **有没有测试**调用过这两个解析器 | **一处都没有** ← 缺口 |
+| 今天全部 preset 是否合规 | **101 个**(22 + 3 + 75 + 1)**全合规** ⇒ 钉它安全、不产生假红 |
+
+⇒ 契约**只在"真的跑到那个 preset"时才成立**:少一个键的 preset 不会在 CI 里响,
+只会在某天有人跑它的时候炸。**"没跑到的 preset"与"合规的"看起来一样** ——
+本册这句话又一次成立,这次坐落在**注册表**上。
+
+### 2 · 新增的普查判据
+
+`tests/test_preset_contract_census.py`:按与 `test_preset_to_engine_api_conformance.py`
+**同口径**枚举四个注册表(`PRESETS` × 3 + cycle 的**单个** `PRESET_V1`),逐个 preset 调两个解析器。
+
+另加一条**对账**:四个注册表都要真的取到、且每个非空 —— 否则上面那条会因为"0 个 preset"而**空转**
+(与附一百四十 的"面自洽"同形:普查本身也要被普查)。
+牙齿:缺 `max_positions`、缺 `position_fraction`、`position_fraction=1.5`(越界)各必报。
+
+### 3 · 注入验证(两条)
+
+| 注入 | 结果 |
+|---|---|
+| ① `short_reversal` 某 preset 删掉 `max_positions` | **红** |
+| ② cycle 的 `PRESET_V1` 删掉 `position_fraction=1.0` | **红** |
+
+**② 第一版注入没落上**:我按"字面量字典"写了正则(`^\s*"position_fraction":`),而 cycle 的
+`PRESET_V1` 是**关键字参数**写法(`position_fraction=1.0,`)——于是正则 0 匹配、注入静默失效,
+读数显示"1 passed"差点被当成"判据没牙"。⇒ 又一次:**注入没响时,先怀疑注入自己的写法假设**。
+
+### 4 · 边界
+
+* 只断言"两个键**在**且**不越界**";**不**判断值是否**合理**(那是 §5 / 口径决策);
+* 三个 `PRESETS` + cycle 单个 `PRESET_V1` 的枚举口径**与既有 conformance 守卫一致**
+  (cycle 只暴露一个 cfg 是它的现状,不是本判据的选择);
+* 本批**只新增一个测试文件**,未动生产代码。
