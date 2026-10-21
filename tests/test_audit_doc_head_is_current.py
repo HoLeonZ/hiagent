@@ -69,3 +69,63 @@ def test_header_latest_appendix_exists_and_is_the_last_one() -> None:
     assert headings[-1] == token, (
         f"状态头说最新增补是「{token}」,而正文最后一条是「{headings[-1]}」"
     )
+
+
+_CN_DIGITS = {"零": 0, "一": 1, "二": 2, "三": 3, "四": 4,
+              "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+
+
+def _cn_to_int(token: str) -> int:
+    """`附一百三十二` → 132(本册编号只用 百/十 两级)。
+
+    (第一版写成"遇到 百/十 就把累计值乘上去",于是 `一百三十二` 得 1030 ——
+     已改成按级累加:`section` 收 百/十 那一段,`num` 收当前数字。)
+    """
+    section = 0
+    num = 0
+    for char in token.removeprefix("附"):
+        if char == "百":
+            section += (num or 1) * 100
+            num = 0
+        elif char == "十":
+            section += (num or 1) * 10
+            num = 0
+        elif char in _CN_DIGITS:
+            num = _CN_DIGITS[char]
+        else:
+            raise ValueError(f"意外的编号字符 {char!r}(在 {token!r} 里)")
+    return section + num
+
+
+def test_appendix_numbering_is_contiguous() -> None:
+    """**编号必须连续无洞、无重号** —— 这条是前两条**挡不住**的。
+
+    前两条只查「条数」与「最后一条」:删掉中间一条、再补一条新的 ⇒ **条数与末条都不变**
+    ⇒ 门禁照绿,而编号留了个洞(读者会以为「缺的那条被并进别处了」)。
+    这里直接钉编号序列本身:它**不可能被散文满足**,也不需要文首配合。
+    """
+    headings = _NUMBERED_HEADING.findall(_document())
+    assert headings, "正文里找不到任何带编号的 `## 附N` 标题"
+    numbers = [_cn_to_int(h) for h in headings]
+
+    duplicated = sorted({n for n in numbers if numbers.count(n) > 1})
+    assert not duplicated, f"这些附录编号**重复**:{duplicated}"
+
+    missing = sorted(set(range(min(numbers), max(numbers) + 1)) - set(numbers))
+    assert not missing, (
+        f"附录编号**不连续**,缺号:{missing} —— 删掉一条后请把后面的编号接上"
+        f"(或补回被删的那条)。门禁的前两条**看不出**这种情况。"
+    )
+
+
+def test_the_appendix_number_parser_handles_the_forms_this_document_uses() -> None:
+    """解析器本身的牙齿:本册用到的写法各测一遍。
+
+    (第一版把 `一百三十二` 解析成 1030 —— 一条**恒不相等**的判据会红得莫名其妙,
+     所以解析器自己也要钉。)
+    """
+    cases = {"附二": 2, "附十": 10, "附十一": 11, "附二十": 20,
+             "附一百": 100, "附一百一": 101, "附一百三十二": 132, "附一百四十一": 141}
+    wrong = {token: (_cn_to_int(token), expected)
+             for token, expected in cases.items() if _cn_to_int(token) != expected}
+    assert not wrong, f"编号解析错了(写法: (实得, 应为)):{wrong}"
