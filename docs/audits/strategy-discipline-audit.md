@@ -3,7 +3,7 @@
 > ## ⚠️ 状态头(2026-10-19)—— 读 §0 之前先看这里
 >
 > 本报告 §0–§8 的判定是**对 `main @ 94ca15d`(2026-10-14 快照)** 的:**不合规(NO-GO)**。
-> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **146 条附录**(计法:正文里带编号的 `## 附N` 标题数;编号自 `附二` 起、连续无洞、无重号 ——
+> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **147 条附录**(计法:正文里带编号的 `## 附N` 标题数;编号自 `附二` 起、连续无洞、无重号 ——
 >   `## 附:修复进展` 那条**无编号**,不计),
 > **§0 列的 11 个 BLOCKER 族全部已处置**(修 / 登记 / 待口径决策,逐条见附七十九 §1)。
 >
@@ -22,7 +22,7 @@
 >   `test_attribution.py::test_the_dormant_module_is_not_wired_is_registered`(**不在 ①② 里**)。
 >   ⚠️ 这一类与 ①② **方向相反**:它们断言"缺口**仍在**",**接好反而变红**(提示更新登记)——
 >   故 ①② 的"只许变短"**不适用于**它们;引用未结清单时不要把它们漏掉。
-> * 最新增补见**附一百四十七**。
+> * 最新增补见**附一百四十八**。
 > * ⚠️ 本状态头会被判据盯着:`tests/test_audit_doc_head_is_current.py`(**与本报告同批落地**)
 >   —— 它断言「这里的条数 == 正文里**带编号** `## 附N` 标题的条数」且「'最新增补见附X' 那个 X
 >   真的存在,且就是**最后**一条」。**文首漂移是本仓库栽过两次的形态,故给它一道门禁。**
@@ -12105,3 +12105,67 @@ A:阴性判据此前会被一句「别再用它」的注释判红。B:它此前*
 * 本附只做**复验与汇总**,未新增判据;
 * 全量的 30 条跳过仍是那批数据指纹/产物门禁 —— 它们**不是**"通过",是"数据变了或产物没生出来";
 * 本报告所有数字都绑定到具体提交;要复现:见各附的"复现"一栏与 `fix/discipline-remediation` 的 commit。
+
+---
+
+## 附一百四十八 —— 换透镜看**跳过**的形态:全库 30 条 skip 里,**一条既不能跑也不能失败**
+
+(判据层的三条线都收口后,换一个还没用过的透镜:`pytest.skip` / `skipif` / `xfail`。
+§6 是**允许**在产物/DB 缺失时 skip 的,所以要问的不是"有没有 skip",而是"**有没有 skip 是永久的**"。)
+
+### 1 · 普查读数
+
+| 形态 | 处数 |
+|---|---|
+| `pytest.skip(`(运行期条件跳过)| 35 |
+| `pytest.mark.skipif` | 11 |
+| `pytest.mark.xfail` | **1** |
+| `pytest.importorskip` | 1(可选依赖的正规写法,`pandas`)|
+| 无条件 `pytest.mark.skip` | **0** ✓ |
+
+11 条 `skipif` 的条件**逐条读**过:全部是 DB/产物可用性(`not _db().exists() or size == 0`、
+`_real_db() is None`、`not _db_available()`)⇒ 符合 §6,**无常量条件**。
+
+### 2 · ⚠️ 真发现:**既不能跑、也不能失败的用例**
+
+`tests/test_backtrader_engine_net_return_entry_commission.py` 的
+`test_uptrend_pullback_stale_trades_csv_needs_regeneration`(参数化两份 fixture):
+
+* **两份 fixture 都不存在**(`uptrend_pullback/results/v33_long_reverse_v{19,20}_trades.csv`)
+  ⇒ 每次走 `pytest.skip` ⇒ **永不执行**(这是全量那 30 条 skip 里的 2 条);
+* 它还标着 `@pytest.mark.xfail(strict=False)` ⇒ **即使执行也不会失败**(XPASS 不报错)⇒ **双重失效**;
+* 而它的理由文字说「**STALE FIXTURE**:trades.csv 是 pre-Round 20 旧代码生成」——
+  现状是**产物根本不在**,不是"stale"。**名字与理由都在描述一个不存在的对象。**
+
+⇒ 这是本册 taxonomy ①("跑了却不可能失败")的**加强版**:它连"跑"这一半都没有。
+
+### 3 · 处置(我**没有**擅自做,给你两个候选)
+
+| 候选 | 代价 / 收益 |
+|---|---|
+| **(a) 删除**该用例(连同两个参数) | 收益:套件里少一条"看起来有守卫"的错觉;代价:丢掉它 docstring 里的**重跑命令** |
+| **(b) 登记成 `[OPEN:…]` token**(推荐) | 与 `EQUITY-CURVE-WRITER` 同类(产物型缺口),登记表棘轮会让它**可见且只许变短** |
+
+**(b) 我卡在一个我不该替你决定的地方**:`OPEN_ITEMS` 的未指派条数棘轮是**精确相等**
+(`KNOWN_UNASSIGNED_OWNERS = 5`),加第 6 条要么**填 owner**、要么改那个常数。
+**"owner 是谁"不是我能填的**(另外 5 条全是空 = 未指派)⇒ **这一步等你一句话**:
+"删掉"还是"登记并给个 owner"。
+
+### 4 · 一条**假警报**(如实记,因为它证明"先查再说"的价值)
+
+我一度怀疑 `test_short_reversal_sha256_baseline.py` 的两条
+`pytest.skip(f"baseline not pinned yet: …")` 也是永久跳过 —— **实测两份 baseline JSON 都在**
+(`tests/golden/short_reversal_{v50_slope,v58_mp_2}_baseline.json`)⇒ 那两条 skip **不触发** ✓。
+**又一次:先查事实,避免了一个假发现。**
+
+### 5 · 顺带修了一处(已单独提交 `1c2358e`)
+
+`test_uptrend_pullback_v3a_runtime.py` 里那条 `except ImportError: pytest.skip("`_verify_trade_with_backtrader`
+**not yet refactored to accept price_source**")` —— 实测该函数**已存在且已接受** `price_source_for_execution`
+⇒ 理由陈述的现状是**假的**(不影响判定,import 成功即不 skip;但一句陈旧的现状陈述会误导读者)。
+已改为陈述真正的条件(模块缺失 ⇒ §6 skip 而非 error)。
+
+### 6 · 边界
+
+* 只覆盖 `tests/`;`importorskip` 那一处是可选依赖的正规写法(已看过);
+* 本附**只修了一处文本**;第 2 节那条用例的处置**等你选 (a)/(b)**。
