@@ -3,7 +3,7 @@
 > ## ⚠️ 状态头(2026-10-19)—— 读 §0 之前先看这里
 >
 > 本报告 §0–§8 的判定是**对 `main @ 94ca15d`(2026-10-14 快照)** 的:**不合规(NO-GO)**。
-> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **161 条附录**(计法:正文里带编号的 `## 附N` 标题数;编号自 `附二` 起、连续无洞、无重号 ——
+> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **162 条附录**(计法:正文里带编号的 `## 附N` 标题数;编号自 `附二` 起、连续无洞、无重号 ——
 >   `## 附:修复进展` 那条**无编号**,不计),
 > **§0 列的 11 个 BLOCKER 族全部已处置**(修 / 登记 / 待口径决策,逐条见附七十九 §1)。
 >
@@ -22,7 +22,7 @@
 >   `test_attribution.py::test_the_dormant_module_is_not_wired_is_registered`(**不在 ①② 里**)。
 >   ⚠️ 这一类与 ①② **方向相反**:它们断言"缺口**仍在**",**接好反而变红**(提示更新登记)——
 >   故 ①② 的"只许变短"**不适用于**它们;引用未结清单时不要把它们漏掉。
-> * 最新增补见**附一百六十二**。
+> * 最新增补见**附一百六十三**。
 > * ⚠️ 本状态头会被判据盯着:`tests/test_audit_doc_head_is_current.py`(**与本报告同批落地**)
 >   —— 它断言「这里的条数 == 正文里**带编号** `## 附N` 标题的条数」且「'最新增补见附X' 那个 X
 >   真的存在,且就是**最后**一条」。**文首漂移是本仓库栽过两次的形态,故给它一道门禁。**
@@ -12953,3 +12953,56 @@ python tests/_repin_after_data_refresh.py              # 正式:写指纹 + 重�
 | `audit/strategy-discipline` | 见文首 | 文首门禁 4 passed |
 
 `main` **未被我用任何方式推送**(`fff0413` 是并行 session 的 PR #13)。
+
+---
+
+## 附一百六十三 —— 把"可整体采用"从**推理**变成**实测**:**两条能直接用、两条要成对搬、一条要在 trunk 上重新冻结**
+
+(附一百六十二 §4 我列了一批"与 pin 无涉、可整体采用"的判据,并**如实标注**"搬到主干引擎上跑之前
+我没有验证过 —— 那是推理,不是实测"。本批把它测了:**结论部分推翻了我自己的清单**。)
+
+### 1 · 做法
+
+在 `main @ fff0413`(主干,**对方的代码**)上建 scratch 树,只把**判据文件**搬进去
+(`tests/_production_scan.py`、`tests/conftest.py` + 6 个判据文件),**不搬**它们在 fix 分支上的任何配套改动,
+然后照常跑。⇒ 这正好回答"这些判据**单独**能不能用"。
+
+### 2 · 读数(全部实测)
+
+| 判据文件 | trunk 上 | 结论 |
+|---|---|---|
+| `test_preset_contract_census.py` | **6 / 6 过** | ✅ **可整体采用** |
+| `test_banned_functions_section1.py` | **6 / 6 过** | ✅ **可整体采用**;★ 顺带证明**trunk 的生产代码在 §1 上干净**(它扫的是生产代码)|
+| `test_no_same_day_exit_4engine.py` | **9 / 9 过** | ✅ 可整体采用;★ **对方的新 `short_reversal` 引擎满足 §4 T+1** |
+| `test_accounting_closure_4engine.py` | **16 过 + 4 跳过** | ✅ 可整体采用;★ **四族账务闭合(含方向感知的 `net_return`/`gross_pnl`)在 trunk 引擎上成立** |
+| `test_scan_surface_is_single_source.py` | **3 / 4**(第 2 条红)| ⚠️ **需成对搬运**:`test_no_audit_defines_its_own_scan_surface` 要求**四条 AST 审计**都用单源面 —— 而我只搬了判据、没搬那 4 个文件的重构 |
+| `test_no_text_shaped_behaviour_checks.py` | **3 / 5**(2 条红)| ⚠️ **需在 trunk 上重新冻结**:见 §3 |
+
+★ **那两条红的性质要说清**(否则会被误读成"trunk 有问题"):
+* 扫描面那条红 = **我搬得不全**(判据 + 它的配套重构是一对);
+* 棘轮两条红 = **登记表的对象变了**:`test_no_new_…` 报"某些文件计数涨了",
+  `test_the_registries_have_no_stale_entries` 报 **2 条陈旧条目**
+  (`test_backtest_data_integrity.py`、`test_section4_microstructure_gap.py` 在 trunk 的版本上**已清零**)。
+  ⇒ 两张表是**对着 fix 分支的文件版本**冻结的,在 trunk 的文件版本上既不匹配"不涨"也不匹配"不陈旧"。
+
+### 3 · 由此浮出的一条**通用**结论(比这一批本身更重要)
+
+**凡是"对着 fix 分支冻结"的东西,搬到 trunk 前都必须在新对象上重新生成。**
+已经撞到两次,而且是同一类:
+
+| 冻结的东西 | 冻结点 | 到 trunk 上的后果 |
+|---|---|---|
+| 20 份 golden 哈希(附一百五十九)| fix 分支的引擎 | `short_reversal` 两条**必然不符**(main 已前移 1254 行)|
+| 棘轮的两张登记表(本附)| fix 分支的文件版本 | 陈旧条目 + "计数上涨"双红 |
+
+⇒ 这与 §6 那句"改变 trade list 的逻辑必须重新生成基线"是**同一条**,只是它适用于
+**任何以"当前状态"为基准的产物**,不只是 golden。**移植时先问:这个基线钉的是"哪个版本的对象"?**
+
+### 4 · 对附一百六十二 §4 的**更正**
+
+* **能直接搬(实测绿)**:`test_preset_contract_census.py`、`test_banned_functions_section1.py`、
+  `test_no_same_day_exit_4engine.py`、`test_accounting_closure_4engine.py`
+  —— 这四条**同时**在 trunk 引擎上验证了"§1 干净 / §4 T+1 / 四族账务闭合"三件事;
+* **要成对搬**:`test_scan_surface_is_single_source.py` + **四条 AST 审计的单源重构**;
+* **要在 trunk 上重新冻结**:`test_no_text_shaped_behaviour_checks.py` 的两张登记表
+  (做法与 `_repin_after_data_refresh.py` 同型:**在新对象上重算,并在 PR 里说明为何变了**)。
