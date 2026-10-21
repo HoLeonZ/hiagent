@@ -44,6 +44,7 @@ HTML/CSV 的,就会**假报**。两张表各自只许变短,消息里也分开�
 from __future__ import annotations
 
 import ast
+import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -319,3 +320,46 @@ def test_the_census_classifier_has_teeth() -> None:
         "应判:3 处源码(a/b/c)+ 1 处解析不出(e);d 读的是 .html,不算"
     )
     assert _text_shaped_checks_in("assert 'x' in a_list\n") == (0, 0)
+
+
+# ---------------------------------------------------------------------------
+# 重新冻结(**本守卫的可移植性**)—— 与 golden 那边的 `_repin_after_data_refresh.py` 对称
+# ---------------------------------------------------------------------------
+#
+# 为什么要有它:两张登记表是**对着某个树冻结**的。换一棵树(例如把本判据搬到主干)时,
+# 表里的条目会**既不匹配"不涨"、也不匹配"不陈旧"** —— 实测在 `main` 上跑本文件:
+# `test_no_new_…` 报若干文件计数上涨,`test_the_registries_have_no_stale_entries` 报
+# `test_backtest_data_integrity.py` / `test_section4_microstructure_gap.py` 已清零(附一百六十三)。
+# ⇒ 没有这条入口,本判据**不可移植**(只能手改两张表);有了它,换树就变成一条命令 + 一份 diff。
+#
+# ⚠️ 重新冻结**不是"让红变绿"的捷径**:它把"当前状态"变成新基线,所以
+# **必须在 PR 里说明为什么变了**(与 §6 对 golden 的要求同一条:
+# "改变 trade list 的逻辑必须重新生成基线,并在 PR 中说明漂移原因")。
+
+
+def _freeze_text() -> str:
+    """把当前两张表打印成**可直接粘贴**的形式。"""
+    source, unresolved = current_counts()
+    lines = [
+        "# 由 `python tests/test_no_text_shaped_behaviour_checks.py --freeze` 生成;",
+        "# 粘回本文件后请在 PR 里写明「为什么变了」。",
+        "",
+        "KNOWN_TEXT_SHAPED_CHECKS: dict[str, int] = {",
+    ]
+    for name, count in sorted(source.items(), key=lambda kv: (-kv[1], kv[0])):
+        lines.append(f'    "{name}": {count},')
+    lines += ["}", "", "KNOWN_UNRESOLVED_CHECKS: dict[str, int] = {"]
+    for name, count in sorted(unresolved.items(), key=lambda kv: (-kv[1], kv[0])):
+        lines.append(f'    "{name}": {count},')
+    lines += ["}", ""]
+    return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    if "--freeze" in sys.argv:
+        print(_freeze_text())
+        raise SystemExit(0)
+    raise SystemExit(
+        "用法: python tests/test_no_text_shaped_behaviour_checks.py --freeze"
+        "(打印当前两张登记表,供换树时重新冻结)"
+    )
