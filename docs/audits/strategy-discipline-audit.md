@@ -3,7 +3,7 @@
 > ## ⚠️ 状态头(2026-10-19)—— 读 §0 之前先看这里
 >
 > 本报告 §0–§8 的判定是**对 `main @ 94ca15d`(2026-10-14 快照)** 的:**不合规(NO-GO)**。
-> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **164 条附录**(计法:正文里带编号的 `## 附N` 标题数;编号自 `附二` 起、连续无洞、无重号 ——
+> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **165 条附录**(计法:正文里带编号的 `## 附N` 标题数;编号自 `附二` 起、连续无洞、无重号 ——
 >   `## 附:修复进展` 那条**无编号**,不计),
 > **§0 列的 11 个 BLOCKER 族全部已处置**(修 / 登记 / 待口径决策,逐条见附七十九 §1)。
 >
@@ -22,7 +22,7 @@
 >   `test_attribution.py::test_the_dormant_module_is_not_wired_is_registered`(**不在 ①② 里**)。
 >   ⚠️ 这一类与 ①② **方向相反**:它们断言"缺口**仍在**",**接好反而变红**(提示更新登记)——
 >   故 ①② 的"只许变短"**不适用于**它们;引用未结清单时不要把它们漏掉。
-> * 最新增补见**附一百六十五**。
+> * 最新增补见**附一百六十六**。
 > * ⚠️ 本状态头会被判据盯着:`tests/test_audit_doc_head_is_current.py`(**与本报告同批落地**)
 >   —— 它断言「这里的条数 == 正文里**带编号** `## 附N` 标题的条数」且「'最新增补见附X' 那个 X
 >   真的存在,且就是**最后**一条」。**文首漂移是本仓库栽过两次的形态,故给它一道门禁。**
@@ -13130,3 +13130,78 @@ fix 分支取的 ⇒ 取到的版本**根本没有 `__main__` 块**(Python 把�
 
 * 只改**两个测试文件**(各加 `--freeze` + 用法文案);**未动生产代码**;**`main` 未被推送**;
 * 换树实验在一次性 scratch 树里做,已清理。
+
+---
+
+## 附一百六十六 —— 补测 5 个**因果判据**在 trunk 上的可采纳性:`9 failed`,而其中**一条是我的判据错了**
+
+(附一百六十二 §4 我把 5 个因果判据列进了"可整体采用",但**当时只测了 4 条快的 + 2 条引擎的**,
+这 5 个没测。本批把它们放到 `main @ fff0413` 上跑 —— 这是采纳前必须做的一步,结果**又推翻了一部分**。)
+
+### 1 · 读数(trunk 上,只搬判据、不搬配套)
+
+```
+9 failed, 23 passed in 148.73s
+```
+
+逐类分诊后是**三件不同的事**:
+
+| 类 | 条数 | 性质 |
+|---|---|---|
+| `test_no_pre_window_entries_4engine.py` | **5** | **缺配套** —— 它要 `from tests.conftest import run_engine_once`,而那个 helper **只在 fix 分支上** |
+| `test_short_reversal_signal_layer_is_causal.py` | **4** | ⚠️ **trunk 上一处真实的静默契约违反**(见 §2)|
+| `test_cycle_signal_layer_is_causal.py` | **1** | ⚠️ **我的判据在 trunk 的(更优)实现上误报**(见 §3)|
+
+### 2 · short_reversal:trunk 的**静默契约违反**仍在(潜在,不咬人)
+
+| | 代码 |
+|---|---|
+| **trunk** `scan_signals_fast.py:148` | `last_g = df.groupby("thscode").tail(1).reset_index(drop=True)` ← **无切片** |
+| **fix** 同处 `:155-156` | `df = df[df["date"] <= _cut]` 之后才是同一行 ← **一行修复** |
+
+`_filter_signals(df, preset, signal_date)` 的 `signal_date` **不决定取哪一行** —— 取的是**面板最后一行**。
+**生产路径**(`:368 raw_panel = load_panel_for_signal(db_path, signal_date)`)恰好让面板止于 `T`
+⇒ 两者**恰好相等** ⇒ **当前不产生错数**;但契约不成立:**传更长的面板就静默算成另一天**。
+实测:面板止于 `2026-06-30` 而 `T=2026-03-31` 时,命中集合与"面板止于 T"**完全不同**
+(8 只 vs 另一组 8 只,交集为空)。
+
+⇒ **这条判据与那一行修复是一对**:只搬判据 ⇒ 红(实测 3 条);搬判据 + 搬那一行 ⇒ 绿
+(该修复的**零生产漂移**已由等价性门禁 `test_fast_scanner_matches_engine.py` 22 passed 锁过)。
+
+### 3 · cycle:**trunk 是对的,我那条判据是错的**
+
+失败的是 `test_scores_are_only_computed_on_causally_sliced_bars` —— 它是**句法**判据:
+"哪些调用点收到了**全量面板** `df`"。而 trunk 的 `cycle_price_action/backtest.py:87-90` 那段
+**有完整论证**:
+
+> `detect_k_patterns` / `k_line_score`:全为 rolling/shift 的**后向**窗口,在前缀 `df.iloc[:i+1]` 的第 i 行
+> 与在全表第 i 行取值相同;`calendar_score`:纯日期函数;`phase_score`:只用到序列**长度**的 `np.arange(n)`,
+> 唯一例外是 `len < max(periods)` 时整体返回 0,**故此处显式复刻该分支**。
+> 旧路径是 **O(n²):2990 只票 × ~235 bar 实测 86 分钟**,其中 **87% 花在这个重算上**。
+> **零漂移由 40 只票对照脚本 (trades sha256) 锁定。**
+
+⇒ trunk 传全量面板是**因果安全**的,而且是**更优**的实现(把 O(n²) 变成 O(n))。
+**而我那条句法判据见"传了 `df`"就报** ⇒ **假报**。
+★ 佐证:**不变性判据(真正的性质)在 trunk 上通过了**(失败清单里 cycle 只有那一条)⇒ 代码是对的、
+判据是错的。⇒ **这条判据不该照搬**;要么删掉它的句法断言(只留不变性),要么把它改成**性质式**。
+
+### 4 · 更新后的**最终采纳矩阵**(把附一百六十三 §4 补全)
+
+| 判据 | trunk 上 | 怎么采纳 |
+|---|---|---|
+| `test_preset_contract_census.py` | **6/6 过** | ✅ 直接搬 |
+| `test_banned_functions_section1.py` | **6/6 过** | ✅ 直接搬 |
+| `test_no_same_day_exit_4engine.py` | **9/9 过** | ✅ 直接搬 |
+| `test_accounting_closure_4engine.py` | **16 过 + 4 跳过** | ✅ 直接搬 |
+| `test_scan_surface_is_single_source.py` | 3/4 | ⚠️ **成对**:+ 四条 AST 审计的单源重构 |
+| `test_no_text_shaped_behaviour_checks.py` | 3/5 | ⚠️ **先 `--freeze` 重冻结**(已备工具,附一百六十四)|
+| `test_exception_specificity_audit.py` 的登记表 | — | ⚠️ **先 `--freeze`**(附一百六十五)+ **保留对方的保守面**(§13.47,已被 20 条的分布证实)|
+| `test_short_reversal_signal_layer_is_causal.py` | 3 红 | ⚠️ **成对**:+ `scan_signals_fast.py` 的**一行切片** |
+| `test_no_pre_window_entries_4engine.py` | 5 红 | ⚠️ **成对**:+ conftest 的 `run_engine_once` |
+| `test_cycle_signal_layer_is_causal.py` | 1 红 | ❌ **不要照搬句法那条**(它的不变性部分是对的)|
+| `test_short_reversal_indicators_are_causal.py` | **全过** | ✅ 直接搬 |
+
+### 5 · 边界
+
+* 全部在**一次性 scratch 树**里做,已清理;**`main` 未被推送**;
+* 本批**未改任何 fix 分支代码** —— 只补了测量,并据此更正采纳建议。
