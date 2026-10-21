@@ -505,6 +505,21 @@ def _freeze_text() -> str:
     return "\n".join(lines)
 
 
+def test_the_freeze_output_reproduces_the_registry() -> None:
+    """**重新冻结必须与消费它的判据逐字同口径**(本册附一百一十八 的规矩)。
+
+    (没有它,`--freeze` 可以悄悄与登记表分叉;而换树时人**只会**照它的输出粘回去。)
+    """
+    namespace: dict[str, object] = {}
+    exec(_freeze_text(), {}, namespace)
+    assert namespace["KNOWN_BARE_EXCEPT_SITES"] == KNOWN_BARE_EXCEPT_SITES, (
+        "`--freeze` 输出的登记表与本文件冻结的不一致(含人工理由)"
+    )
+    assert namespace["_FROZEN_BARE_EXCEPT_COUNT"] == _FROZEN_BARE_EXCEPT_COUNT, (
+        "`--freeze` 输出的冻结常量与本文件的不一致"
+    )
+
+
 if __name__ == "__main__":
     if "--freeze" in sys.argv:
         print(_freeze_text())

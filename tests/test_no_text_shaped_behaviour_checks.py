@@ -355,6 +355,23 @@ def _freeze_text() -> str:
     return "\n".join(lines)
 
 
+def test_the_freeze_output_reproduces_the_frozen_tables() -> None:
+    """**重新冻结必须与消费它的判据逐字同口径**(本册附一百一十八 的规矩)。
+
+    没有这条时,`--freeze` 可以悄悄与两张表分叉 —— 而在**换树**(把本判据搬到另一棵树)时,
+    人**只会**照着 `--freeze` 的输出粘回去 ⇒ 一旦分叉,粘回去的表就**不是**"当前状态",
+    而是一份**谁都没量过的**表。
+    """
+    namespace: dict[str, object] = {}
+    exec(_freeze_text(), {}, namespace)
+    assert namespace["KNOWN_TEXT_SHAPED_CHECKS"] == KNOWN_TEXT_SHAPED_CHECKS, (
+        "`--freeze` 输出的「有证据」表与本文件冻结的不一致 —— 两者必须同口径"
+    )
+    assert namespace["KNOWN_UNRESOLVED_CHECKS"] == KNOWN_UNRESOLVED_CHECKS, (
+        "`--freeze` 输出的「判不了」表与本文件冻结的不一致"
+    )
+
+
 if __name__ == "__main__":
     if "--freeze" in sys.argv:
         print(_freeze_text())
