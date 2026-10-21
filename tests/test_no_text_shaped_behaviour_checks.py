@@ -58,7 +58,6 @@ KNOWN_TEXT_SHAPED_CHECKS: dict[str, int] = {
     "test_volume_cap_low_bar.py": 9,
     "test_metrics_per_preset.py": 7,
     "test_short_reversal_volume_cap.py": 7,
-    "test_annualization_basis.py": 5,
     "test_short_reversal_window_gate.py": 5,
     "test_backtrader_engine_net_return_entry_commission.py": 4,
     "test_cycle_limit_down_exit_guard.py": 4,
