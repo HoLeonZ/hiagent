@@ -3,7 +3,7 @@
 > ## ⚠️ 状态头(2026-10-19)—— 读 §0 之前先看这里
 >
 > 本报告 §0–§8 的判定是**对 `main @ 94ca15d`(2026-10-14 快照)** 的:**不合规(NO-GO)**。
-> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **178 条附录**(计法:正文里带编号的 `## 附N` 标题数;编号自 `附二` 起、连续无洞、无重号 ——
+> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **179 条附录**(计法:正文里带编号的 `## 附N` 标题数;编号自 `附二` 起、连续无洞、无重号 ——
 >   `## 附:修复进展` 那条**无编号**,不计),
 > **§0 列的 11 个 BLOCKER 族全部已处置**(修 / 登记 / 待口径决策,逐条见附七十九 §1)。
 >
@@ -22,7 +22,7 @@
 >   `test_attribution.py::test_the_dormant_module_is_not_wired_is_registered`(**不在 ①② 里**)。
 >   ⚠️ 这一类与 ①② **方向相反**:它们断言"缺口**仍在**",**接好反而变红**(提示更新登记)——
 >   故 ①② 的"只许变短"**不适用于**它们;引用未结清单时不要把它们漏掉。
-> * 最新增补见**附一百七十九**。
+> * 最新增补见**附一百八十**。
 > * ⚠️ 本状态头会被判据盯着:`tests/test_audit_doc_head_is_current.py`(**与本报告同批落地**)
 >   —— 它断言「这里的条数 == 正文里**带编号** `## 附N` 标题的条数」且「'最新增补见附X' 那个 X
 >   真的存在,且就是**最后**一条」。**文首漂移是本仓库栽过两次的形态,故给它一道门禁。**
@@ -13973,3 +13973,78 @@ git -C <tree> rev-list --left-right --count origin/main...<branch>   # 本会话
 
 **过程教训**:长期存活的工作树会**静默落后**;「读工作树 = 读现状」是错的,
 尤其当主树**同时被多个 session 推进**(本会话 main 前进了 520 个提交)。
+
+---
+
+## 附一百八十 —— 合并清单(**逐文件实测**):30 个测试文件里 10 新增 / 13 可直接取 / 7 真分叉;外加一处**生产改动 main 上确实没有**
+
+### 0 · 先更正我自己上一条的两处说法
+
+| 我上一条写的 | 实测 |
+|---|---|
+| 「36 个提交」的落点是 tests + golden | **还有 2 个生产/文档文件**:`core/trade_schema.py`(**仅 docstring**)、`short_reversal/scan_signals_fast.py`(**有代码改动**)+ README/requirements |
+| (更早记的)「5 个冲突测试文件」「main 上那两份**更好**」 | 实测:**7 个测试 + 1 个生产文件**是真分叉;而抽验的孪生里,main 侧恰恰是**没修的那一版** |
+
+### 1 · 判据(可复算)
+
+```
+BASE=$(git -C <tree> merge-base origin/main origin/fix/discipline-remediation)
+git -C <tree> diff --quiet $BASE origin/main -- <file>   # 退出码 = main 自 BASE 起有没有动过它
+```
+**没动过 ⇒ main 的内容就是 BASE 的内容** ⇒ fix 版 = BASE + 我的强化,**取过来不丢 main 的任何东西**。
+动过 ⇒ 两侧都改了同一文件 ⇒ 必须**三方并**,不能覆盖。
+
+### 2 · 结果
+
+**A. 新增(10 个,main 无此文件)** —— 直接加:
+
+```
+test_no_text_shaped_behaviour_checks.py    test_scan_surface_is_single_source.py
+test_accounting_closure_4engine.py         test_no_same_day_exit_4engine.py
+test_no_pre_window_entries_4engine.py      test_preset_contract_census.py
+test_signal_layers_are_causal.py           test_cycle_signal_layer_is_causal.py
+test_short_reversal_signal_layer_is_causal.py  test_short_reversal_indicators_are_causal.py
+```
+
+**B. 孪生,且 main 未改过(13 个)** —— **取 fix 版,不丢东西**(抽验 `test_dsr_trial_basis.py` /
+`test_annualization_basis.py` 在 main 上仍是文本式判据,fix 版已改 AST):
+
+```
+test_annualization_basis.py                test_dsr_trial_basis.py
+test_artifact_hygiene_section7.py          test_equity_curve_csv.py
+test_corporate_actions_dividend_deposit.py test_registered_open_items.py
+test_cycle_price_action_sha256_baseline.py test_research_scripts_reference_live_presets.py
+test_short_reversal_sha256_baseline.py     test_short_side_borrow_model_is_declared.py
+test_sweep_scripts_dsr.py                  test_uptrend_pullback_sha256_baseline.py
+test_uptrend_pullback_v3a_runtime.py
+```
+
+**C. 真分叉(7 个)—— 必须三方并,不能覆盖**:
+
+```
+test_adjusted_views_do_not_silently_revert_to_raw.py   test_exception_specificity_audit.py
+test_assert_vs_raise_audit.py                          test_fail_fast_deep_scan_section2.py
+test_backtrader_engine_net_return_entry_commission.py  test_banned_functions_section1.py
+test_chase_up_no_lookahead.py
+```
+其中 `test_assert_vs_raise_audit.py` / `test_backtrader_engine_net_return_entry_commission.py`
+是**我删过测试**的那两个(main 仍留着那个死/xfail 用例)⇒ 合并时按"删"处置,不是按"并"处置。
+
+**D. 生产与文档**
+
+| 文件 | main 自 BASE 起 | 处置 |
+|---|---|---|
+| `short_reversal/scan_signals_fast.py` | **未改** ⇒ 那个因果切片 **main 上确实没有**(`_filter_signals` 仍是裸 `tail(1)`)⇒ **值得并**,且其自带实测说明"生产路径结论不变"(面板本就止于 signal_date) |
+| `core/trade_schema.py` | **改过** ⇒ 我的 docstring 改动要**三方并** |
+| `README.md` / `requirements.txt` | 未改 ⇒ 直接取 |
+
+**E. 19 个 golden 基线** —— **不要从 fix 分支取**,必须在**合并后的树**上重 pin
+(与"数据刷新暴露的两处夹具缺陷"同因:基线是"数据 × 引擎"的函数,而 main 侧的引擎也动了)。
+
+### 3 · 这就把「trunk 的 11 条红」拆成了两半
+
+* **可机械完成**:10 新增 + 13 直接取 + README/requirements + `scan_signals_fast.py` 切片;
+* **要人看的一共 9 处**:7 个真分叉测试 + `core/trade_schema.py` 三方并 + 19 个基线重 pin。
+
+⇒ 我先前问的「由谁重生成那 2 条 `short_reversal` 基线」,**现在缩成"在合并后的树上跑一次
+`tests/_repin_after_data_refresh.py` + 核指纹"**,并且 19 个基线是**一次**处置,不是两次。
