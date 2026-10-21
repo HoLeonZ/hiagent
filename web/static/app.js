@@ -8,6 +8,12 @@ async function loadCatalog() {
   // 指标表的中文标签与类型：**只从服务端取**，前端不另写一份（见 showResult 的说明）
   HP.metricMeta = body.metric_meta;
   HP.tradeMeta = body.trade_meta;      // 交易明细的中文列名与平仓原因中文值
+  // ⚠️ 元数据到位后**重渲染一次历史**。
+  // `loadHistory()` 与 `loadCatalog()` 是**并发**发起的（页面末尾连写三行，都不 await），
+  // 历史可能先渲染 —— 那时 `HP.metricMeta` 还没到，`fmtValue` 拿不到 `kind`，
+  // 于是收益退化成**原始浮点**（实测：显示成 `1.1502863790988918`，会被读成 1.15%）。
+  // 重渲染让结果与"谁先完成"无关 —— 靠调用顺序正确太脆。
+  if ((HP.history || []).length) renderHistory();
   const engines = {};
   for (const p of HP.catalog) engines[p.engine] = (engines[p.engine] || 0) + 1;
   $("engine-summary").textContent = Object.entries(engines)
@@ -621,8 +627,15 @@ function renderHistory() {
     cb.addEventListener("change", updateCompareButton);
     row.appendChild(cb);
     const eff = Object.keys(h.param_diff || {}).length;
+    // **直接显示这次回测的收益** —— 对标聚宽的「我的回测」列表。
+    // 没有它，用户得把每次运行都点开才知道哪个好，而"看出哪个更好"
+    // 正是这个平台存在的理由（改了参数之后，得能看出哪个更好）。
+    const kind = ((HP.metricMeta || {}).total_return || {}).kind;
+    const ret = h.metrics
+      ? ` · ${fmtValue(h.metrics.total_return, kind)}`
+      : "";
     row.appendChild(document.createTextNode(
-      ` ${h.preset} · ${h.mode} · ${h.start}~${h.end}`
+      ` ${h.preset} · ${h.mode} · ${h.start}~${h.end}${ret}`
       + (eff ? ` · 改 ${eff} 项` : " · 原件")
       + (h.has_result ? "" : "（无结果）")));
     // 「载入」补上迭代闭环：把那次运行的改动载回表单，改完再跑。

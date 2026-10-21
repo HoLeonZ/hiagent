@@ -419,8 +419,21 @@ def create_app() -> FastAPI:
 
     @app.get("/api/runs")
     def list_runs(limit: int = 50) -> dict[str, Any]:
-        """最近的运行历史（倒序）。服务重启后 `status` 为 null，但 `has_result` 仍为真。"""
-        return {"runs": jobs_mod.list_runs(limit=max(1, min(limit, 500)))}
+        """最近的运行历史（倒序）。服务重启后 `status` 为 null，但 `has_result` 仍为真。
+
+        每条**带上该次运行的指标**（`window_metrics`，按它自己的请求窗口算）。
+        为什么：聚宽的「我的回测」列表里每条直接显示收益 —— 没有它，
+        用户得把每一次运行都点开才知道哪个好，而"看出哪个更好"正是这个平台存在的理由。
+        只在 `has_result` 时读盘算，被取消/失败的那些不付这个代价。
+        """
+        rows = jobs_mod.list_runs(limit=max(1, min(limit, 500)))
+        for r in rows:
+            if not r.get("has_result"):
+                r["metrics"] = None
+                continue
+            result = jobs_mod.load_persisted(r["run_id"])
+            r["metrics"] = window_metrics(result) if result is not None else None
+        return {"runs": rows}
 
     # ⚠️ 路径**不能**写成 `/api/runs/compare`——它会被 `/api/runs/{run_id}` 抢先匹配，
     # 于是 run_id="compare" 并返回 404。放 `/api/compare` 才无歧义。

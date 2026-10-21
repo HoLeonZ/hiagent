@@ -283,3 +283,54 @@ def test_the_trade_table_headers_come_from_the_server_not_from_english_keys():
     # 平仓原因的英文码要有中文值
     for code in ("SL", "TP", "time", "eod"):
         assert code in EXIT_REASON_LABELS, f"平仓原因 {code} 没有中文值"
+
+
+def test_the_history_list_shows_each_runs_return():
+    """**历史列表里每条直接显示收益** —— 对标聚宽的「我的回测」。
+
+    没有它，用户得把每次运行都点开才知道哪个好；而"改了参数之后得能看出
+    哪个更好"正是这个平台存在的理由。
+
+    判据落在**服务端给的数据**上（`/api/runs` 每条带 `metrics`），
+    前端只把它格式化出来。
+    """
+    from fastapi.testclient import TestClient
+
+    from web.app import create_app
+
+    client = TestClient(create_app())
+    runs = client.get("/api/runs?limit=5").json()["runs"]
+    if not runs:
+        pytest.skip("本地状态目录里没有运行记录（§6：缺失应 skip 而非 error）")
+    for r in runs:
+        assert "metrics" in r, "每条运行都要带 metrics 字段（没有结果时为 None）"
+        if r.get("has_result"):
+            assert r["metrics"] is not None, f"{r['run_id']} 声称有结果却没有指标"
+            assert r["metrics"]["total_return"] is not None
+        else:
+            assert r["metrics"] is None, "没有结果的运行不该带指标"
+
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "h.metrics" in js, "历史行应当把该次运行的收益显示出来"
+    assert "fmtValue(h.metrics.total_return" in js, \
+        "收益要按服务端声明的单位格式化，不能原样倒出"
+
+
+def test_history_is_rerendered_once_the_metric_metadata_arrives():
+    """**历史行的收益不能退化成原始浮点。**
+
+    `loadHistory()` 与 `loadCatalog()` 是**并发**发起的（页面末尾连写三行，都不 await），
+    历史可能先渲染 —— 那时 `HP.metricMeta` 还没到，`fmtValue` 拿不到 `kind`，
+    于是收益渲染成 `1.1502863790988918`（实测截图确认，会被读成 1.15%）。
+
+    修法必须与"谁先完成"无关：元数据到位后**重渲染一次**。
+    靠"保证 loadCatalog 先跑完"太脆 —— 那一行挪个位置就悄悄坏了，
+    而坏的表现只是"数字格式变了"，不会有测试注意到。
+    """
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "renderHistory()" in js
+    # 在 loadCatalog 里（metricMeta 赋值之后）必须有一次重渲染
+    i = js.index("HP.metricMeta = body.metric_meta")
+    j = js.index("renderCatalog(", i)          # loadCatalog 的结尾
+    assert "renderHistory()" in js[i:j], \
+        "loadCatalog 拿到 metric_meta 之后必须重渲染历史，否则并发下收益会是原始浮点"
