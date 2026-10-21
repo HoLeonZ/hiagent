@@ -3,7 +3,7 @@
 > ## ⚠️ 状态头(2026-10-19)—— 读 §0 之前先看这里
 >
 > 本报告 §0–§8 的判定是**对 `main @ 94ca15d`(2026-10-14 快照)** 的:**不合规(NO-GO)**。
-> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **155 条附录**(计法:正文里带编号的 `## 附N` 标题数;编号自 `附二` 起、连续无洞、无重号 ——
+> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **156 条附录**(计法:正文里带编号的 `## 附N` 标题数;编号自 `附二` 起、连续无洞、无重号 ——
 >   `## 附:修复进展` 那条**无编号**,不计),
 > **§0 列的 11 个 BLOCKER 族全部已处置**(修 / 登记 / 待口径决策,逐条见附七十九 §1)。
 >
@@ -22,7 +22,7 @@
 >   `test_attribution.py::test_the_dormant_module_is_not_wired_is_registered`(**不在 ①② 里**)。
 >   ⚠️ 这一类与 ①② **方向相反**:它们断言"缺口**仍在**",**接好反而变红**(提示更新登记)——
 >   故 ①② 的"只许变短"**不适用于**它们;引用未结清单时不要把它们漏掉。
-> * 最新增补见**附一百五十六**。
+> * 最新增补见**附一百五十七**。
 > * ⚠️ 本状态头会被判据盯着:`tests/test_audit_doc_head_is_current.py`(**与本报告同批落地**)
 >   —— 它断言「这里的条数 == 正文里**带编号** `## 附N` 标题的条数」且「'最新增补见附X' 那个 X
 >   真的存在,且就是**最后**一条」。**文首漂移是本仓库栽过两次的形态,故给它一道门禁。**
@@ -12602,3 +12602,67 @@ A:阴性判据此前会被一句「别再用它」的注释判红。B:它此前*
 
 * 本附**只记录**,未改任何代码、**未推 `main`**(`main` 上那份报告因此落后 1 条附录,已记);
 * 全量读数:`main @ d7f0b98` = `13 / 1461 / 26`;修复分支最近全量 = `1554 / 28 / 0`(`fdd7fe0`)。
+
+---
+
+## 附一百五十七 —— `main` 在我工作期间**前移了**;重做合并出现 **5 处真冲突**(对方 session 独立改过同一批文件)
+
+### 1 · 事件链(每一步都实测)
+
+1. 我把「fix → main」的合并做成并**验证通过**:合并结果上跑 main 此前那 13 条失败 ⇒ **18 passed**(13:38)。
+2. **推送被 git 拒绝** —— 远端 main 已前移:`d7f0b98 → **fff0413** Merge pull request #13
+   from HoLeonZ/mine/strategy-potential`(**并行 session 把他们的分支合进 main 了**)。
+   ★ 这是 **git 的正常保护**(非 force 推送被拒)⇒ **没有覆盖任何人的工作**。
+3. **在新 main 上重做合并** ⇒ **5 处真冲突**:
+   `test_adjusted_views_…`、`test_assert_vs_raise_audit.py`、
+   `test_backtrader_engine_net_return_entry_commission.py`、`test_banned_functions_section1.py`、
+   `test_exception_specificity_audit.py`。
+   (此前那次的"5 处冲突"是**我误把合并落在并行 session 的分支上**,与本次同名不同因。)
+
+### 2 · 关键读数:**冲突的另一侧不是我的工作**
+
+新 main 那 5 个文件里,我改过的东西**一处都没有**:
+
+| 探针 | 新 main 上的出现次数 |
+|---|---|
+| `tests/test_exception_specificity_audit.py` 里的 `KNOWN_BARE_EXCEPT_SITES` | **0** |
+| `tests/test_banned_functions_section1.py` 里的 `_FILL_METHOD_NAMES` | **0** |
+| `tests/_production_scan.py`(扫描面单源)是否存在 | **不在** |
+
+⇒ 冲突**不是**"我的旧版 vs 我的新版",而是**并行 session 独立编辑了同一批测试文件**
+(他们的分支合过"discipline/audit 线"、并有自己的改动)。
+**解冲突 = 把两边的编辑合起来**,这已经涉及**另一个 session 的在途工作** —— 不是取一侧就能完事的机械操作。
+
+### 3 · 但主干**确实仍然缺**修复分支的内容(所以问题是真的)
+
+| 探针 | 新 main |
+|---|---|
+| `tests/conftest.py` 里 `db_fingerprint` | **0 次** |
+| 我新增的 11 个守卫文件 | **一个都没有** |
+| main ↔ fix 相差文件 | **56**(README、`core/trade_schema.py`、`requirements.txt`、`short_reversal/scan_signals_fast.py`、`tests/**`、20 份 golden JSON)|
+
+⇒ 并行 session 合进 main 的是**审计文档线**,不是**纪律修复**。13 条红的根因
+(golden pin 数据漂移 + 复权视图守卫)在 main 上**原样存在**。
+
+### 4 · 我停在这里(这次是真的要你定),理由不是"不敢",而是**顺序问题**
+
+* 那条 `mine/strategy-potential` 分支**此刻在 main 上**,而且它**也在改同一批测试文件**;
+* 我若在 `main` 上解这 5 处冲突,等于**替另一个 session 的在途工作做编辑决定** ——
+  而他们的工作区里**还有未提交的改动**(本会话亲眼见到他们切分支/提交/重置);
+* 更省事的顺序通常是:**先把 `fix/discipline-remediation` 落进主干**(它已证能把 13 条红转绿、
+  且 52/56 是测试文件),**再**让那条在途分支去 rebase/merge —— 而不是两边同时往 main 上叠。
+
+### 5 · 三个可选动作(你点一个)
+
+| 选项 | 说明 |
+|---|---|
+| **(a) 我来解那 5 处冲突并推 main** | 我会**逐文件**读两侧编辑、写成"两边都要"的合并,并给出每处的取舍说明;风险:替对方 session 在**他们的在途文件**上做决定 |
+| **(b) 让那条在途分支先吸收修复分支** | 由他们那条分支先 merge/rebase `fix/discipline-remediation`,再让他们照常合 main ⇒ 冲突在他们的分支里解,**main 只被快进** |
+| **(c) 我先只把"非重叠"的部分送上去** | 把 4 个无冲突文件里**能独立成立**的挑出来(如 `db_fingerprint` + 20 份 golden 重 pin)单独提一个 PR/提交 —— 但 `conftest.py` 与 golden 是**同一个修法的两半**,拆开会造成"喂数据给旧判据"的错配,**我不建议** |
+
+### 6 · 本批边界
+
+* **未推 `main`**(推送被拒,我没有 force,也没有改写任何远端内容);
+* 诊断用的 worktree(`/tmp/merge-diag`)在**独立分支** `diag/merge-fix-into-main` 上,不动 main;
+* 读数:旧 `main @ d7f0b98` 全量 = `13 / 1461 / 26`;`fix @ fdd7fe0` 全量 = `1554 / 28 / 0`;
+  **新 `main @ fff0413` 是否仍红**正在测(结果出来我会补一句)。
