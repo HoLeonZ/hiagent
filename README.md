@@ -27,7 +27,7 @@ hiagent/
 │
 ├── sql/migrate_v_daily_dual.sql  # v_daily_dual view 定义
 ├── tools/                     # DB 维护脚本
-├── tests/                     # 136 个测试文件
+├── tests/                     # 测试套(个数见下方「测试」一节)
 └── data/exclude_thscodes.txt  # 排除股票清单(样本)
 ```
 
@@ -89,7 +89,10 @@ export DNA_STRAT_DB=/path/to/your.duckdb
 pytest tests/ -v
 ```
 
-> 完整测试套 136 文件,**部分 pre-existing 失败**(chase_up 缺 `is_limit_up` import、cycle 缺 §4 limit-up 守卫、2 处 partial-NaN edge case)—— 与本 README 无关,见 git log。
+> 测试套的**规模与状态都不在这里钉**:规模用 `ls tests/test_*.py | wc -l`,状态用一次全量运行。
+> (此前这里写着「136 文件 + 部分 pre-existing 失败」并点名三处 —— 实测该数字**已漂到 211**,
+> 而那三处**早已修好**:`chase_up/portfolio.py` 现有 `is_limit_up` 的 import、`cycle` 有 §4
+> limit-up 守卫测试。按 CLAUDE.md §6,「既存失败」必须**带 owner 登记**,不以「见 git log」概称。)
 
 ## 重要设计约束
 
