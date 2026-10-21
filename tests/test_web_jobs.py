@@ -496,3 +496,49 @@ def test_the_run_log_is_not_empty_while_the_job_runs(home, fast_child):
     assert "[jobs] 回测开始" in text, f"起始行缺失，日志在回测期间是空的：{text!r}"
     assert "short_reversal" in text and "v50_slope" in text, "起始行要写明跑的是什么"
     assert "[jobs] 回测结束" in text and "用时" in text, "结束行要给出用时"
+
+
+def test_a_cancelled_run_says_so_in_its_own_log(home, fast_child, monkeypatch):
+    """**取消后日志要说明自己是被取消的。**
+
+    实测（2026-10-21）：取消一次真运行的流程（提交 → 看日志 → 取消）全对，
+    但日志里**只有起始行** —— 子进程被 kill，写不到它的结束行，
+    于是日志读起来像"跑着跑着没了"。状态行会说 cancelled ✓，但日志没讲完。
+
+    收尾行由**父进程**补，且只在子进程**已结束之后** —— 那时没有并发写入者，
+    不会争文件偏移（子进程攥着那个 fd，两边同时写会把日志写花）。
+    """
+    from web.state import run_artifact
+
+    monkeypatch.setenv("HIAGENT_JOBS_FAKE_SLEEP", "30")
+    rid = jobs_mod.submit("short_reversal", "v50_slope", None,
+                          "2024-01-01", "2025-01-01", "full")
+    deadline = time.monotonic() + 30
+    while jobs_mod.get(rid).status != "running" and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert jobs_mod.get(rid).status == "running", "作业没能在 30 秒内开跑"
+
+    # ⚠️ 等日志**已经有起始行**再取消：`proc.start()` 之后子进程还要跑一小段
+    # 才 `open(log_path)`，取消太早会连日志文件都还没建（实测踩过）。
+    log = run_artifact(rid, "run.log")
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        if log.exists() and "[jobs] 回测开始" in log.read_text(encoding="utf-8"):
+            break
+        time.sleep(0.02)
+    assert log.exists(), "子进程始终没有建出日志文件"
+
+    assert jobs_mod.cancel(rid) == "cancelled"
+
+    # ⚠️ `wait()` 在 `cancel()` 置状态时就返回了，而**收尾行是 worker 之后才写的**
+    #（它要等 terminate/join 走完）—— 所以这里也要轮询，不能读一次就断言。
+    deadline = time.monotonic() + 30
+    text = ""
+    while time.monotonic() < deadline:
+        text = log.read_text(encoding="utf-8")
+        if "已取消" in text:
+            break
+        time.sleep(0.05)
+
+    assert "[jobs] 回测开始" in text
+    assert "已取消" in text, f"取消后日志不说自己是被取消的：{text!r}"

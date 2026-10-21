@@ -220,6 +220,16 @@ def _run_one(run_id: str) -> None:
         # 落盘只在**真的成功**时做：被取消的作业即使子进程恰好回了 ok 也不留结果。
         should_persist = job.status == "done"
 
+    # ⚠️ 收尾行由**父进程**写，而这是安全的：子进程此刻**已经结束**
+    #（自然退出、被 terminate、或被 kill），没有并发的写入者，不会争文件偏移。
+    # 加上它是因为：光有"回测开始"而无下文，日志读起来像"跑着跑着没了" ——
+    # 实测取消时正是如此（子进程被 kill，写不到它的结束行）。
+    # 只补取消/失败两种：**成功**时子进程自己已经写了"回测结束 用时 Ns"。
+    if job.status == "cancelled":
+        _append_log(job.run_id, "[jobs] 已取消（未落盘）")
+    elif job.status == "failed":
+        _append_log(job.run_id, f"[jobs] 失败：{job.error}")
+
     if should_persist:
         try:
             _persist_result(job, payload)
@@ -322,6 +332,19 @@ def list_runs(limit: int = 50) -> list[dict[str, Any]]:
             "has_result": run_artifact(rid, "result.json").exists(),
         })
     return out
+
+
+def _append_log(run_id: str, line: str) -> None:
+    """父进程往某次运行的日志追加一行。
+
+    **只在子进程已结束后调用** —— 子进程攥着那个 fd，两边同时写会争文件偏移，
+    日志会花掉（这也是"起始行/结束行必须由子进程自己写"的原因）。
+    """
+    try:
+        with run_artifact(run_id, "run.log").open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except OSError:
+        pass          # 日志写不进去不该影响作业的状态判定
 
 
 def _ensure_worker() -> None:
