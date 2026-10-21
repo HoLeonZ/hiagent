@@ -3,7 +3,7 @@
 > ## ⚠️ 状态头(2026-10-19)—— 读 §0 之前先看这里
 >
 > 本报告 §0–§8 的判定是**对 `main @ 94ca15d`(2026-10-14 快照)** 的:**不合规(NO-GO)**。
-> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **160 条附录**(计法:正文里带编号的 `## 附N` 标题数;编号自 `附二` 起、连续无洞、无重号 ——
+> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **161 条附录**(计法:正文里带编号的 `## 附N` 标题数;编号自 `附二` 起、连续无洞、无重号 ——
 >   `## 附:修复进展` 那条**无编号**,不计),
 > **§0 列的 11 个 BLOCKER 族全部已处置**(修 / 登记 / 待口径决策,逐条见附七十九 §1)。
 >
@@ -22,7 +22,7 @@
 >   `test_attribution.py::test_the_dormant_module_is_not_wired_is_registered`(**不在 ①② 里**)。
 >   ⚠️ 这一类与 ①② **方向相反**:它们断言"缺口**仍在**",**接好反而变红**(提示更新登记)——
 >   故 ①② 的"只许变短"**不适用于**它们;引用未结清单时不要把它们漏掉。
-> * 最新增补见**附一百六十一**。
+> * 最新增补见**附一百六十二**。
 > * ⚠️ 本状态头会被判据盯着:`tests/test_audit_doc_head_is_current.py`(**与本报告同批落地**)
 >   —— 它断言「这里的条数 == 正文里**带编号** `## 附N` 标题的条数」且「'最新增补见附X' 那个 X
 >   真的存在,且就是**最后**一条」。**文首漂移是本仓库栽过两次的形态,故给它一道门禁。**
@@ -12863,3 +12863,93 @@ git -C /tmp/hiagent-fix checkout -- $(cat missing.txt)
 * 未改任何代码;`main` 未被推送(`fff0413`);
 * 与主干那件事(11 条 golden pin + 2 条 short_reversal pin 需在**合并后的树**上重生成)状态不变,
   见附一百五十九;裁决权在持有 `short_reversal` 在途代码的一侧。
+
+---
+
+## 附一百六十二 —— **移交包**:把主干从"红 11 条"变绿的可执行步骤(不需要我替谁决定)
+
+(把附一百五十六 ~ 一百六十一 里的分析收成一份能直接照着做的东西。全部数字都是本轮实测。)
+
+### 1 · 主干现状(实测,`main @ fff0413`)
+
+**13 → 11 条红**(对方那条线已修掉 2 条 `adjusted_views`):
+
+| 类别 | 条数 | 具体 |
+|---|---|---|
+| `chase_up` golden | **7** | `v5 / v8 / v9 / v11 / v12 / v13 / v14` |
+| `cycle` sha256 | **1** | `test_cycle_trades_list_matches_the_pinned_baseline` |
+| `short_reversal` sha256 | **2** | `v50_slope` / `v58_mp_2` |
+| `uptrend` sha256 | **1** | `v33_long_reverse_v21` |
+
+**全部是基线 pin 的数据漂移**,不是引擎缺陷(样例:`uptrend v21` rows 65 vs expected 68)。
+
+### 2 · 可执行步骤(三步,已实测前两步)
+
+**(a) 先搬"数据刷新的必然连带"(实测:21 文件、零冲突)**
+
+```bash
+# 在主干(或任意以主干为基的分支)上:
+git checkout fix/discipline-remediation -- tests/conftest.py tests/_repin_after_data_refresh.py tests/golden/
+```
+
+| 实测 | 结果 |
+|---|---|
+| 冲突 | **0** |
+| 改动文件 | **21**(1 个 conftest + 1 个工具 + 19 份 golden);**零生产代码** |
+| 跑那 12 条 | **`2 failed, 10 passed`** |
+
+⇒ **10 条转绿**(7 chase + cycle + uptrend + 1 额外),**剩下 2 条 `short_reversal` 仍红** —— 原因见 §3。
+
+**(b) 在**合并后的树**上重新生成 `short_reversal` 的两条基线**
+
+```bash
+python tests/_repin_after_data_refresh.py --dry-run    # 先看它打算改哪几条
+python tests/_repin_after_data_refresh.py              # 正式:写指纹 + 重算漂移项
+```
+
+该工具的 docstring 写明它**只改 `tests/golden/*.json` 的哈希与元数据,不碰任何引擎代码**,
+并会保留原有 note、附上本次漂移来源 ⇒ 正合 §6 的"重新生成基线并说明漂移理由"。
+**理由要写进 PR**:`short_reversal` 的成交列表变了,是因为**那条在途分支改了它的引擎**
+(`presets.py` 503 行 / `engine.py` 249 / `replay_strategy_v3.py` 241)—— 该由**那条 PR 的作者**说明。
+
+**(c) 5 个冲突文件:按附一百五十八 的逐块对比处理**
+
+| 文件 | 建议 |
+|---|---|
+| `test_adjusted_views_…` | 两侧**语义相同**,取任一侧(建议留 main 侧以减 churn)|
+| `test_assert_vs_raise_audit.py` / `test_banned_functions_section1.py` | **合起来**:保留对方的**反空转判据 + 划面理由**,采用我方的**单源面**(`tests/_production_scan.py`)与**按操作识别** |
+| `test_exception_specificity_audit.py` | ⚠️ **口径之争**:对方论证"不放宽"更细 ⇒ **保留对方的保守面**,把我方"那 7 处 `tools/` 命中"作为**附注**记进去 |
+| `test_backtrader_engine_…` | 保留对方的 **`strict=True` 自失效豁免**,把我方 docstring 里的**重跑命令**并进去 |
+
+### 3 · 为什么那 2 条**不能**照搬(实测)
+
+`main` 已前移到对方对 `short_reversal` 的**在途开发**:子集树 vs fix 在该目录相差 **1254 行**
+(`presets.py` 503 / `engine.py` 249 / `replay_strategy_v3.py` 241 / 另 5 个文件 ~200)。
+而我这条分支的 short_reversal golden 是拿**旧引擎**pin 的 ⇒ 搬到主干 = **让新引擎吃旧成交列表**;
+为让它绿而"重算",就是把新引擎钉在一个不属于它的口径上 —— **那正是本审计要防的"陈旧基线"**。
+⇒ 所以 (b) 必须在**合并后的树**上做,且由持有那条在途代码的一侧说明漂移。
+
+### 4 · 与我这条分支**无关**、可整体采用的部分(pin 无涉)
+
+* `tests/_production_scan.py` + 四条 AST 审计的单源面 + `tests/test_scan_surface_is_single_source.py`
+  (**扫描面单源**;修掉 4 份副本分叉,其中一处拼写错 `uptrend_pulback` 曾让**整族**从未被扫到);
+* `tests/test_no_text_shaped_behaviour_checks.py`(**文本判据棘轮**,只许变短);
+* `tests/test_no_same_day_exit_4engine.py`(§4 T+1,方向复用单源表);
+* `tests/test_accounting_closure_4engine.py`(五条:逐笔闭合 / 净值↔曲线 / **方向感知** `net_return` 与
+  `gross_pnl` / 权益曲线烟感器);
+* `tests/test_preset_contract_census.py`(§2 契约,**101 个 preset** 逐个调解析器 + 对账);
+* `tests/test_banned_functions_section1.py` 的**按操作识别**(8 种合法写法);
+* `tests/test_audit_doc_head_is_current.py`(**已在 main** ✓)。
+
+⚠️ **如实**:以上判据**本身**与 pin 无涉,但它们是**在 fix 分支的引擎上**验过的
+(该分支全量 `1554 / 28 / 0`,两次独立读数)。**搬到主干的引擎上跑之前,我没有验证过** ——
+它们的断言是"不变量"而非"哈希",理论上应当成立,但**那是推理,不是实测**。
+
+### 5 · 我这边的状态(便于对接)
+
+| 分支 | HEAD | 全量读数 |
+|---|---|---|
+| `fix/discipline-remediation` | `fdd7fe0` | **1554 / 28 / 0**(损坏前 1:06:30、恢复后 1:09:19,逐字相同)|
+| `audit/strategy-discipline` | 见文首 | 文首门禁 4 passed |
+
+`main` **未被我用任何方式推送**(`fff0413` 是并行 session 的 PR #13)。
