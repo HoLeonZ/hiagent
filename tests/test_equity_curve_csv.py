@@ -127,15 +127,13 @@ def _read_csv_header(path: Path) -> list[str]:
 def test_chase_up_main_exposes_equity_curve_writer(tmp_path: Path) -> None:
     """§2/§3 chase_up main.py exposes _write_equity_curve(writer)."""
     from chase_up import main as chase_main
-    import inspect
-    src = inspect.getsource(chase_main)
-    assert "_write_equity_curve" in src or "_write_outputs" in src, (
+    writer = getattr(chase_main, "_write_equity_curve", None)
+    assert writer is not None or hasattr(chase_main, "_write_outputs"), (
         "§2/§3 GREEN: chase_up/main.py must define _write_equity_curve "
         "(or _write_outputs) writer (Tick 51 fix)."
     )
 
-    if "_write_equity_curve" in src:
-        from chase_up.main import _write_equity_curve
+    if writer is not None:
         import pandas as pd
 
         # Synthetic equity DataFrame
@@ -147,7 +145,7 @@ def test_chase_up_main_exposes_equity_curve_writer(tmp_path: Path) -> None:
         })
         equity_path = tmp_path / "equity_curve.csv"
         cash_walk_path = tmp_path / "cash_walk.csv"
-        _write_equity_curve(equity_path, cash_walk_path, eq)
+        writer(equity_path, cash_walk_path, eq)
 
         assert _read_csv_header(equity_path) == list(EQUITY_CURVE_COLS), (
             f"equity_curve.csv header diverged: "
@@ -164,14 +162,12 @@ def test_chase_up_main_exposes_equity_curve_writer(tmp_path: Path) -> None:
 def test_uptrend_pullback_main_exposes_equity_curve_writer(tmp_path: Path) -> None:
     """§2/§3 uptrend_pullback main.py exposes _write_equity_curve(writer)."""
     from uptrend_pullback import main as ut_main
-    import inspect
-    src = inspect.getsource(ut_main)
-    assert "_write_equity_curve" in src or "_write_outputs" in src, (
+    writer = getattr(ut_main, "_write_equity_curve", None)
+    assert writer is not None or hasattr(ut_main, "_write_outputs"), (
         "§2/§3 GREEN: uptrend_pullback/main.py must define _write_equity_curve."
     )
 
-    if "_write_equity_curve" in src:
-        from uptrend_pullback.main import _write_equity_curve
+    if writer is not None:
         import pandas as pd
 
         eq = pd.DataFrame({
@@ -182,7 +178,7 @@ def test_uptrend_pullback_main_exposes_equity_curve_writer(tmp_path: Path) -> No
         })
         equity_path = tmp_path / "equity_curve.csv"
         cash_walk_path = tmp_path / "cash_walk.csv"
-        _write_equity_curve(equity_path, cash_walk_path, eq)
+        writer(equity_path, cash_walk_path, eq)
 
         assert _read_csv_header(equity_path) == list(EQUITY_CURVE_COLS)
         assert _read_csv_header(cash_walk_path) == list(CASH_WALK_COLS)
@@ -200,14 +196,12 @@ def test_short_reversal_main_exposes_equity_curve_writer(tmp_path: Path) -> None
     main.py can dump it. We unit-test the writer with a synthetic list.
     """
     from short_reversal import main as sr_main
-    import inspect
-    src = inspect.getsource(sr_main)
-    assert "_write_equity_curve" in src or "_write_outputs" in src, (
+    writer = getattr(sr_main, "_write_equity_curve", None)
+    assert writer is not None or hasattr(sr_main, "_write_outputs"), (
         "§2/§3 GREEN: short_reversal/main.py must define _write_equity_curve."
     )
 
-    if "_write_equity_curve" in src:
-        from short_reversal.main import _write_equity_curve
+    if writer is not None:
 
         # Synthetic equity_curve list of dicts.
         # 2026-10-15: 夹具补上三池 —— 写者现在**要求**它们(缺则 fail-fast,不再补 0)。
@@ -222,7 +216,7 @@ def test_short_reversal_main_exposes_equity_curve_writer(tmp_path: Path) -> None
         ]
         equity_path = tmp_path / "equity_curve.csv"
         cash_walk_path = tmp_path / "cash_walk.csv"
-        _write_equity_curve(equity_path, cash_walk_path, equity_curve)
+        writer(equity_path, cash_walk_path, equity_curve)
 
         assert _read_csv_header(equity_path) == list(EQUITY_CURVE_COLS)
         assert _read_csv_header(cash_walk_path) == list(CASH_WALK_COLS)
@@ -236,14 +230,12 @@ def test_short_reversal_main_exposes_equity_curve_writer(tmp_path: Path) -> None
 def test_cycle_price_action_main_exposes_equity_curve_writer(tmp_path: Path) -> None:
     """§2/§3 cycle_price_action main.py exposes _write_equity_curve(writer)."""
     from cycle_price_action import main as cyc_main
-    import inspect
-    src = inspect.getsource(cyc_main)
-    assert "_write_equity_curve" in src or "_write_outputs" in src, (
+    writer = getattr(cyc_main, "_write_equity_curve", None)
+    assert writer is not None or hasattr(cyc_main, "_write_outputs"), (
         "§2/§3 GREEN: cycle_price_action/main.py must define _write_equity_curve."
     )
 
-    if "_write_equity_curve" in src:
-        from cycle_price_action.main import _write_equity_curve
+    if writer is not None:
 
         # cycle_price_action: per-stock equity curves aggregated
         per_stock_curves = [
@@ -254,7 +246,7 @@ def test_cycle_price_action_main_exposes_equity_curve_writer(tmp_path: Path) -> 
         ]
         equity_path = tmp_path / "equity_curve.csv"
         cash_walk_path = tmp_path / "cash_walk.csv"
-        _write_equity_curve(equity_path, cash_walk_path, per_stock_curves)
+        writer(equity_path, cash_walk_path, per_stock_curves)
 
         assert _read_csv_header(equity_path) == list(EQUITY_CURVE_COLS)
         assert _read_csv_header(cash_walk_path) == list(CASH_WALK_COLS)

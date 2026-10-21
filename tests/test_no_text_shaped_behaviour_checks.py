@@ -52,7 +52,6 @@ TESTS = REPO_ROOT / "tests"
 #: 有**正面证据**指向源码的存量(冻结)。**只许变短**;清零就从表里删掉。
 KNOWN_TEXT_SHAPED_CHECKS: dict[str, int] = {
     "test_short_reversal_adj_close_indicator.py": 13,
-    "test_equity_curve_csv.py": 12,
     "test_nav_gate_cycle_price_action.py": 12,
     "test_limit_up_guard_cross_engine.py": 10,
     "test_raw_prev_close_data_layer.py": 10,
