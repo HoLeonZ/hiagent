@@ -48,6 +48,13 @@ _METRIC_SOURCES: dict[str, tuple[str, ...]] = {
     # 故跨引擎可比。前端必须按金额渲染（千分位、两位小数），不能按百分比。
     "total_pnl":     ("total_pnl",),
     "avg_hold_days": ("avg_hold_days",),
+    # ↓ 下面三项**引擎不产出**，是平台从**窗口切片的曲线**自己算的
+    # （对标聚宽「收益概览/风险指标」里的日胜率、年化波动率、Calmar）。
+    # 它们的来源元组是**空的** —— 引擎侧永远取不到，`canonical_metrics` 会给 `None`，
+    # 由 `window_metrics` 填上真正的值。**不要**给它们编一个引擎键名去凑。
+    "daily_win_rate": (),
+    "volatility": (),
+    "calmar": (),
 }
 
 #: 每个规范键的渲染类型：`"pct"` / `"money"` / `"ratio"` / `"count"` / `"days"`。
@@ -66,6 +73,9 @@ METRIC_KINDS: dict[str, str] = {
     "profit_factor": "ratio",
     "total_pnl":     "money",
     "avg_hold_days": "days",
+    "daily_win_rate": "pct",
+    "volatility": "pct",
+    "calmar": "ratio",
 }
 
 #: 中文标签（对标聚宽的「收益概览」列名）。
@@ -87,6 +97,9 @@ METRIC_LABELS: dict[str, str] = {
     # **不做换算**：日历↔交易日需要交易日历，而且那会成为引擎语义的第二份实现（§6）。
     # 如实标注口径，比给一个看起来可比的数强。
     "avg_hold_days": "平均持仓（天，口径随引擎）",
+    "daily_win_rate": "日胜率",
+    "volatility": "年化波动率",
+    "calmar": "Calmar比率",
 }
 
 #: 规范键的顺序（前端指标表按它渲染）
@@ -226,4 +239,11 @@ def window_metrics(result: Any) -> dict[str, Any]:
             var = sum((r - mu) ** 2 for r in rets) / (len(rets) - 1)
             sd = math.sqrt(var)
             out["sharpe"] = (mu / sd) * math.sqrt(243.0) if sd > 0 else None
+            # 年化波动率：日收益标准差 × √243（与上面的夏普同一条年化约定）
+            out["volatility"] = sd * math.sqrt(243.0)
+            # 日胜率：**日**收益为正的天数占比（与"胜率"按笔不同，别混）
+            out["daily_win_rate"] = sum(1 for r in rets if r > 0) / len(rets)
+        # Calmar = 年化收益 / 最大回撤。回撤为 0 时**没有意义** → None（不是 inf）
+        if out["cagr"] is not None and out["max_dd"]:
+            out["calmar"] = out["cagr"] / out["max_dd"]
     return out

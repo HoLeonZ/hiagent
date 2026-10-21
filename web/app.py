@@ -22,7 +22,6 @@ from web.metrics_view import (
     CANONICAL_KEYS,
     METRIC_KINDS,
     METRIC_LABELS,
-    canonical_metrics,
     window_metrics,
     window_slice,
 )
@@ -421,7 +420,7 @@ def create_app() -> FastAPI:
         """并排比较若干历史运行（`?ids=a,b,c`）。**不重跑回测**——结果来自磁盘。
 
         这正是本平台存在的理由：改了参数之后，得能看出**哪个更好**。
-        指标一律经 `canonical_metrics` 归一，缺的补 `None`（不是 0）。
+        指标一律经 `window_metrics` 按**请求窗口**算，缺的补 `None`（不是 0）。
         """
         rows = []
         for rid in [s for s in ids.split(",") if s]:

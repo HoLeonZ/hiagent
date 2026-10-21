@@ -178,3 +178,55 @@ def test_avg_hold_days_label_admits_the_unit_varies_by_engine():
     label = METRIC_LABELS["avg_hold_days"]
     assert "口径" in label, f"标签必须提示口径随引擎而变，现在是 {label!r}"
     assert METRIC_LABELS["trades_count"] == "交易笔数", "别把无关的标签也改了"
+
+
+def test_the_risk_metrics_joinquant_shows_are_computed_from_the_window_curve():
+    """**日胜率 / 年化波动率 / Calmar** —— 聚宽风险指标里的那几项，平台自己算。
+
+    全部来自**窗口切片的曲线**（平台已有的东西），不碰引擎、不引第二份实现。
+    `Alpha`/`Beta` **明确不做**：基准是等权多头篮子而策略是空头，回归会产出
+    方向相反的 "alpha"，比没有更坏。
+    """
+    import math
+
+    from web.metrics_view import window_metrics
+
+    class _R:
+        start, end = "2025-01-01", "2025-01-04"
+
+        def __init__(self, curve, trades):
+            self.metrics = {"equity_curve": curve}
+            self.trades = trades
+
+    # 手工构造：日收益 +10%、−10%、+9.09%
+    curve = [{"date": "2025-01-01", "equity": 100.0},
+             {"date": "2025-01-02", "equity": 110.0},
+             {"date": "2025-01-03", "equity": 99.0},
+             {"date": "2025-01-04", "equity": 108.0}]
+    m = window_metrics(_R(curve, []))
+
+    rets = [0.10, -0.10, 108.0 / 99.0 - 1.0]
+    mu = sum(rets) / 3
+    sd = math.sqrt(sum((r - mu) ** 2 for r in rets) / 2)     # 样本标准差
+
+    assert abs(m["daily_win_rate"] - 2 / 3) < 1e-12, "日胜率 = 正收益天数占比"
+    assert abs(m["volatility"] - sd * math.sqrt(243.0)) < 1e-9, \
+        "年化波动率 = 日收益标准差 × √243（与夏普同一条年化约定）"
+    assert abs(m["sharpe"] - (mu / sd) * math.sqrt(243.0)) < 1e-9
+    assert abs(m["calmar"] - m["cagr"] / m["max_dd"]) < 1e-9, "Calmar = 年化收益 / 最大回撤"
+    # 回撤：峰值 110 → 谷 99 = 10%
+    assert abs(m["max_dd"] - 0.10) < 1e-9
+
+
+def test_the_engine_side_mapping_leaves_the_window_only_metrics_as_none():
+    """这三项**引擎不产出** → 引擎映射路径必须给 `None`，不能编一个值出来。
+
+    它们的来源元组是**空的**；若有人给它们编一个引擎键名去凑，
+    这条会红。
+    """
+    from web.metrics_view import canonical_metrics
+
+    got = canonical_metrics({"cagr": 1.0, "trades_count": 3})
+    for k in ("daily_win_rate", "volatility", "calmar"):
+        assert k in got, f"规范键里应当有 {k}"
+        assert got[k] is None, f"{k} 没有引擎来源，引擎映射路径必须给 None"
