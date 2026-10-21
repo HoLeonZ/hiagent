@@ -3,7 +3,7 @@
 > ## ⚠️ 状态头(2026-10-19)—— 读 §0 之前先看这里
 >
 > 本报告 §0–§8 的判定是**对 `main @ 94ca15d`(2026-10-14 快照)** 的:**不合规(NO-GO)**。
-> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **154 条附录**(计法:正文里带编号的 `## 附N` 标题数;编号自 `附二` 起、连续无洞、无重号 ——
+> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **155 条附录**(计法:正文里带编号的 `## 附N` 标题数;编号自 `附二` 起、连续无洞、无重号 ——
 >   `## 附:修复进展` 那条**无编号**,不计),
 > **§0 列的 11 个 BLOCKER 族全部已处置**(修 / 登记 / 待口径决策,逐条见附七十九 §1)。
 >
@@ -22,7 +22,7 @@
 >   `test_attribution.py::test_the_dormant_module_is_not_wired_is_registered`(**不在 ①② 里**)。
 >   ⚠️ 这一类与 ①② **方向相反**:它们断言"缺口**仍在**",**接好反而变红**(提示更新登记)——
 >   故 ①② 的"只许变短"**不适用于**它们;引用未结清单时不要把它们漏掉。
-> * 最新增补见**附一百五十五**。
+> * 最新增补见**附一百五十六**。
 > * ⚠️ 本状态头会被判据盯着:`tests/test_audit_doc_head_is_current.py`(**与本报告同批落地**)
 >   —— 它断言「这里的条数 == 正文里**带编号** `## 附N` 标题的条数」且「'最新增补见附X' 那个 X
 >   真的存在,且就是**最后**一条」。**文首漂移是本仓库栽过两次的形态,故给它一道门禁。**
@@ -12506,3 +12506,99 @@ A:阴性判据此前会被一句「别再用它」的注释判红。B:它此前*
 * `main` 上那份报告与本文同步(本批合并);
 * `main` 自身**仍未跑过全量** —— 最近两次全量都在 `fix/discipline-remediation` 上。
   main 的增量为**文档 + 一个门禁测试文件**,已单独验过文首门禁(4 passed)与收集(1500)。
+
+---
+
+## 附一百五十六 —— ⚠️ **事故**:我的合并误落到了**并行 session 的共享仓库**上(main 是红的)
+
+### 1 · 先说事故(按时间顺序,不辩解)
+
+**我做了什么**:在**共享仓库** `/Users/holeon/code/hiagent` 里执行了
+`cd /tmp/main-fixmerge && git worktree add … -B main …` — 那一步**失败**了
+(`fatal: 'main' is already used by worktree at '/private/tmp/main-verify'`),
+于是 `cd` **没生效**,而同一命令串里**后面的 `git merge` 就落在了共享仓库当前的头上**。
+
+**后果**:共享仓库当时检出的分支被我的 `merge --no-fix` 介入,
+在 **5 个测试文件**上留下冲突:`test_adjusted_views_…`、`test_assert_vs_raise_audit.py`、
+`test_backtrader_engine_net_return_entry_commission.py`、`test_banned_functions_section1.py`、
+`test_exception_specificity_audit.py`。
+
+**现在的状态(已核实)**:
+
+* 共享仓库 **HEAD 未变**(`4e7bcac`,是并行 session 自己提交的 `chore(tools)`)、
+  **无 MERGE_HEAD、无冲突**;**我的任何文件都不在里面**(我的文档测试、`_production_scan.py` 都不在);
+* reflog 显示冲突状态是**并行 session 自己**用 `reset: moving to HEAD` 清掉的
+  (`HEAD@{0}`),不是我;
+* 我**已释放**我占用的 `main` 分支锁(删掉 `/tmp/main-verify`),现在 `0` 个 worktree 占用 `main`。
+
+**我不能排除的一件事(如实写)**:若并行 session 当时在那 **5 个测试文件**上有**未提交**的编辑,
+我的 merge 介入 + 随后的 reset **可能**把它们清掉。证据指向"没有":他们当前的工作在
+`tools/`(`M tools/run_all_backtests_html.py`、`?? tools/run_all_backtests_sharded.py`),
+且那 5 个文件现在都不在改动列表里。**但我无法替他们确认。**
+
+**为什么我该早就避免**:这条坑**本册的长期记忆里就有**(「多 session 共用仓库的 git 卫生:
+`cd X && …` 在 cd 失败时会落到并行 session 的分支上」)。我读过它、却在**同一会话里**又踩了
+——因为我把 `git -C` 用在了**我自己的两棵树**上,而对**共享仓库**用了 `cd`。
+
+**即刻生效的三条纪律**:
+
+1. **永不 `cd` 进共享仓库**;所有命令一律 `git -C <显式路径>`,并在**每个**跨树批次里
+   把"是哪棵树"写进命令本身;
+2. **建 worktree 之前先 `git worktree list`** —— 分支被占用时 `worktree add` 会失败,
+   而 `&&` 链会把失败**藏起来**继续跑后面的命令(本次事故的直接机理);
+3. **不在共享仓库上做任何写操作**(merge / checkout / reset / stash),哪怕只是"试一下"。
+
+### 2 · 事故之外:**main 本身是红的**(这是本批的实质发现)
+
+`main @ d7f0b98` 全量(1500 条,1:25:23):
+
+```
+13 failed, 1461 passed, 26 skipped
+```
+
+**13 条失败分两类**(全部实测):
+
+| 类 | 条数 | 内容 |
+|---|---|---|
+| **golden / sha256 基线 pin 漂移** | **11** | `chase_up` v5/v8/v9/v11/v12/v13/v14(7)+ `cycle`(1)+ `short_reversal` v50_slope/v58_mp_2(2)+ `uptrend` v21(1)|
+| 复权视图守卫 | 2 | `test_adjusted_views_do_not_silently_revert_to_raw.py` 的 `test_the_gap_is_a_pure_tail` 与 `..._refuses_a_window_with_uncovered_trading_days` |
+
+**失败样例**(可直接复现):
+`uptrend v33_long_reverse_v21`:expected `f9503834…` / actual `f0295d63…`,rows 65 (expected 68)。
+
+### 3 · 这 13 条**在 `fix/discipline-remediation` 上全部通过**(已实测)
+
+把 main 上那 13 条(外加 `-k` 顺带匹配到的 1 条)拿到修复分支上跑:
+
+```
+14 passed, 25 deselected in 1352.84s (0:22:32)
+```
+
+⇒ **结论:main 是红的,而修复分支携带的正是这些修复**(11 条 golden 已在数据刷新后**重新 pin 并加
+`db_fingerprint`**;2 条复权视图守卫对应的 `core/data_coverage.py` 修复也在那一侧)。
+**修复分支自 PR #11 之后就没再合过** ⇒ 主干停在旧状态上。
+
+### 4 · 合并范围(已量,**未执行**)
+
+| 项 | 值 |
+|---|---|
+| 提交数 | **31** |
+| 文件数 | **56**(+3227 / −502)|
+| 其中**测试** | **52** |
+| 其中**生产代码** | **3 个代码文件**(`short_reversal/scan_signals_fast.py` 的因果切片、`core/trade_schema.py` **仅注释**)+ `README.md` / `requirements.txt` |
+| **试合并结果** | **5 个测试文件冲突**(需逐个取修复分支一侧)|
+| 无冲突? | ✗ 需人工解冲突 |
+
+### 5 · 我停在这里,等你一句
+
+* **要不要我把修复分支合进 `main`?** 范围已量清(52/56 是测试;3 个代码文件里 2 个是注释/README)、
+  且 13 条红已证在那一侧全绿;但它是**主干上的一次 56 文件合并**,而仓库既有流程是 **PR**
+  (PR #11 就是这条分支),加上**我刚出过一次事故** ⇒ **这一步我不再自作主张**;
+* 若你同意,我会:(a) 在**独立 worktree** 里解那 5 处冲突(取修复分支一侧)、(b) 在**合并结果**上
+  跑那 13 条 + 文首门禁 +(若你要)全量、(c) 再推 `main`,并给出回滚命令;
+* 若你更倾向走 PR:本机**没有 `gh`**,你可以直接建,或者把 remote 的 PR 建好让我去跟。
+
+### 6 · 本批的边界
+
+* 本附**只记录**,未改任何代码、**未推 `main`**(`main` 上那份报告因此落后 1 条附录,已记);
+* 全量读数:`main @ d7f0b98` = `13 / 1461 / 26`;修复分支最近全量 = `1554 / 28 / 0`(`fdd7fe0`)。
