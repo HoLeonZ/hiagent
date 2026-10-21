@@ -59,7 +59,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
-from tests._production_scan import production_python_files as _iter_production_files
+from tests._production_scan import engine_python_files as _iter_production_files
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]

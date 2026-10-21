@@ -77,7 +77,7 @@ from __future__ import annotations
 import ast
 import sys
 from pathlib import Path
-from tests._production_scan import production_python_files as _iter_python_files
+from tests._production_scan import engine_python_files as _iter_python_files
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -110,40 +110,17 @@ _BROAD_EXCEPTION_NAMES = frozenset({"Exception", "BaseException"})
 #: 已登记的 bare-`except` 站点。键 = (仓库相对路径, 行号),值 = (理由, 什么条件下消失)。
 #: **只许变短**:某处修好、或行号变了,就把条目删掉/更新(陈旧条目会让测试红 —— 见
 #: `test_every_registered_site_is_still_live`)。
+# 由 `python -m tests.test_exception_specificity_audit --freeze` 生成;
+# 粘回后请在 PR 里写明「为什么变了」。理由按**文件**从旧表带过来。
+
 KNOWN_BARE_EXCEPT_SITES: dict[tuple[str, int], tuple[str, str]] = {
-    ("short_reversal/replay_strategy_v3.py", 641): (
-        "`except (IndexError, Exception)` —— `Exception` 混在 IndexError 的元组里,"
-        "等于把 catch-all 藏在具体类型旁边",
+    ("short_reversal/replay_strategy_v3.py", 685): (
+        "`except (IndexError, Exception)` —— `Exception` 混在 IndexError 的元组里,等于把 catch-all 藏在具体类型旁边",
         "回放层决定要不要 fail-fast(口径决策)",
-    ),
-    ("tools/render_top5_presets_html.py", 1167): (
-        "批处理:单 preset 失败 → traceback + `failures += 1` 进**退出码**(§0 附六十三 已定的口径)",
-        "该工具改为单 preset 失败即整体退出时",
-    ),
-    ("tools/rerun_top_presets.py", 130): (
-        "批处理:同上,错误进 `failures`,末尾由退出码报出",
-        "同上",
-    ),
-    ("tools/rerun_top_presets.py", 153): (
-        "批处理:同上,错误进 `failures`,末尾由退出码报出",
-        "同上",
-    ),
-    ("tools/run_all_backtests_html.py", 264): (
-        "批处理:错误进 `rows` 并留 `# noqa: BLE001`,由退出码报出",
-        "同上",
-    ),
-    ("tools/update_db_direct.py", 154): (
-        "抓取循环:单 code 失败继续、`errors += 1`,末尾判定并报出",
-        "改为逐 code fail-fast(会牺牲批量更新的可用性)时",
-    ),
-    ("tools/update_db_direct.py", 192): (
-        "写库循环:同上",
-        "同上",
     ),
 }
 
-#: 登记表的**冻结点** —— 只许变短(新增一条会让 `test_registry_does_not_grow` 红)。
-_FROZEN_BARE_EXCEPT_COUNT = 7
+_FROZEN_BARE_EXCEPT_COUNT = 1
 
 
 

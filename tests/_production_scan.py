@@ -64,3 +64,37 @@ def production_python_files() -> list[Path]:
         if not rel.startswith(EXCLUDED_PATH_PREFIXES)
         and not Path(rel).name.startswith("test_")
     ]
+
+
+#: 视为**开发者工具**(非生产路径)的路径前缀。
+#:
+#: 与 `EXCLUDED_PATH_PREFIXES` 是两种东西:tests/ 是「测试故意使用被禁写法」,
+#: 而这里是「**标准本身不适用于它**」。§0 明写 scan/grid 循环允许
+#: "warn-log + continue";这些工具的失败口径是「单项失败继续、末尾由退出码或汇总表报出」。
+#:
+#: §13.47 已就该裁定实测并记录(在 `test_exception_specificity_audit` 里):
+#: 把 tools/ 加进来会新增一批**合法**命中,而当时的判据是**阈值式** ⇒ 后果不是
+#: "多一条红",而是"吃掉余量"。合并到当前 main 后实测:该裕度已从 7 处涨到 **13** 处
+#: (main 新增了多个 tools/ 脚本),另有 `assert` 式 fail-fast 5 处,同样全在 tools/。
+#:
+#: 所以面**分两种**,但**在同一处定义**(这才是单源的意义):
+#:   * `production_python_files()` —— 全部非测试代码(含 tools/)。§1 禁用函数审计用**这个**:
+#:     `bfill` 出现在**生成 panel** 的脚本里,会污染下游**每一个**回测,与它是不是"工具"无关。
+#:   * `engine_python_files()` —— 再去掉 tools/。只对**生产路径**立标准的审计用这个
+#:     (断言/例外具体性:标准是给引擎与共享层的,不是给开发者脚本的整洁度)。
+ENGINE_TOOL_EXCLUDED_PREFIXES: tuple[str, ...] = ("tools/",)
+
+
+def is_developer_tool(path: Path) -> bool:
+    """`path` 是否落在开发者工具范围(接受绝对路径或仓库相对路径)。"""
+    rel = (path.relative_to(REPO_ROOT) if path.is_absolute() else path).as_posix()
+    return rel.startswith(ENGINE_TOOL_EXCLUDED_PREFIXES)
+
+
+def engine_python_files() -> list[Path]:
+    """生产路径:比 `production_python_files()` 再排除开发者工具。
+
+    ⚠️ 排除是**具名的**(只排 `tools/`),不是白名单 ⇒ 将来新增的顶层目录**默认进面**
+    (失败方向是"多报",不是"静默漏报")。
+    """
+    return [p for p in production_python_files() if not is_developer_tool(p)]
