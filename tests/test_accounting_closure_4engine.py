@@ -187,3 +187,38 @@ def test_gross_pnl_follows_the_family_direction(fam: str, preset: str) -> None:
         f"{'exit' if ENTRY_IS_A_SALE[fam] else 'entry'}) × size` ——\n"
         f"  {bad[['thscode', 'gross_pnl']].head(5).to_dict('records')}"
     )
+
+
+#: 权益曲线单日变动的**烟感器**阈值(附一百三十二)。
+#:
+#: **为什么不是紧界限**:A 股涨跌停 ±10%,而实测三族的曲线最大 |日收益| 是
+#: **9.99% / 9.96% / 9.70%** —— 紧界限(如 11%)会因标记口径/费用的细枝末节误报。
+#: 而本判据要抓的那类缺陷**离得很远**:`simulate_portfolio` 曾经把 `equity` 记成
+#: `现金账本 + Σ(close × size)`,而现金账本**买入时不扣减** ⇒ **建仓名义被计两次**
+#: ⇒ 实测出现 **−52% / +110%** 的单日跳变(`tests/test_uptrend_pullback_equity_curve_integrity.py`
+#: 记录了那次修复)。⇒ 20% 既能抓住"结构性错"(2–5 倍量级),又不碰正常波动。
+MAX_PLAUSIBLE_DAILY_EQUITY_MOVE = 0.20
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("fam,preset", CASES, ids=[c[0] for c in CASES])
+def test_equity_curve_has_no_physically_impossible_move(fam: str, preset: str) -> None:
+    """§2:权益曲线的单日变动必须是**物理上可能**的(烟感器,抓"名义被计两次"那类结构性错)。
+
+    这条性质此前**只有 `uptrend_pullback`** 有判据(`test_uptrend_pullback_equity_curve_integrity.py`,
+    它记录了那次真实的 −52%/+110% 缺陷)。`cycle` 没有曲线(登记的 `[OPEN:CYCLE-BAR-EQUITY]`)。
+    """
+    require_market_db()
+    _tr, _fin, eq = _run(fam, preset)
+    if eq is None:
+        pytest.skip(f"{fam} 没有权益曲线(登记的 [OPEN:CYCLE-BAR-EQUITY])⇒ 本条对它无对象")
+    col = "equity" if "equity" in eq.columns else eq.columns[-1]
+    r = eq[col].astype(float).pct_change().dropna()
+    assert len(r) > 0, f"{fam}/{preset} 的权益曲线只有一行 ⇒ 本条空转"
+    worst = float(r.abs().max())
+    assert worst <= MAX_PLAUSIBLE_DAILY_EQUITY_MOVE, (
+        f"§2 权益曲线出现物理上不可能的日变动: {fam}/{preset} 最大 |日收益| = {worst:.2%} "
+        f"(阈值 {MAX_PLAUSIBLE_DAILY_EQUITY_MOVE:.0%})。\n"
+        f"  这类跳变通常是**记账结构错**(例如「建仓名义被计两次」),而不是市场行为 —— "
+        f"证据:`tests/test_uptrend_pullback_equity_curve_integrity.py` 记录的 −52%/+110%。"
+    )
