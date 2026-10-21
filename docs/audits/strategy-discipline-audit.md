@@ -10916,3 +10916,54 @@ net_return == net_pnl / (entry_price × size + buy_commission)
 ⇒ 通用形态:**凡"某个族与其余族方向相反"的仓库,任何从多数族归纳出的不变式,
 都必须先问一句"它在反方向上怎么写"。** 这条与"族内不对称"是一体两面 ——
 前者防"只查了一族",后者防"用一族的尺子量另一族"。
+
+---
+
+## 附一百三十一 —— 顺着"方向"这条线再扫一次:`gross_pnl` 的**公式**判据也**只在 `chase_up`**
+
+(附一百三十 的教训是"别用一族的尺子量另一族"。那么反过来问:**还有哪些尺子只有一族有?**
+把 `gross_pnl` 这条拿去核 —— 又是同一个形状。)
+
+### 1 · 发现
+
+`tests/test_gross_pnl_per_row_closure.py` 的两条核心判据
+
+* `test_chase_up_per_row_gross_pnl_equals_price_diff_times_size`
+* `test_chase_up_per_row_gross_pnl_sign_matches_price_direction`
+
+断言的是 **`gross_pnl = (exit − entry) × size`** —— 也就是**多头**公式;
+而它们**只在 `chase_up`**。**空头族的符号约定无人钉。**
+
+### 2 · 方向表(逐族从代码里读出,不是猜)
+
+| 族 | 入场是 | `gross_pnl` 公式 | 出处 |
+|---|---|---|---|
+| `chase_up` | 买 | `(exit − entry) × size` | 由那条 chase 判据钉住 |
+| `uptrend_pullback` | 买 | 同上 | 多头 |
+| **`short_reversal`** | **卖** | **`(entry − exit) × size`** | `replay_strategy_v3.py:129`(docstring 明写"做空方向") |
+| `cycle_price_action` | 买 | `(exit − entry) × size` | `main.py:46`(报告层);其 `TradeRecord` **不带** `gross_pnl` |
+
+### 3 · 补的判据与读数
+
+`tests/test_accounting_closure_4engine.py` 第四条例 `test_gross_pnl_follows_the_family_direction`:
+
+* **方向由 `ENTRY_IS_A_SALE` 决定**(与第三条共用同一张表 —— 方向只声明一次);
+* `cycle` 无 `gross_pnl` 列 ⇒ **正确 skip**;
+* 与其它三条**共用 `conftest.run_engine_once` 的回测缓存** ⇒ 边际成本 ≈ 0。
+
+**实测**:`3 passed / 1 skipped` ⇒ **多头两族与做空族各自的公式都成立**。
+
+### 4 · 为什么这条值得补(而不是"反正它是对的")
+
+**一个符号错会翻转全部数字。** 而在此之前:
+
+* 多头的公式有判据(且**只在 `chase_up`**);
+* 空头的公式**只有代码里的一行 docstring** 说它是"做空方向" —— **没有任何判据**。
+
+⇒ 本册反复出现的两种缺口的**交集**:①只在多数族有判据(族内不对称);②**反方向那族靠注释自证**。
+
+### 5 · 记录
+
+* 本条由**单独运行**验证(`3 passed / 1 skipped`);
+* 当时在跑的那次全量**早于本提交**(pytest 收集在启动时完成)⇒ **它不含本例**;下一次全量会覆盖。
+  这一句必须写,否则"全量绿"会被读成"含本条"。
