@@ -341,7 +341,7 @@ def _freeze_text() -> str:
     """把当前两张表打印成**可直接粘贴**的形式。"""
     source, unresolved = current_counts()
     lines = [
-        "# 由 `python tests/test_no_text_shaped_behaviour_checks.py --freeze` 生成;",
+        "# 由 `python -m tests.test_no_text_shaped_behaviour_checks --freeze` 生成;",
         "# 粘回本文件后请在 PR 里写明「为什么变了」。",
         "",
         "KNOWN_TEXT_SHAPED_CHECKS: dict[str, int] = {",
@@ -360,6 +360,6 @@ if __name__ == "__main__":
         print(_freeze_text())
         raise SystemExit(0)
     raise SystemExit(
-        "用法: python tests/test_no_text_shaped_behaviour_checks.py --freeze"
+        "用法: python -m tests.test_no_text_shaped_behaviour_checks --freeze"
         "(打印当前两张登记表,供换树时重新冻结)"
     )

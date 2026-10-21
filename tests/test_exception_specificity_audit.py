@@ -75,6 +75,7 @@ F. **Acceptable exceptions**:
 from __future__ import annotations
 
 import ast
+import sys
 from pathlib import Path
 from tests._production_scan import production_python_files as _iter_python_files
 
@@ -451,4 +452,66 @@ def test_registry_does_not_grow() -> None:
     """冻结点:登记表不许变长(新增登记本身不该是一条捷径)。"""
     assert len(KNOWN_BARE_EXCEPT_SITES) <= _FROZEN_BARE_EXCEPT_COUNT, (
         f"登记表变长了:冻结 {_FROZEN_BARE_EXCEPT_COUNT},现 {len(KNOWN_BARE_EXCEPT_SITES)}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 重新冻结(附一百六十五)—— 与棘轮那边的 `--freeze` 对称
+# ---------------------------------------------------------------------------
+#
+# 为什么需要:本表按 **(文件, 行号)** 键 ⇒ **换一棵树,键就全变**(行号会漂);
+# 而 `test_every_registered_site_is_still_live` 又要求每条**必须仍被检出** ⇒
+# 没有重冻结入口时,本判据**只能在它出生的那棵树上用**(实测:搬到 `main @ fff0413` 上会红)。
+#
+# 关键设计:**理由是人写的,必须跟着走**。所以重冻结时按**文件**把旧表的 (理由, 关闭条件)
+# 带过去(同一文件多条时按出现顺序配对);**新增**的站点写成显式待填,而不是编一个理由。
+#
+# ⚠️ 与棘轮同一条规矩:重新冻结**不是"让红变绿"的捷径** —— 它把当前状态变成新基线,
+# 必须在 PR 里说明"为什么变了"(§6 对 golden 的同一要求)。
+
+
+def _freeze_text() -> str:
+    """把当前检出到的站点打印成**可直接粘贴**的登记表。"""
+    by_file: dict[str, list[tuple[str, str]]] = {}
+    for (path, _line), meta in KNOWN_BARE_EXCEPT_SITES.items():
+        by_file.setdefault(path, []).append(meta)
+    used: dict[str, int] = {}
+
+    def quote(text: str) -> str:
+        return text.replace('"', '\\"')
+
+    lines = [
+        "# 由 `python -m tests.test_exception_specificity_audit --freeze` 生成;",
+        "# 粘回后请在 PR 里写明「为什么变了」。理由按**文件**从旧表带过来。",
+        "",
+        "KNOWN_BARE_EXCEPT_SITES: dict[tuple[str, int], tuple[str, str]] = {",
+    ]
+    for path, line, type_name, snippet in _scan_bare_except_sites():
+        index = used.get(path, 0)
+        metas = by_file.get(path, [])
+        if index < len(metas):
+            what, closes = metas[index]
+        else:
+            what = f"新站点({type_name}): {snippet.strip()[:60]}"
+            closes = "待填:这条在什么条件下消失"
+        used[path] = index + 1
+        lines += [
+            f'    ("{path}", {line}): (',
+            f'        "{quote(what)}",',
+            f'        "{quote(closes)}",',
+            "    ),",
+        ]
+    lines += ["}", "", f"_FROZEN_BARE_EXCEPT_COUNT = {len(_scan_bare_except_sites())}", ""]
+    return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    if "--freeze" in sys.argv:
+        print(_freeze_text())
+        raise SystemExit(0)
+    raise SystemExit(
+        "用法: python -m tests.test_exception_specificity_audit --freeze"
+        "(打印当前登记表;换树时用它重新冻结,并说明漂移原因)\n"
+        "⚠️ 必须用 -m(本文件跨包 import `tests._production_scan`,"
+        "按脚本方式跑时 sys.path[0] 是 tests/、仓库根不在路径上 ⇒ ImportError)"
     )
