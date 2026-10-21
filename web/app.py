@@ -349,9 +349,17 @@ def create_app() -> FastAPI:
             hist = jobs_mod.load_persisted(run_id)
             if hist is None:
                 raise HTTPException(404, detail=f"unknown run: {run_id}")
+            # ⚠️ **`mode` 与 `trial_no` 要从落盘的 `job.json` 取，不能写死 None。**
+            # 写死的后果实测过：服务重启后打开一次 **preview** 运行，`job.mode` 是 null，
+            # 前端就不挂"非可比"横幅（设计要求 preview 结果**强制标注非可比**）——
+            # 于是那些数字看上去像全量回测的，而它们其实只覆盖了最近 90 天。
+            # 这类"标签在重启后消失"的缺陷，静态契约测试看不见：两条路径都返回 200。
+            meta = jobs_mod.meta_persisted(run_id) or {}
             return {"run_id": run_id, "engine": hist.engine, "preset": hist.preset,
-                    "status": "done", "error": None, "mode": None,
-                    "start": hist.start, "end": hist.end, "trial_no": None,
+                    "status": "done", "error": None,
+                    "mode": meta.get("mode"),
+                    "start": hist.start, "end": hist.end,
+                    "trial_no": meta.get("trial_no"),
                     "metrics": window_metrics(hist), "queue_position": None,
                     "from_disk": True}
         metrics = job.result.metrics if job.result else None

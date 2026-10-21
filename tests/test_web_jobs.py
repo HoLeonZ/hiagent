@@ -75,7 +75,11 @@ def test_cancelling_a_running_job_actually_stops_it(home, fast_child, monkeypatc
     **一次都不会转**，测试会在"子进程还在烧 CPU"的情况下全绿。
     **判据必须落在进程对象上**（`job.proc.is_alive()`）。
     """
-    monkeypatch.setenv("HIAGENT_JOBS_FAKE_SLEEP", "8")   # 够长，未终止时必被察觉
+    # 子进程睡 30 秒，判据的截止是 15 秒 —— **2 倍余量**。
+    # 原先写的是"睡 8 秒 / 截止 6 秒"，只有 **2 秒**余量：在同时跑浏览器、服务与
+    # 其它作业的机器上会**误红**（实测过一次全套跑时它单独没红）。
+    # 2 倍余量照样能判别 —— 不终止的话子进程要睡满 30 秒 ≫ 15 秒的截止。
+    monkeypatch.setenv("HIAGENT_JOBS_FAKE_SLEEP", "30")   # 够长，未终止时必被察觉
     rid = jobs_mod.submit("short_reversal", "v50_slope", None,
                           "2024-01-01", "2025-01-01", "full")
     # 等它真的开跑，并拿到子进程对象
@@ -99,7 +103,7 @@ def test_cancelling_a_running_job_actually_stops_it(home, fast_child, monkeypatc
     assert not proc.is_alive(), "cancel 之后子进程仍然活着——terminate 没生效（或只改了状态）"
     # ② 时间判据：cancel() 内部会 join(timeout=10)，若 terminate 无效就会**等满 8 秒**
     #    （子进程自然跑完）。故这条判别力**由 cancel 里的 join 承载**，不是由 status 承载。
-    assert elapsed < 6, f"取消耗时 {elapsed:.1f}s——子进程没有被真正终止"
+    assert elapsed < 15, f"取消耗时 {elapsed:.1f}s——子进程没有被真正终止"
     assert jobs_mod.get(rid).status == "cancelled"
     assert jobs_mod.get(rid).result is None, "被取消的作业不应留下结果"
 

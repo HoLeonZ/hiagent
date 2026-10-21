@@ -626,3 +626,51 @@ def test_the_engine_only_extra_column_is_not_duplicated_in_the_table(client, mon
     assert tr["rows"], "去掉的是列，不是行 —— 行不能被过滤掉"
     for c in ("net_return", "entry_date", "thscode", "sl_price", "tp_price"):
         assert c in tr["columns"], f"规范列 {c} 不该丢"
+
+
+def test_a_restarted_run_keeps_its_preview_marker(client, monkeypatch, tmp_path):
+    """**服务重启后，preview 的"非可比"标注必须还在。**
+
+    实测缺陷（2026-10-21）：`GET /api/runs/{id}` 的**磁盘回退路径**把 `mode`
+    写死成 `None` —— 而前端只在 `job.mode === "preview"` 时挂"非可比"横幅。
+    于是**服务重启后打开一次 preview 运行，标注就没了**：
+    那些数字看上去像全量回测的，而它们其实只覆盖了最近 90 天。
+    设计要求 preview 结果**强制标注非可比**。
+
+    这类缺陷静态契约测试看不见 —— 两条路径都返回 200。
+
+    这里**直接造出落盘产物**（而不是用假 runner 跑一遍）：假 runner 顶掉的是
+    `_run_one` 整个函数，**落盘那一步也在里面**，于是磁盘上什么都没有、
+    根本走不到回退路径 —— 那样测的就不是这个缺陷了。
+    """
+    import json as _json
+
+    from web.state import state_home
+
+    monkeypatch.setenv("HIAGENT_PLATFORM_HOME", str(tmp_path))
+    state_mod = __import__("web.state", fromlist=["state"])
+    state_mod._ASSERTED.clear()
+
+    rid = "diskpreview01"
+    d = state_home() / "runs" / rid
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "result.json").write_text(_json.dumps({
+        "run_id": rid, "engine": "short_reversal", "preset": "v50_slope",
+        "overrides": {}, "start": "2025-01-01", "end": "2025-03-01",
+        "mode": "preview", "trial_no": 7,
+        "metrics": {"trades_count": 0, "equity_curve": [
+            {"date": "2025-01-01", "equity": 1_000_000.0},
+            {"date": "2025-03-01", "equity": 1_100_000.0}]},
+        "trades": [],
+    }), encoding="utf-8")
+    (d / "job.json").write_text(_json.dumps({
+        "run_id": rid, "engine": "short_reversal", "preset": "v50_slope",
+        "overrides": {}, "start": "2025-01-01", "end": "2025-03-01",
+        "mode": "preview", "trial_no": 7,
+    }), encoding="utf-8")
+
+    got = client.get(f"/api/runs/{rid}").json()
+    assert got.get("from_disk") is True, f"本测试要走磁盘回退路径，实得 {got}"
+    assert got["mode"] == "preview", \
+        f"重启后 mode 丢了（{got.get('mode')!r}）—— preview 的'非可比'标注会消失"
+    assert got["trial_no"] == 7, "trial_no 同样不该丢"
