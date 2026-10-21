@@ -48,6 +48,7 @@ r"""§6 守卫:**登记在案的未结事项必须可解析、可复现、有归
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -105,10 +106,30 @@ def _test_files() -> list[Path]:
     return [p for p in sorted((REPO_ROOT / "tests").glob("*.py")) if p != Path(__file__)]
 
 
+#: ① / ② 的普查面:**所有被跟踪的文本文件**(不只是 `tests/*.py`)。
+#: 原实现只扫 `tests/` ⇒ 在 `docs/` 或生产代码里被引用的 token 它看不见 ——
+#: 若哪天把 `tests/` 里的引用删掉、只留文档里那一处,② 会**误报**「已无引用」。
+#: (实测两条分支今天恰好同解:fix 分支 tests/ 5 个 token、audit 分支 docs/ 也是那 5 个 ⇒ 加宽安全。)
+#: ③(`test_no_bare_doc_registration_without_a_token`)的面**保持 `tests/`** ——
+#: 它管的是"测试文件把某章节当登记册"这个习惯,而文档正文本来就含「未结事项」这类词。
+_TEXT_SUFFIXES = (".py", ".md", ".html", ".txt", ".json", ".csv", ".sql")
+
+
+def _tracked_text_files() -> list[Path]:
+    listed = subprocess.run(["git", "ls-files"], cwd=REPO_ROOT,
+                            capture_output=True, text=True, check=True).stdout.split()
+    paths = [REPO_ROOT / rel for rel in listed if rel.endswith(_TEXT_SUFFIXES)]
+    return [p for p in sorted(paths) if p.is_file()]
+
+
 def _cited_tokens() -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
-    for p in _test_files():
-        for m in _CITED.finditer(p.read_text(encoding="utf-8")):
+    for p in _tracked_text_files():
+        try:
+            text = p.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for m in _CITED.finditer(text):
             out.setdefault(m.group(1), []).append(str(p.relative_to(REPO_ROOT)))
     return out
 

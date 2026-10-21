@@ -170,8 +170,13 @@ git -C hiagent remote add origin git@github.com:HoLeonZ/hiagent.git
 - **远程仓库**:`git@github.com:HoLeonZ/hiagent.git`
 - **Python**:3.10+ (实测 3.14.6)
 - **关键依赖**:duckdb / pandas / numpy / backtrader / pytest
-- **测试**:136 文件,部分 pre-existing 失败(见 git log)
-- **审计历史**:R1-R171 累计,见 commit log(历史审计报告已从 `docs/` 移除)
+- **测试**:`tests/` 下 `test_*.py` 的个数以 `ls tests/test_*.py | wc -l` 为准
+  (此前这里写死"136 文件",实测已漂到 **211** —— 文档里的计数会漂,故只给复现方式)
+- **测试状态**:以一次全量运行为准(`python3 -m pytest tests/ -q`)。
+  按 CLAUDE.md §6,"既存失败"必须**带 owner 登记**,不以"见 git log"概称
+- **审计历史**:R1-R171 累计,见 commit log(那批历史审计报告已从 `docs/` 移除)。
+  另:`docs/audits/` 下有一份针对 `main @ 94ca15d` 快照的**纪律审计报告** —— 它**含历史数字**,
+  按 §7 属"附了复现方式的**证据**",不是"文档里的成绩单"
 
 ## 详细文档
 
