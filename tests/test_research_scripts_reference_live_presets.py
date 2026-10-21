@@ -97,6 +97,13 @@ KNOWN_DEAD_REFERENCES = {
     "short_reversal/wf_v37_focused.py": (("v37_liq_3e7_5e8",), "4b7eab0"),
     "short_reversal/wf_v39_focused.py": (("v39_pctchg_04_09",), "4b7eab0"),
     "short_reversal/wf_v41_focused.py": (("v41_pctchg_04_10",), "4b7eab0"),
+    # ⚠️ 附一百二十三 新增的两条:它们是 **tests/ 下的助手脚本**,而本守卫的扫描面
+    # **排除了 tests/** ⇒ 两边都看不见。实测它们各自引用已删的 `v33_mainboard_*`
+    # (`tests/golden/_capture_baseline.py` 的 `PRESET =` 常量、`_combine_preset_html.py`
+    # 的字面量列表)⇒ **两者都跑不起来**,正是本守卫存在的理由。
+    # (为什么不干脆把面扩到整个 tests/:见 `EXTRA_REFERENCING_SCRIPTS` 上方的实测 —— 8 个文件里 7 个
+    #  是**故意的**死名夹具(`planted_*` / `v33_does_not_exist` / `test_atr_preset`)。)
+    "tests/golden/_capture_baseline.py": (("v33_mainboard_tp6_sl005_mh5_realistic",), "4b7eab0"),
 }
 
 #: 其中**失败信息由我们自己写**的那些(把出处与登记位置写进了 `SystemExit` 文本)。
@@ -331,6 +338,25 @@ def _references() -> dict[str, set[str]]:
     return out
 
 
+#: **扫描面之外、但确实引用 preset 名的两个助手脚本** —— `{相对路径: 引擎}`。
+#:
+#: 为什么不把面直接扩到整个 `tests/`:实测那样会牵出 **8 个**文件 ——
+#: **2 个是真的**(本文件登记的 `_capture_baseline.py` + 按设计不入表的 `_combine_preset_html.py`)、
+#: **6 个是假报** ——
+#: 测试里**故意**写着不存在的 preset 名当夹具(`planted_*`、`v33_does_not_exist`、`test_atr_preset`),
+#: 还有几个是引擎推错(`chase` 的 preset 被推成 `short_reversal`)。故**显式登记**这两条真债,
+#: 而不是放宽判据 —— 放宽会让"判据淹没在自己的假报里",那正是本会话反复记的那类失败。
+EXTRA_REFERENCING_SCRIPTS: dict[str, str] = {
+    # 它 `from short_reversal.engine import run_backtest_v3`,本可推出引擎;但仍显式写清,便于阅读
+    "tests/golden/_capture_baseline.py": "short_reversal",
+    # ⚠️ **另一个同类文件不入表**:`tests/_combine_preset_html.py` 也引用两个已删 preset,
+    # 但它**只按名字读产物 HTML**(`GOLDEN / f"{preset}_trades.html"`),**不解析 preset**
+    # ⇒ 本守卫的两条判据(①经校验路径解析 ②删除提交可由 git 核验)**都不适用**。
+    # 它的失效形态是"读不到产物 ⇒ FileNotFoundError"(响亮,但不是本守卫要钉的那种)。
+    # **不为了收它而放宽判据** —— 那会让判据淹没在自己的假报里(见上方 8→7 假报的实测)。
+}
+
+
 def _engine_of(rel: str) -> str:
     """脚本属于哪个引擎(推不出来则 `""`)。
 
@@ -352,8 +378,9 @@ def _engine_of(rel: str) -> str:
 def _references() -> dict[str, set[str]]:
     """{脚本相对路径: 它引用但不存在的 preset 名集合}(只含确实失效的)。"""
     out: dict[str, set[str]] = {}
-    for rel in sorted(research_scripts() | preset_referencing_scripts()):
-        engine = _engine_of(rel)
+    universe = set(research_scripts()) | preset_referencing_scripts() | set(EXTRA_REFERENCING_SCRIPTS)
+    for rel in sorted(universe):
+        engine = EXTRA_REFERENCING_SCRIPTS.get(rel) or _engine_of(rel)
         if not engine:
             continue
         known = _preset_names(engine)

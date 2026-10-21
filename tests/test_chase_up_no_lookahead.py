@@ -663,6 +663,10 @@ def _check_golden_baseline(key: str) -> None:
     baseline_path = Path(__file__).parent / "golden" / f"chase_v{key}_baseline.json"
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
 
+    from tests.conftest import skip_if_pinned_under_other_data  # §0/§6 数据指纹(附一百一十七)
+
+    skip_if_pinned_under_other_data(baseline, baseline_path.name)
+
     if not Path(_DB).exists() or Path(_DB).stat().st_size == 0:
         pytest.skip(f"§6: 本地 DuckDB 不可用({_DB})—— skip 而非 error")
 

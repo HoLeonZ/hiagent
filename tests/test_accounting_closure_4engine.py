@@ -1,0 +1,224 @@
+r"""§2/§3 守卫:**四族的账务闭合** —— 此前**只有 `chase_up` 有判据**(附一百二十八)。
+
+## 缺口
+
+仓库里三个 closure 文件都是 **chase_up-only**:`test_per_trade_math_closure.py`
+(`test_chase_up_per_trade_*`)、`test_gross_pnl_per_row_closure.py`(`test_chase_up_per_row_*`)、
+以及 `test_nav_cash_ledger_invariants.py` 的端到端那条(注释明写"端到端:chase_up …")。
+⇒ **同一批性质,另外三族没有输出侧判据** —— 正是本册反复记的"族内不对称"。
+
+## 判据(两条,都是**逐位等式**,不留容差口子)
+
+1. **逐笔闭合**:`net_pnl == gross_pnl − fees`(每笔);
+2. **净值 ↔ 权益曲线一致**:`final == equity_curve` 末值。
+
+## 实测读数(建成时,窗口 2026-02-02..2026-04-30)
+
+| 族 | 成交 | 逐笔闭合违反 | final 与曲线末值之差 |
+|---|---|---|---|
+| `chase_up` | 9 | **0** | **0.00** |
+| `uptrend_pullback` | 14 | **0** | **0.00** |
+| `short_reversal` | 12 | **0** | **0.00** |
+
+**顺带量掉的一条"疑似违反"**:`short_reversal` 的 `末值 − 初值 − Σnet_pnl = −8,338.72`。
+**它不是缺陷**:该组**末笔 exit = 2026-05-06 > 窗口止 2026-04-30** ⇒ 期末**仍有持仓**,
+而 `final_capital` 取的是**窗口末的净值**(含浮盈)—— `engine.py:228` 明写"必须用净值,不是总现金"。
+chase/uptrend 那两组的末笔 exit 恰为窗口止日 ⇒ 全部平仓 ⇒ 差额 0.00。
+
+## ⚠️ `cycle_price_action`:**我上一版说它"输出上不可验",那句话是错的**(附一百二十九)
+
+它确实**没有** `gross_pnl`/`fees` 列,也**没有**权益曲线 —— 于是我当时写下"不可验"。
+**但可以推导**:它的成交里有 `entry_price` / `exit_price` / `shares` / `pnl`,而**费率有单一来源**
+(`core.dual_price.calc_commission` / `calc_stamp_duty`)⇒ 手算 `gross − fees` 再与 `pnl` 对。
+**实测 490/490 笔逐位相同**(中位差 `0.000000`,最大 `0.0000`)⇒ **它可验,而且验过了**。
+
+判据因此从两条里**去掉用不上的第二条**(它没有曲线),保留第一条的**推导版**:
+`pnl == (exit − entry) × shares − [佣金(买+卖) + 印花税(卖)]`。
+
+(这一条同时说明:**"没有那一列"不等于"不可验"** —— 只要其它列 + 单一来源的常量能推出它。)
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+import pandas as pd
+import pytest
+
+from tests.conftest import require_market_db
+
+#: 窗口取 **1 个月**(而不是 3 个月):这两条判据是**结构性等式**,与窗口长度无关,
+#: 而 3 个月窗在 `short_reversal`(~9 分钟)与 `cycle`(~6 分钟)上把这条守卫推到 35 分钟。
+#: 缩到 1 个月后 ≈10 分钟 —— **判据的强度不变,成本降到可接受**。
+from tests.conftest import STD_WINDOWS as _STD  # 各族的窗口与窗口边界守卫**共用**(见其 docstring)
+CASES = [
+    ("chase_up", "chase_v1_atr_tp4_sl1"),
+    ("uptrend_pullback", "v33_long_reverse_v19"),
+    ("short_reversal", "v50_slope"),
+    ("cycle_price_action", "v1"),
+]
+TOL = 1e-6
+
+
+def _run(fam: str, preset: str):
+    """取**共享**的一次回测(与 `test_no_pre_window_entries_4engine.py` 同源)。"""
+    from tests.conftest import run_engine_once
+
+    return run_engine_once(fam, preset, _STD[fam])
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("fam,preset", CASES, ids=[c[0] for c in CASES])
+def test_per_trade_closure_holds(fam: str, preset: str) -> None:
+    """§2/§3:每笔 `net_pnl == gross_pnl − fees`(逐位)。"""
+    require_market_db()
+    tr, _fin, _eq = _run(fam, preset)
+    assert len(tr) > 0, f"{fam}/{preset} 在 {_STD[fam]} 上没有成交 ⇒ 本条空转"
+    if fam == "cycle_price_action":
+        # 推导版:cycle 没有 gross/fees 列,但有价格与股数 + **单一来源**的费率
+        from core.dual_price import calc_commission, calc_stamp_duty
+
+        buy = tr["entry_price"] * tr["shares"]
+        sell = tr["exit_price"] * tr["shares"]
+        fees = buy.map(calc_commission) + sell.map(calc_commission) + sell.map(
+            lambda n: calc_stamp_duty(n, "sell")
+        )
+        derived = (tr["exit_price"] - tr["entry_price"]) * tr["shares"] - fees
+        bad = tr[(tr["pnl"] - derived).abs() > 1e-6]
+        assert bad.empty, (
+            f"§2/§3 逐笔闭合(推导版): cycle_price_action 有 {len(bad)} 笔 "
+            f"`pnl != (exit-entry)*shares - 费率` ——\n"
+            f"  {bad[['thscode', 'pnl']].head(5).to_dict('records')}"
+        )
+        return
+    bad = tr[(tr["net_pnl"] - (tr["gross_pnl"] - tr["fees"])).abs() > TOL]
+    assert bad.empty, (
+        f"§2/§3 逐笔闭合: {fam}/{preset} 有 {len(bad)} 笔 `net_pnl != gross_pnl - fees` ——\n"
+        f"  {bad[['thscode', 'gross_pnl', 'fees', 'net_pnl']].head(5).to_dict('records')}"
+    )
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("fam,preset", CASES, ids=[c[0] for c in CASES])
+def test_final_equity_equals_the_equity_curve_tail(fam: str, preset: str) -> None:
+    """§2:报告口径必须与权益曲线**同源** —— `final` == 曲线末值(逐位)。
+
+    (这条钉的是"同一次运行的两份输出要一致":`final_capital` 取净值还是总现金、取哪一天,
+     都会在这里露出来。`short_reversal/engine.py:228` 那段注释记的正是它修过一次的错。)
+    """
+    require_market_db()
+    _tr, fin, eq = _run(fam, preset)
+    if eq is None:
+        pytest.skip(f"{fam} 没有权益曲线(其 TradeRecord 不带 gross/fees、也不出版曲线)—— "
+                    f"逐笔闭合已由推导版覆盖;净值一致性对 cycle 无对象")
+    assert len(eq) > 0, f"{fam}/{preset} 没有权益曲线 ⇒ 本条无从比较"
+    tail = float(eq["equity"].iloc[-1]) if "equity" in eq.columns else float(eq.iloc[-1].iloc[-1])
+    assert abs(fin - tail) <= 1e-6, (
+        f"§2 口径不一致: {fam}/{preset} 报告的 final={fin:,.2f},而权益曲线末值={tail:,.2f} "
+        f"(差 {fin - tail:,.2f}) —— 同一次运行的两份输出必须同源。"
+    )
+
+
+#: 各族在 `net_return` 分母上的**方向**(附一百三十):入场是"买"还是"卖"。
+#: 空头(short_reversal)的入场是**卖** ⇒ 入场成本里**含印花税**(`core.dual_price.STAMP_DUTY_SIDE="sell"`)。
+#: ⚠️ `core/trade_schema.py` 的旧措辞把这条不变式写成**通用**形式,而它是从**多头**推出来的:
+#: 拿通用形式去对 short_reversal 会得到 **12/12 笔"违反"**(假警报)。本表把方向写明。
+ENTRY_IS_A_SALE: dict[str, bool] = {
+    "chase_up": False,
+    "uptrend_pullback": False,
+    "short_reversal": True,
+    "cycle_price_action": False,   # 无 net_return 列,见下
+}
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("fam,preset", CASES, ids=[c[0] for c in CASES])
+def test_net_return_closure_holds(fam: str, preset: str) -> None:
+    """§2/§3:`net_return == net_pnl / 入场成本`,而**入场成本随方向而不同**。
+
+    多头:名义额 + 买入佣金;空头:名义额 + 佣金 + **印花税**(它的入场就是卖出)。
+    费率一律从 `core.dual_price` 取(单一来源),不写字面量。
+    """
+    require_market_db()
+    from core.dual_price import COMMISSION_RATE, MIN_COMMISSION, STAMP_DUTY_RATE
+
+    tr, _fin, _eq = _run(fam, preset)
+    if "net_return" not in tr.columns:
+        pytest.skip(f"{fam} 的成交记录没有 `net_return` 列 ⇒ 本条对它无对象")
+    assert len(tr) > 0, f"{fam}/{preset} 在 {_STD[fam]} 上没有成交 ⇒ 本条空转"
+
+    notional = tr["entry_price"] * tr["size"]
+    buy_comm = (notional * COMMISSION_RATE).clip(lower=MIN_COMMISSION)
+    entry_cost = notional + buy_comm
+    if ENTRY_IS_A_SALE[fam]:
+        entry_cost = entry_cost + notional * STAMP_DUTY_RATE
+    d = (tr["net_return"] - tr["net_pnl"] / entry_cost).abs()
+    bad = tr[d > 1e-9]
+    assert bad.empty, (
+        f"§2/§3 net_return 闭合: {fam}/{preset} 有 {len(bad)} 笔不满足 "
+        f"`net_return == net_pnl / 入场成本`(入场是{'卖' if ENTRY_IS_A_SALE[fam] else '买'})——\n"
+        f"  {bad[['thscode', 'net_return', 'net_pnl']].head(5).to_dict('records')}"
+    )
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("fam,preset", CASES, ids=[c[0] for c in CASES])
+def test_gross_pnl_follows_the_family_direction(fam: str, preset: str) -> None:
+    """§3:`gross_pnl` 的公式**随方向**——
+
+    * **多头**(入场买、出场卖):`gross_pnl == (exit − entry) × size`;
+    * **空头**(入场卖、出场买):`gross_pnl == (entry − exit) × size`(`short_reversal/replay_strategy_v3.py:129`)。
+
+    ⚠️ 这条判据此前**只在 `chase_up`**(`test_gross_pnl_per_row_closure.py` 的
+    `test_chase_up_per_row_gross_pnl_*`,断言的是**多头**公式)⇒ 空头族的符号约定**无人钉**。
+    一个符号错会翻转全部数字,所以本文件按方向把它补齐。(附一百三十一同族。)
+    """
+    require_market_db()
+    tr, _fin, _eq = _run(fam, preset)
+    if "gross_pnl" not in tr.columns:
+        pytest.skip(f"{fam} 的成交记录没有 `gross_pnl` 列(只有 pnl)⇒ 本条对它无对象")
+    assert len(tr) > 0, f"{fam}/{preset} 在 {_STD[fam]} 上没有成交 ⇒ 本条空转"
+
+    diff = (tr["entry_price"] - tr["exit_price"]) if ENTRY_IS_A_SALE[fam] else (tr["exit_price"] - tr["entry_price"])
+    expect = diff * tr["size"]
+    bad = tr[(tr["gross_pnl"] - expect).abs() > 1e-6]
+    assert bad.empty, (
+        f"§3 gross_pnl 公式: {fam}/{preset} 有 {len(bad)} 笔不满足 "
+        f"`gross_pnl == ({'entry' if ENTRY_IS_A_SALE[fam] else 'exit'} − "
+        f"{'exit' if ENTRY_IS_A_SALE[fam] else 'entry'}) × size` ——\n"
+        f"  {bad[['thscode', 'gross_pnl']].head(5).to_dict('records')}"
+    )
+
+
+#: 权益曲线单日变动的**烟感器**阈值(附一百三十二)。
+#:
+#: **为什么不是紧界限**:A 股涨跌停 ±10%,而实测三族的曲线最大 |日收益| 是
+#: **9.99% / 9.96% / 9.70%** —— 紧界限(如 11%)会因标记口径/费用的细枝末节误报。
+#: 而本判据要抓的那类缺陷**离得很远**:`simulate_portfolio` 曾经把 `equity` 记成
+#: `现金账本 + Σ(close × size)`,而现金账本**买入时不扣减** ⇒ **建仓名义被计两次**
+#: ⇒ 实测出现 **−52% / +110%** 的单日跳变(`tests/test_uptrend_pullback_equity_curve_integrity.py`
+#: 记录了那次修复)。⇒ 20% 既能抓住"结构性错"(2–5 倍量级),又不碰正常波动。
+MAX_PLAUSIBLE_DAILY_EQUITY_MOVE = 0.20
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("fam,preset", CASES, ids=[c[0] for c in CASES])
+def test_equity_curve_has_no_physically_impossible_move(fam: str, preset: str) -> None:
+    """§2:权益曲线的单日变动必须是**物理上可能**的(烟感器,抓"名义被计两次"那类结构性错)。
+
+    这条性质此前**只有 `uptrend_pullback`** 有判据(`test_uptrend_pullback_equity_curve_integrity.py`,
+    它记录了那次真实的 −52%/+110% 缺陷)。`cycle` 没有曲线(登记的 `[OPEN:CYCLE-BAR-EQUITY]`)。
+    """
+    require_market_db()
+    _tr, _fin, eq = _run(fam, preset)
+    if eq is None:
+        pytest.skip(f"{fam} 没有权益曲线(登记的 [OPEN:CYCLE-BAR-EQUITY])⇒ 本条对它无对象")
+    col = "equity" if "equity" in eq.columns else eq.columns[-1]
+    r = eq[col].astype(float).pct_change().dropna()
+    assert len(r) > 0, f"{fam}/{preset} 的权益曲线只有一行 ⇒ 本条空转"
+    worst = float(r.abs().max())
+    assert worst <= MAX_PLAUSIBLE_DAILY_EQUITY_MOVE, (
+        f"§2 权益曲线出现物理上不可能的日变动: {fam}/{preset} 最大 |日收益| = {worst:.2%} "
+        f"(阈值 {MAX_PLAUSIBLE_DAILY_EQUITY_MOVE:.0%})。\n"
+        f"  这类跳变通常是**记账结构错**(例如「建仓名义被计两次」),而不是市场行为 —— "
+        f"证据:`tests/test_uptrend_pullback_equity_curve_integrity.py` 记录的 −52%/+110%。"
+    )

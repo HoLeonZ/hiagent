@@ -14,10 +14,21 @@ Engine-specific adaptations (Tick 50 / Tick 54):
   - cycle_price_action populates 12 cols (entry/exit dates + prices + size
     + PnL); `atr_pct` defaults to NaN, `sub_signal_type` defaults to "".
 
-Per-trade math closure invariant (per ``test_per_trade_math_closure.py``):
+Per-trade math closure invariant:
   - gross - fees == net_pnl  (within 1e-6 absolute / 1e-4 relative)
-  - net_return == net_pnl / (entry_price × size + buy_commission)
   - fees ≥ 0
+  - **net_return == net_pnl / 入场成本** —— 而"入场成本"**随方向而不同**:
+      · **多头**(chase_up / uptrend_pullback):入场是**买** ⇒ 入场成本 = 名义额 + **买入佣金**
+        (`max(最小佣金, 名义额 × 佣金率)`);
+      · **空头**(short_reversal):入场是**卖** ⇒ 入场成本 = 名义额 + 买入侧费用,
+        而**卖出侧含印花税** ⇒ 入场成本 = 名义额 + 佣金 + **印花税**
+        (与 `core.dual_price.STAMP_DUTY_SIDE = "sell"` 一致 —— 对空头而言"卖出"就是**入场**)。
+  ⚠️ 这条不变式此前**写成通用形式**(`net_return == net_pnl / (entry_price × size + buy_commission)`),
+  而它是从**多头**的判据推出来的 ⇒ 拿它去对 `short_reversal` 会得到**"12/12 笔违反"的假警报**
+  (实测:多头两族 0 违反;空头 12/12 违反**通用形式**、0 违反**方向正确形式**)。附一百三十 记录。
+
+  (原先引用的 ``test_per_trade_math_closure.py`` 是 **chase_up-only** 的 —— 见 附一百二十八
+   发现的"族内不对称"同族问题。)
 """
 from __future__ import annotations
 

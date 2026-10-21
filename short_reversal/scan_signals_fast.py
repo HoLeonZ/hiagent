@@ -144,7 +144,15 @@ def _filter_signals(df: pd.DataFrame, preset: dict, signal_date: str) -> pd.Data
     pc_high = cfg.get("pct_chg_high", 0.06)
     a_cond = cfg.get("a_condition", "default")
 
-    # T-day row = 各 thscode 的最后一行
+    # T-day row = 各 thscode 的**不晚于 signal_date 的**最后一行。
+    #
+    # §1 (附一百二十四): 原实现是 `df.groupby("thscode").tail(1)` —— 取的是**面板的最后一行**,
+    # `signal_date` **不决定取哪一行** ⇒ as-of 日其实是"面板末端"。生产路径恰好让两者相等
+    # (它用 `load_panel_for_signal(db, signal_date)`,面板本来就止于 signal_date),所以一直没露;
+    # 但**传错不会报错,只会静默算成另一天**。
+    # 实测: 面板止于 06-30、而 signal_date=04-30 ⇒ 返回的是 06-30 的 7 只命中,而 T 日正确是 2 只。
+    _cut = pd.Timestamp(signal_date)
+    df = df[df["date"] <= _cut]
     last_g = df.groupby("thscode").tail(1).reset_index(drop=True)
 
     # 5 条件(参数一律取 preset 的**声明值** —— 2026-10-16:此前写死 3e7/3e8、3/10、

@@ -17,13 +17,20 @@ CLAUDE.md §3 verbatim:
 
 本文件现在验证：
   1. 处理器在 `core/` **单源**定义（不是四个引擎各写一份）。
-  2. 四个引擎都真的把它接到自己的账本上。
+  2. 四个引擎都真的把它接到自己的账本上（判据是 **AST 导入 + 调用**，不是子串匹配）。
   3. 语义正确（分红 = 股数 × 每股分红；送股保总成本不变；无事件则无操作）。
   4. 分红现金流在**规范账本 schema** 里可追溯（`cum_dividends`）。
 
 逐引擎的账本级行为覆盖在 `tests/test_corporate_actions_events.py`
 （chase_up / uptrend_pullback / short_reversal）与
 `tests/test_cycle_corporate_actions.py`（cycle_price_action）；本文件管**接线与 schema**。
+
+附一百三十六（2026-10-21）：本文件的接线判据原为**子串匹配**
+（`"apply_corporate_action(" in 源码`），而它的孪生 `tests/test_corporate_actions_gap.py`
+**早已是 AST** —— 又一次「同一处修法只落到孪生文件之一」。更要紧的是：本文件那行 docstring
+写的就是「**声明 ≠ 接线**」，而子串匹配恰恰**分不出**这两者。已改为**复用**那份的 AST helper
+（不复制 AST 逻辑），并加一张两表对账（模块名 ↔ 文件路径必须解析到同一个文件）。
+注入验证见文件末尾的 `test_the_wiring_check_distinguishes_a_call_from_a_mention`。
 """
 from __future__ import annotations
 
@@ -33,6 +40,9 @@ import pytest
 
 from core.corporate_actions import apply_corporate_action
 from core.trade_schema import EQUITY_COLS
+from tests.test_corporate_actions_gap import _engine_has_event_handler
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 #: 每个引擎把它接到账本上的**接线点**（调用点所在文件）。
 ENGINE_CALLERS = {
@@ -41,6 +51,39 @@ ENGINE_CALLERS = {
     "short_reversal": "short_reversal/replay_strategy_v3.py",
     "cycle_price_action": "cycle_price_action/portfolio.py",
 }
+
+#: 同一件事的**模块名**写法 —— 孪生守卫 `test_corporate_actions_gap.py` 的 AST 判据按模块名解析。
+#: 附一百三十六:那份孪生守卫**早已是 AST**,而本文件这句还是文本子串匹配
+#: (`"apply_corporate_action(" in src`)—— 而本文件自己的 docstring 写的就是「声明 ≠ 接线」,
+#: 文本匹配恰恰**分不出**这两者。此处改为**复用**那份的 AST helper(不复制),
+#: 并加一条对账:两张表的同一引擎必须解析到**同一个文件**(否则即 fail-fast)。
+ENGINE_MODULES = {
+    "chase_up": "chase_up.portfolio",
+    "uptrend_pullback": "uptrend_pullback.portfolio",
+    "short_reversal": "short_reversal.replay_strategy_v3",
+    "cycle_price_action": "cycle_price_action.portfolio",
+}
+
+
+def _resolved_file(engine: str) -> Path:
+    import importlib
+
+    return Path(importlib.import_module(ENGINE_MODULES[engine]).__file__).resolve()
+
+
+def _reconciled_engines() -> list[str]:
+    """两张表(模块名 / 文件路径)必须指同一批引擎、同一个文件。不一致即报 —— 不静默跳过。"""
+    assert set(ENGINE_MODULES) == set(ENGINE_CALLERS), (
+        f"两张表的引擎集合不一致:模块侧={sorted(ENGINE_MODULES)},"
+        f"文件侧={sorted(ENGINE_CALLERS)}"
+    )
+    mismatched = [
+        engine
+        for engine, rel in ENGINE_CALLERS.items()
+        if _resolved_file(engine) != (REPO_ROOT / rel).resolve()
+    ]
+    assert not mismatched, f"这些引擎的两张表解析到**不同文件**:{mismatched}"
+    return sorted(ENGINE_CALLERS)
 
 
 # ---------------------------------------------------------------------------
@@ -58,14 +101,20 @@ def test_corporate_action_handler_lives_in_core_as_a_single_source() -> None:
 
 
 def test_every_engine_routes_corporate_actions_through_the_core_handler() -> None:
-    """§3：四个引擎都必须真的把处理器接到自己的账本上（声明 ≠ 接线）。"""
+    """§3：四个引擎都必须真的把处理器**接到**自己的账本上（声明 ≠ 接线）。
+
+    判据是 **AST**（从 `core.corporate_actions` 导入 + 源码里真的**调用**了它），
+    不是子串匹配 —— 注释 / docstring 里提到 `apply_corporate_action(` 不算接线。
+    (附一百三十六 用注入验过：把调用注释掉、只留一句提到它的注释,**旧文本判据照样绿**。)
+    """
+    _reconciled_engines()
     missing = [
         engine
-        for engine, rel in ENGINE_CALLERS.items()
-        if "apply_corporate_action(" not in Path(rel).read_text(encoding="utf-8")
+        for engine in sorted(ENGINE_CALLERS)
+        if not _engine_has_event_handler(ENGINE_MODULES[engine])
     ]
     assert not missing, (
-        f"§3 VIOLATION: 以下引擎未调用 core 的公司行为处理器：{missing}。"
+        f"§3 VIOLATION: 以下引擎未**接线**到 core 的公司行为处理器：{missing}。"
         "分红不入 Free_Cash / 送股不调仓 —— §3 要求的是**物理入账**，不是声明。"
     )
 
@@ -129,13 +178,13 @@ def test_dividend_cash_is_traceable_in_the_canonical_ledger_schema() -> None:
     importers = {
         engine: rel
         for engine, rel in ENGINE_CALLERS.items()
-        if "EQUITY_COLS" in Path(rel).read_text(encoding="utf-8")
+        if "EQUITY_COLS" in (REPO_ROOT / rel).read_text(encoding="utf-8")
     }
     assert importers, "预期至少有引擎使用规范权益 schema"
     offenders = [
         engine
         for engine, rel in importers.items()
-        if "cum_dividends" not in Path(rel).read_text(encoding="utf-8")
+        if "cum_dividends" not in (REPO_ROOT / rel).read_text(encoding="utf-8")
     ]
     assert not offenders, (
         f"§3 VIOLATION: 以下引擎输出权益账本却不带 cum_dividends：{offenders} —— "
@@ -258,3 +307,32 @@ def test_booked_dividends_match_real_held_through_events(
             "该 preset/窗口原本有持仓期内除权事件,现在没有了 ⇒ 夹具/数据变了,"
             "这条断言将退化为 0 == 0(空转)"
         )
+
+
+# ---------------------------------------------------------------------------
+# 附一百三十六:接线判据自己的牙齿(「调用」≠「提到」)
+# ---------------------------------------------------------------------------
+
+
+def test_the_wiring_check_distinguishes_a_call_from_a_mention() -> None:
+    """**牙齿**:同一段源码里「**调用**它」与「只**提到**它」必须给出**不同**判定。
+
+    确定性样本取自仓库自身:`core/corporate_actions.py` **定义**了处理器,源码里含
+    `apply_corporate_action(`(那一行是 `def`),但它**不接线** ⇒ AST 判 False;
+    而旧的文本判据 `"apply_corporate_action(" in 源码` 会对它判 **True**
+    —— 那正是"分不出声明与接线"。
+
+    另一半:四个引擎都必须被判为**已接线**(否则这个 helper 可能是恒 False 的死判据)。
+    """
+    core_src = (REPO_ROOT / "core/corporate_actions.py").read_text(encoding="utf-8")
+    assert "apply_corporate_action(" in core_src, (
+        "牙齿样本失效:core 源码里已找不到那个字面量 —— 请换一个样本"
+    )
+    assert not _engine_has_event_handler("core.corporate_actions"), (
+        "AST 判据把「定义处理器」误判成了「接线」"
+    )
+
+    engines = _reconciled_engines()
+    assert len(engines) == 4, f"预期 4 个引擎,实得 {engines}"
+    unwired = [e for e in engines if not _engine_has_event_handler(ENGINE_MODULES[e])]
+    assert not unwired, f"这些引擎应当被判为已接线却是 False(判据可能是恒假的死判据):{unwired}"

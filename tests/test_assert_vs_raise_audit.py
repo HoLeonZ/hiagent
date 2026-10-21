@@ -59,36 +59,17 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from tests._production_scan import production_python_files as _iter_production_files
 
-import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-# ⚠️ 2026-10-19 (§13.46): 这里原先是一张手写的 `SCAN_DIRS`(6 个目录) + `if not exists: continue`
-# (§13.43 记过的静默跳过形态)。它与 §13.45 遇到的是同一个**结构性**问题:
-# **"目录列表 + rglob"够不到仓库根的散文件**。⇒ 改为遍历仓库, 只按目录排除。
-EXCLUDE_DIR_NAMES = {
-    "tests",
-    "__pycache__",
-    ".git",
-    ".claude",
-    "node_modules",
-    "results",
-    "worktrees",
-}
-
-
-def _iter_production_files() -> list[Path]:
-    """**发现式**: 遍历仓库里所有 `.py`, 只按目录排除 (§13.46)。"""
-    files: list[Path] = []
-    for path in sorted(REPO_ROOT.rglob("*.py")):
-        if any(part in EXCLUDE_DIR_NAMES for part in path.parts):
-            continue
-        if path.name.startswith("test_"):
-            continue
-        files.append(path)
-    return files
+# 扫描面是**单源**的:`tests/_production_scan.py`(附一百三十四)。
+# 此前本文件自带一份写死的目录清单 —— 4 份清单互不一致:附十五 补的 `dna_data`/`tools`
+# 只落到其中 1 份;`test_assert_vs_raise_audit.py` 那份还把 `uptrend_pullback` 拼成了
+# `uptrend_pulback`,于是 `base.exists()` 为假、静默跳过 ⇒ 整个族未被扫过。四份也都不含
+# 仓库根下的 `.py`。现在面从 `git ls-files` 派生,新包/新顶层脚本自动进面。
 
 
 def _scan_assert_sites() -> list[tuple[str, int, str]]:
@@ -208,40 +189,10 @@ def test_assert_to_raise_ratio_is_healthy() -> None:
     raise_sites = _scan_raise_sites()
 
     # Healthy production code: ≥10 raises per 1 assert
-    # ⚠️ 2026-10-19 (§13.58): 此处原为 `if len(assert_sites) > 0: ...` —— 一个**静默通过**的
-    # 条件式: 当前生产代码里 assert 站点为 **0** ⇒ 比值没有分母 ⇒ 分支从不执行
-    # ⇒ 这条测试既不会响, 也不会在 `-rs` 里显示为 skip, 看上去与"跑过并通过"完全一样。
-    # 条件本身是**合法前置条件** (比值需要分母), 所以改成**显式 skip** —— 让它可见。
-    if not assert_sites:
-        pytest.skip(
-            "生产代码里当前 0 处 assert ⇒ 比值判据没有分母, 本判据**不适用** "
-            "(这不是通过; 见 §13.58 的说明)"
+    if len(assert_sites) > 0:
+        ratio = len(raise_sites) / len(assert_sites)
+        assert ratio >= 10.0, (
+            f"§0 RAISE/ASSERT RATIO WARNING: {len(raise_sites)} raises "
+            f"vs {len(assert_sites)} asserts (ratio {ratio:.1f}:1, "
+            f"target ≥10:1). Production code should prefer `raise`."
         )
-    ratio = len(raise_sites) / len(assert_sites)
-    assert ratio >= 10.0, (
-        f"§0 RAISE/ASSERT RATIO WARNING: {len(raise_sites)} raises "
-        f"vs {len(assert_sites)} asserts (ratio {ratio:.1f}:1, "
-        f"target ≥10:1). Production code should prefer `raise`."
-    )
-
-# ---------------------------------------------------------------------------
-# 反空转对照 (§13.46): 扫描必须是**发现式**的
-# ---------------------------------------------------------------------------
-
-
-def test_scan_is_discovery_based_and_reaches_root_files() -> None:
-    """扫描必须覆盖旧手写清单**之外**的位置 —— 否则"放宽覆盖面"是句空话。
-
-    ⚠️ 2026-10-19 (§13.46): 原用 `SCAN_DIRS`(6 个目录) + `rglob`。
-    "目录列表 + rglob" **结构上够不到仓库根的散文件** (见 §13.45);
-    实测改为遍历仓库后覆盖到 `tools/` / `dna_data/` / 两个根散文件。
-    """
-    rels = {f.relative_to(REPO_ROOT).as_posix() for f in _iter_production_files()}
-    old_scope = {"chase_up", "uptrend_pullback", "short_reversal",
-                 "cycle_price_action", "core", "dna_stats"}
-    assert {r for r in rels if r.split("/")[0] not in old_scope}, (
-        "扫描没有越出旧的那 6 个目录 ⇒ 覆盖面并未真的放宽"
-    )
-    assert {r for r in rels if "/" not in r}, (
-        "扫描够不到仓库根的散文件 ⇒ 目录列表 + rglob 的老问题还在"
-    )

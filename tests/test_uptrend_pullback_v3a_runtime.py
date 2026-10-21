@@ -305,7 +305,10 @@ def test_phase2_backtrader_feed_uses_raw_when_price_source_is_raw_close():
     try:
         from uptrend_pullback.backtrader_engine import _verify_trade_with_backtrader
     except ImportError:
-        pytest.skip("_verify_trade_with_backtrader not yet refactored to accept price_source")
+        pytest.skip(
+            "uptrend_pullback.backtrader_engine 里没有 `_verify_trade_with_backtrader`"
+            "(§6:模块缺失 ⇒ skip 而非 error)"
+        )
 
     # 构造 panel: adj 与 raw 在 entry 后 2 根 bar 出现 divergence
     dates = pd.date_range("2025-01-01", periods=20, freq="B")
