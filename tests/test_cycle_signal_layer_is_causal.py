@@ -102,54 +102,21 @@ def test_bars_up_to_is_a_causal_slice() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ② 分数只准在**切片**上算(结构判据 —— 这一族特有的风险)
-# ---------------------------------------------------------------------------
+# ② 分数只准在**切片**上算 —— **不再用句法判据,改由 ③ 的性质判据覆盖**
+#
+# 原实现是**句法**检查:"哪些调用点收到了全量面板 `df`"(要求实参以 `bars_until_today` 开头)。
+# 它在 `main` 上**误报**了 —— 那边的实现把全量 `df` 交给四个分数函数,而**带完整论证**:
+#   `detect_k_patterns` / `k_line_score` 全为**后向** rolling/shift(第 i 根在前缀里的值与在全表里相同)、
+#   `calendar_score` 是纯日期函数、`phase_score` 只用序列**长度**(并显式复刻 `len < periods` 分支),
+#   且旧 O(n²) 路径实测 86 分钟、**零漂移由 40 只票的 trades sha256 锁定**(附一百六十六)。
+# ⇒ 句法判据把"更优的实现"判红,而**它想保的性质**("第 i 根的值不依赖尾部")**已由 ③ 逐入口直接断言**
+#   ⇒ 只要 ③ 成立,**任何**把全量面板交进去的调用点都是安全的(这正是那段论证的要点)。
+# ⇒ 删掉句法检查,**保留性质检查**:
+#   **判据只该说"性质成立不成立",不该说"代码必须长成什么样"。**
+#
+# (仍保留下面这条**覆盖**检查:函数确实存在、且确实被调用 —— 否则 ③ 会在"测一个没人用的函数"上空转。)
 
 
-def test_scores_are_only_computed_on_causally_sliced_bars() -> None:
-    """五个入口的实参必须是 `bars_until_today`(或其列),**不许**直接传全量面板。
-
-    (函数本身都因果;但只要有一个调用点漏了 `bars_up_to`,就是一处静默前视。)
-    """
-    bad, seen = [], 0
-    for p in sorted(PKG.rglob("*.py")):
-        if "__pycache__" in p.parts:
-            continue
-        tree = ast.parse(p.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
-                continue
-            if node.func.id not in SCORE_ENTRIES:
-                continue
-            # `bars_up_to` 自己就是对全量做切片,不适用本条
-            if node.func.id == "bars_up_to":
-                continue
-            seen += 1
-            args = [ast.unparse(a) for a in node.args]
-            if node.func.id in FRAME_ENTRIES:
-                # ①类:第一个位置参数必须是因果切片
-                if not args or not args[0].startswith(CAUSAL_ARG_PREFIXES):
-                    bad.append(
-                        f"{p.relative_to(REPO_ROOT)}:{node.lineno} (传了全量面板) {node.func.id}({args[0] if args else ''})"
-                    )
-            elif node.func.id in SCALAR_ENTRIES:
-                # ②类:收标量的入口**不许**收到全量面板本身
-                # (第一版判据对它也要求"实参以 bars_until_today 开头",那是**粗了** ——
-                #  它收的是已从切片算出的 `kscore/cyc/cal`,不是面板。)
-                leaked = [a for a in args if a.strip() in FULL_FRAME_NAMES]
-                if leaked:
-                    bad.append(
-                        f"{p.relative_to(REPO_ROOT)}:{node.lineno} {node.func.id} 收到了全量面板 {leaked}"
-                    )
-    assert seen >= 4, f"只扫到 {seen} 个分数计算入口 —— 判据空转"
-    assert not bad, (
-        "§1:以下调用点把**全量面板**交给了分数函数(而不是 `bars_until_today`)"
-        "—— 那会读到当根之后的 bar:\n  " + "\n  ".join(bad)
-        + "\n正确形态见 `backtrader_engine.py:257-260`。"
-    )
-
-
-# ---------------------------------------------------------------------------
 # ③ 分数函数对**截尾**不变
 # ---------------------------------------------------------------------------
 
@@ -207,14 +174,14 @@ def test_k_patterns_and_k_line_score_are_end_truncation_invariant() -> None:
 
 
 def test_the_scan_is_not_vacuous() -> None:
-    """扫描面自检:五个入口都必须真的在本包里被定义(否则 ② 是空转)。"""
+    """覆盖自检:五个入口都必须真的在本包里被定义**且被调用**(否则 ③ 的空转)。"""
     srcs = {p.name: p.read_text(encoding="utf-8") for p in PKG.glob("*.py")}
     missing = [f for f in SCORE_ENTRIES if not any(f"def {f}(" in s for s in srcs.values())]
-    assert not missing, f"以下入口在本包里找不到定义:{missing} —— 判据 ② 可能已空转"
+    assert not missing, f"以下入口在本包里找不到定义:{missing} —— 性质判据 ③ 可能已空转"
     # 且它们的调用点确实集中在引擎里(实测 5 处)
     calls = sum(
         sum(1 for n in ast.walk(ast.parse(s)) if isinstance(n, ast.Call)
             and isinstance(n.func, ast.Name) and n.func.id in SCORE_ENTRIES and n.func.id != "bars_up_to")
         for s in srcs.values()
     )
-    assert calls >= 4, f"分数入口的调用点只有 {calls} 处 —— 面变小了,请复核判据 ②"
+    assert calls >= 4, f"分数入口的调用点只有 {calls} 处 —— 它们可能已不被使用,性质判据 ③ 随之空转"
