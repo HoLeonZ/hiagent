@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from web.catalog import all_presets
 from web.runners import (
     EngineInputError,
     PREVIEW_DAYS,
@@ -304,3 +305,48 @@ def test_the_preview_window_yields_enough_bars_on_the_DEFAULT_ui_path():
         "这会让 short_reversal（75/101 个预设）在 preview 下必然抛 "
         "WindowTooShortError —— 调大 PREVIEW_DAYS，别把余量卡到边界上。"
     )
+
+
+def test_the_equity_curve_of_a_wrapped_engine_is_kept_not_dropped():
+    """**chase_up / uptrend_pullback 的净值曲线本来就有，不该被适配器丢掉。**
+
+    实测（2026-10-22）：这两个引擎的 `run_backtest` 返回
+    `{"metrics": …, "trades": …, "equity": equity_df}`（`equity_df` 的列是
+    `date/cash/holdings/equity`，见 `chase_up/portfolio.py`），
+    而适配器只取了 `metrics` 与 `trades`，**把 `equity` 扔了**。
+
+    丢掉的后果不是"少一张图"：没有曲线时平台的结果页**头部收益曲线、每日收益、
+    每日持仓全都没有**，指标表也退化成引擎口径 —— 而聚宽那边每个策略都有这些。
+
+    （`cycle_price_action` 是真的没有组合级曲线，它保持引擎口径并被**标注**出来。）
+    """
+    import pandas as pd
+
+    from web.runners import _as_equity_curve
+
+    df = pd.DataFrame({"date": ["2025-01-02", "2025-01-03"],
+                       "cash": [1e6, 1e6], "holdings": [0, 100],
+                       "equity": [1_000_000.0, 1_005_000.0]})
+    curve = _as_equity_curve(df)
+    assert curve == [{"date": "2025-01-02", "equity": 1_000_000.0},
+                     {"date": "2025-01-03", "equity": 1_005_000.0}]
+    # 没有曲线（cycle）→ 空列表，而不是崩
+    assert _as_equity_curve(None) == []
+    assert _as_equity_curve(pd.DataFrame()) == []
+    # 形状不对（缺列）→ 空列表，而不是编一条
+    assert _as_equity_curve(pd.DataFrame({"date": ["2025-01-02"]})) == []
+
+
+@pytest.mark.skipif(_db() is None, reason=SKIP_REASON)
+def test_a_chase_up_run_now_carries_an_equity_curve():
+    """端到端：chase_up 跑一次应当**带曲线** —— 头部图表、每日收益、每日持仓都靠它。"""
+    # 用 golden 里那个**已知有成交**的预设与窗口 —— 随手挑一个窗口会撞上"0 笔信号"，
+    # 而引擎对空成交有一条**早返回**分支（`chase_up/backtest.py:33`），
+    # 它**不带 `equity`**，于是这条测试会红在一个与"曲线被丢"无关的原因上（实测踩过）。
+    got = run("chase_up", "chase_v10_pos2_equal_atr_tp6_sl15_mh18_score16",
+              "2025-09-19", "2026-09-19")
+    assert got.trades, "该窗口应当有成交（否则测的是空成交早返回分支，不是本缺陷）"
+    curve = got.metrics.get("equity_curve")
+    assert curve, "chase_up 的曲线被丢了 —— 结果页会没有收益曲线/每日收益/每日持仓"
+    assert {"date", "equity"} <= set(curve[0]), f"曲线形状不对：{curve[0]}"
+    assert len(curve) > 20, "曲线点数太少，可能是空帧"

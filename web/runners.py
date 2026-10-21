@@ -113,6 +113,38 @@ def effective_window(mode: str, start: str, end: str) -> tuple[str, str]:
     return start_d.isoformat(), end_d.isoformat()
 
 
+def _as_equity_curve(equity: Any) -> list[dict[str, Any]]:
+    """把引擎的 equity 帧转成平台的曲线形状 `[{date, equity}, …]`。
+
+    ⚠️ **只有 short_reversal 自带净值曲线**（`run_backtest_v3` 的 metrics 里就有
+    `equity_curve`）。而 chase_up / uptrend_pullback 的引擎**其实已经算出了这条曲线** ——
+    `chase_up/backtrader_engine.py` 返回 `{"metrics":…, "trades":…, "equity": equity_df}`
+    （`equity_df` 的列是 `date/cash/holdings/equity`，见 `chase_up/portfolio.py`），
+    **只是适配器把它丢掉了**。
+
+    丢掉的后果不是"少一张图"：没有曲线时平台的结果页**头部收益曲线、每日收益、
+    每日持仓全都没有**，指标表也退化成引擎口径（`window_metrics` 退回 `engine_scoped`）。
+
+    `cycle_price_action` **真的没有**组合级净值曲线（它的账户按票独立，v1 做不出来）——
+    那个引擎保持引擎口径，指标表会**标注**出来，不假装一致。
+    """
+    if equity is None:
+        return []
+    try:
+        import pandas as pd
+
+        if not isinstance(equity, pd.DataFrame) or equity.empty:
+            return []
+        if not {"date", "equity"} <= set(equity.columns):
+            return []
+        out = []
+        for _, r in equity.iterrows():
+            out.append({"date": str(r["date"])[:10], "equity": float(r["equity"])})
+        return out
+    except (TypeError, ValueError, KeyError):
+        return []
+
+
 def _as_trades(payload: Any) -> list[dict[str, Any]]:
     """把引擎返回的交易统一成 14 列规范的 list[dict]。
 
@@ -166,6 +198,11 @@ def _run_chase_up(preset: str, start: str, end: str, db: Path, params: dict) -> 
     metrics = dict(res.get("metrics") or {})
     trades = _as_trades(res.get("trades"))
     metrics.setdefault("trades_count", len(trades))
+    # 引擎**已经把净值曲线算出来了**（在返回值的 `equity` 里），接回来 ——
+    # 否则结果页的收益曲线、每日收益、每日持仓全都没有。
+    curve = _as_equity_curve(res.get("equity"))
+    if curve:
+        metrics["equity_curve"] = curve
     return RunResult("chase_up", preset, start, end, metrics, trades)
 
 
@@ -177,6 +214,10 @@ def _run_uptrend_pullback(preset: str, start: str, end: str, db: Path, params: d
     metrics = dict(res.get("metrics") or {})
     trades = _as_trades(res.get("trades"))
     metrics.setdefault("trades_count", len(trades))
+    # 同 chase_up：引擎已算出曲线，接回来（见 `_as_equity_curve` 的说明）。
+    curve = _as_equity_curve(res.get("equity"))
+    if curve:
+        metrics["equity_curve"] = curve
     return RunResult("uptrend_pullback", preset, start, end, metrics, trades)
 
 
