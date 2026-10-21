@@ -259,6 +259,25 @@ def window_metrics(result: Any) -> dict[str, Any]:
         # Calmar = 年化收益 / 最大回撤。回撤为 0 时**没有意义** → None（不是 inf）
         if out["cagr"] is not None and out["max_dd"]:
             out["calmar"] = out["cagr"] / out["max_dd"]
+
+    if len(curve) < 2:
+        # ⚠️ **这个引擎不产出净值曲线** —— 四个引擎里**只有 short_reversal 有**
+        # （实测：chase_up / uptrend_pullback / cycle_price_action 的 metrics 里
+        # 「equity_curve」出现 0 次）。此时曲线派生的键**退回引擎自报的值**。
+        #
+        # 它们**不是窗口口径**（引擎按它自己的面板算），但那是**唯一可得**的数。
+        # 让它们留 `None` 会让这三个引擎的结果页有 **8/13 格是"—"**
+        #（期末资金/总收益率/年化/夏普/最大回撤/年化波动率/日胜率/Calmar）——
+        # 那是把一个"口径不够理想"的问题，换成一个"整张表空了"的问题。
+        #
+        # 退回的那几个键在此**明确标注来源**，别让人以为它们与 short_reversal 同口径。
+        fb = canonical_metrics(result.metrics)
+        for k in ("final_capital", "total_return", "cagr", "sharpe", "max_dd"):
+            if out.get(k) is None:
+                out[k] = fb.get(k)
+        # 这个标记**不是**规范键（不在 `CANONICAL_KEYS` 里），所以指标表不会渲染它；
+        # 它随 `metrics` 一起走，是为了让**消费方**知道哪几个数是引擎口径的。
+        out["engine_scoped"] = ["final_capital", "total_return", "cagr", "sharpe", "max_dd"]
     return out
 
 

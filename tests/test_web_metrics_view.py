@@ -1,6 +1,8 @@
 """跨引擎 metrics 归一：缺键补 None（**不是 0**），且处理 trades 同名不同型。"""
 from __future__ import annotations
 
+import pytest
+
 from web.metrics_view import (
     CANONICAL_KEYS,
     METRIC_KINDS,
@@ -230,3 +232,66 @@ def test_the_engine_side_mapping_leaves_the_window_only_metrics_as_none():
     for k in ("daily_win_rate", "volatility", "calmar"):
         assert k in got, f"规范键里应当有 {k}"
         assert got[k] is None, f"{k} 没有引擎来源，引擎映射路径必须给 None"
+
+
+def _engine_only_result():
+    """造一次**没有净值曲线**的运行 —— 三个非 short_reversal 引擎的真实形态。"""
+    class _R:
+        start, end = "2025-01-01", "2025-03-01"
+
+        def __init__(self):
+            # chase_up 的真实 metrics 形状：有 final_equity/total_return/cagr/…，
+            # 但**没有 equity_curve**（实测：那三个引擎的源码里 `equity_curve` 出现 0 次）。
+            self.metrics = {"final_equity": 1_200_000.0, "total_return": 0.2,
+                            "cagr": 0.5, "sharpe": 1.5, "max_dd": 0.1, "win_rate": 0.4,
+                            "trades": 3, "avg_hold_days": 2.0}
+            self.trades = [{"entry_date": "2025-01-05", "net_pnl": 10.0, "hold_days": 2},
+                           {"entry_date": "2025-02-05", "net_pnl": -5.0, "hold_days": 3},
+                           {"entry_date": "2025-02-20", "net_pnl": 7.0, "hold_days": 1}]
+    return _R()
+
+
+def test_an_engine_without_an_equity_curve_still_gets_its_metrics():
+    """**四个引擎里只有 short_reversal 产出净值曲线。**
+
+    实测（2026-10-21）：`chase_up` / `uptrend_pullback` / `cycle_price_action` 的 metrics 里
+    `equity_curve` 出现 **0 次**。而窗口指标是**从曲线算**的 —— 若不给回退，
+    这三个引擎的结果页会有 **8/13 格是 `—`**（期末资金/总收益率/年化/夏普/最大回撤/
+    年化波动率/日胜率/Calmar），把"口径不够理想"换成了"整张表空了"。
+
+    这条测试就是为此存在的 —— **原先的窗口测试只用 short_reversal 的曲线，
+    所以那个回归一路全绿通过了。**
+    """
+    from web.metrics_view import window_metrics
+
+    m = window_metrics(_engine_only_result())
+    # 曲线派生的键退回**引擎自报**的值（唯一可得）
+    assert m["total_return"] == 0.2, "没有曲线时应当退回引擎自报的 total_return"
+    assert m["final_capital"] == 1_200_000.0
+    assert m["cagr"] == 0.5 and m["sharpe"] == 1.5 and m["max_dd"] == 0.1
+    # 成交派生的仍然按**窗口**算（那不需要曲线）
+    assert m["trades_count"] == 3 and m["win_rate"] == pytest.approx(2 / 3)
+    # 明确标注哪几个数是引擎口径的 —— 消费方要能分辨
+    assert set(m["engine_scoped"]) == {"final_capital", "total_return", "cagr", "sharpe", "max_dd"}
+    # 它是**额外的标记**，不是规范键：指标表按 metric_meta 渲染，不会多出一格
+    from web.metrics_view import CANONICAL_KEYS
+
+    assert "engine_scoped" not in CANONICAL_KEYS
+
+
+def test_a_run_with_a_curve_does_not_get_the_engine_scoped_marker():
+    """有曲线时它就是窗口口径，不该带"引擎口径"的标记 —— 免得标记变成噪声。"""
+    from web.metrics_view import window_metrics
+
+    class _R:
+        start, end = "2025-01-01", "2025-01-03"
+
+        def __init__(self):
+            self.metrics = {"equity_curve": [
+                {"date": "2025-01-01", "equity": 100.0},
+                {"date": "2025-01-03", "equity": 110.0}]}
+            self.trades = []
+
+    m = window_metrics(_R())
+    assert "engine_scoped" not in m
+    assert abs(m["total_return"] - 0.1) < 1e-12
