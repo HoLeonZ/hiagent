@@ -49,10 +49,12 @@ import pytest
 
 from tests.conftest import require_market_db
 
+#: 各族的标准小窗**统一放在 `conftest.STD_WINDOWS`**(附一百二十九)—— 让本文件与
+#: `test_accounting_closure_4engine.py` **共用同一批回测**;否则同一份计算会被重复收费
+#: (`short_reversal` 3 个月窗 ≈ 9 分钟、`cycle` 1 个月窗 ≈ 6 分钟,套件时长翻倍)。
 WINDOW_FAST = ("2026-02-02", "2026-04-30")
 WINDOW_CYCLE = ("2026-04-01", "2026-05-01")
 
-#: (族, preset, 窗口)
 CASES = [
     ("chase_up", "chase_v1_atr_tp4_sl1", WINDOW_FAST),
     ("uptrend_pullback", "v33_long_reverse_v19", WINDOW_FAST),
@@ -62,28 +64,9 @@ CASES = [
 
 
 def _trades(fam: str, preset: str, window: tuple[str, str]) -> pd.DataFrame:
-    from datetime import date
+    from tests.conftest import run_engine_once
 
-    from hiagent_config import get_db_path
-
-    db = Path(str(get_db_path()))
-    start, end = window
-    if fam == "chase_up":
-        from chase_up.backtest import run_backtest
-
-        return pd.DataFrame(run_backtest(preset, start, end, db)["trades"])
-    if fam == "uptrend_pullback":
-        from uptrend_pullback.backtest import run_backtest
-
-        return pd.DataFrame(run_backtest(preset, start, end, db)["trades"])
-    if fam == "short_reversal":
-        from short_reversal.engine import run_backtest_v3
-
-        return pd.DataFrame(run_backtest_v3(preset, start, end, db)["trades"])
-    from cycle_price_action.backtest import run_backtest
-
-    r = run_backtest(str(db), date.fromisoformat(start), date.fromisoformat(end))
-    return pd.DataFrame([t.__dict__ for t in r.trades])
+    return run_engine_once(fam, preset, window)[0]
 
 
 @pytest.mark.slow

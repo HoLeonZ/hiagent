@@ -192,3 +192,54 @@ def skip_if_pinned_under_other_data(baseline: dict, name: str) -> None:
             "前复权视图锚在最新日,新增「已公告的未来除权」会平移整条历史序列 ⇒ "
             "同一批成交被重新定价。重 pin:`python tests/_repin_after_data_refresh.py`。"
         )
+
+
+# ---------------------------------------------------------------------------
+# §0/§6: **跨守卫共享**的引擎回测 —— 同一 (族, preset, 窗口) 只跑一次
+# ---------------------------------------------------------------------------
+#: 成本背景(附一百二十九):四族的回测本身从秒级到分钟级不等
+#: (`short_reversal` 3 个月窗 ≈ 9 分钟、`cycle_price_action` 1 个月窗 ≈ 6 分钟)。
+#: 多个守卫若各自重跑同一组回测,套件时长会被同一份计算重复收费。
+#: 故把"跑一次引擎"收成一个**进程级缓存**;各守卫按同样的 (族, preset, 窗口) 取用即可共享。
+ENGINE_RUNS: dict[tuple[str, str, tuple[str, str]], tuple] = {}
+
+#: 各族的**标准小窗** —— 由"四族都产出成交 + 成本可接受"共同决定(实测)。
+#: (`short_reversal` 在 1 个月窗里可能 0 笔 ⇒ 用 3 个月;`cycle` 引擎分钟级 ⇒ 用 1 个月。)
+STD_WINDOWS: dict[str, tuple[str, str]] = {
+    "chase_up": ("2026-02-02", "2026-04-30"),
+    "uptrend_pullback": ("2026-02-02", "2026-04-30"),
+    "short_reversal": ("2026-02-02", "2026-04-30"),
+    "cycle_price_action": ("2026-04-01", "2026-05-01"),
+}
+
+
+def run_engine_once(fam: str, preset: str, window: tuple[str, str] | None = None) -> tuple:
+    """跑一次引擎并缓存 —— 返回 `(trades, final, equity)`(`equity` 可为 `None`)。"""
+    from datetime import date
+
+    import pandas as pd
+
+    from hiagent_config import get_db_path
+
+    window = window or STD_WINDOWS[fam]
+    key = (fam, preset, window)
+    if key in ENGINE_RUNS:
+        return ENGINE_RUNS[key]
+    db = Path(str(get_db_path()))
+    start, end = window
+    if fam in ("chase_up", "uptrend_pullback"):
+        mod = __import__(f"{fam}.backtest", fromlist=["x"])
+        r = mod.run_backtest(preset, start, end, db)
+        out = (pd.DataFrame(r["trades"]), float(r["metrics"]["final_equity"]), pd.DataFrame(r["equity"]))
+    elif fam == "short_reversal":
+        from short_reversal.engine import run_backtest_v3
+
+        r = run_backtest_v3(preset, start, end, db)
+        out = (pd.DataFrame(r["trades"]), float(r["final_capital"]), pd.DataFrame(r["equity_curve"]))
+    else:
+        from cycle_price_action.backtest import run_backtest
+
+        r = run_backtest(str(db), date.fromisoformat(start), date.fromisoformat(end))
+        out = (pd.DataFrame([t.__dict__ for t in r.trades]), float("nan"), None)
+    ENGINE_RUNS[key] = out
+    return out
