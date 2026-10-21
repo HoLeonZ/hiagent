@@ -407,3 +407,56 @@ def test_the_columns_the_chart_uses_exist_in_the_shared_trade_schema():
     )
     # 反方向：schema 的列必须是**真实存在**的（防止有人往 TRADE_COLS 里塞幽灵列）
     assert len(TRADE_COLS) == 14, f"14 列规范变成了 {len(TRADE_COLS)} 列：{TRADE_COLS}"
+
+
+@pytest.mark.skipif(_db() is None, reason=SKIP_REASON)
+def test_the_chart_indicators_are_the_numbers_the_strategy_actually_used():
+    """**图上的指标必须逐位等于策略当时算的那一组**（§4.6.1）。
+
+    实测缺陷（2026-10-22）：`chase_up` 的策略用**前复权**（`chase_up/data.py`：
+    "前复权价 v_daily_qfq"、"signal 仍用 adj (… from v_daily_qfq)"），
+    而图用的是 `v_daily_dual.adj_*` —— 那个视图的定义是 `FROM v_daily_hfq`（**后复权**）。
+    同一只票、同一天的 `ma20` 差 **+43.838%**（逐日同一个常数比）。
+
+    **而且它看起来是对的** —— 后复权恰好接近原始价，MA 线正好贴着蜡烛。
+    **看着对、其实是错**，是这类缺陷最阴险的形态：肉眼看不出任何问题。
+
+    这条测试把**引擎自己的指标**与**图上的指标**放在同一天直接比 ——
+    不是比"复权域对不对"，而是比**那个数**。
+    """
+    from chase_up.data import load_panel
+    from chase_up.signals import compute_indicators
+
+    from web.chart import PRICE_DOMAIN_BY_ENGINE, _indicators_on_adj, _load_dual_bars
+
+    db = _db()
+    code = "603843.SH"
+    start, end = "2024-08-19", "2025-09-24"
+
+    # 引擎自己那一组（它自己的面板 + 它自己的 compute_indicators）
+    panel = load_panel(db, "2025-06-01", "2025-12-31", universe={code})
+    eng = compute_indicators(panel)[["date", "ma20"]].copy()
+    eng["date"] = eng["date"].astype(str).str[:10]
+    eng_ma = eng.set_index("date")["ma20"]
+
+    # 图上的那一组
+    bars = _load_dual_bars(db, code, start, end,
+                           PRICE_DOMAIN_BY_ENGINE["chase_up"])
+    chart = _indicators_on_adj("chase_up", bars)
+    chart["date"] = chart["date"].astype(str).str[:10]
+    chart_ma = chart.set_index("date")["ma20"]
+
+    # ⚠️ 必须同时挡掉 NaN —— 引擎的 ma20 在面板起点附近是 NaN（暖机不足），
+    # 而 `x is not None` 挡不住 NaN，于是比较会变成 `nan < 1e-6` → 恒假。
+    import math as _math
+
+    common = [d for d in eng_ma.index if d in chart_ma.index
+              and eng_ma[d] is not None and chart_ma[d] is not None
+              and _math.isfinite(float(eng_ma[d])) and _math.isfinite(float(chart_ma[d]))]
+    assert len(common) >= 5, f"可比的日子太少（{len(common)}）——这条测试会失去判别力"
+    for d in common[:8]:
+        e, c = float(eng_ma[d]), float(chart_ma[d])
+        assert abs(c - e) / abs(e) < 1e-6, (
+            f"{d}: 图上的 ma20={c:.4f}，引擎自己算的是 {e:.4f} —— 差 {(c-e)/e*100:+.2f}%。"
+            "图上画的必须是策略当时看到的那一组数（§4.6.1）"
+        )

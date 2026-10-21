@@ -123,22 +123,66 @@ def exit_levels(params: dict[str, Any], entry_price: float, direction: str,
     return sl_tp_prices(entry_price, float(sl_pct), float(tp_pct), direction)
 
 
-def _load_dual_bars(db_path: Path, code: str, start: str, end: str) -> pd.DataFrame:
-    """取一只票 `[start - PAD, end]` 的**双价**日线（原始 + 复权）。"""
+#: 各引擎的**指标复权域**（`qfq` = 前复权 / `hfq` = 后复权）。
+#:
+#: ⚠️ **图上画的指标必须是策略当时看到的那一组数**（§4.6.1）。
+#: 实测（2026-10-22）：`chase_up` 的策略用**前复权** ——
+#: `chase_up/data.py:1` 写着"行情读取 — 前复权价 v_daily_qfq"、
+#: "策略 signal 仍用 adj (open/high/low/close from v_daily_qfq)"；
+#: 而图用的是 `v_daily_dual.adj_*`，那个视图的定义是 `FROM v_daily_hfq`（**后复权**）。
+#: → 同一只票、同一天的 `ma20` 差 **+43.838%**（逐日同一个常数比）。
+#:
+#: 而且它**看起来是对的** —— 后复权恰好接近原始价，MA 线正好贴着蜡烛。
+#: **看着对、其实是错**，是这类缺陷最阴险的形态：肉眼看不出任何问题。
+#:
+#: `short_reversal`（`_panel_loader.py` join `v_daily_hfq`）与
+#: `cycle_price_action`（`data_feed.py` join `v_daily_hfq`）用的就是 hfq ✓
+#: —— 所以原先的取法对它们是对的，问题只在 chase_up / uptrend_pullback。
+#:
+#: 这是一张**按引擎**的手工表（与 `ENGINE_DIRECTION` 同类）——
+#: 但"每个引擎的指标在哪个复权域上算"**本来就是引擎自己的事实**，
+#: 平台只能知道它、不能重算它（重算就变成第二份实现了，§6）。
+PRICE_DOMAIN_BY_ENGINE: dict[str, str] = {
+    "short_reversal": "hfq",
+    "cycle_price_action": "hfq",
+    "chase_up": "qfq",
+    "uptrend_pullback": "qfq",
+}
+
+#: 两种复权域各自的取数 SQL。**raw 侧两边相同**（`v_daily_dual.raw_*` 来自
+#: `raw_kline_daily`），差异只在 adj 侧来自哪个视图。
+_BARS_SQL = {
+    "hfq": (
+        "SELECT thscode, date, "
+        "raw_open, raw_high, raw_low, raw_close, "
+        "adj_open, adj_high, adj_low, adj_close, "
+        "volume, amount "
+        "FROM v_daily_dual WHERE thscode = ? AND date BETWEEN ? AND ? "
+        "ORDER BY date"
+    ),
+    "qfq": (
+        "SELECT d.thscode, d.date, "
+        "d.raw_open, d.raw_high, d.raw_low, d.raw_close, "
+        "q.open AS adj_open, q.high AS adj_high, q.low AS adj_low, q.close AS adj_close, "
+        "d.volume AS volume, d.amount AS amount "
+        "FROM v_daily_dual d "
+        "LEFT JOIN v_daily_qfq q ON q.thscode = d.thscode AND q.date = d.date "
+        "WHERE d.thscode = ? AND d.date BETWEEN ? AND ? "
+        "ORDER BY d.date"
+    ),
+}
+
+
+def _load_dual_bars(db_path: Path, code: str, start: str, end: str,
+                     domain: str = "hfq") -> pd.DataFrame:
+    """取一只票 `[start - PAD, end]` 的**双价**日线（原始 + **该引擎所用的复权域**）。"""
     import duckdb
 
     lo = (pd.Timestamp(start) - pd.Timedelta(days=PAD_DAYS)).strftime("%Y-%m-%d")
+    sql = _BARS_SQL.get(domain, _BARS_SQL["hfq"])
     con = duckdb.connect(str(db_path), read_only=True)
     try:
-        df = con.execute(
-            "SELECT thscode, date, "
-            "raw_open, raw_high, raw_low, raw_close, "
-            "adj_open, adj_high, adj_low, adj_close, "
-            "volume, amount "
-            "FROM v_daily_dual WHERE thscode = ? AND date BETWEEN ? AND ? "
-            "ORDER BY date",
-            [code, lo, end],
-        ).fetchdf()
+        df = con.execute(sql, [code, lo, end]).fetchdf()
     finally:
         con.close()
     if not df.empty:
@@ -197,7 +241,8 @@ def chart_payload(engine: str, params: dict[str, Any], trade: dict[str, Any], db
     entry_date = str(trade["entry_date"])[:10]
     exit_date = str(trade["exit_date"])[:10]
 
-    bars = _load_dual_bars(db_path, code, entry_date, exit_date)
+    domain = PRICE_DOMAIN_BY_ENGINE.get(engine, "hfq")
+    bars = _load_dual_bars(db_path, code, entry_date, exit_date, domain)
     if bars.empty:
         return {"bars": [], "entry": None, "exit": None,
                 "sl_price": None, "tp_price": None, "direction": direction}
