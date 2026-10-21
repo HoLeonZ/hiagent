@@ -158,3 +158,32 @@ def test_net_return_closure_holds(fam: str, preset: str) -> None:
         f"`net_return == net_pnl / 入场成本`(入场是{'卖' if ENTRY_IS_A_SALE[fam] else '买'})——\n"
         f"  {bad[['thscode', 'net_return', 'net_pnl']].head(5).to_dict('records')}"
     )
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("fam,preset", CASES, ids=[c[0] for c in CASES])
+def test_gross_pnl_follows_the_family_direction(fam: str, preset: str) -> None:
+    """§3:`gross_pnl` 的公式**随方向**——
+
+    * **多头**(入场买、出场卖):`gross_pnl == (exit − entry) × size`;
+    * **空头**(入场卖、出场买):`gross_pnl == (entry − exit) × size`(`short_reversal/replay_strategy_v3.py:129`)。
+
+    ⚠️ 这条判据此前**只在 `chase_up`**(`test_gross_pnl_per_row_closure.py` 的
+    `test_chase_up_per_row_gross_pnl_*`,断言的是**多头**公式)⇒ 空头族的符号约定**无人钉**。
+    一个符号错会翻转全部数字,所以本文件按方向把它补齐。(附一百三十一同族。)
+    """
+    require_market_db()
+    tr, _fin, _eq = _run(fam, preset)
+    if "gross_pnl" not in tr.columns:
+        pytest.skip(f"{fam} 的成交记录没有 `gross_pnl` 列(只有 pnl)⇒ 本条对它无对象")
+    assert len(tr) > 0, f"{fam}/{preset} 在 {_STD[fam]} 上没有成交 ⇒ 本条空转"
+
+    diff = (tr["entry_price"] - tr["exit_price"]) if ENTRY_IS_A_SALE[fam] else (tr["exit_price"] - tr["entry_price"])
+    expect = diff * tr["size"]
+    bad = tr[(tr["gross_pnl"] - expect).abs() > 1e-6]
+    assert bad.empty, (
+        f"§3 gross_pnl 公式: {fam}/{preset} 有 {len(bad)} 笔不满足 "
+        f"`gross_pnl == ({'entry' if ENTRY_IS_A_SALE[fam] else 'exit'} − "
+        f"{'exit' if ENTRY_IS_A_SALE[fam] else 'entry'}) × size` ——\n"
+        f"  {bad[['thscode', 'gross_pnl']].head(5).to_dict('records')}"
+    )
