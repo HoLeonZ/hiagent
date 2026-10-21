@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from tests._production_scan import production_python_files as _iter_python_files
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -66,42 +67,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # 注入到下游**每一个**回测里,而守卫看不到(它只看引擎、core、dna_stats)。
 # 覆盖缺口是静默的:它不会报错,只会让"没被扫到的地方"与"合规"看起来一样。
 # `sql/` 未纳入:AstScanner 是 Python AST 实现,SQL 需要另一套检查(已登记)。
-SCAN_DIRS = [
-    "chase_up",
-    "uptrend_pullback",
-    "short_reversal",
-    "cycle_price_action",
-    "core",
-    "dna_stats",
-    "dna_data",
-    "tools",
-]
-
-# Excluded subdirs (tests, __pycache__, etc.)
-EXCLUDE_DIR_NAMES = {
-    "__pycache__",
-    ".git",
-    "node_modules",
-    "results",
-}
-
-
-def _iter_python_files() -> list[Path]:
-    """Yield all .py files in SCAN_DIRS, excluding tests + cache dirs."""
-    files: list[Path] = []
-    for scan_dir in SCAN_DIRS:
-        base = REPO_ROOT / scan_dir
-        if not base.exists():
-            continue
-        for path in base.rglob("*.py"):
-            # Skip excluded dirs
-            if any(part in EXCLUDE_DIR_NAMES for part in path.parts):
-                continue
-            # Skip test files (test_*.py)
-            if path.name.startswith("test_"):
-                continue
-            files.append(path)
-    return files
+# 扫描面是**单源**的:`tests/_production_scan.py`(附一百三十四)。
+# 此前本文件自带一份写死的目录清单 —— 4 份清单互不一致:附十五 补的 `dna_data`/`tools`
+# 只落到其中 1 份;`test_assert_vs_raise_audit.py` 那份还把 `uptrend_pullback` 拼成了
+# `uptrend_pulback`,于是 `base.exists()` 为假、静默跳过 ⇒ 整个族未被扫过。四份也都不含
+# 仓库根下的 `.py`。现在面从 `git ls-files` 派生,新包/新顶层脚本自动进面。
 
 
 def _find_bfill_calls(tree: ast.AST, source_lines: list[str]) -> list[tuple[int, str]]:

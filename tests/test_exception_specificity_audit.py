@@ -56,89 +56,101 @@ F. **Acceptable exceptions**:
 - RED: each silent except site flagged with line number
 - PASS baseline: known-good sites use specific exception types
 - PASS baseline: import-related `except ImportError` exempt
+
+## 附一百三十四(2026-10-21):三处「自陈 ≠ 实际」,都在本文件里
+
+1. **扫描面是 4 份副本里的 1 份**(详见 `tests/_production_scan.py`):附十五 补的
+   `dna_data`/`tools` 只落到本文件;另 3 份仍漏着,而 `test_assert_vs_raise_audit.py` 那份
+   还把族名拼成了 `uptrend_pulback`(本文件上面的 A 节里也是这个拼法 —— 错误由此扩散)⇒
+   那条审计里**整个 `uptrend_pullback` 族从未被扫过**,而它显示为绿。
+   四份也都不含**仓库根下的 `.py`**(漏掉 `hiagent_config.py` — 全库唯一的 `DB_PATH` 来源)。
+   现已**单源**;四份的面从 120 / 112 / 112 / 84 统一为 **122**。
+2. **判据比它自陈的严**:旧判据要求类型名命中白名单,于是 **3 个具体类型**被报红
+   (`duckdb.CatalogException`、`subprocess.TimeoutExpired`、`requests.RequestException`),
+   而报错文案写的是「bare `except Exception` or bare `except:`」。已按自陈口径改。
+3. **阈值冒充不变量**:旧测试是 `if len(sites) >= 10: raise` ⇒ **0–9 处时一言不发**。
+   实测 HEAD 上有 **3 处活违规却报 PASS**,而 docstring 写「Expected RED state: ≥10」。
+   现改为**不变量 + 登记表**:每一处都必须被登记,任何**新增**的一处立刻红(不再等凑够数)。
 """
 from __future__ import annotations
 
 import ast
 from pathlib import Path
+from tests._production_scan import production_python_files as _iter_python_files
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-SCAN_DIRS = [
-    "chase_up",
-    "uptrend_pullback",
-    "short_reversal",
-    "cycle_price_action",
-    "core",
-    "dna_stats",
-]
+# 扫描面是**单源**的:`tests/_production_scan.py`(附一百三十四)。
+# 此前本文件自带一份写死的目录清单 —— 4 份清单互不一致:附十五 补的 `dna_data`/`tools`
+# 只落到其中 1 份;`test_assert_vs_raise_audit.py` 那份还把 `uptrend_pullback` 拼成了
+# `uptrend_pulback`,于是 `base.exists()` 为假、静默跳过 ⇒ 整个族未被扫过。四份也都不含
+# 仓库根下的 `.py`。现在面从 `git ls-files` 派生,新包/新顶层脚本自动进面。
 
-EXCLUDE_DIR_NAMES = {
-    "__pycache__",
-    ".git",
-    "node_modules",
-    "results",
+
+# ---------------------------------------------------------------------------
+# 判据(2026-10-21 附一百三十四 改):**具名类型即具体**;只有 `Exception` /
+# `BaseException` / 裸 `except:` 算过宽。
+#
+# 旧判据要求类型名**命中一张白名单**,名单之外一律报红("be conservative")。实测后果:
+# 10 个被报的站点里 **3 个其实是具体类型**,只因不在名单上 ——
+# `duckdb.CatalogException`(`core/data_coverage.py:60`)、
+# `subprocess.TimeoutExpired`(`short_reversal/st_filter.py:81`)、
+# `requests.RequestException`(`tools/update_db_direct.py:91`)。
+# 而本文件自己的报错文案写的是「bare `except Exception` or bare `except:`」,上面 docstring 的
+# F 节也把「`except (X, Y)` 里的具体类型」列为可接受 ⇒ **实现比自陈严**(本册的"自陈 ≠ 实际")。
+# 白名单还有结构性缺点:任何**新**库的异常类都会先被误报一次。
+#
+# 边界:解析不出的表达式(不是 Name/Attribute)仍按"不可判定"报红;
+# 别名解析不做(`E = Exception` 后 `except E` 会被放过)—— 静态 AST 到此为止。
+_BROAD_EXCEPTION_NAMES = frozenset({"Exception", "BaseException"})
+
+#: 已登记的 bare-`except` 站点。键 = (仓库相对路径, 行号),值 = (理由, 什么条件下消失)。
+#: **只许变短**:某处修好、或行号变了,就把条目删掉/更新(陈旧条目会让测试红 —— 见
+#: `test_every_registered_site_is_still_live`)。
+KNOWN_BARE_EXCEPT_SITES: dict[tuple[str, int], tuple[str, str]] = {
+    ("short_reversal/replay_strategy_v3.py", 641): (
+        "`except (IndexError, Exception)` —— `Exception` 混在 IndexError 的元组里,"
+        "等于把 catch-all 藏在具体类型旁边",
+        "回放层决定要不要 fail-fast(口径决策)",
+    ),
+    ("tools/render_top5_presets_html.py", 1167): (
+        "批处理:单 preset 失败 → traceback + `failures += 1` 进**退出码**(§0 附六十三 已定的口径)",
+        "该工具改为单 preset 失败即整体退出时",
+    ),
+    ("tools/rerun_top_presets.py", 130): (
+        "批处理:同上,错误进 `failures`,末尾由退出码报出",
+        "同上",
+    ),
+    ("tools/rerun_top_presets.py", 153): (
+        "批处理:同上,错误进 `failures`,末尾由退出码报出",
+        "同上",
+    ),
+    ("tools/run_all_backtests_html.py", 264): (
+        "批处理:错误进 `rows` 并留 `# noqa: BLE001`,由退出码报出",
+        "同上",
+    ),
+    ("tools/update_db_direct.py", 154): (
+        "抓取循环:单 code 失败继续、`errors += 1`,末尾判定并报出",
+        "改为逐 code fail-fast(会牺牲批量更新的可用性)时",
+    ),
+    ("tools/update_db_direct.py", 192): (
+        "写库循环:同上",
+        "同上",
+    ),
 }
 
+#: 登记表的**冻结点** —— 只许变短(新增一条会让 `test_registry_does_not_grow` 红)。
+_FROZEN_BARE_EXCEPT_COUNT = 7
 
-def _iter_python_files() -> list[Path]:
-    files: list[Path] = []
-    for scan_dir in SCAN_DIRS:
-        base = REPO_ROOT / scan_dir
-        if not base.exists():
-            continue
-        for path in base.rglob("*.py"):
-            if any(part in EXCLUDE_DIR_NAMES for part in path.parts):
-                continue
-            if path.name.startswith("test_"):
-                continue
-            files.append(path)
-    return files
-
-
-# Specific exception types considered GOOD (not flagged)
-GOOD_EXCEPTION_TYPES = {
-    "duckdb",
-    "duckdb.Error",
-    "ValueError",
-    "TypeError",
-    "IndexError",
-    "KeyError",
-    "StopIteration",
-    "AttributeError",
-    "OSError",
-    "IOError",
-    "FileNotFoundError",
-    "PermissionError",
-    "ImportError",
-    "ModuleNotFoundError",
-    "RuntimeError",
-    "NotImplementedError",
-    "TimeoutError",
-    "ConnectionError",
-    "AssertionError",
-    "ZeroDivisionError",
-    "OverflowError",
-    "ArithmeticError",
-    "LookupError",
-    "UnicodeError",
-    "UnicodeDecodeError",
-    "json.JSONDecodeError",
-    "csv.Error",
-    "struct.error",
-    "dateutil.parser.ParserError",
-    "pandas.errors.EmptyDataError",
-    "pandas.errors.ParserError",
-}
 
 
 def _is_specific_exception_type(handler: ast.ExceptHandler) -> bool:
-    """Check if except handler uses a specific exception type.
+    """具名类型即具体;`Exception` / `BaseException` / 裸 `except:` 判为过宽。
 
-    Returns True if all caught exception types are specific (not bare
-    Exception or ExceptionGroup).
+    (依据见上方注释:本文件的报错文案与 docstring 的 F 节都只把
+     `Exception` / `BaseException` / 裸 `except` 当作违规。)
     """
     if handler.type is None:
         # Bare `except:` — overly broad
@@ -153,13 +165,9 @@ def _is_specific_exception_type(handler: ast.ExceptHandler) -> bool:
     for exc_type in types:
         type_name = _get_exception_name(exc_type)
         if type_name is None:
+            # 不是 Name/Attribute —— 解析不出具体是什么,按"不可判定"报红
             return False
-        # Bare `Exception` or `BaseException` is too broad
-        if type_name in {"Exception", "BaseException"}:
-            return False
-        # Check if it's a recognized specific type
-        if type_name not in GOOD_EXCEPTION_TYPES:
-            # Not in known list — be conservative, flag it
+        if type_name in _BROAD_EXCEPTION_NAMES:
             return False
 
     return True
@@ -283,45 +291,42 @@ def _scan_silent_with_specific_except() -> list[tuple[str, int, str, str]]:
 
 
 def test_bare_except_exception_in_production() -> None:
-    """§0 RED: bare `except Exception` in production code.
+    """§0:生产侧**不许**出现 `except Exception` / `except BaseException` / 裸 `except:`。
 
-    Per CLAUDE.md §0: Fail-Fast. Bare `except Exception` is a code
-    smell that catches KeyboardInterrupt, SystemExit, MemoryError,
-    and programming errors (AttributeError, TypeError, NameError).
-
-    Expected RED state: ≥10 production sites use bare `except Exception`.
-
-    GREEN fix: replace with specific exception types:
-    - duckdb.Error for DB operations
-    - ValueError/TypeError for data validation
-    - KeyError for dict access
-    - ImportError for optional deps
+    附一百三十四 改:此前这条是 `if len(sites) >= 10: raise` —— 一个**阈值**冒充不变量,
+    于是 **0–9 处活违规时它一言不发**(实测 HEAD 上有 3 处却报 PASS,而 docstring 写着
+    「Expected RED state: ≥10」)。现在分三条钉住:
+      * 每一处检出都必须**在登记表里**(任何**新增**的一处立刻红,不再等凑够数);
+      * 登记表里的每一条都必须**仍被检出**(陈旧条目 = 修好了或行号变了,要清);
+      * 登记表**只许变短**。
     """
     sites = _scan_bare_except_sites()
+    detected = {(file, line) for file, line, _t, _s in sites}
 
-    if len(sites) >= 10:
-        sample = sites[:20]
-        raise AssertionError(
-            f"§0 EXCEPTION SPECIFICITY VIOLATION: {len(sites)} sites use "
-            f"bare `except Exception` or bare `except:` in production code.\n"
-            f"Bare except is a code smell: catches KeyboardInterrupt, "
-            f"SystemExit, MemoryError, and programming errors.\n\n"
-            f"Sites:\n" +
-            "\n".join(
-                f"  {file}:{line} [{type_name}] — {snippet}"
-                for file, line, type_name, snippet in sample
-            ) +
-            (f"\n  ... ({len(sites) - len(sample)} more)" if len(sites) > len(sample) else "") +
-            f"\n\nGOOD exception types (per project pattern):\n"
-            f"  - duckdb.Error (DB operations)\n"
-            f"  - ValueError / TypeError (data validation)\n"
-            f"  - KeyError / IndexError (dict/list access)\n"
-            f"  - StopIteration (iterator protocol)\n"
-            f"  - ImportError (optional deps)\n"
-            f"  - csv.Error / json.JSONDecodeError (parsing)\n"
-            f"\nGREEN fix: replace `except Exception` with the specific "
-            f"exception type that the code is designed to handle."
+    unregistered = sorted(detected - set(KNOWN_BARE_EXCEPT_SITES))
+    assert not unregistered, (
+        f"§0 VIOLATION: {len(unregistered)} 处 `except Exception` / 裸 `except:` **未登记**:\n"
+        + "\n".join(
+            f"  {file}:{line} [{type_name}] — {snippet}"
+            for file, line, type_name, snippet in sites
+            if (file, line) in set(unregistered)
         )
+        + "\n\n两条路:①把它改成具体的异常类型(GREEN fix);"
+        "②确实是批处理「单个失败继续、末尾进退出码」的口径,就加进 KNOWN_BARE_EXCEPT_SITES,"
+        "并写清**什么条件下消失**。\n"
+        "(判据口径:具名类型即具体;只有 `Exception` / `BaseException` / 裸 `except:` 违规。)"
+    )
+
+    stale = sorted(set(KNOWN_BARE_EXCEPT_SITES) - detected)
+    assert not stale, (
+        f"这些登记项已**不再被检出**(修好了,或行号变了)—— 请从 "
+        f"KNOWN_BARE_EXCEPT_SITES 删除或更新:{stale}"
+    )
+
+    assert len(KNOWN_BARE_EXCEPT_SITES) <= _FROZEN_BARE_EXCEPT_COUNT, (
+        f"登记表**只许变短**:冻结值 {_FROZEN_BARE_EXCEPT_COUNT},现为 "
+        f"{len(KNOWN_BARE_EXCEPT_SITES)}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -389,4 +394,61 @@ def test_known_good_specific_exception_patterns_exist() -> None:
     assert not violations, (
         f"§0 SPECIFIC EXCEPTION REGRESSION: known-good sites lost their "
         f"specific exception types:\n" + "\n".join(f"  {v}" for v in violations)
+    )
+
+
+# ---------------------------------------------------------------------------
+# 附一百三十四:判据与登记表自己的牙齿
+# ---------------------------------------------------------------------------
+
+
+def _handlers_in(source: str) -> list[ast.ExceptHandler]:
+    """取出一段源码里所有 except 处理器(供牙齿测试用)。"""
+    return [node for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.ExceptHandler)]
+
+
+def _handler_of(clause: str) -> ast.ExceptHandler:
+    """`except <clause>:` 的处理器;`clause` 为空串时构造裸 `except:`。"""
+    if clause:
+        src = f"try:\n    pass\nexcept {clause}:\n    pass\n"
+    else:
+        src = "try:\n    pass\nexcept:\n    pass\n"
+    return _handlers_in(src)[0]
+
+
+def test_the_criterion_verdict_has_teeth() -> None:
+    """判据本身:具名即具体;三种过宽必须报。
+
+    前三条正是**旧白名单判据的假报** —— 它们都是具体类型,只因不在名单上被报红。
+    """
+    for specific in ("duckdb.CatalogException",
+                     "requests.RequestException",
+                     "(OSError, subprocess.TimeoutExpired)"):
+        assert _is_specific_exception_type(_handler_of(specific)), (
+            f"具体类型被误报(旧判据正是这样):{specific}"
+        )
+    for broad in ("Exception", "BaseException", ""):
+        assert not _is_specific_exception_type(_handler_of(broad)), (
+            f"过宽却没报:{broad!r}"
+        )
+    assert not _is_specific_exception_type(_handler_of("(IndexError, Exception)")), (
+        "元组里混了 Exception 却没报"
+    )
+
+
+def test_every_registered_site_is_still_live() -> None:
+    """登记表**只许变短**:每条都必须仍被检出;修好了 / 行号动了就删掉或更新。"""
+    detected = {(file, line) for file, line, _t, _s in _scan_bare_except_sites()}
+    stale = sorted(set(KNOWN_BARE_EXCEPT_SITES) - detected)
+    assert not stale, (
+        f"这些登记项已**不再被检出**(修好了,或行号变了)—— 请从 KNOWN_BARE_EXCEPT_SITES "
+        f"删除或更新:{stale}"
+    )
+
+
+def test_registry_does_not_grow() -> None:
+    """冻结点:登记表不许变长(新增登记本身不该是一条捷径)。"""
+    assert len(KNOWN_BARE_EXCEPT_SITES) <= _FROZEN_BARE_EXCEPT_COUNT, (
+        f"登记表变长了:冻结 {_FROZEN_BARE_EXCEPT_COUNT},现 {len(KNOWN_BARE_EXCEPT_SITES)}"
     )
