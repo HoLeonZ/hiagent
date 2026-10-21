@@ -467,3 +467,28 @@ def test_a_dead_worker_is_detected_and_restarted(home, monkeypatch):
     finally:
         hold.set()          # 让替代线程退出，不留后台线程
         jobs_mod._WORKER = previous   # 把全局状态还给原来的 worker
+
+
+def test_the_run_log_is_not_empty_while_the_job_runs(home, fast_child):
+    """**日志从一开始就要有内容** —— 界面那句承诺得兑现。
+
+    实测（2026-10-21）：一次真实 preview 的 `run.log` 全程只有 **1 行**，
+    而且是面板建完**之后**才打印的 —— 引擎在整个 5–8 分钟里**一行都不打印**。
+    而界面上写着"运行日志（回测 5–8 分钟，这里能看出它在动）"：
+    **那是一句空的承诺**，日志在整个回测期间是黑的。
+
+    现在子进程在**开跑时**就写起始行（跑的是哪个引擎/预设/窗口/覆盖），
+    结束时写用时。写日志的**只能是子进程自己** —— 它独占那个 fd；
+    父进程若也往同一文件追加，两边的文件偏移会互相覆盖（日志会花掉）。
+
+    中途"还在动"由**状态行的"已等 Ns"**承担（父进程写的，不碰这个 fd）。
+    """
+    from web.state import run_artifact
+
+    rid = jobs_mod.submit("short_reversal", "v50_slope", {"tp_pct": 0.09},
+                          "2024-01-01", "2025-01-01", "full")
+    jobs_mod.wait(rid, timeout=60)
+    text = run_artifact(rid, "run.log").read_text(encoding="utf-8")
+    assert "[jobs] 回测开始" in text, f"起始行缺失，日志在回测期间是空的：{text!r}"
+    assert "short_reversal" in text and "v50_slope" in text, "起始行要写明跑的是什么"
+    assert "[jobs] 回测结束" in text and "用时" in text, "结束行要给出用时"

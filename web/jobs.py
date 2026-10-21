@@ -73,7 +73,20 @@ def _child_entry(conn, engine, preset, overrides, start, end, mode, log_path) ->
     with open(log_path, "w", buffering=1, encoding="utf-8") as _log:
         os.dup2(_log.fileno(), 1)
         os.dup2(_log.fileno(), 2)
-        _child_body(conn, engine, preset, overrides, start, end, mode)
+        # ⚠️ **引擎在整个回测期间一行都不打印**（实测：一次真实 preview 的日志
+        # 全程只有结束时的 1 行 `build_per_stock_feeds dropped …`），
+        # 于是界面上"这里能看出它在动"是**一句空的承诺**。
+        # 这里补上**起始行**与**结束行（带用时）**，让日志从一开始就有内容。
+        # 写日志的**只能是子进程自己**——它独占这个 fd；父进程若也往同一文件追加，
+        # 两边的文件偏移会互相覆盖（日志会花掉）。
+        # 中途"还在动"由**状态行的"已 Ns"**承担（父进程写的，不碰这个 fd）。
+        print(f"[jobs] 回测开始 engine={engine} preset={preset} "
+              f"窗口={start}..{end} mode={mode} 覆盖={overrides or {}}", flush=True)
+        _t0 = time.time()
+        try:
+            _child_body(conn, engine, preset, overrides, start, end, mode)
+        finally:
+            print(f"[jobs] 回测结束 用时 {time.time() - _t0:.0f}s", flush=True)
 
 
 def _child_body(conn, engine, preset, overrides, start, end, mode) -> None:
