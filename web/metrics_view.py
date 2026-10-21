@@ -128,3 +128,102 @@ def canonical_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
                 val = t
         out[key] = _finite_or_none(val)
     return out
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 窗口口径：结果页要显示的**全部**指标，都按**请求窗口**算。
+#
+# 为什么（2026-10-21 实测）：引擎的记录器覆盖的是**带缓冲的面板**
+# （`[start-180d, end+60d]`，引擎不设 fromdate/todate），于是
+#   · 引擎会在**窗口之前**交易（实测：请求 2026-03-30..2026-10-16，45 笔里 3 笔入场早于起点）；
+#   · 引擎的 `cagr` 分母用**窗口**年数、分子却含**窗口前**的盈亏
+#     （`short_reversal/engine.py:65-70`：`cagr = (final_capital/INITIAL_CAPITAL)**(1/years)-1`）。
+#
+# 平台**已经**把净值曲线切到了 `[start, end]`（设计文档明文要求"策略曲线必须切到"），
+# 而曲线的两个端点**必然**给出窗口收益 —— 所以**窗口口径是设计自己选的**。
+# 但指标表没跟着切，于是**同一个结果页自己跟自己不一致**：
+#   指标表 total_return = 114.24%（引擎口径） vs 曲线栏 strategy_return = 115.03%（窗口口径）
+# —— 聚宽那边「收益概览」与「收益曲线」是同一套数。
+#
+# 这里把该口径**应用完整**：指标表与曲线同源，都来自窗口切片后的曲线与成交。
+# **不冻结一半** —— 只改 total_return 而留着面板口径的 cagr，用户拿显示的
+# total_return 反推 cagr 会得到另一个数，比不修更坏。
+#
+# ⚠️ **平台口径与引擎口径会分叉**，这是有意的：引擎那份仍混着面板盈亏，
+# 全仓库的报告与门禁都吃它。**那是一个独立且未修的引擎缺陷**，本模块不掩盖它，
+# 也不假装两边一致。
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def window_slice(curve: list[dict], start: str, end: str) -> list[dict]:
+    """把净值曲线切到 `[start, end]` —— **窗口切片的唯一判据**。
+
+    `/equity` 与指标表都走这里：两处各写一遍筛选条件，就是"各自漂移"的起点。
+    """
+    return [r for r in curve
+            if r.get("date") is not None and start <= str(r["date"])[:10] <= end]
+
+
+def _days_between(a: str, b: str) -> int:
+    import datetime as dt
+
+    return (dt.date.fromisoformat(str(b)[:10]) - dt.date.fromisoformat(str(a)[:10])).days
+
+
+def window_metrics(result: Any) -> dict[str, Any]:
+    """该次运行**按请求窗口**算出来的规范指标（键与 `CANONICAL_KEYS` 一致）。
+
+    数据全部来自平台**已经拥有**的东西：窗口切片后的净值曲线，与窗口内入场的成交。
+    没有第二份实现，也不碰引擎。
+    """
+    import math
+
+    start, end = result.start, result.end
+    curve = window_slice(result.metrics.get("equity_curve") or [], start, end)
+    trades = [t for t in (result.trades or [])
+              if start <= str(t.get("entry_date", ""))[:10] <= end]
+
+    out: dict[str, Any] = {k: None for k in CANONICAL_KEYS}
+
+    # ---- 成交派生（只用**窗口内入场**的）----
+    n = len(trades)
+    out["trades_count"] = n
+    if n:
+        net = [float(t.get("net_pnl") or 0.0) for t in trades]
+        out["win_rate"] = sum(1 for x in net if x > 0) / n
+        holds = [float(t["hold_days"]) for t in trades if t.get("hold_days") is not None]
+        if holds:
+            out["avg_hold_days"] = sum(holds) / len(holds)
+        out["total_pnl"] = sum(net)
+        gains = sum(x for x in net if x > 0)
+        losses = -sum(x for x in net if x < 0)
+        # 盈亏比：**没有亏损就没有这个比值** —— 不是无穷大（§0：缺失补 None 不补 0）
+        out["profit_factor"] = (gains / losses) if losses > 0 else None
+
+    # ---- 曲线派生（与 `/equity` 同一段窗口切片）----
+    if len(curve) >= 2:
+        e0 = float(curve[0]["equity"])
+        e1 = float(curve[-1]["equity"])
+        if e0 > 0:
+            out["final_capital"] = e1
+            out["total_return"] = e1 / e0 - 1
+            days = max(_days_between(curve[0]["date"], curve[-1]["date"]), 1)
+            out["cagr"] = (e1 / e0) ** (365.0 / days) - 1
+        peak, dd = -math.inf, 0.0
+        for r in curve:
+            eq = float(r["equity"])
+            peak = max(peak, eq)
+            if peak > 0:
+                dd = max(dd, (peak - eq) / peak)
+        out["max_dd"] = dd
+        rets = []
+        for a, b in zip(curve, curve[1:]):
+            pa = float(a["equity"])
+            if pa > 0:
+                rets.append(float(b["equity"]) / pa - 1.0)
+        if len(rets) >= 2:
+            mu = sum(rets) / len(rets)
+            var = sum((r - mu) ** 2 for r in rets) / (len(rets) - 1)
+            sd = math.sqrt(var)
+            out["sharpe"] = (mu / sd) * math.sqrt(243.0) if sd > 0 else None
+    return out

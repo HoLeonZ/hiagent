@@ -434,3 +434,116 @@ def test_the_trades_list_and_the_chart_agree_on_sl_tp(client, monkeypatch):
     assert row["tp_price"] == chart["tp_price"], "表里的止盈价与图上的止盈线不是同一个数"
     # 空头：止损在入场价**上方**、止盈在**下方**
     assert row["sl_price"] > row["entry_price"] > row["tp_price"]
+
+
+def test_window_metrics_uses_the_requested_window_not_the_engine_panel():
+    """**指标按请求窗口算**，不按引擎的面板（§4.6.1 同一族的口径错配）。
+
+    实测缺陷（2026-10-21）：引擎的记录器覆盖的是**带缓冲的面板**
+    （`[start-180d, end+60d]`，引擎不设 fromdate/todate），于是它
+      · **在窗口之前交易**（实测 45 笔里 3 笔入场早于窗口起点）；
+      · `cagr` 分母用窗口年数、分子却含窗口前的盈亏
+        （`short_reversal/engine.py:65-70`）。
+    平台已经把净值曲线切到 `[start, end]`（设计文档明文要求），
+    而曲线端点**必然**给出窗口收益 —— 所以窗口口径是**设计自己选的**。
+    指标表没跟着切，于是**同一个结果页自己跟自己不一致**：
+      指标表 total_return 114.24% vs 曲线栏 strategy_return 115.03%。
+
+    本条不依赖 DB：用一条自造的曲线与成交，把窗口语义钉死。
+    """
+    from web.metrics_view import window_metrics
+
+    class _R:
+        start, end = "2025-01-01", "2025-03-01"
+
+        def __init__(self, curve, trades):
+            self.metrics = {"equity_curve": curve}
+            self.trades = trades
+
+    # 曲线故意伸出窗口两头：2024-12-20（窗口前）.. 2025-03-10（窗口后）
+    curve = [
+        {"date": "2024-12-20", "equity": 1_000_000.0},   # 窗口外
+        {"date": "2025-01-01", "equity": 900_000.0},     # 窗口起点
+        {"date": "2025-02-01", "equity": 1_100_000.0},
+        {"date": "2025-03-01", "equity": 1_200_000.0},   # 窗口终点
+        {"date": "2025-03-10", "equity": 5_000_000.0},   # 窗口外
+    ]
+    trades = [
+        {"entry_date": "2024-12-24", "net_pnl": 999_999.0, "hold_days": 30},  # 窗口外
+        {"entry_date": "2025-01-15", "net_pnl": 100.0, "hold_days": 2},
+        {"entry_date": "2025-02-15", "net_pnl": -50.0, "hold_days": 3},
+        {"entry_date": "2025-03-20", "net_pnl": 888_888.0, "hold_days": 40},  # 窗口外
+    ]
+    m = window_metrics(_R(curve, trades))
+
+    # 曲线：只用窗口内的 900000 → 1200000
+    assert m["final_capital"] == 1_200_000.0
+    assert abs(m["total_return"] - (1_200_000 / 900_000 - 1)) < 1e-12
+    # 成交：只用窗口内入场的 2 笔
+    assert m["trades_count"] == 2
+    assert m["total_pnl"] == 50.0
+    assert m["win_rate"] == 0.5
+    assert m["avg_hold_days"] == 2.5
+    # 盈亏比：100/50 = 2.0
+    assert abs(m["profit_factor"] - 2.0) < 1e-12
+    # 回撤：窗口内峰值 1_200_000 之前的 900_000 → 峰 1_100_000 → 谷 1_200_000 无回撤
+    assert m["max_dd"] == 0.0
+
+
+def test_the_metrics_table_and_the_curve_agree(client, monkeypatch):
+    """**同一个结果页不能自己跟自己不一致**（聚宽那边两者是同一套数）。
+
+    这是这次改动的验收点：指标表的 `total_return` 必须等于曲线栏的
+    `strategy_return`，`max_dd` 必须等于曲线回撤序列的最大值。
+
+    ⚠️ **它与另一条测试分工，不是重复**：
+      · 本条测"**两个端点彼此自洽**"（同一次运行，页面不能有两个答案）；
+      · `test_window_metrics_uses_the_requested_window_not_the_engine_panel` 测
+        "**窗口是否真被应用**"。
+    所以本条在"窗口切片被摘掉"时**仍然绿**——那时两个端点一起不切，仍然彼此一致。
+    摘掉切片会让**那一条**变红。两条合起来才覆盖全部。
+
+    ⚠️ 需要本地 DB（`/equity` 会真查库算基准序列），故按 §6 skip 而非 error。
+    """
+    from web import jobs as jobs_mod
+    from web.runners import RunResult
+
+    real_db = get_db_path()
+    if not (real_db.exists() or Path(os.environ.get("DNA_STRAT_DB", "")).exists()):
+        pytest.skip("需要 DNA_STRAT_DB 或 hiagent_config.DEFAULT_DB_PATH")
+
+    import datetime as dt
+
+    from web.state import state_home
+
+    def fake_run(*a, **kw):
+        # 曲线**故意伸出窗口两头**（2024-12-20 与 2025-03-10）——
+        # 否则整段都在窗口内，切不切都一样，这条测试就没有判别力了。
+        curve = []
+        v = 1_000_000.0
+        for i in range(-12, 50):
+            v *= 1.01
+            curve.append({"date": (dt.date(2025, 1, 1) + dt.timedelta(days=i)).isoformat(),
+                          "equity": v})
+        trades = [{"entry_date": "2025-01-05", "exit_date": "2025-01-07", "thscode": "000001.SZ",
+                   "exit_reason": "TP", "entry_price": 1.0, "exit_price": 1.1, "size": 100,
+                   "hold_days": 2, "gross_pnl": 10.0, "fees": 1.0, "net_pnl": 9.0,
+                   "net_return": 0.09, "atr_pct": 0.02, "sub_signal_type": "a"}]
+        return RunResult("short_reversal", "v50_slope", "2025-01-01", "2025-02-09",
+                         {"trades_count": 1, "equity_curve": curve}, trades)
+
+    _install_fake_run(monkeypatch, fake_run)
+    rid = client.post("/api/runs", json={
+        "engine": "short_reversal", "preset": "v50_slope", "overrides": {},
+        "start": "2025-01-01", "end": "2025-02-09", "mode": "full",
+    }).json()["run_id"]
+    jobs_mod.wait(rid, timeout=60)
+
+    m = client.get(f"/api/runs/{rid}").json()["metrics"]
+    e = client.get(f"/api/runs/{rid}/equity").json()
+    assert abs(m["total_return"] - e["strategy_return"]) < 1e-9, (
+        f"指标表 total_return={m['total_return']} 与曲线栏 strategy_return="
+        f"{e['strategy_return']} 不一致 —— 同一个页面不能有两个答案"
+    )
+    assert abs(m["max_dd"] - max(d["value"] for d in e["drawdown"])) < 1e-9, \
+        "指标表的最大回撤必须与曲线回撤序列的最大值一致"

@@ -23,6 +23,8 @@ from web.metrics_view import (
     METRIC_KINDS,
     METRIC_LABELS,
     canonical_metrics,
+    window_metrics,
+    window_slice,
 )
 from web.params import OverrideError, split_params, validate_overrides
 from web.runners import RunResult
@@ -342,7 +344,7 @@ def create_app() -> FastAPI:
             return {"run_id": run_id, "engine": hist.engine, "preset": hist.preset,
                     "status": "done", "error": None, "mode": None,
                     "start": hist.start, "end": hist.end, "trial_no": None,
-                    "metrics": canonical_metrics(hist.metrics), "queue_position": None,
+                    "metrics": window_metrics(hist), "queue_position": None,
                     "from_disk": True}
         metrics = job.result.metrics if job.result else None
         return {
@@ -350,7 +352,8 @@ def create_app() -> FastAPI:
             "status": job.status, "error": job.error, "mode": job.mode,
             "start": job.start, "end": job.end,
             "trial_no": job.trial_no,
-            "metrics": canonical_metrics(metrics) if metrics else None,
+            # 指标按**请求窗口**算（与 `/equity` 的曲线同源）—— 见 `window_metrics` 的说明。
+              "metrics": window_metrics(job.result) if job.result else None,
             # 单 worker 下"前面还有几个"是用户唯一能看到的等待依据
             "queue_position": jobs_mod.queue_position(run_id),
             "from_disk": False,
@@ -430,7 +433,7 @@ def create_app() -> FastAPI:
                 "run_id": rid, "engine": result.engine, "preset": result.preset,
                 "overrides": (job.overrides if job else {}),
                 "start": result.start, "end": result.end,
-                "metrics": canonical_metrics(result.metrics),
+                "metrics": window_metrics(result),
             })
         if not rows:
             raise HTTPException(404, detail=f"no persisted results for ids={ids}")
@@ -464,7 +467,7 @@ def create_app() -> FastAPI:
         body = json.dumps(_json_safe({
             "run_id": run_id, "engine": result.engine, "preset": result.preset,
             "start": result.start, "end": result.end,
-            "metrics": canonical_metrics(result.metrics),
+            "metrics": window_metrics(result),
         }), ensure_ascii=False, indent=2)
         return Response(content=body, media_type="application/json",
                         headers={"Content-Disposition": f'attachment; filename="{run_id}_metrics.json"'})
@@ -488,8 +491,9 @@ def create_app() -> FastAPI:
 
         result = _load_result(run_id)
         curve = result.metrics.get("equity_curve") or []
-        rows = [r for r in curve
-                if r.get("date") is not None and result.start <= str(r["date"])[:10] <= result.end]
+        # 窗口切片走 `metrics_view.window_slice` —— **唯一判据**。
+        # 指标表也用同一个函数，两处各写一遍筛选条件就是各自漂移的起点。
+        rows = window_slice(curve, result.start, result.end)
         if not rows:
             raise HTTPException(404, detail="this run has no in-window equity curve")
         base = float(rows[0]["equity"])
