@@ -3,7 +3,7 @@
 > ## ⚠️ 状态头(2026-10-19)—— 读 §0 之前先看这里
 >
 > 本报告 §0–§8 的判定是**对 `main @ 94ca15d`(2026-10-14 快照)** 的:**不合规(NO-GO)**。
-> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **186 条附录**(计法:正文里带编号的 `## 附N` 标题数;编号自 `附二` 起、连续无洞、无重号 ——
+> 从那以后,修复分支 `fix/discipline-remediation` 上累计落地 **187 条附录**(计法:正文里带编号的 `## 附N` 标题数;编号自 `附二` 起、连续无洞、无重号 ——
 >   `## 附:修复进展` 那条**无编号**,不计),
 > **§0 列的 11 个 BLOCKER 族全部已处置**(修 / 登记 / 待口径决策,逐条见附七十九 §1)。
 >
@@ -22,7 +22,7 @@
 >   `test_attribution.py::test_the_dormant_module_is_not_wired_is_registered`(**不在 ①② 里**)。
 >   ⚠️ 这一类与 ①② **方向相反**:它们断言"缺口**仍在**",**接好反而变红**(提示更新登记)——
 >   故 ①② 的"只许变短"**不适用于**它们;引用未结清单时不要把它们漏掉。
-> * 最新增补见**附一百八十七**。
+> * 最新增补见**附一百八十八**。
 > * ⚠️ 本状态头会被判据盯着:`tests/test_audit_doc_head_is_current.py`(**与本报告同批落地**)
 >   —— 它断言「这里的条数 == 正文里**带编号** `## 附N` 标题的条数」且「'最新增补见附X' 那个 X
 >   真的存在,且就是**最后**一条」。**文首漂移是本仓库栽过两次的形态,故给它一道门禁。**
@@ -14463,3 +14463,68 @@ FULL_FRAME_NAMES = {"df", "bars", "panel", "panel_ind", "data"}   # ← fix 线�
 | **主干剩余** | **~35 条**(其中 8 条是刻意留的前向防御)|
 
 ⇒ **"11 → 0" 只对基线那 11 条成立;trunk 整体仍有 ~35 条自己的红,那是另一条更大的工作流。**
+
+---
+
+## 附一百八十八 —— 落主干之后:再过 19 条**过期判据**,并**登记**两处「声明了但没做」
+
+### 1 · 落进主干的三次合并
+
+| 合并 | 内容 | 验证 |
+|---|---|---|
+| `7f48295` | `fix/discipline-remediation` + 6 处跟进修复 + 基线重 pin | 合并树全量 `39 failed / 1775 passed`;那 39 条在纯 main 上 `37 failed` ⇒ **引入 2 条, 均已修 ⇒ 净引入 0**;基线子集 **25 passed, 1 xfailed** ⇒ **11 → 0** |
+| `91bc40e` | main 自己的 **9 条**过期判据红(5 条独立分支) | 落主干后复验 **43 passed** |
+| `10dd864` | 又一批 **10 条**(见下) | 落主干后复验 **23 passed, 1 skipped** |
+
+**行为中性**已实测:合并后四族与 main **逐数相同**(short_reversal 68/32 两树一致)。
+
+### 2 · 这一批的 10 条:同族 —— 判据钉**位置 / 排版 / 已消失的名字**
+
+| 位置 | 钉住的东西 | 被什么打断 |
+|---|---|---|
+| `test_line_references_are_not_stale`(1)| 三处注释里的**行号** | 代码搬动(`tp_p`/`sl_p` 现在在 `portfolio.py` 的 `try_exit_with_intraday_check`;`load_universe_data` 移到 `data_feed.py:238`)|
+| `test_cost_constants_bound_to_core`(3)| `re.search(r"from core\.dual_price import .*COMMISSION_RATE")` —— `.*` **不跨行** | 导入改成**多行括号**;cycle 那条找的 `_CANON_COMMISSION_RATE` **根本不存在** |
+| `test_no_new_unused_core_imports`(2)| 冻结登记表 | 2 条已消失 ⇒ 删;6 条新增死导入 ⇒ **登记**(§3「指出它, 不删它」)|
+| `test_cost_model_canonical_conformance_4engine`(1)| 用例**自己坏了**:`NameError: stamp_duty` | 检查被**贴进来却没接线**(见 §3)|
+| `test_limit_down_exit_guard_4engine[chase_up]`(1)| `strict=True` xfail 的豁免 | chase_up **已补上卖出侧** ⇒ 按设计自失效 |
+| `test_sql_order_by_discipline_4engine` 等 5 条(前一批)| 见附一百八十七 | |
+
+### 3 · 新发现之一:**「补是补了,补得不完整」**
+
+`test_cost_model_canonical_conformance_4engine::test_short_reversal_cost_model_canonical`
+里贴了一段「必须**真的看** `stamp_duty` 的**值**」的检查,而 `commission` / `stamp_duty` / `lines`
+**三个变量在该函数里根本不存在** ⇒ 每次抛 `NameError`(**用例自己坏了**, 不是断言失败)。
+而它的 docstring 写着「(chase_up / uptrend / cycle 三条都有这一句; **只有本族漏了**)」——
+**实测正好相反**:只有这一族有, 另外三族没有。⇒ 那次"补齐"**贴进来了但没接线**。
+
+处置:抽成 `_assert_stamp_duty_is_valid(engine)`, **四族一起调**(实测四族 `stamp_duty` 均为
+`0.0005` ∈ `VALID_STAMP_DUTY` ⇒ 仍绿)。
+**双向验证(拿**没有**这条检查的 chase_up 做)**:基线绿;注入 `0.002` ⇒ **新判据红**;
+而**旧状态(无此检查)在同样注入下是绿的** ⇒ 补上的是**真覆盖面**, 不只是修 NameError。
+
+### 4 · 新发现之二(**只登记, 不改**):`iter_reverse.py` 的 `n_ret` 仍在**估**
+
+该文件自己的注释写着:
+
+> 实测偏差: A 股实际月均 ≈ 20.25 个交易日(243/12)⇒ T 约 **+4% 偏乐观** …
+> **现直接取引擎发布的真实观察数 `n_daily_returns`(附六十六), 不再估。**
+
+而同文件**已有** `_mean_window_returns()`(第 134 行, 取 `n_daily_returns` 的均值),
+**第 195 行却仍是** `n_ret = max(n_total * 63, 100)` —— 而它的窗是**每窗 2 个月**
+(文件头自陈「每窗 2m, 步 1m → 共 22 窗」)⇒ `63`(三个月)与窗口长度**对不上**。
+⇒ **"修法只落到 1 处"** 的又一次:声明已完成, 实际只改了一处。
+
+**为什么只登记不改**:改它会**改报出的 DSR** ⇒ 按长期授权「**结果变更 / 口径选择 ⇒ 登记,
+不擅自改**」。同时 `test_dsr_inputs_single_source` 的红**是对的**(它就该红), 属**有意的
+RED 前向防御**, 直到有人决定改这个数。
+
+### 5 · 主干剩余的红的完整分类(截至 `10dd864`)
+
+| 类 | 条数 | 处置 |
+|---|---|---|
+| 基线(刷新前 pin)| **0** | 已重 pin |
+| 过期判据(钉拼写/位置/魔数窗口)| **0** | 已修 **19** 条(9 + 10)|
+| **有意的 RED 前向防御**(结果变更 / 口径选择类)| **~11** | `cagr_period_basis` 5 + `sharpe_basis_mismatch` 3 + `metrics_basis_table_is_pinned` 2 + `metrics_self_consistency` 1 —— **两文件自己写明"登记, 不擅自改"** |
+| 同上但**新登记** | **1** | §4 的 `iter_reverse.py` `n_ret` |
+| 使用者的文件 | **2** | 挖掘日志:§7 指标 167 处 + 文首未引用最新一节 §13.215 |
+| 各族既有债 | 余 | 不因本程而变 |
