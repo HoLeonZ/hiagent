@@ -59,7 +59,15 @@ PARAM_METADATA: dict[str, dict[str, dict[str, Any]]] = {
         # --- F 条件：MA20 斜率（replay_strategy_v3.py:214-221）---
         "require_ma20_slope_neg": {"label": "启用MA20负斜率过滤", "type": "bool"},
         "ma20_slope_period": {"label": "MA20斜率回看窗口", "type": "int", "unit": "交易日"},
-        "ma20_slope_threshold": {"label": "MA20斜率阈值", "type": "float", "unit": "比例/日"},
+        # ⚠️ 单位是 **点/日**（price per day），**不是比例/日**。
+        # 引擎侧 `short_reversal/indicators_bt.py` 的 `Ma20SlopeN` docstring 写着：
+        # "取最近 N 个 ma20 值, numpy polyfit deg=1 算斜率 (per day)；
+        #  **单位: (price / day)** — 9 元/天斜率 ≈ 显著下跌"。
+        # 标成"比例/日"会让人以为 −0.003 是"每天跌 0.3%"，实际是"每天跌 0.003 元"。
+        # （另有一条**引擎侧**疑点已单独登记：预设里写的是 −0.003 且注释说"每天 -0.3%"，
+        #   而按点/日的单位，那个量级几乎恒成立 ⇒ F 条件近乎恒真。
+        #   那属于引擎语义，不在本平台范围内。）
+        "ma20_slope_threshold": {"label": "MA20斜率阈值", "type": "float", "unit": "点/日"},
         # --- G 条件：弱势股过滤（replay_strategy_v3.py:222-232）---
         "require_weak_1m": {"label": "启用1月弱势过滤", "type": "bool"},
         "require_weak_3m": {"label": "启用3月弱势过滤", "type": "bool"},

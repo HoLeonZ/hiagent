@@ -350,3 +350,21 @@ def test_a_chase_up_run_now_carries_an_equity_curve():
     assert curve, "chase_up 的曲线被丢了 —— 结果页会没有收益曲线/每日收益/每日持仓"
     assert {"date", "equity"} <= set(curve[0]), f"曲线形状不对：{curve[0]}"
     assert len(curve) > 20, "曲线点数太少，可能是空帧"
+
+
+def test_all_four_engines_are_registered_without_needing_the_database():
+    """**四个引擎都注册了适配器** —— 这条不该被 DB 门控。
+
+    原来只有 DB 门控的测试守着它：没有本地库时，`_RUNNERS` 少一项**整套全绿**。
+    而"少一个引擎"意味着它的所有预设**在界面上直接消失**（目录会少 22 或 3 个预设），
+    没有任何测试会察觉。
+
+    这条只读模块里的注册表，**不需要数据库**。
+    """
+    from web.runners import _RUNNERS
+
+    assert set(_RUNNERS) == {
+        "short_reversal", "chase_up", "uptrend_pullback", "cycle_price_action"
+    }, f"适配器注册表少了引擎：{set(_RUNNERS)}"
+    for name, fn in _RUNNERS.items():
+        assert callable(fn), f"{name} 的适配器不可调用"

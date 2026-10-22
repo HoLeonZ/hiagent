@@ -460,3 +460,26 @@ def test_the_chart_indicators_are_the_numbers_the_strategy_actually_used():
             f"{d}: 图上的 ma20={c:.4f}，引擎自己算的是 {e:.4f} —— 差 {(c-e)/e*100:+.2f}%。"
             "图上画的必须是策略当时看到的那一组数（§4.6.1）"
         )
+
+
+def test_every_engines_direction_is_pinned_not_just_its_key():
+    """**每个引擎的方向值都要被钉住**，不是只钉"键在不在"。
+
+    原来那条测试只断言（a）四个键都在映射里、（b）取值 ∈ {short, long} ——
+    (b) 对一个二值字段**近乎恒真**，它区分不出"谁是多、谁是空"。
+    而方向标反的后果是**图上止损画在入场价下方、止盈画在上方**，与 §4 完全相反，
+    且**没有任何守卫会喊**。
+
+    这里把**每个引擎的具体方向**写下来，标反即红。
+    """
+    from web.chart import ENGINE_DIRECTION
+
+    # 逐引擎的实测定论（2026-10-22 核对引擎源码）：
+    #   short_reversal   空头（`replay_strategy_v3.py`：tp_p = ep*(1-tp_pct)）→ 止损在上、止盈在下
+    #   chase_up         多头（`backtrader_engine.py`：tp = entry*(1+a*atr_tp_mult)）→ 止损在下、止盈在上
+    #   uptrend_pullback 多头（同 chase_up 的口径）
+    #   cycle_price_action 多头（`portfolio.py`：先买后卖）
+    assert ENGINE_DIRECTION["short_reversal"] == "short"
+    assert ENGINE_DIRECTION["chase_up"] == "long"
+    assert ENGINE_DIRECTION["uptrend_pullback"] == "long"
+    assert ENGINE_DIRECTION["cycle_price_action"] == "long"
