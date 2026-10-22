@@ -52,10 +52,6 @@ def _found() -> set[str]:
 FROZEN = {
     # ⚠️ 这两个是**已登记的假声明的载体** (§13.106(e) / §13.95); 注释已更正, 导入**按规矩不删**
     #    ("看到未使用的代码, 指出它, 不删它")。
-    "uptrend_pullback/portfolio.py::is_limit_up":
-        "§13.106(e): 守卫是**内联**式 (本地 `LIMIT_UP_THRESHOLD = 0.098`), 此导入未被调用。",
-    "short_reversal/replay_strategy_v3.py::atr_slippage":
-        "§13.95: 别名 `dual_atr_slippage`, **导入后零读取**; 真正用的是 `effective_slippage`。",
     # 其余为**纯死导入** (各处只出现 1 次 = import 行本身), 不影响任何行为。
     "uptrend_pullback/main.py::CASH_WALK_COLS": "纯死导入 (产物列名常量)。",
     "uptrend_pullback/main.py::EQUITY_CURVE_COLS": "纯死导入 (产物列名常量)。",
@@ -70,6 +66,20 @@ FROZEN = {
         "§13.77: 该文件是 **19 行 re-export 存根**, 导入本身即导出; 但它没用 `__all__` ⇒ 未被标 reexport。",
     "cycle_price_action/walkforward.py::walkforward_windows":
         "§13.77: 同上 (re-export 存根)。",
+    # ⚠️ 2026-10-22 (附一百八十八) 登记 6 条本轮实测的**纯死导入**: 每个名字在全文件里
+    #    只出现 1 次(import 行本身), 零调用。按 §3「看到未使用的代码, 指出它, 不删它」登记。
+    "chase_up/backtrader_engine.py::resolve_max_positions":
+        "纯死导入; 该族的持仓上限判定在 `portfolio.py`。",
+    "uptrend_pullback/backtest.py::resolve_max_positions":
+        "纯死导入; 同上。",
+    "cycle_price_action/backtrader_engine.py::is_limit_up":
+        "纯死导入; **§4 涨停入场拒绝的调用在 `portfolio.py`**(带 `threshold=`), 本文件只导入。",
+    "tests/test_corporate_actions_events.py::portfolio_nav":
+        "纯死导入(测试文件)。",
+    "tests/test_dual_price_cross_engine.py::annualized_years":
+        "纯死导入(测试文件)。",
+    "tests/test_sharpe_basis_labeled.py::TRADING_DAYS_PER_YEAR":
+        "纯死导入(测试文件); 该测试用的是 `core.trade_schema` 的规范常数。",
 }
 
 

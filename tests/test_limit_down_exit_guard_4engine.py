@@ -31,14 +31,17 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # 已补齐卖出侧的族; chase_up 未补 (见 _XFAIL)
 _LONG_ENGINES = {
     "uptrend_pullback": REPO_ROOT / "uptrend_pullback" / "portfolio.py",
+    # ⚠️ 2026-10-22 (附一百八十八): chase_up **已补上卖出侧**(实测 `is_limit_down` 在第 586 行被调用)
+    # ⇒ 按本文件 `strict=True` xfail 的设计(缺口一补上就红,逼人回来删豁免),把它移到这里。
+    # 移过来之后,上面两条用例(卖出侧存在 / 守卫排在 SL 之前)**自动对 chase_up 生效** ——
+    # 这不只是删一条豁免,是把两个真判据扩到第二族。
+    "chase_up": REPO_ROOT / "chase_up" / "portfolio.py",
 }
-_NOT_YET = {
-    "chase_up": (REPO_ROOT / "chase_up" / "portfolio.py",
-                 "§13.106: chase_up 同样只有买入侧。本轮只补了当前最优所在的 "
-                 "uptrend_pullback; chase_up 的补齐与零漂移验证未做 ⇒ **具名豁免**。"
-                 "⚠️ 本条 `strict=True`: 一旦 chase_up 补上卖出侧, 它会 XPASS ⇒ 红, "
-                 "逼人回来删掉豁免。"),
-}
+#: **尚未**补上卖出侧的族 —— 现在为空(2026-10-22: chase_up 已补齐, 见 `_LONG_ENGINES`)。
+#:
+#: 机制**保留**: 将来若有族退回"只守买入侧", 把它写进来, `test_not_yet_...` 会断言缺口**存在**,
+#: 缺口一被补上就红(自失效)。registry 为空时该用例自动 skip, 见其内部。
+_NOT_YET: dict[str, tuple[Path, str]] = {}
 
 
 def _calls(path: Path, name: str) -> list[int]:
@@ -95,6 +98,8 @@ def test_not_yet_families_still_lack_the_sell_side(fam: str) -> None:
     加上 `strict=True` 会把"通过"报成 XPASS 失败 (我第一版就是这么写错的)。
     **自失效**由断言本身提供: 缺口一被补上, `assert not ...` 立刻失败。
     """
+    if not _NOT_YET:
+        pytest.skip("_NOT_YET 已空 —— 四族都补上了卖出侧(2026-10-22);机制保留待将来需要")
     path, why = _NOT_YET[fam]
     assert not _calls(path, "is_limit_down"), (
         f"{fam} 已补上卖出侧 ⇒ 请删掉 _NOT_YET 里那一条豁免, 并把本族加进 _LONG_ENGINES。\n"

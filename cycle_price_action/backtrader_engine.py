@@ -49,7 +49,8 @@ class CyclePriceActionStrategy(bt.Strategy):
         # price to compute daily-bar stop —— **就是 5%**。
         # ⚠️ **2026-10-20 (§13.175) 更正**: 此处此前写「Pessimistic default =
         #   atr_sl_mult × 0.05 = 7.5% stop」—— **代码不这么算**
-        #   (`portfolio.py:378` 用的是 `sl_p = entry × (1 − sl_pct)`, 即 **5%**),
+        #   (`portfolio.py` 的 `try_exit_with_intraday_check` 用
+        #    `sl_p = entry × (1 − sl_pct)`, 即 **5%**),
         #   而 `atr_sl_mult` 在本族**从未被读** ⇒ 那句把止损宽度**谎报了 2.5pp**。
         sl_pct=0.05,
         # Round 10 (2026-09-28, CLAUDE.md §2): NAV gate anchor — plumbed

@@ -308,12 +308,38 @@ def _assert_cost_constants_single_sourced(engine: str) -> None:
                         f"重新声明 {t.id} —— 必须引用 core 单源"
                     )
 
+
+def _assert_stamp_duty_is_valid(engine: str) -> None:
+    """§13.76: 必须**真的看** `stamp_duty` 的**值**, 而不只是把它收进变量再传给错误信息。
+
+    ⚠️ 2026-10-22 (附一百八十八): 这段检查此前**只被贴进了 short_reversal 那一条用例**,
+    而且**三个变量从未接上** —— `commission` / `stamp_duty` / `lines` 在该函数里根本不存在
+    ⇒ 那条用例每次都抛 `NameError`(**用例自己坏了**, 不是断言失败);
+    而它的 docstring 却写着「(chase_up / uptrend / cycle 三条都有这一句; 只有本族漏了)」
+    —— **实测正好相反**: 只有这一族有, 另外三族没有。
+
+    ⇒ 抽成本函数, **四族一起调**, 让那句话成真。四族的 `stamp_duty` 实测均为 `0.0005`
+    (∈ `VALID_STAMP_DUTY`) ⇒ 补上后四族仍绿, 而"注入 `0.002` 必须红"的性质对四族同时成立。
+    """
+    commission, stamp_duty, lines = _scan_cost_constants(COST_MODEL_FILES[engine])
+    if stamp_duty not in VALID_STAMP_DUTY:
+        raise AssertionError(
+            _engine_red_message(
+                engine,
+                commission,
+                stamp_duty,
+                f"stamp_duty must be one of {sorted(VALID_STAMP_DUTY)} "
+                f"(line {lines.get('stamp_duty', '?')})",
+            )
+        )
+
 def test_chase_up_cost_model_canonical() -> None:
     """§6 单源不变量: chase_up 必须从 core.dual_price 导入费率常量。
 
     audit P2-11 (2026-10-15): 原用例比对数值 == canonical —— 允许重复定义。
     """
     _assert_cost_constants_single_sourced("chase_up")
+    _assert_stamp_duty_is_valid("chase_up")
 
 
 def test_uptrend_pullback_cost_model_canonical() -> None:
@@ -322,6 +348,7 @@ def test_uptrend_pullback_cost_model_canonical() -> None:
     audit P2-11 (2026-10-15): 原用例比对数值 == canonical —— 允许重复定义。
     """
     _assert_cost_constants_single_sourced("uptrend_pullback")
+    _assert_stamp_duty_is_valid("uptrend_pullback")
 
 
 def test_short_reversal_cost_model_canonical() -> None:
@@ -330,22 +357,8 @@ def test_short_reversal_cost_model_canonical() -> None:
     audit P2-11 (2026-10-15): 原用例比对数值 == canonical —— 允许重复定义。
     """
     _assert_cost_constants_single_sourced("short_reversal")
+    _assert_stamp_duty_is_valid("short_reversal")
 
-    # ⚠️ §13.76: 这一条此前**只断言 commission, 从不看 stamp_duty** ——
-    # 而它把 stamp_duty 收进来、还传给了错误信息, 制造了"已经检查过"的印象。
-    # **注入实证**: 把 `stamp_duty_rate` 换成 **0.002** (不在 VALID_STAMP_DUTY 里)
-    # ⇒ 扫描器正确报出 0.002, 而本测试**仍然 4 passed**。
-    # (chase_up / uptrend / cycle 三条都有这一句; 只有本族漏了。)
-    if stamp_duty not in VALID_STAMP_DUTY:
-        raise AssertionError(
-            _engine_red_message(
-                "short_reversal",
-                commission,
-                stamp_duty,
-                f"stamp_duty must be one of {sorted(VALID_STAMP_DUTY)} "
-                f"(line {lines.get('stamp_duty', '?')})",
-            )
-        )
 
 
 def test_cycle_price_action_cost_model_canonical() -> None:
@@ -354,4 +367,5 @@ def test_cycle_price_action_cost_model_canonical() -> None:
     audit P2-11 (2026-10-15): 原用例比对数值 == canonical —— 允许重复定义。
     """
     _assert_cost_constants_single_sourced("cycle_price_action")
+    _assert_stamp_duty_is_valid("cycle_price_action")
 
