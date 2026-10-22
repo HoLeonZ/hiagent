@@ -334,3 +334,26 @@ def test_history_is_rerendered_once_the_metric_metadata_arrives():
     j = js.index("renderCatalog(", i)          # loadCatalog 的结尾
     assert "renderHistory()" in js[i:j], \
         "loadCatalog 拿到 metric_meta 之后必须重渲染历史，否则并发下收益会是原始浮点"
+
+
+def test_the_compare_panel_flags_runs_that_are_not_comparable():
+    """**窗口或模式不同的运行不可直接比较，而界面上必须说出来。**
+
+    原实现把选中的运行并排列出，**既不显示各自覆盖的时段、也不警示** ——
+    用户勾两次不同区间（或一次 preview + 一次 full）就会看到一张
+    **静默地拿苹果比橘子**的表，而那些数看起来一样可信。
+
+    设计文档的标准比聚宽更严：preview 的数字"不得作为业绩依据、不可与 full 比较"。
+    """
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "comparable" in js, "对比面板必须判断所选运行是否可比"
+    assert "不可直接比较" in js, "不可比时必须在界面上明确说出来"
+    # 每一列都要显示**它自己**的窗口 —— 否则用户看不出它们覆盖不同时段
+    assert "x.start}~${x.end}" in js or "${x.start}~${x.end}" in js, \
+        "列头要显示该次运行自己的窗口"
+    # 文案里**不许写 markdown 星号** —— 这个页面用 textContent 渲染，星号会原样显示出来。
+    # （本文件里已有同一条规矩，我在这个警告上又违反过一次。）
+    import re
+
+    for m in re.finditer(r'class="warn">([^`]{0,200}?)<', js):
+        assert "**" not in m.group(1), f"警告文案里有 markdown 星号：{m.group(1)}"

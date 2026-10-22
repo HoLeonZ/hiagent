@@ -695,8 +695,19 @@ async function compareSelected() {
   // 标签与单位都取**服务端下发的** `HP.metricMeta`（与结果页的指标表同一份来源），
   // 前端不自备副本 —— 两份必然漂移。
   const meta = HP.metricMeta || {};
-  out.innerHTML = `<table><thead><tr><th>指标</th>${d.rows.map((x) =>
-      `<th>${x.preset}<br><span class="hint">${x.run_id} · ${x.mode ?? ""}</span></th>`).join("")}</tr></thead>`
+  // ⚠️ **窗口/模式不同的运行不可直接比较** —— 而这张表原先既不显示窗口、
+  // 也不警示。用户勾两次不同时段（或一次 preview + 一次 full）就会看到一张
+  // **静默地拿苹果比橘子**的表，而那些数看起来一样可信。
+  // 聚宽那边也是这个问题；设计文档的标准更严：preview 的数字"不得作为业绩依据、
+  // 不可与 full 模式比较"。
+  const sig = (x) => `${x.start}~${x.end}|${x.mode ?? ""}`;
+  const comparable = new Set(d.rows.map(sig)).size === 1;
+  const warn = comparable ? ""
+    : `<p class="warn">所选运行的窗口或模式不同，这些数字不可直接比较。</p>`;
+  out.innerHTML = warn
+    + `<table><thead><tr><th>指标</th>${d.rows.map((x) =>
+      `<th>${x.preset}<br><span class="hint">${x.run_id} · ${x.mode ?? ""}`
+      + `<br>${x.start}~${x.end}</span></th>`).join("")}</tr></thead>`
     + `<tbody>${d.keys.map((k) => `<tr><td>${(meta[k] || {}).label || k}</td>${d.rows.map((x) =>
       `<td>${fmtValue(x.metrics[k], (meta[k] || {}).kind)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
 }

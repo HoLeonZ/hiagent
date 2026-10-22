@@ -674,3 +674,38 @@ def test_a_restarted_run_keeps_its_preview_marker(client, monkeypatch, tmp_path)
     assert got["mode"] == "preview", \
         f"重启后 mode 丢了（{got.get('mode')!r}）—— preview 的'非可比'标注会消失"
     assert got["trial_no"] == 7, "trial_no 同样不该丢"
+
+
+def test_compare_reports_each_runs_mode_so_mixed_selections_can_be_flagged(client, monkeypatch):
+    """**`/api/compare` 必须带上 `mode`。**
+
+    实测缺陷（2026-10-22）：compare 的行里**没有 `mode`**，前端 `x.mode` 是 `undefined`
+    —— 于是"preview 与 full 混着比"这类**不可比**静默通过。
+    而设计文档明令 preview 的数字"不得作为业绩依据、不可与 full 模式比较"。
+
+    没有 `mode`，前端就只能比窗口，比不出模式差异。
+    """
+    import json as _json
+
+    from web.state import state_home
+
+    # 直接造两个落盘运行：一个 preview、一个 full（同一窗口，**只差模式**）
+    for rid, mode in (("cmp" + "p" * 8, "preview"), ("cmp" + "f" * 8, "full")):
+        d = state_home() / "runs" / rid
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "result.json").write_text(_json.dumps({
+            "run_id": rid, "engine": "short_reversal", "preset": "v50_slope",
+            "overrides": {}, "start": "2025-01-01", "end": "2025-03-01",
+            "mode": mode, "trial_no": 1,
+            "metrics": {"trades_count": 0, "equity_curve": []}, "trades": [],
+        }), encoding="utf-8")
+        (d / "job.json").write_text(_json.dumps({
+            "run_id": rid, "engine": "short_reversal", "preset": "v50_slope",
+            "overrides": {}, "start": "2025-01-01", "end": "2025-03-01",
+            "mode": mode, "trial_no": 1,
+        }), encoding="utf-8")
+
+    got = client.get("/api/compare?ids=" + "cmp" + "p" * 8 + "," + "cmp" + "f" * 8).json()
+    modes = sorted(r["mode"] for r in got["rows"])
+    assert modes == ["full", "preview"], \
+        f"compare 必须给出每个运行的 mode（实得 {modes}）—— 否则模式不可比判不出来"

@@ -458,10 +458,17 @@ def create_app() -> FastAPI:
             result = (job.result if (job and job.result) else None) or jobs_mod.load_persisted(rid)
             if result is None:
                 continue
+            # ⚠️ **`mode` 必须带上** —— 没有它，前端判不出"preview 与 full 混着比"
+            # 这种不可比（preview 的数字设计文档明令"不得作为业绩依据、
+            # 不可与 full 比较"）。实测：原先 `x.mode` 在前端是 `undefined`，
+            # 于是那一类不可比**静默通过**。
+            # 与 `get_run` 同一套取法：内存优先、磁盘兜底。
+            meta = jobs_mod.meta_persisted(rid) or {}
             rows.append({
                 "run_id": rid, "engine": result.engine, "preset": result.preset,
                 "overrides": (job.overrides if job else {}),
                 "start": result.start, "end": result.end,
+                "mode": (job.mode if job else None) or meta.get("mode"),
                 "metrics": window_metrics(result),
             })
         if not rows:
