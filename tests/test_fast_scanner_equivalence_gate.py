@@ -39,6 +39,7 @@ F/G/H/I/J/K 与市场宽度开关;也不评估多腿集成。而模块 docstring
 """
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pandas as pd
@@ -154,6 +155,14 @@ def test_conditions_implemented_in_this_round_are_now_supported() -> None:
         )
 
 
+
+def _func_node(path: Path, name: str) -> ast.FunctionDef:
+    """取 `path` 里名为 `name` 的函数节点(按 AST;改名/搬家会**具名**报出)。"""
+    for n in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(n, ast.FunctionDef) and n.name == name:
+            return n
+    raise AssertionError(f"找不到 `{name}` —— 它被改名或移动了")
+
 def test_filter_signals_reads_declared_params() -> None:
     """§6: 五条件的参数必须**读 preset 声明**,不得再写死。
 
@@ -166,23 +175,54 @@ def test_filter_signals_reads_declared_params() -> None:
     挡在门口;真正的等价性证据是 `tests/test_fast_scanner_matches_engine.py`
     (在真实数据上与真引擎路径对拍)。
     """
-    src = (REPO_ROOT / "short_reversal" / "scan_signals_fast.py").read_text(encoding="utf-8")
-    body = src[src.index("def _filter_signals("): src.index("def _scan_preset(")]
-    for key in ("liq_low", "liq_high", "up_streak_low", "up_streak_high",
-                "below_ratio_60", "close_ma60_buffer", "d_mode"):
-        assert f'cfg.get("{key}"' in body, (
-            f"§6 VIOLATION: `_filter_signals` 没有读 preset 的 {key} —— 又回到写死口径"
+    # ⚠️ 2026-10-22 (附一百八十九 收口后): 原判据用**双边界文本切片**取函数体 ——
+    #     body = src[src.index("def _filter_signals("): src.index("def _scan_preset(")]
+    # 两个标记任一个**改名或搬家** ⇒ `str.index` 抛 **ValueError**(用例在断言之前就炸);
+    # 而断言本身是 `f'cfg.get("{key}"' in body` —— **字面量出现**就算过。
+    # ⇒ 取 **AST 节点**,并改断三条真正的性质:① 七个参数都**经 `cfg.get("<key>"…)` 读声明**;
+    #   ② 读出来的名字**真的进了比较式**(否则"读了但没用"与写死同效);
+    #   ③ 两种非默认 `d_mode` 分支都在。
+    fn = _func_node(REPO_ROOT / "short_reversal" / "scan_signals_fast.py", "_filter_signals")
+    called = {
+        a.args[0].value
+        for a in ast.walk(fn)
+        if isinstance(a, ast.Call) and isinstance(a.func, ast.Attribute)
+        and a.func.attr == "get" and isinstance(a.func.value, ast.Name)
+        and a.func.value.id == "cfg" and a.args
+        and isinstance(a.args[0], ast.Constant) and isinstance(a.args[0].value, str)
+    }
+    missing = [k for k in ("liq_low", "liq_high", "up_streak_low", "up_streak_high",
+                           "below_ratio_60", "close_ma60_buffer", "d_mode") if k not in called]
+    assert not missing, (
+        f"§6 VIOLATION: `_filter_signals` 没有经 `cfg.get` 读 preset 的 {missing} —— 又回到写死口径"
+    )
+    def _has_cmp(op_type: type, name: str) -> bool:
+        """存在 `… <op> name` 或 `name <op> …` 这样的比较(运算符也要对)。"""
+        for c in ast.walk(fn):
+            if not isinstance(c, ast.Compare) or not any(isinstance(o, op_type) for o in c.ops):
+                continue
+            if any(isinstance(x, ast.Name) and x.id == name
+                   for x in [c.left, *c.comparators]):
+                return True
+        return False
+
+    # 读了必须**真的进比较式**(否则"读了但没用"与写死同效);运算符一并钉住。
+    for op_type, var in ((ast.GtE, "liq_low"), (ast.LtE, "liq_high"), (ast.GtE, "us_low"),
+                         (ast.LtE, "us_high"), (ast.GtE, "ratio_min")):
+        assert _has_cmp(op_type, var), (
+            f"§6 VIOLATION: 声明了参数却没有用于条件({op_type.__name__} {var})"
         )
+    assert any(
+        isinstance(n, ast.BinOp) and isinstance(n.op, ast.Add)
+        and isinstance(n.left, ast.Constant) and n.left.value == 1.0
+        and isinstance(n.right, ast.Name) and n.right.id == "ma60_buf"
+        for n in ast.walk(fn)
+    ), "§6 VIOLATION: `1.0 + ma60_buf`(close_ma60_buffer 的用法)不见了"
+    strs = {c.value for c in ast.walk(fn) if isinstance(c, ast.Constant) and isinstance(c.value, str)}
+    for mode in ("d_only", "converge_strict"):
+        assert mode in strs, f"§6 VIOLATION: 缺 `d_mode == {mode!r}` 分支(引擎 _all_conditions 的对应分支)"
     # 变量必须真的进了比较式(否则"读了但没用"—— 与写死同效)。
     # 注:`cfg.get(..., 3e7)` 里的字面量是**缺省兜底**,是合法的,故不禁止字面量本身。
-    for usage in (">= liq_low", "<= liq_high", ">= us_low", "<= us_high",
-                  ">= ratio_min", "1.0 + ma60_buf"):
-        assert usage in body, (
-            f"§6 VIOLATION: `_filter_signals` 声明了参数却没有用于条件({usage})"
-        )
-    assert 'd_mode == "d_only"' in body and 'd_mode == "converge_strict"' in body, (
-        "§6 VIOLATION: 三种 d_mode 必须都实现(引擎 _all_conditions 逐字对应)"
-    )
 
 
 def test_ensemble_preset_is_refused() -> None:
@@ -230,8 +270,11 @@ def test_faithful_preset_actually_scans() -> None:
 
 def test_module_docstring_no_longer_claims_100_percent_equivalence() -> None:
     """§7/§0: 声明的口径必须与实际一致 —— 旧的"100% 等价"是错的。"""
-    src = (REPO_ROOT / "short_reversal" / "scan_signals_fast.py").read_text(encoding="utf-8")
-    head = src[: src.index('"""', src.index('"""') + 3)]
+    # ⚠️ 2026-10-22: 原判据用 `src[: src.index('"""', src.index('"""') + 3)]` 取模块 docstring ——
+    # 三个引号的**算术**;散文里出现 `"""` 或首行不是 docstring 就会取错。
+    # ⇒ 直接用 `ast.get_docstring`(它按 AST 找真正的 docstring 节点)。
+    tree = ast.parse((REPO_ROOT / "short_reversal" / "scan_signals_fast.py").read_text(encoding="utf-8"))
+    head = ast.get_docstring(tree) or ""
     assert "100% 等价" not in head, (
         "docstring 又宣称与策略 100% 等价 —— 实测 71/75 个 preset 不成立"
     )
