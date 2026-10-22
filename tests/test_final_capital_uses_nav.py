@@ -30,6 +30,7 @@ fail-fast**(合成夹具只给 `cash` 会拿到一个与曲线末行不一致的
 """
 from __future__ import annotations
 
+import ast
 import inspect
 from pathlib import Path
 
@@ -73,15 +74,38 @@ def test_missing_final_nav_fails_fast() -> None:
         )
 
 
+
+def _stop_node(mod) -> ast.FunctionDef | None:
+    """`mod` 里名为 `stop` 的函数节点(按 AST,不按文本切片)。"""
+    for n in ast.walk(ast.parse(inspect.getsource(mod))):
+        if isinstance(n, ast.FunctionDef) and n.name == "stop":
+            return n
+    return None
+
 def test_stop_writes_nav_so_metrics_can_use_it() -> None:
     """生产路径:`stop()` 必须写入 `final_nav`,且取自 `_nav()`。"""
     from short_reversal import replay_strategy_v3 as mod
 
-    src = inspect.getsource(mod)
-    start = src.index("def stop(self):")
-    body = src[start:start + 900]
-    assert '"final_nav"' in body, "§2: stop() 未写入 final_nav"
-    assert "self._nav()" in body, "§2: stop() 的 final_nav 必须取自 _nav()"
+    # ⚠️ 2026-10-22 (附一百八十九 收口后): 原判据是**文本切片** ——
+    #     start = src.index("def stop(self):"); body = src[start:start + 900]
+    # 两处都脆:① `stop` 改名/搬家 ⇒ `str.index` 抛 **ValueError**(用例在断言之前就炸);
+    # ② **900 字魔数窗口** —— 实测今天 `stop()` 是 **738** 字符,窗口刚好盖满;
+    #    而只要有人往那段注释里再加一百多字,后半段就**够不着**,那时**不报错**,
+    #    只是静默地少判一段(本册反复记的"静默缩小覆盖面"正是这个形状)。
+    # ⇒ 按 AST 取 `stop` 节点,并改断**那条真正的不变式**:`"final_nav"` 这个键的值
+    #    必须**是** `self._nav()` 的调用。
+    fn = _stop_node(mod)
+    assert fn is not None, "引擎里找不到 `stop()` —— 它被改名或删除了"
+    finals = [
+        v for n in ast.walk(fn) if isinstance(n, ast.Dict)
+        for k, v in zip(n.keys, n.values)
+        if isinstance(k, ast.Constant) and k.value == "final_nav"
+    ]
+    assert finals, "§2: stop() 未写入 final_nav"
+    assert any(
+        isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute) and v.func.attr == "_nav"
+        for v in finals
+    ), "§2: stop() 的 final_nav 必须取自 _nav()"
 
 
 def test_equity_curve_and_final_capital_share_one_definition() -> None:
