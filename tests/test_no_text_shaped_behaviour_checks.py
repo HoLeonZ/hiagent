@@ -54,6 +54,9 @@ TESTS = REPO_ROOT / "tests"
 # 由 `python -m tests.test_no_text_shaped_behaviour_checks --freeze` 生成;
 # 粘回本文件后请在 PR 里写明「为什么变了」。
 
+# 由 `python -m tests.test_no_text_shaped_behaviour_checks --freeze` 生成;
+# 粘回本文件后请在 PR 里写明「为什么变了」。
+
 KNOWN_TEXT_SHAPED_CHECKS: dict[str, int] = {
     "test_short_reversal_adj_close_indicator.py": 13,
     "test_nav_gate_cycle_price_action.py": 12,
@@ -71,12 +74,12 @@ KNOWN_TEXT_SHAPED_CHECKS: dict[str, int] = {
     "test_pit_universe_4engine.py": 4,
     "test_short_reversal_max_hold_semantics.py": 4,
     "test_short_reversal_win_rate_basis.py": 4,
-    "test_slippage_sign_long_short_antisymmetry.py": 4,
     "test_cycle_signals_adj_close.py": 3,
     "test_fast_scanner_matches_engine.py": 3,
     "test_lookahead_trade_trace_net_closure.py": 3,
     "test_nav_gate_cross_preset.py": 3,
     "test_short_reversal_entry_selection.py": 3,
+    "test_slippage_sign_long_short_antisymmetry.py": 3,
     "test_wfv_eval_oos_discipline.py": 3,
     "test_core_walkforward.py": 2,
     "test_corporate_actions_dividend_deposit.py": 2,
@@ -135,12 +138,10 @@ KNOWN_UNRESOLVED_CHECKS: dict[str, int] = {
     "test_short_reversal_cagr_period_basis.py": 2,
     "test_single_window_selection_is_disclosed.py": 2,
     "test_slippage_declaration_required.py": 2,
-    "test_slippage_sign_long_short_antisymmetry.py": 2,
     "test_sweep_axes_are_live.py": 2,
     "test_sweep_thresholds_oos_compliance.py": 2,
     "test_wfv_eval_oos_discipline.py": 2,
     "test_adjusted_views_do_not_silently_revert_to_raw.py": 1,
-    "test_cost_constants_bound_to_core.py": 1,
     "test_equity_curve_physical_invariant.py": 1,
     "test_exception_specificity_audit.py": 1,
     "test_preset_subdict_splats_conform_to_signatures.py": 1,
