@@ -150,6 +150,113 @@ KNOWN_UNRESOLVED_CHECKS: dict[str, int] = {
     "test_st_filter_fails_closed.py": 1,
 }
 
+
+# ---------------------------------------------------------------------------
+# 第三种形态:**按「标记」切片取源码**(`<源文本>.index("…")`)
+# ---------------------------------------------------------------------------
+#
+# 为什么单独列:棘轮原来只认 `in` / `re.search(…, X)` 两种形态,而**切片式**是第三种
+# (2026-10-22 实测:一程内 5 个文件 9 条红里有 2 条属于这一族)。
+# 它的失效形态最响也最难查:
+#
+#   * 标记**改名**(`_conviction` → `_conviction_key`)⇒ `str.index` 抛 **ValueError**
+#     ⇒ 用例**在断言之前就炸**,报错里没有任何关于"判据过期"的线索;
+#   * 标记**搬家**(跑到起始标记的**前面**)⇒ 同一种 ValueError;
+#   * 还可能配一个**魔数长度**(`[start:start + 1400]`)⇒ 上游加几行注释就够不着,
+#     而那处**不会报错**,只会静默地少判一段(本册记过"静默缩小覆盖面"同族)。
+#
+# 判据口径:变量**确实绑到源码文本**(复用上面的 `_classify`)且对它调 `.index(<字面量>)`。
+# 只扫 `tests/test_*.py`;不判断每条该不该改(逐条升级仍是人工活)。
+
+
+def _slice_checks_in(source: str) -> int:
+    """一份源码里「**按标记切片取源码**」的处数。"""
+    tree = ast.parse(source)
+    kinds = _classify(tree)
+    if not kinds:
+        return 0
+    n = 0
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "index"
+                and isinstance(node.func.value, ast.Name)
+                and kinds.get(node.func.value.id) == "source"):
+            n += 1
+    return n
+
+
+def current_slice_counts() -> dict[str, int]:
+    """当前**按标记切片**的存量(只列非零)。"""
+    out: dict[str, int] = {}
+    for path in sorted(TESTS.glob("test_*.py")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        try:
+            n = _slice_checks_in(text)
+        except SyntaxError:
+            continue
+        if n:
+            out[path.name] = n
+    return out
+
+
+def test_no_new_text_slice_checks() -> None:
+    """**棘轮**:不许新增「按标记切片取源码」的判据。
+
+    新写时请改用 **AST**(按函数名取节点),或至少**先断言标记存在**
+    (`assert MARKER in src` 紧挨着那处切片)—— 前者更好:它对改名与搬家都免疫。
+    """
+    cur = current_slice_counts()
+    grown = {k: (KNOWN_SLICE_CHECKS.get(k, 0), v)
+             for k, v in cur.items() if v > KNOWN_SLICE_CHECKS.get(k, 0)}
+    assert not grown, (
+        "有**新增**的「按标记切片取源码」判据(文件: 冻结 → 现在)\n  "
+        + "\n  ".join(f"{k}: {o} → {n}" for k, (o, n) in sorted(grown.items()))
+        + "\n它的失效形态: 标记改名/搬家 ⇒ `str.index` 抛 ValueError,用例**在断言之前就炸**。"
+        "请改按 AST,或紧邻处补 `assert <标记> in <源>`。"
+    )
+
+
+def test_the_slice_registry_has_no_stale_entries() -> None:
+    """同样**只许变短**:清零的文件必须从表里删掉。"""
+    cur = current_slice_counts()
+    stale = sorted(n for n in KNOWN_SLICE_CHECKS if not cur.get(n))
+    assert not stale, f"这些条目已清零,请从 KNOWN_SLICE_CHECKS 删掉:{stale}"
+
+
+def test_the_slice_census_is_not_vacuous() -> None:
+    """非空转:普查必须真扫到东西(分类器坏掉会让上面两条恒真)。"""
+    assert sum(current_slice_counts().values()) > 0, (
+        "一处「按标记切片」都没扫到 —— 分类器坏了,该棘轮失效"
+    )
+
+
+def test_the_slice_census_has_teeth() -> None:
+    """牙齿:三种写法各测一遍 —— 绑到源码的 **算**;绑到产物的 / 字面量的 **不算**。"""
+    src = (
+        "import inspect, pathlib\n"
+        "a = inspect.getsource(mod)\n"
+        "b = pathlib.Path('x/y.py').read_text()\n"
+        "c = pathlib.Path('r.html').read_text()\n"
+        "i = a.index('def foo(')\n"
+        "j = b.index('def bar(')\n"
+        "k = c.index('<table')\n"
+        "m = 'literal'.index('x')\n"
+    )
+    assert _slice_checks_in(src) == 2, "应判 2 处(a/b 绑到源码);c 是 .html、m 不是名字 ⇒ 不算"
+
+#: **按标记切片取源码**的存量(冻结)。**只许变短**;清零就从表里删掉。
+#:
+#: 口径见 `_slice_checks_in`。2026-10-22 首次登记(本册附一百八十九)。
+KNOWN_SLICE_CHECKS: dict[str, int] = {
+    "test_fast_scanner_equivalence_gate.py": 4,
+    "test_short_reversal_capacity_gate.py": 2,
+    "test_final_capital_uses_nav.py": 1,
+}
+
+
 _SOURCE_READERS = frozenset({"read_text", "read_bytes"})
 _AST_READERS = frozenset({"getsource", "getsourcefile"})
 _REGEX_FUNCS = frozenset({"search", "findall", "match", "count"})
