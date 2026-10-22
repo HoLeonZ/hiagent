@@ -57,7 +57,19 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
-from tests._production_scan import production_python_files as _iter_python_files
+# ⚠️ 2026-10-22 (附一百八十七): 本审计的**标准只针对生产路径** ⇒ 用 `engine_python_files()`
+# (同一处定义, 比 `production_python_files()` 再排除 `tools/`)。
+#
+# 合并把本文件的面换成单源后, `tools/` 进了面, 于是 8 处被报为 §0 违规 ——
+# 而它们正是**本文件自己写明允许**的那一类:
+#     tools/preset_census.py      × 4  (清点循环: 逐项失败记 NaN 后继续)
+#     tools/scan_dead_text_pins.py × 4 (扫描循环: 逐项 `continue`)
+# 原来的豁免是按**文件名 token** 做的(`sweep/grid/walkforward/wf_/compare/rerun`),
+# 这两个工具名不含任何 token ⇒ 漏。而那份 token 表还有**相反**的毛病:
+# `compare` / `rerun` 是通用子串, 一个**生产**文件叫 `*_compare.py` 会被**误豁免**。
+# ⇒ 范围改按**位置**判: `tools/`(开发者工具)整体出局, 生产路径照旧全查
+#   (引擎目录里的 `sweep*.py` 仍由 `SCAN_TOOL_TOKENS` 豁免 —— 那条仍然需要)。
+from tests._production_scan import engine_python_files as _iter_python_files
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
