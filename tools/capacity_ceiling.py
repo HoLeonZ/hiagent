@@ -74,7 +74,8 @@ def main() -> None:
             print(f"{label:<6} 无成交"); continue
         t["entry_date"] = pd.to_datetime(t["entry_date"])
         q = con.execute("SELECT thscode, date, volume FROM raw_kline_daily "
-                        "WHERE date BETWEEN ? AND ?", [w0, w1]).df()
+                        "WHERE date BETWEEN ? AND ? "
+                        "ORDER BY thscode, date", [w0, w1]).df()
         q["date"] = pd.to_datetime(q["date"])
         m = t.merge(q, left_on=["entry_date", "thscode"],
                     right_on=["date", "thscode"], how="left").dropna(subset=["volume"])
