@@ -13,7 +13,7 @@ numpy>=1.26,<3.0            # 数值计算
 backtrader>=1.9.78.123      # chase_up / uptrend_pullback 使用其框架做对账
 
 # --- 测试 ---
-pytest>=8.0,<10.0           # tests/ 目录下 136 个测试文件
+pytest>=8.0,<10.0           # tests/ 下的测试(个数会漂,不在此钉数字)
 pytest-asyncio>=0.23        # async fixture 支持(若后续加入)
 
 # --- 工具脚本(可选) ---

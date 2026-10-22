@@ -108,6 +108,10 @@ def _check_one(preset: str) -> None:
     require_market_db()
 
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+
+    from tests.conftest import skip_if_pinned_under_other_data  # §0/§6 数据指纹(附一百一十七)
+
+    skip_if_pinned_under_other_data(baseline, baseline_path.name)
     start, end = baseline["window"]
     df = _regenerate_trades(preset, start, end)
     actual = _sha256_of_csv(df)

@@ -30,5 +30,6 @@
   },
   "note": "v17 = v16 + atr_pct_high 0.085 → 0.082(再次收紧波动率上限)。Pareto 改善 walkforward mean +106.70% → +116.94%(+10.24pp over v16,+15.78pp over v14 baseline),worst 持平。负窗口研究启发:2017-09 / 2024-09 等负窗口中 atr_pct ∈ (8.2%, 8.5%] 的高波动垃圾股被 gap-down 套牢,负贡献明显。锁定窗口 73 trades 全部 atr_pct < 8.2%,所以 locked 指标完全不变,trades.csv SHA256 与 v14/v15/v16 相同。",
   "v6_change_note": "V6 (2026-09-22): chase_up/portfolio.py intraday tiebreak flipped TP-first → SL-first per CLAUDE.md §4 worst-case. Some TP exits where intraday low also crossed SL became SL exits. Compare tp_count/sl_count against pre-V6 baseline.",
-  "v3a_change_note": "V3a+ (2026-09-22, CLAUDE.md §3): chase_up/portfolio.py entry override 守卫拆解 (decoupling). 此前守卫要求 raw_prev_close 非 NaN 且 > 0 才走 raw entry, 但实测 panel 该字段 100% NaN (DuckDB raw_kline_daily.prev_close NULL upstream). 导致 V3a entry 静默 回退到 adj_open, exit 用 raw_*, 混用触发 phantom TP/SL. 修复后 entry fill 用 raw_open (per §3 raw_close execution source). trades.csv 已重生成, entry_price 列与 panel raw_open 对齐."
+  "v3a_change_note": "V3a+ (2026-09-22, CLAUDE.md §3): chase_up/portfolio.py entry override 守卫拆解 (decoupling). 此前守卫要求 raw_prev_close 非 NaN 且 > 0 才走 raw entry, 但实测 panel 该字段 100% NaN (DuckDB raw_kline_daily.prev_close NULL upstream). 导致 V3a entry 静默 回退到 adj_open, exit 用 raw_*, 混用触发 phantom TP/SL. 修复后 entry fill 用 raw_open (per §3 raw_close execution source). trades.csv 已重生成, entry_price 列与 panel raw_open 对齐.",
+  "db_fingerprint": "2026-10-20|2026-10-20|57707|2026-10-28"
 }

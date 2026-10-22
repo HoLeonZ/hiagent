@@ -5,7 +5,7 @@
     "2026-09-19"
   ],
   "engine": "simulate",
-  "trades_csv_sha256": "d0d2796a748c685bdc54aa55005c22306e55b37197c60bb1c37133bfb4fb2890",
+  "trades_csv_sha256": "e9018d3fe11b22806cebfa4187dc95780f2200898ebb058666725fe0edcbf0c2",
   "trades_csv_rows": 14,
   "trades_csv_cols": [
     "entry_date",
@@ -26,5 +26,7 @@
   "note": "v11 = v10 + min_score 1.6 → 1.7(进一步收紧信号强度门槛)。在锁定窗口 2025-09-19 → 2026-09-19 上 Pareto 改善 CAGR / Sharpe / DD / WR / PF 五项指标同时上升,12m walkforward 均值从 +42.9% 跳到 +80.5%,worst 从 -80.9% 改善到 -73.9%。1.7 是 score 1.6-1.8 区间的 isolated peak(1.65/1.75/1.8 都不如它)。",
   "v6_change_note": "V6 (2026-09-22): chase_up/portfolio.py intraday tiebreak flipped TP-first → SL-first per CLAUDE.md §4 worst-case. Some TP exits where intraday low also crossed SL became SL exits. Compare tp_count/sl_count against pre-V6 baseline.",
   "v7_change_note": "V7 (2026-09-22, CLAUDE.md §2 All-In Sizing Policy): preset converted from multi-slot equal sizing to single-slot all_in (position_sizing='equal' max_positions=2 → 'all_in' max_positions=1). Engine `chase_up/portfolio.py:325` now locks 100% cash per slot. trades.csv regenerated under new sizing; row count and PnL reflect single-slot dynamics. Walk-forward results originally searched under multi-slot diversification are now stale — see docs/claudemd_preset_audit_2026_09_22.md for §2 re-baseline plan.",
-  "v3a_change_note": "V3a+ (2026-09-22, CLAUDE.md §3): chase_up/portfolio.py entry override 守卫拆解 (decoupling). 此前守卫要求 raw_prev_close 非 NaN 且 > 0 才走 raw entry, 但实测 panel 该字段 100% NaN (DuckDB raw_kline_daily.prev_close NULL upstream). 导致 V3a entry 静默 回退到 adj_open, exit 用 raw_*, 混用触发 phantom TP/SL. 修复后 entry fill 用 raw_open (per §3 raw_close execution source). trades.csv 已重生成, entry_price 列与 panel raw_open 对齐."
+  "v3a_change_note": "V3a+ (2026-09-22, CLAUDE.md §3): chase_up/portfolio.py entry override 守卫拆解 (decoupling). 此前守卫要求 raw_prev_close 非 NaN 且 > 0 才走 raw entry, 但实测 panel 该字段 100% NaN (DuckDB raw_kline_daily.prev_close NULL upstream). 导致 V3a entry 静默 回退到 adj_open, exit 用 raw_*, 混用触发 phantom TP/SL. 修复后 entry fill 用 raw_open (per §3 raw_close execution source). trades.csv 已重生成, entry_price 列与 panel raw_open 对齐.",
+  "db_fingerprint": "2026-10-20|2026-10-20|57707|2026-10-28",
+  "data_refresh_2026_10_20": "2026-10-20 数据刷新后重 pin。漂移来源**已查明且已 A/B 验证**:库刷新新增了一批「已公告的未来除权」(ex_date 至 2026-10-28),而 `v_daily_qfq` 是**前复权**(锚在最新日)⇒ 它之前的历史 qfq 序列整体平移 ⇒ 同一批成交被**重新定价**(chase 行数不变、uptrend 68→65)。判定依据:把引擎代码退到上一版 pin 的提交 + 今天的库,**仍复现不出旧哈希**⇒ 漂移是**数据**不是引擎。见审计 附一百一十七。"
 }

@@ -85,6 +85,9 @@ def test_cycle_trades_list_matches_the_pinned_baseline() -> None:
     from cycle_price_action.backtest import run_backtest
 
     payload = _baseline()
+    from tests.conftest import skip_if_pinned_under_other_data  # §0/§6 数据指纹(附一百一十七)
+
+    skip_if_pinned_under_other_data(payload, BASELINE_PATH.name)
     start, end = (date.fromisoformat(d) for d in payload["window"])
     result = run_backtest(DB_PATH, start, end, cash=payload["cash"])
 

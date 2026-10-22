@@ -65,8 +65,17 @@ def _scope_lists() -> list[tuple[str, int, str, list[str]]]:
             ]
             if len(vals) < 2 or not all(BARE_NAME.match(v) for v in vals):
                 continue
-            # 判别式: 至少有一项在仓库根解析成已存在的目录
-            if not any((REPO_ROOT / v).is_dir() for v in vals):
+            # 判别式: 这一项"像是指向目录的清单"。
+            #
+            # ⚠️ 2026-10-22 (附一百八十六): 原判别式是「**至少有一项**是已存在目录」——
+            # 太弱。实测被它误判:`test_cycle_signal_layer_is_causal.py` 里的
+            # `FULL_FRAME_NAMES = {"df","bars","panel","panel_ind","data"}` 是**变量名集**,
+            # 只因 `"data"` 恰好是仓库根下的目录 ⇒ 整条被当成扫描范围清单 ⇒ 另外 4 个名字报红。
+            # (讽刺的是这条守卫存在的理由正是"抓会静默缩小覆盖面的清单"。)
+            # 收紧为:**过半**是已存在目录,且**至少 2 项**。带 1 处拼错的真清单是
+            # (N−1)/N 项为目录 ⇒ 仍被认出来(原功能不减)。
+            hits = sum(1 for v in vals if (REPO_ROOT / v).is_dir())
+            if hits < 2 or hits * 2 < len(vals):
                 continue
             names = [t.id for t in node.targets if isinstance(t, ast.Name)]
             for n in names:

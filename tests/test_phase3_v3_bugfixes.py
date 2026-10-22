@@ -180,27 +180,32 @@ def test_hold_days_is_bar_span_not_bar_count_minus_one():
     Bug 修复前：hold_days = len(self) - 1 - entry_bar = bar_count - 1（off-by-1）
     Bug 修复后：hold_days = len(self) - entry_bar = bar_span
 
-    scenario: max_hold=3 → 在 entry bar + 3 触发 time exit，跨度 = 4
+    ⚠️ 2026-10-22 (附一百八十四): 本用例原先钉 `hold_days == 4`(max_hold=3)。那个数**编码了
+    另一处的 off-by-one**: `_check_exit` 里 `held` 当时写成 `len(self) - 1 - entry_bar`
+    (把**计数**当索引用),于是 time exit 晚一根,跨度才成了 max_hold+1 = 4。
+    该处已被修正为 `held = len(self) - entry_bar` ⇒ 跨度**恰等于 max_hold** ⇒ 原先的 4 变成 3。
+    ⇒ 本用例改为断言**不变量** `hold_days == max_hold`,不再钉那个由两处 off-by-one 抵消出来的数。
+    (族内对照: chase_up / uptrend 的 `max_hold` 同样以「恰 N 根」为语义。)
     """
     n = 220
+    max_hold = 3
     panel = _build_cascade_entry_panel(n=n)
 
     h = _run_strategy(
         panel,
         tp_pct=0.0001,      # 极小 → 永不触发 TP
         sl_pct=10.0,        # 极大 → 永不触发 SL
-        max_hold=3,
+        max_hold=max_hold,
         a_condition="cascade_price",
         position_fraction=1.0,
     )
     assert len(h["trades"]) >= 1, f"未触发入场, trades={h['trades']}"
     t = h["trades"][0]
     assert t["exit_reason"] == "time"
-    # hold_days 应 = exit bar - entry bar = 200 + 3 + 1 - 200 = 4 (max_hold 触发后 bar +1)
-    # Bug 修复前：hold_days=3；Bug 修复后：hold_days=4
-    assert t["hold_days"] == 4, (
-        f"hold_days 应=4 (entry bar 200, max_hold=3 触发 time exit, 跨度=4), "
-        f"实际={t['hold_days']} (Bug 2 修复验证)"
+    # 不变量: time exit 的跨度就是封顶持有期本身(entry bar + max_hold)。
+    assert t["hold_days"] == max_hold, (
+        f"hold_days 应恰等于 max_hold={max_hold}(time exit 的跨度 = 封顶持有期), "
+        f"实际={t['hold_days']}"
     )
 
 
