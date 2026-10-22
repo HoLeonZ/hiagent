@@ -253,7 +253,6 @@ def test_the_slice_census_has_teeth() -> None:
 KNOWN_SLICE_CHECKS: dict[str, int] = {
     "test_fast_scanner_equivalence_gate.py": 4,
     "test_short_reversal_capacity_gate.py": 2,
-    "test_final_capital_uses_nav.py": 1,
 }
 
 
