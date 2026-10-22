@@ -34,6 +34,7 @@
 """
 from __future__ import annotations
 
+import ast
 import glob
 import re
 import subprocess
@@ -159,7 +160,11 @@ SCRIPT_GLOBS = {
 SCRIPT_EXPLICIT = (
     "short_reversal/walkforward.py",
     "uptrend_pullback/iter_reverse.py",
-    "cycle_price_action/walkforward.py",
+    # ⚠️ 2026-10-22 (附一百八十五): 此处原有 `"cycle_price_action/walkforward.py"` —— **幽灵项**。
+    # 它进名单的原因正是本文件那次"文本判据"的同一个根: 该文件里
+    # `from dna_stats.deflated import (  # noqa: F401\n    deflated_sharpe_ratio,\n …)` 只是**导入**
+    # (作者用 noqa 明确标注未使用),**全文没有任何 DSR 调用**(AST 实测)。
+    # ⇒ 判据改成 AST 后,本文件自己的"名单不许虚胖"那条立刻把它抓了出来。已移除。
     "cycle_price_action/main.py",
     # 附一百零九: `uptrend_pullback/grid.py` 此前**不报** DSR(§5 Penalty Metrics 缺口),
     # 本批补上后它就成了一个新的 DSR 调用点 —— 而前缀 glob `uptrend_pullback/sweep*.py`
@@ -207,6 +212,35 @@ def research_scripts() -> set[str]:
             for raw in glob.glob(str(REPO_ROOT / pattern)):
                 out.add(str(Path(raw).relative_to(REPO_ROOT)))
     return out
+
+
+def _calls_dsr(path: Path) -> bool:
+    """该文件是否**真的调用** `deflated_sharpe_ratio` —— 按 AST,不看注释与字符串。
+
+    ⚠️ 2026-10-22 (附一百八十五): 本文件此前**三处**判据都写成
+    `"deflated_sharpe_ratio" in read_text(...)` —— 而**注释能满足它**。
+    main 的 `chase_up|cycle_price_action|short_reversal/presets.py` 新增了记录
+    §13.83 更正的注释(那几句里恰好写着 `deflated_sharpe_ratio`),于是三个 `presets.py`
+    被当成"DSR 调用点" ⇒ `test_the_wf_family_list_is_the_whole_family` /
+    `test_research_scripts_cover_every_dsr_caller` / `test_the_explicit_scan_list_is_real_and_load_bearing`
+    **三条守卫一起假红**。而在只看注释的这一版上,"记录修复"这件事本身会制造违规。
+
+    判据:存在 `Call(func=Name('deflated_sharpe_ratio'))` 或
+    `Call(func=Attribute(attr='deflated_sharpe_ratio'))`。
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError, OSError):
+        return False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name) and func.id == "deflated_sharpe_ratio":
+            return True
+        if isinstance(func, ast.Attribute) and func.attr == "deflated_sharpe_ratio":
+            return True
+    return False
 
 
 #: 显式把 preset 名交给回测/取 preset 的调用,以及模块级常量赋值。
@@ -314,20 +348,34 @@ def _preset_names(engine: str) -> set[str]:
 def _references() -> dict[str, set[str]]:
     """{脚本相对路径: 它引用但不存在的 preset 名集合}(只含确实失效的)。"""
     out: dict[str, set[str]] = {}
-    for rel in sorted(research_scripts() | preset_referencing_scripts()):
+    universe = (set(research_scripts()) | preset_referencing_scripts()
+                | set(EXTRA_REFERENCING_SCRIPTS))
+    for rel in sorted(universe):
         path = REPO_ROOT / rel
         # 附一百零八: 引擎不能只按**路径前缀**推 —— 根目录脚本(`run_sizing_comparison.py`)
         # 的 `rel.split("/")[0]` 是整个文件名 ⇒ 推不出引擎 ⇒ 此前被**静默跳过**。
         # 故再按"它 import 了哪个 engine 的 presets"推一次。
-        engine = rel.split("/", 1)[0]
-        if engine not in SCRIPT_GLOBS:
+        override = EXTRA_REFERENCING_SCRIPTS.get(rel)
+        head = rel.split("/", 1)[0]
+        if override:
+            engines = [override]
+        elif head in SCRIPT_GLOBS:
+            engines = [head]
+        else:
             src = path.read_text(encoding="utf-8")
-            engine = next(
-                (e for e in SCRIPT_GLOBS
-                 if re.search(rf"(?:from|import)\s+{e}\.(?:presets|backtest|engine|portfolio)", src)),
-                "",
-            )
-        known = _preset_names(engine) if engine in SCRIPT_GLOBS else set()
+            # ⚠️ 2026-10-22 (附一百八十五): 此处原用 `next(...)` 只取**一个**引擎 —— 而
+            # `tools/signal_overlap.py` **本来就跨两个多头族**(`chase_up` 与 `uptrend_pullback`)。
+            # `next()` 按 `SCRIPT_GLOBS` 的键序取到 `chase_up`,于是拿 **chase 的名册**去判
+            # **uptrend 的** `v33_long_reverse_v22` ⇒ 一个**活着的** preset 被判成"死引用",
+            # 而失败信息的处方是"登记为历史债务" —— 照做就是给活的 preset 编一份废弃记录。
+            # ⇒ 改为**并集**:凡本文件 import 到的引擎,名册全部并入。
+            engines = [
+                e for e in SCRIPT_GLOBS
+                if re.search(rf"(?:from|import)\s+{e}\.(?:presets|backtest|engine|portfolio)", src)
+            ]
+        known: set[str] = set()
+        for e in engines:
+            known |= _preset_names(e)
         if not known:
             continue
         src = path.read_text(encoding="utf-8")
@@ -375,22 +423,9 @@ def _engine_of(rel: str) -> str:
     )
 
 
-def _references() -> dict[str, set[str]]:
-    """{脚本相对路径: 它引用但不存在的 preset 名集合}(只含确实失效的)。"""
-    out: dict[str, set[str]] = {}
-    universe = set(research_scripts()) | preset_referencing_scripts() | set(EXTRA_REFERENCING_SCRIPTS)
-    for rel in sorted(universe):
-        engine = EXTRA_REFERENCING_SCRIPTS.get(rel) or _engine_of(rel)
-        if not engine:
-            continue
-        known = _preset_names(engine)
-        dead = {c for c in _cited_names((REPO_ROOT / rel).read_text(encoding="utf-8"))
-                if c not in known}
-        if dead:
-            out[rel] = dead
-    return out
-
-
+# ⚠️ 2026-10-22 (附一百八十五): 此处原先**第二份** `_references` 定义(用 `_engine_of` 取
+# **单个**引擎),它**覆盖**了上面那份 —— 我按上面那份改,实测无效(条目仍在)才查出是重复定义。
+# 两份并存 ⇒ 改哪一份都可能改到死代码。已合成一份: 并集判引擎 + 尊重 EXTRA_REFERENCING_SCRIPTS。
 def test_no_new_dead_preset_references() -> None:
     """研究脚本不得引用已不存在的 preset —— 那会让脚本在启动即退出。
 
@@ -822,7 +857,7 @@ def test_the_wf_family_list_is_the_whole_family() -> None:
     callers = {
         str(p.relative_to(REPO_ROOT))
         for p in sorted((REPO_ROOT / "short_reversal").glob("*.py"))
-        if "deflated_sharpe_ratio" in p.read_text(encoding="utf-8")
+        if _calls_dsr(p)
     }
     known = set(_WF_FAMILY) | set(_PER_CONFIG_GRID)
     assert callers == known, (
@@ -907,7 +942,7 @@ def test_research_scripts_cover_every_dsr_caller() -> None:
     callers: set[str] = set()
     for engine in SCRIPT_GLOBS:
         for p in sorted((REPO_ROOT / engine).glob("*.py")):
-            if "deflated_sharpe_ratio" in p.read_text(encoding="utf-8"):
+            if _calls_dsr(p):
                 callers.add(str(p.relative_to(REPO_ROOT)))
 
     covered = research_scripts()
@@ -926,6 +961,6 @@ def test_the_explicit_scan_list_is_real_and_load_bearing() -> None:
         p = REPO_ROOT / rel
         if not p.exists():
             bad.append(f"{rel}: 文件不存在")
-        elif "deflated_sharpe_ratio" not in p.read_text(encoding="utf-8"):
+        elif not _calls_dsr(p):
             bad.append(f"{rel}: 并没有调用 DSR")
     assert not bad, "§5: 显式扫描名单有问题(幽灵项或虚胖项):\n  " + "\n  ".join(bad)
