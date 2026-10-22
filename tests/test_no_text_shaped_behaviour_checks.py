@@ -251,7 +251,6 @@ def test_the_slice_census_has_teeth() -> None:
 #:
 #: 口径见 `_slice_checks_in`。2026-10-22 首次登记(本册附一百八十九)。
 KNOWN_SLICE_CHECKS: dict[str, int] = {
-    "test_fast_scanner_equivalence_gate.py": 4,
     "test_short_reversal_capacity_gate.py": 2,
 }
 
