@@ -31,6 +31,7 @@
 """
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -53,14 +54,24 @@ COST_NAMES = (
 )
 
 # 定义站点: 这三个文件必须**确实**绑定到 core.dual_price (正面断言)
+#: (文件, 必须从 `core.dual_price` 绑定的名字)
 BINDINGS = (
-    ("short_reversal/engine.py", r"from core\.dual_price import .*COMMISSION_RATE"),
-    ("short_reversal/replay_strategy_v3.py", r"from core\.dual_price import"),
-    ("cycle_price_action/portfolio.py", r"_CANON_COMMISSION_RATE"),
+    ("short_reversal/engine.py", "COMMISSION_RATE"),
+    ("short_reversal/replay_strategy_v3.py", "COMMISSION_RATE"),
+    ("cycle_price_action/portfolio.py", "COMMISSION_RATE"),
     # §13.22 新增: 本轮补上的两族
-    ("chase_up/backtest.py", r"from core\.dual_price import .*COMMISSION_RATE"),
-    ("uptrend_pullback/backtest.py", r"from core\.dual_price import .*COMMISSION_RATE"),
+    ("chase_up/backtest.py", "COMMISSION_RATE"),
+    ("uptrend_pullback/backtest.py", "COMMISSION_RATE"),
 )
+
+
+def _bound_from_core_dual_price(src: str) -> set[str]:
+    """该模块从 `core.dual_price` **导入**的名字集合(AST)。"""
+    names: set[str] = set()
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.ImportFrom) and node.module == "core.dual_price":
+            names |= {a.asname or a.name for a in node.names}
+    return names
 
 
 def _family_files():
@@ -124,11 +135,23 @@ def _bare_literal_hits(path: Path):
     return out
 
 
-@pytest.mark.parametrize("rel,pat", BINDINGS)
-def test_cost_constants_are_bound_not_redeclared(rel: str, pat: str) -> None:
-    """正面: 必须**确实**绑定到 `core.dual_price`。"""
-    src = (ROOT / rel).read_text(encoding="utf-8")
-    assert re.search(pat, src), f"{rel} 没有绑定到 core.dual_price 的规范成本常量"
+@pytest.mark.parametrize("rel,name", BINDINGS)
+def test_cost_constants_are_bound_not_redeclared(rel: str, name: str) -> None:
+    r"""正面: 必须**确实**从 `core.dual_price` 绑定该常量。
+
+    ⚠️ 2026-10-22 (附一百八十八): 此处原为 `re.search(pat, src)`, 三条模式是:
+
+        r"from core\.dual_price import .*COMMISSION_RATE"   ← `.*` **不跨行**
+        r"_CANON_COMMISSION_RATE"                           ← 这个**名字根本不存在**
+
+    实现后来改成**多行括号导入**(`COMMISSION_RATE,` 落在下一行)⇒ 三条一起假红,
+    而**三个引擎都真的绑定了**(实测: 5 个文件全都从 `core.dual_price` 导入 `COMMISSION_RATE`)。
+    ⇒ 改为 AST: 直接问「这个名字有没有从 `core.dual_price` 导入」, 与排版无关。
+    """
+    bound = _bound_from_core_dual_price((ROOT / rel).read_text(encoding="utf-8"))
+    assert name in bound, (
+        f"{rel} 没有从 core.dual_price 绑定 {name} —— 实测它导入的名字: {sorted(bound)}"
+    )
 
 
 def test_no_cost_name_is_bound_to_a_literal_anywhere() -> None:

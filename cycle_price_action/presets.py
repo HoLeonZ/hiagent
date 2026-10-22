@@ -42,7 +42,8 @@ def resolve_score_weights(preset: dict, preset_name: str) -> tuple[float, float,
 
 
 # §4 TP/SL: **固定百分比** —— 出场完全由 `tp_pct` / `sl_pct` 决定
-# (exit 路径见 cycle_price_action/portfolio.py:377-378: tp_p = entry×(1+tp_pct),
+# (exit 路径见 cycle_price_action/portfolio.py 的 `try_exit_with_intraday_check`:
+#  tp_p = entry×(1+tp_pct),
 #  sl_p = entry×(1−sl_pct); intraday tiebreak 走 sl_first)。
 # ⚠️ **2026-10-20 (§13.175) 更正**: 本行此前写的是
 #   「hybrid —— tp_pct/sl_pct 为固定基准, **atr_sl_mult 提供 ATR 自适应**」
@@ -60,7 +61,7 @@ PRESET_V1 = dict(
     atr_period=14,
     atr_sl_mult=1.5,
     # V3a (2026-09-22, CLAUDE.md §3): PIT universe declaration.
-    # data_feed.py:140-225 load_universe_data hardcodes P8 + main-board
+    # `data_feed.py` 的 `load_universe_data` hardcodes P8 + main-board
     # + liquidity filter. Declared here for compliance consistency with
     # chase_up / short_reversal / uptrend_pullback presets.
     universe="mainboard_only",
