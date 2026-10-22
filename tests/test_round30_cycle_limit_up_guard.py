@@ -21,6 +21,7 @@ chase_up's 0.098 vs cycle's default 0.095 distinction is supported.
 from __future__ import annotations
 
 import inspect
+import ast
 import re
 import sys
 from pathlib import Path
@@ -118,23 +119,38 @@ def test_cycle_engine_skips_entry_on_limit_up() -> None:
     )
 
 
+def _params_keywords(src: str) -> set[str] | None:
+    """取循环引擎里 `params = dict(...)` 的**关键字名**(AST,不看括号平衡)。"""
+    for node in ast.walk(ast.parse(src)):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == "params" for t in node.targets):
+            continue
+        call = node.value
+        if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "dict":
+            return {k.arg for k in call.keywords if k.arg}
+    return None
+
+
 def test_cycle_engine_does_not_enter_at_limit_up_close() -> None:
     """§3 source-guard via parametrize: check the cycle strategy.params dict
     has limit_up_threshold exposed (default 0.095 to match chase_up +
     uptrend_pullback conventions).
     """
     src = _read(CYCLE_ENGINE)
-    # Use paren-balanced regex to skip nested `)` in comments
-    m = re.search(
-        r"params\s*=\s*dict\(((?:[^()]|\([^()]*\))*)\)",
-        src,
+    # ⚠️ 2026-10-22 (附一百八十七): 此处原用「括号平衡」正则取 params 块 ——
+    #     r"params\s*=\s*dict\(((?:[^()]|\([^()]*\))*)\)"
+    # 它只容许**一层**嵌套括号。params 块里后来出现了更深嵌套 ⇒ **匹配失败** ⇒
+    # 报「params dict not found」,**而键一直都在**(实测 :83 `limit_up_threshold=0.095`)。
+    # ⇒ 改为 AST: 找 `params = dict(...)` 的赋值, 直接读它的**关键字名**。
+    keys = _params_keywords(src)
+    assert keys is not None, "循环引擎里找不到 `params = dict(...)` 赋值"
+    assert "limit_up_threshold" in keys, (
+        "§3 forward-defense: limit_up_threshold 必须在 params 里(默认 0.095)以便 preset 覆盖。"
+        f"实测 params 关键字: {sorted(keys)}"
     )
-    assert m is not None, "params dict not found in cycle strategy"
-    params_block = m.group(1)
-    assert "limit_up_threshold" in params_block, (
-        "§3 forward-defense: limit_up_threshold must be in params "
-        f"(default 0.095) for preset override. Got params block:\n{params_block}"
-    )
+    # 故意**不钉死**数值: chase_up / uptrend_pullback 用 0.098, 而本族用 0.095 ——
+    # 文档里说明"这条区分要被支持",钉死任一侧都会与那句话打架。
 
 
 # ---------------------------------------------------------------------------
