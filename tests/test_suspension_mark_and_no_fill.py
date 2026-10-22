@@ -41,6 +41,7 @@ positions in suspended names are marked at the **last `raw_close`** and
 from __future__ import annotations
 
 import logging
+import ast
 from pathlib import Path
 
 import numpy as np
@@ -258,6 +259,14 @@ _ENGINES = {
 }
 
 
+def _stmt_after(tree: ast.AST, line: int) -> ast.stmt:
+    """锚点注释**之后**的第一条语句(注释进不了 AST,故只用它定位**行号**)。"""
+    cands = [n for n in ast.walk(tree)
+             if isinstance(n, ast.stmt) and n.lineno >= line + 1]
+    assert cands, "锚点之后找不到任何语句 —— 该段结构变了"
+    return min(cands, key=lambda n: n.lineno)
+
+
 @pytest.mark.parametrize("engine,path", sorted(_ENGINES.items()))
 def test_no_engine_marks_with_entry_price_as_fallback(engine: str, path: Path) -> None:
     """盯市不得再接受"调用方给的成本价"这个输入 —— 它没有一句话说得通。"""
@@ -275,11 +284,76 @@ def test_no_engine_marks_with_entry_price_as_fallback(engine: str, path: Path) -
 
 @pytest.mark.parametrize("engine,path", sorted(_ENGINES.items()))
 def test_every_engine_guards_the_window_end_force_close(engine: str, path: Path) -> None:
-    """末日强平必须先判当日是否有 bar(§1:停牌不得成交)。"""
+    """末日强平必须先判当日是否有 bar(§1:停牌不得成交)。
+
+    ⚠️ 2026-10-22 (附一百八十七): 本用例此前是**文本切片 + 字面量**判据 ——
+
+        start = src.index("末日强制平仓"); block = src[start:start + 1400]
+        assert "_row_at(pi, day) is None" in block
+
+    而实现已经从「**直接比较**」改成「**先绑定再判 None**」:
+
+        j = _row_at(pi, day)          # ← 必须绑定: 下游 `_exit_fill_px(..., j, ...)` 要用
+        if j is None:
+            _unclosed_at_window_end.append(code); continue
+
+    (该行注释里写明理由: 不绑定的话 `j` 会退化成上一轮循环残留的行号 ⇒ 拿**别的票的 bar**
+     算成交量。)⇒ 判据找的那个字面量**再也不存在**, 而它要保的性质**一直都在**。
+    另有 1400 字符的魔数窗口 —— 上游加几行注释就够不着了。
+
+    现改为 AST: 用注释**只定位行号**, 然后断言**性质** ——
+      `_row_at` 被调用 → 结果**被绑定** → 该绑定名被判 `None` → 分支里 `continue`(不产生 fill)
+      → 且**同一个绑定名**被传给 `_close_position`(这正是"必须绑定"的理由)。
+    """
     src = path.read_text(encoding="utf-8")
-    start = src.index("末日强制平仓")
-    block = src[start:start + 1400]
-    assert "_row_at(pi, day) is None" in block, (
-        f"§1 VIOLATION {engine}: 末日强平未跳过当日无 bar 的停牌持仓"
+    tree = ast.parse(src)
+    line = next((i for i, l in enumerate(src.splitlines(), 1) if "末日强制平仓" in l), None)
+    assert line is not None, (
+        f"§1 VIOLATION {engine}: 找不到「末日强制平仓」段 —— 该段被删除或改名了"
     )
-    assert "continue" in block
+    block = _stmt_after(tree, line)
+
+    def _calls_row_at(node: ast.AST) -> bool:
+        return any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+                   and c.func.id == "_row_at" for c in ast.walk(node))
+
+    assert _calls_row_at(block), (
+        f"§1 VIOLATION {engine}: 末日强平不判当日是否有 bar(`_row_at` 未出现)"
+    )
+
+    # 1) 结果必须**被绑定**(理由见该行注释: 否则下游读到上一轮残留的行号)
+    bound = {
+        t.id
+        for a in ast.walk(block) if isinstance(a, ast.Assign)
+        for t in a.targets if isinstance(t, ast.Name)
+        if _calls_row_at(a.value)
+    }
+    assert bound, (
+        f"§1 VIOLATION {engine}: `_row_at(...)` 的结果未被绑定 —— "
+        f"下游会读到上一轮循环残留的行号(拿别的票的 bar 算成交量)"
+    )
+
+    # 2) 绑定名必须被判 None, 且该分支 `continue`(不产生 fill)
+    guards = [
+        i for i in ast.walk(block)
+        if isinstance(i, ast.If)
+        and isinstance(i.test, ast.Compare)
+        and any(isinstance(op, (ast.Is, ast.Eq)) for op in i.test.ops)
+        and any(isinstance(x, ast.Constant) and x.value is None for x in i.test.comparators)
+        and isinstance(i.test.left, ast.Name) and i.test.left.id in bound
+    ]
+    assert guards, f"§1 VIOLATION {engine}: 没有对 {sorted(bound)} 的 None 判定"
+    assert any(any(isinstance(st, ast.Continue) for st in ast.walk(g)) for g in guards), (
+        f"§1 VIOLATION {engine}: 停牌持仓未被跳过(缺 continue)⇒ 会造出一笔现实中不存在的假成交"
+    )
+
+    # 3) 同一个绑定名必须被**复用**到成交价计算 —— 这正是"必须绑定"的理由
+    reused = any(
+        isinstance(c, ast.Call)
+        and any(isinstance(arg, ast.Name) and arg.id in bound for arg in c.args)
+        for c in ast.walk(block)
+    )
+    assert reused, (
+        f"§1 VIOLATION {engine}: 绑定名 {sorted(bound)} 未被复用到成交价计算 —— "
+        f"'必须绑定'这条注释的理由不再成立, 说明该段被改写过"
+    )

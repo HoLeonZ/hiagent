@@ -75,7 +75,8 @@ def main() -> None:
           WITH r AS (SELECT thscode, date, close,
                             LAG(close) OVER (PARTITION BY thscode ORDER BY date) pc
                      FROM raw_kline_daily WHERE date BETWEEN ?::DATE - 90 AND ?)
-          SELECT thscode, date, pc FROM r""", [w0, w1]).df()
+          SELECT thscode, date, pc FROM r
+          ORDER BY thscode, date""", [w0, w1]).df()
         q["date"] = pd.to_datetime(q["date"])
         m = t.merge(q, left_on=["entry_date", "thscode"],
                     right_on=["date", "thscode"], how="left").dropna(subset=["pc"])

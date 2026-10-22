@@ -55,7 +55,8 @@ def _gaps(con, w0: str, w1: str) -> pd.DataFrame:
                         LAG(close) OVER (PARTITION BY thscode ORDER BY date) pc
                  FROM raw_kline_daily WHERE date BETWEEN ?::DATE - 90 AND ?)
       SELECT thscode, date, open / pc - 1.0 AS g
-      FROM r WHERE pc IS NOT NULL AND open > 0""", [w0, w1]).df()
+      FROM r WHERE pc IS NOT NULL AND open > 0
+      ORDER BY thscode, date""", [w0, w1]).df()
 
 
 def _row(fam: str, preset: str, w0: str, w1: str, con) -> dict:

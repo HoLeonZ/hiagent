@@ -59,6 +59,7 @@ def _touch_rate(con, h: int, keys: pd.DataFrame | None = None) -> float:
                                         ROWS BETWEEN 1 FOLLOWING AND {h} FOLLOWING) mx
                  FROM v_daily WHERE date BETWEEN ? AND ?)
       SELECT thscode, date, mx/open-1 AS r FROM x WHERE mx IS NOT NULL AND open>0
+      ORDER BY thscode, date
     """, [W0, W1]).df()
     if keys is None:
         return float((q["r"] >= TP).mean())
