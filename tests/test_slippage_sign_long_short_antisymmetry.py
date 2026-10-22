@@ -22,6 +22,7 @@
 """
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -33,6 +34,50 @@ CORE_SRC = (ROOT / "core" / "dual_price.py").read_text(encoding="utf-8")
 
 # 多头引擎名单 (entry 与 exit 两处符号都要查)
 _LONG = ("chase_up/portfolio.py", "uptrend_pullback/portfolio.py")
+
+
+def _sign_from(scaled: ast.AST) -> str | None:
+    r"""`X * (1 ± Y)` 的乘号符号 —— 只看**结构**,不看变量名。
+
+    ⚠️ 2026-10-22 (附一百八十七): 本文件此前两条扫描正则都把**变量名**写进模式:
+
+        entry_px = float(o) * (\s*1\s*([+-])\s*(?:atr_slip|effective_slippage)
+        return float(raw_px) * (1\.0 ([+-]) slip)
+
+    而滑点变量被合法改名成 `slippage` / `slip_eff` ⇒ 正则认不出 ⇒ 返回 `'?'` ⇒ 用例红,
+    **而符号本身是对的**。本文件自己的 docstring 早就记过同一条教训(§13.96/§13.120:
+    「尺子认不出新的正确形态」),只是那次又补了一个名字 —— 名字还会再变。
+    ⇒ 改为认**操作**:`X * (1 ± Y)` 这个形状,与 `X`/`Y` 叫什么无关。
+    """
+    if not (isinstance(scaled, ast.BinOp) and isinstance(scaled.op, ast.Mult)):
+        return None
+    right = scaled.right
+    if not (isinstance(right, ast.BinOp) and isinstance(right.op, (ast.Add, ast.Sub))):
+        return None
+    if not (isinstance(right.left, ast.Constant) and right.left.value == 1):
+        return None
+    return "+" if isinstance(right.op, ast.Add) else "-"
+
+
+def _assigned_sign(src: str, name: str) -> str | None:
+    """`<name> = X * (1 ± Y)` 的符号(取第一处结构成立的赋值)。"""
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == name for t in node.targets):
+            sign = _sign_from(node.value)
+            if sign:
+                return sign
+    return None
+
+
+def _returned_sign(src: str) -> str | None:
+    """`return X * (1 ± Y)` 的符号(出现的第一个结构成立的 return)。"""
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Return) and node.value is not None:
+            sign = _sign_from(node.value)
+            if sign:
+                return sign
+    return None
 
 
 def _long_signs() -> dict[str, str]:
@@ -50,11 +95,7 @@ def _long_signs() -> dict[str, str]:
     out = {}
     for rel in _LONG:
         src = (ROOT / rel).read_text(encoding="utf-8")
-        m = re.search(
-            r"entry_px = float\(o\) \* \(\s*1\s*([+-])\s*(?:atr_slip|effective_slippage)",
-            src,
-        )
-        out[rel] = m.group(1) if m else "?"
+        out[rel] = _assigned_sign(src, "entry_px") or "?"
     return out
 
 
@@ -68,14 +109,13 @@ def _long_exit_signs() -> dict[str, str]:
     out = {}
     for rel in _LONG:
         src = (ROOT / rel).read_text(encoding="utf-8")
-        m = re.search(r"return float\(raw_px\) \* \(1\.0 ([+-]) slip\)", src)
-        out[rel] = m.group(1) if m else "?"
+        out[rel] = _returned_sign(src) or "?"
     return out
 
 
 def test_short_entry_slippage_takes_the_negative_sign() -> None:
-    """空头 entry 是卖出 ⇒ 冲击让成交价更低 ⇒ 必须是 `(1.0 - atr_slip)`。"""
-    assert "entry_price = entry_price * (1.0 - atr_slip)" in SHORT_SRC, (
+    """空头 entry 是卖出 ⇒ 冲击让成交价更低 ⇒ 必须是 `(1.0 - <滑点>)`(不钉变量名)。"""
+    assert _assigned_sign(SHORT_SRC, "entry_price") == "-", (
         "short_reversal 的 entry 滑点符号不对。空头 entry 是**卖出**, 悲观方向是"
         "成交价更低 ⇒ 必须取减号。取加号 = 把执行成本记成执行收益 (§0 违规)。"
     )
