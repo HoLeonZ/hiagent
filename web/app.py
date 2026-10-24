@@ -347,8 +347,26 @@ def create_app() -> FastAPI:
         job = jobs_mod.get(run_id)
         if job is None:
             hist = jobs_mod.load_persisted(run_id)
-            if hist is None:
+            meta0 = jobs_mod.meta_persisted(run_id)
+            outcome = jobs_mod.outcome_persisted(run_id)
+            if hist is None and not jobs_mod.run_exists(run_id):
                 raise HTTPException(404, detail=f"unknown run: {run_id}")
+            if hist is None:
+                # **失败的运行没有 result.json** —— 但它存在，而且原因就在 outcome.json 里。
+                # 旧实现在这里直接 404，于是重启后**看不到它为什么失败**（实测）。
+                #
+                # ⚠️ **没有 outcome.json 时状态是 `unknown`，不是 `failed`。**
+                # 进程在运行中被杀（服务崩了 / 机器重启）时，磁盘上只剩 `job.json`——
+                # 平台**并不知道**那次运行最后怎么了。报 `failed` 是在编一个拿不到的事实，
+                # 而用户会据此去找一个并不存在的错误原因。pessimistic 不等于"编一个坏结局"。
+                return {"run_id": run_id,
+                        "engine": (meta0 or {}).get("engine"), "preset": (meta0 or {}).get("preset"),
+                        "status": (outcome or {}).get("status") or "unknown",
+                        "error": (outcome or {}).get("error"),
+                        "mode": (meta0 or {}).get("mode"),
+                        "start": (meta0 or {}).get("start"), "end": (meta0 or {}).get("end"),
+                        "trial_no": (meta0 or {}).get("trial_no"),
+                        "metrics": None, "queue_position": None, "from_disk": True}
             # ⚠️ **`mode` 与 `trial_no` 要从落盘的 `job.json` 取，不能写死 None。**
             # 写死的后果实测过：服务重启后打开一次 **preview** 运行，`job.mode` 是 null，
             # 前端就不挂"非可比"横幅（设计要求 preview 结果**强制标注非可比**）——
@@ -608,21 +626,41 @@ def create_app() -> FastAPI:
 
     @app.get("/api/runs/{run_id}/log")
     def run_log(run_id: str, offset: int = 0) -> dict[str, Any]:
-        """**增量**读运行日志：`offset` 是客户端已读的字节数，返回新的一段。
+        """**增量**读运行日志：`offset` 是客户端**已读到的字符数**，返回新的一段。
 
         增量而不是整份，是因为回测会持续打印，整份重传会随运行变长而越来越贵。
         作业不在内存里（服务重启过）时视为已结束。
+
+        ⚠️ **`offset` 的单位是字符，不是字节。** 原实现返回 `len(data)`（**字节**）
+        却把 `text` 解码成**字符串**发出去 —— 中文一个字 3 字节，于是
+        `offset≠len(text)`（实测一次 20 行的日志：offset=470、len(text)=310），
+        而服务端按**字节**切 `data[offset:]`：落在**字符中间**时
+        `errors="replace"` 把半个字变成 `�` —— **不报错，只是静默改字**。
+        前端今天侥幸没事（它只用服务端发回的 offset，那总是落在边界上），
+        但"发字符、收字节"这个契约自相矛盾，读代码的人看不出来。
+        既然每次都读整份文件，按字符切**不额外多读一个字节**，就按字符切。
+
+        不变量（可断言）：`offset - 上次的 offset == len(本次 text)`。
         """
         job = jobs_mod.get(run_id)
-        if job is None and jobs_mod.load_persisted(run_id) is None:
+        # ⚠️ 运行"存在"的判据**不能是"内存里有作业 或 有 result.json"** ——
+        # `result.json` 只在**成功**时落盘，而一次**失败**的运行在磁盘上只有
+        # `job.json` + `run.log`。旧判据让重启后的失败运行在 `/log` 上返回 404（实测），
+        # **而那恰恰是最需要看日志的时候**：说明原因的日志就在磁盘上。
+        if job is None and not jobs_mod.run_exists(run_id):
             raise HTTPException(404, detail=f"unknown run: {run_id}")
         p = run_artifact(run_id, "run.log")
         if not p.exists():
             return {"text": "", "offset": 0, "done": True}
-        data = p.read_bytes()
+        text = p.read_text(encoding="utf-8", errors="replace")
+        # 偏移越过文件尾 = 客户端的窗口已经不在了（日志被替换/截断）。**从头重发**，
+        # 而不是回一段空字符串 —— 空的会让界面**永久停在空白**，且不报错。
+        # （本平台只追加不截断，所以这条是防御性的；用一条测试把它钉住。）
+        if offset < 0 or offset > len(text):
+            offset = 0
         return {
-            "text": data[offset:].decode("utf-8", errors="replace"),
-            "offset": len(data),
+            "text": text[offset:],
+            "offset": len(text),
             "done": job is None or job.status in {"done", "failed", "cancelled"},
         }
 

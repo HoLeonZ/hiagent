@@ -336,6 +336,87 @@ def test_the_configs_endpoints_round_trip(client):
                                              "preset": "v50_slope", "overrides": {}}).status_code == 400
 
 
+def test_a_failed_run_stays_readable_after_a_restart(client, monkeypatch):
+    """**失败**的运行，重启后仍然要能查到状态、读到日志。
+
+    实测缺陷（2026-10-23，真实运行的失败预览 `f6fa740e0921`）：
+    `result.json` **只在成功时**落盘，于是一次失败的运行在磁盘上只剩
+    `job.json` + `run.log`；而 `/api/runs/{id}` 与 `/log` 当时的判据是
+    "内存里有作业 **或** 有 result.json" —— **重启后两者都返回 404**
+    （`unknown run`）。
+
+    **那恰恰是最需要看日志的时候**：说明原因的日志就躺在磁盘上，
+    API 却说这次运行不存在。用户在历史里看得见它（账本记着），点进去是 404。
+
+    判据：状态与**原因**要读得回来，日志要读得回来，且是**失败**而不是别的状态。
+    """
+    from web import jobs as jobs_mod
+
+    def boom(*a, **kw):
+        raise RuntimeError("面板不足 min_bars=200")
+
+    _install_fake_run(monkeypatch, boom)
+    rid = client.post("/api/runs", json={
+        "engine": "short_reversal", "preset": "v50_slope", "overrides": {},
+        "start": "2025-01-01", "end": "2025-01-02", "mode": "full",
+    }).json()["run_id"]
+    job = jobs_mod.wait(rid, timeout=60)
+    assert job.status == "failed"
+
+    # ⚠️ 与上一条测试同理：假 runner 顶掉了 `_run_one`，生产里由它调用的
+    # `_persist_outcome` / `_append_log` 都没有被走到。这里补上——**用生产自己的写入器**，
+    # 写出的形态与真跑一模一样（手搓 JSON 的话，测试就在验证一个不存在的世界）。
+    jobs_mod._append_log(rid, f"[jobs] 失败：{job.error}")
+    jobs_mod._persist_outcome(job)
+
+    from web.state import state_home
+    run_dir = state_home() / "runs" / rid
+    assert (run_dir / "outcome.json").exists(), "结局没有落盘"
+    assert not (run_dir / "result.json").exists(), \
+        "这条测试的前提是**没有** result.json（失败不落结果）——它变了这条就测不到东西"
+
+    # 模拟重启：内存全清，只剩磁盘
+    jobs_mod._JOBS.clear()
+
+    got = client.get(f"/api/runs/{rid}")
+    assert got.status_code == 200, \
+        f"重启后失败的运行是 {got.status_code} —— 它读不到自己的失败原因"
+    body = got.json()
+    assert body["status"] == "failed"
+    assert "min_bars=200" in (body["error"] or ""), "失败原因必须读得回来"
+    assert body["metrics"] is None
+
+    log = client.get(f"/api/runs/{rid}/log")
+    assert log.status_code == 200, "重启后读不到失败运行的日志——而那正是唯一能查原因的东西"
+    assert "min_bars=200" in log.json()["text"]
+
+
+def test_a_run_with_no_outcome_file_is_not_reported_as_failed(client, monkeypatch):
+    """**没有 outcome.json 的运行，不许被说成 "failed"。**
+
+    进程在运行中被杀（服务崩了、机器重启）时，那次运行在磁盘上只剩
+    `job.json`；平台**并不知道**它最后怎么了。把它标成 `failed` 是在
+    编一个我们拿不到的事实——而"失败"会让用户去找一个并不存在的错误。
+
+    判据：状态是 `unknown`，原因留空。
+    """
+    from web import jobs as jobs_mod
+
+    rid = "killedmidway01"
+    from web.state import state_home
+    d = state_home() / "runs" / rid
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "job.json").write_text(
+        '{"engine": "short_reversal", "preset": "v50_slope", "start": "2025-01-01",'
+        ' "end": "2025-02-01", "mode": "full"}', encoding="utf-8")
+    jobs_mod._JOBS.clear()
+
+    body = client.get(f"/api/runs/{rid}").json()
+    assert body["status"] == "unknown", \
+        f"没有结局证据时不该断言失败，现在报的是 {body['status']!r}"
+    assert body["error"] is None
+
+
 def test_result_endpoints_survive_a_restart_by_reading_from_disk(client, monkeypatch):
     """**服务重启后，交易表与 K 线仍要能打开。**
 
@@ -709,3 +790,63 @@ def test_compare_reports_each_runs_mode_so_mixed_selections_can_be_flagged(clien
     modes = sorted(r["mode"] for r in got["rows"])
     assert modes == ["full", "preview"], \
         f"compare 必须给出每个运行的 mode（实得 {modes}）—— 否则模式不可比判不出来"
+
+
+def test_the_log_can_be_pulled_incrementally_without_losing_or_repeating_lines(client, monkeypatch):
+    """**日志的增量拉取必须严丝合缝** —— `?offset=N` 续拉出来的东西，
+    与从 0 拉的全量必须**逐字符相等**。
+
+    前端就是靠这个在回测期间持续显示的（回测 5–8 分钟，日志要能边跑边看）。
+    偏移算错的表现是**重复行或丢行** —— 而两者都不会报错，只会让人读到错的日志。
+    """
+    import json as _json
+
+    from web.state import state_home
+
+    rid = "logoffset01"
+    text = "\n".join(f"[jobs] 第 {i} 行输出" for i in range(20)) + "\n"
+    d = state_home() / "runs" / rid
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "run.log").write_text(text, encoding="utf-8")
+
+    full = client.get(f"/api/runs/{rid}/log").json()
+    assert full["text"] == text, "全量读取应当与文件一致"
+    assert full["done"] is True
+    assert full["offset"] == len(text), "offset 应当是已读到的字符数"
+
+    for cut in (0, 7, len(text) // 2, len(text) - 1, len(text)):
+        head = text[:cut]
+        part = client.get(f"/api/runs/{rid}/log?offset={cut}").json()
+        assert head + part["text"] == text, \
+            f"从 {cut} 处续拉后拼接与全量不一致（重复或丢行）"
+        # ⚠️ **`offset` 是字符数，不是字节数。** 这条断言就是那个契约：
+        # 它同时钉住"续拉回来的正好是没读过的那段"这件事。
+        # 原实现返回字节数（实测 offset=470 而 len(text)=310），
+        # 而服务端按**字节**切 —— 偏移落在字符中间时 `errors="replace"`
+        # 会**静默**把半个汉字变成 `�`，拼接就不再逐字符相等。
+        assert part["offset"] == len(text), \
+            f"offset 必须是**字符**数（{len(text)}），不是字节数"
+        assert part["offset"] - cut == len(part["text"]), \
+            "offset 的增量必须恰好等于本次返回的字符数——否则前端会漏拉或重拉"
+
+
+def test_a_client_whose_offset_is_past_the_end_gets_the_whole_log_again(
+    client, monkeypatch
+):
+    """偏移越过文件尾（日志被替换/截断）→ **从头重发**，不是回空串。
+
+    回空串的表现是界面**永久停在空白**、而且不报错 —— 客户端再也追不回来。
+    本平台只追加不截断，所以这条是防御性的；但"防御性"不等于"可以没测"，
+    因为它是**这条契约上唯一会让人查很久**的分支。
+    """
+    from web.state import state_home
+
+    rid = "logshort01"
+    d = state_home() / "runs" / rid
+    d.mkdir(parents=True, exist_ok=True)
+    text = "[jobs] 只剩这一行\n"
+    (d / "run.log").write_text(text, encoding="utf-8")
+
+    got = client.get(f"/api/runs/{rid}/log?offset=99999").json()
+    assert got["text"] == text, "越界应当从头重发整份日志，而不是回空串"
+    assert got["offset"] == len(text)

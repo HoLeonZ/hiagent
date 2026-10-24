@@ -336,6 +336,37 @@ def test_history_is_rerendered_once_the_metric_metadata_arrives():
         "loadCatalog 拿到 metric_meta 之后必须重渲染历史，否则并发下收益会是原始浮点"
 
 
+def test_the_poller_treats_every_terminal_status_as_terminal():
+    """**轮询必须在这里停下来。** 每漏一个终态，那个 `setInterval` 就永远不会清掉。
+
+    服务在运行中途重启过时，`/api/runs/{id}` 走磁盘回退还给 `unknown`
+    （内存里没有这次作业、磁盘上也没有结局文件）——它**不会再变**。
+    漏掉它，界面就永远停在旧状态上每秒打一次请求，**既不报错也不结束**：
+    用户看到的是一个永远转不完的回测。
+
+    判据取"终态集合要包含服务端磁盘回退会返回的每一个状态"：
+    服务端那侧是 `done` / `failed` / `cancelled` / `unknown`。
+    """
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    fn = js[js.index("function pollRun()"):]
+    fn = fn[:fn.index("async function cancelRun()")]
+    lines = fn.splitlines()
+    # 收集"由状态触发、且**随后真的** clearInterval"的那些分支的条件行。
+    # 不看紧邻一行是刻意的：分支体允许换行/加注释，判据应当是"这个分支会停轮询"，
+    # 而不是"这三个词出现在同一行"。
+    guards = [
+        line for i, line in enumerate(lines)
+        if "j.status" in line
+        and any("clearInterval(HP.poll)" in nxt for nxt in lines[i:i + 4])
+    ]
+    assert guards, "pollRun 里没有任何由**状态**终止轮询的分支"
+    joined = " ".join(guards)
+    for terminal in ("done", "failed", "cancelled", "unknown"):
+        assert f'"{terminal}"' in joined, \
+            f"终态 {terminal!r} 不在任何终止分支里 —— 它会让轮询永远不停：" \
+            f"{[g.strip() for g in guards]}"
+
+
 def test_the_compare_panel_flags_runs_that_are_not_comparable():
     """**窗口或模式不同的运行不可直接比较，而界面上必须说出来。**
 
@@ -357,3 +388,21 @@ def test_the_compare_panel_flags_runs_that_are_not_comparable():
 
     for m in re.finditer(r'class="warn">([^`]{0,200}?)<', js):
         assert "**" not in m.group(1), f"警告文案里有 markdown 星号：{m.group(1)}"
+
+
+def test_the_config_list_shows_the_preset_drift_badge():
+    """**预设漂移必须在界面上如实显示**（不静默、也不阻断）。
+
+    配置存的是"相对预设的一组改动"。**预设本身也会变** —— 那时"同一个配置"
+    跑出来的参数已经不同了，而用户以为在复现。设计文档明文要求界面显示这一点。
+
+    端到端实测过（2026-10-22）：存一个配置 → 把落盘指纹改掉 → 界面出现
+    `⚠ 预设已变动` 并带一条说明。这条把那个渲染钉住。
+    """
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "preset_drifted" in js, "前端必须处理 preset_drifted"
+    assert "预设已变动" in js, "漂移时必须在界面上显示出来"
+    # 不阻断：仍然可以载入/复制/删除 —— 漂移只是提示，不是错误
+    i = js.index("preset_drifted")
+    seg = js[i:i + 600]
+    assert "drift" in seg, "漂移应当是一个独立的视觉标记"

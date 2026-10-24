@@ -198,7 +198,12 @@ function pollRun() {
       await showResult(j);
       await loadHistory();                    // 新结果立刻出现在历史里
     }
-    if (j.status === "failed" || j.status === "cancelled") {
+    // ⚠️ `unknown` 也要**终止轮询**。它是磁盘回退给出的状态：服务在运行中途重启过，
+    // 内存里没有这次作业、磁盘上也没有结局文件（`outcome.json`），
+    // 平台并不知道它最后怎么了。不终止的话，这个 `setInterval` 会**永远**每秒打一次——
+    // 界面停在"running"上，永远等不到一个不会来的结果，而且不报错。
+    // 日志本身照常可读（失败/被杀的运行，说明原因的那几行就在 `run.log` 里）。
+    if (j.status === "failed" || j.status === "cancelled" || j.status === "unknown") {
       clearInterval(HP.poll); $("run").disabled = false; $("cancel").disabled = true;
       await loadHistory();                    // 被取消的运行也要出现在历史里（它是一次试验）
     }

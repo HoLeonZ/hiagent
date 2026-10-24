@@ -229,6 +229,10 @@ def _run_one(run_id: str) -> None:
         _append_log(job.run_id, "[jobs] 已取消（未落盘）")
     elif job.status == "failed":
         _append_log(job.run_id, f"[jobs] 失败：{job.error}")
+    # 结局落盘：失败的运行**没有 result.json**，重启后 `get_run` / `/log`
+    # 就没有任何依据认出它（实测 404）。落一份 outcome.json 让诊断活过重启。
+    if job.status != "running":
+        _persist_outcome(job)
 
     if should_persist:
         try:
@@ -345,6 +349,67 @@ def _append_log(run_id: str, line: str) -> None:
             fh.write(line + "\n")
     except OSError:
         pass          # 日志写不进去不该影响作业的状态判定
+
+
+def outcome_persisted(run_id: str) -> dict[str, Any] | None:
+    """磁盘上的**结局**（`runs/<id>/outcome.json`）：`status` / `error` / `finished_at`。
+
+    ⚠️ 为什么需要：`result.json` **只在成功时**落盘。
+    于是一次**失败**的运行在磁盘上只有 `job.json` + `run.log`，
+    —— 而 `/log` 与 `/api/runs/{id}` 原先要求"内存里有作业 **或** 有 result.json"，
+    所以**服务重启后它们对这个运行都返回 404**（实测）。
+    **那恰恰是最需要看日志的时候**：说明原因的日志就在磁盘上，API 却说 "unknown run"。
+    """
+    p = run_artifact(run_id, "outcome.json")
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _persist_outcome(job: "Job") -> None:
+    """把结局落盘。父进程写，此时子进程已结束（不会争文件）—— 与收尾日志同理。
+
+    **原子写**（临时文件 + `os.replace`）：掉电/被杀时留下半个 JSON，
+    读回来解析失败 → 运行会退回 `unknown` —— 明明成功/失败过，却像从没结束。
+    本仓库已经有"半行账本"的教训（见 `trials._pad_if_unterminated`），同一个坑不踩第二次。
+    """
+    import datetime as _dt
+
+    target = run_artifact(job.run_id, "outcome.json")
+    tmp = target.with_name(target.name + ".tmp")
+    try:
+        tmp.write_text(
+            json.dumps({"status": job.status, "error": job.error,
+                        "finished_at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")},
+                       ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(target)          # 同目录 rename：POSIX 上原子
+    except OSError as exc:
+        print(f"[jobs] WARNING: 结局落盘失败 {job.run_id}: {exc}", flush=True)
+
+
+#: 一次运行在磁盘上可能留下的**任何**痕迹。
+_RUN_ARTIFACTS = ("job.json", "result.json", "outcome.json", "run.log")
+
+
+def run_exists(run_id: str) -> bool:
+    """磁盘上是否有这次运行的**任何痕迹**。
+
+    ⚠️ 判据**不能**是"有没有 `result.json`"：它**只在成功时**落盘，
+    于是一次**失败**的运行（磁盘上只有 `job.json` + `run.log`）在重启后
+    被 `/api/runs/{id}` 与 `/log` 双双判为 "unknown run"（实测 2026-10-23，
+    run `f6fa740e0921`）—— **而那恰恰是最需要看日志的时候**：
+    说明原因的日志就在磁盘上，API 却说这次运行不存在。
+
+    也不能反过来只看 `run.log`（日志文件被清掉时运行就"消失"了）。
+    取**并集**：留下任何一样，这次运行就还在。
+    """
+    for name in _RUN_ARTIFACTS:
+        if run_artifact(run_id, name).exists():
+            return True
+    return False
 
 
 def _ensure_worker() -> None:
