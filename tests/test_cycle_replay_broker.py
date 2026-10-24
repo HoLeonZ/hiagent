@@ -121,3 +121,29 @@ def test_a_code_the_database_never_heard_of_still_fails_fast(tmp_path):
     b = _broker_with_gap(tmp_path)
     with pytest.raises(RuntimeError, match="no data at all"):
         b.submit_buy("999999.SH", 100, decision_date=date(2024, 6, 3))
+
+
+def test_a_window_containing_a_suspension_completes_end_to_end():
+    """**端到端：窗口里有一只票停牌，回测必须跑完。**
+
+    实测（2026-10-24）：`PRESET_V1` 跑 2025-06-01..2026-01-01 时，
+    因为 `000908.SZ` 在 2025-06-13 停牌而整场挂掉（`no data for ... on ...`）。
+    这条用**真库**跑一段含那天的短窗口 —— 停牌是市场常态，不该让回测崩掉。
+    """
+    import os
+    from pathlib import Path as _P
+
+    from hiagent_config import get_db_path
+
+    from web.runners import run
+
+    env = os.environ.get("DNA_STRAT_DB")
+    db = _P(env) if (env and _P(env).exists()) else get_db_path()
+    if not db.exists():
+        pytest.skip("需要本地 DuckDB")
+
+    # 两周边界（含 2025-06-13）—— 一整个月要跑 6 分钟，两周只要 ~3 分钟，
+    # 而成交仍然上百笔，买入路径被充分走到。
+    got = run("cycle_price_action", "PRESET_V1", "2025-06-09", "2025-06-23")
+    assert got.engine == "cycle_price_action"
+    assert got.metrics.get("trades_count") is not None
