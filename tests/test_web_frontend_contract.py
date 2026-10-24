@@ -357,6 +357,20 @@ def test_the_visible_text_carries_no_markdown_asterisks():
     )
 
 
+def test_the_result_page_shows_which_parameters_the_run_changed():
+    """**结果页要显示"这次改了什么"。** 聚宽的结果页会列参数。
+
+    只写"改 N 项"（历史列表里那样）看不出**改了什么、改前是什么**；
+    而 §5 把"改一改"算作一次新试验 —— 没有原值就判断不了改动的分量。
+
+    判据：前端从 `overrides` + `param_defaults` 渲染，原值取服务端下发的。
+    """
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "result-params" in js, "结果页没有参数块"
+    assert "param_defaults" in js, "没有用服务端下发的原值"
+    assert "overrides" in js, "没有用这次运行实际的覆盖值"
+
+
 def test_the_engine_scope_note_reaches_the_page():
     """**引擎口径说明要真的显示出来**（文案来自服务端）。
 

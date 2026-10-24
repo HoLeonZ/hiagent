@@ -351,6 +351,56 @@ def test_the_configs_endpoints_round_trip(client):
                                              "preset": "v50_slope", "overrides": {}}).status_code == 400
 
 
+def test_the_run_carries_the_parameters_it_actually_used(client, monkeypatch):
+    """**结果页要能看出"这次改了什么、改前是什么"。**
+
+    聚宽的结果页会列出参数。我们原先只在历史列表里写"改 N 项"——
+    看不到**改了什么**，更看不到**改前是什么**。而 §5 把"改一改"就算一次新试验：
+    没有原值，就判断不了这次改动的分量。
+
+    覆盖值只存在 `job.json` 里（`result.json` 不存），所以这条同时钉住
+    "内存路径"与"磁盘回退路径"**都要带上它** —— 只在一侧带上，重启后就又丢了。
+    """
+    from web import jobs as jobs_mod
+    from web.runners import RunResult
+
+    def fake_run(*a, **kw):
+        return RunResult("short_reversal", "v50_slope", "2025-01-01", "2025-06-01",
+                         {"trades_count": 0}, [])
+
+    _install_fake_run(monkeypatch, fake_run)
+    rid = client.post("/api/runs", json={
+        "engine": "short_reversal", "preset": "v50_slope",
+        "overrides": {"tp_pct": 0.30},
+        "start": "2025-01-01", "end": "2025-06-01", "mode": "full",
+    }).json()["run_id"]
+    job = jobs_mod.wait(rid, timeout=60)
+    # ⚠️ 假 runner 顶掉了 `_run_one`，生产里由它调用的 `_persist_result` 没被走到 ——
+    # 不补这一步，下面"重启后"的断言走的是**没有结果**那条分支，
+    # 于是"磁盘回退"其实没被测到（实测：这样写时把磁盘分支的 param_defaults 删掉，
+    # 测试照样全绿 —— 一条看起来在测、实际没测到的断言）。
+    jobs_mod._persist_result(job, {"start": job.start, "end": job.end,
+                                   "metrics": job.result.metrics,
+                                   "trades": job.result.trades})
+
+    body = client.get(f"/api/runs/{rid}").json()
+    assert body["overrides"] == {"tp_pct": 0.30}, f"覆盖值没带回来：{body.get('overrides')}"
+    from web.catalog import all_presets
+
+    default = all_presets()["short_reversal"]["v50_slope"]["tp_pct"]
+    assert body["param_defaults"]["tp_pct"] == default, (
+        f"原值应是预设的 {default}，实际 {body['param_defaults'].get('tp_pct')}"
+    )
+    assert body["param_defaults"]["tp_pct"] != body["overrides"]["tp_pct"], \
+        "原值与新值相同，这条测试就失去判别力"
+
+    # 磁盘回退路径也要带（重启后打开旧运行仍要看到改了什么）
+    jobs_mod._JOBS.clear()
+    disk = client.get(f"/api/runs/{rid}").json()
+    assert disk["overrides"] == {"tp_pct": 0.30}, f"重启后覆盖值丢了：{disk.get('overrides')}"
+    assert disk["param_defaults"]["tp_pct"] == default
+
+
 def test_a_failed_run_stays_readable_after_a_restart(client, monkeypatch):
     """**失败**的运行，重启后仍然要能查到状态、读到日志。
 

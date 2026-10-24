@@ -277,6 +277,24 @@ def _assert_no_route_bypasses_the_gate(app: FastAPI) -> None:
         )
 
 
+def _param_defaults(engine: str, preset: str, overrides: dict[str, Any]) -> dict[str, Any]:
+    """这次运行**改掉的那些键**，在预设里的原值。
+
+    为什么需要：结果页要显示"这次运行改了什么"（聚宽的结果页会列出参数），
+    只给新值的话，用户看到 `tp_pct = 0.3` 却不知道预设原本是 0.08 ——
+    而**同一个键改一改就是一次新的试验**（§5），原值是判断"改了多少"的依据。
+
+    只取**被改动的键**，不给整份预设：101 个预设 × 全部参数没有意义，
+    而结果页要的是"这次动过什么"。
+    """
+    if not overrides:
+        return {}
+    from web.catalog import all_presets
+
+    preset_values = all_presets().get(engine, {}).get(preset, {})
+    return {k: preset_values.get(k) for k in overrides}
+
+
 def create_app() -> FastAPI:
     # 测试缝不许出现在服务进程里（§0 fail-fast）：
     # 设了它每个作业都会跳过真实回测、返回空的 done 结果，而结果页上看不出区别。
@@ -369,6 +387,12 @@ def create_app() -> FastAPI:
                         "mode": (meta0 or {}).get("mode"),
                         "start": (meta0 or {}).get("start"), "end": (meta0 or {}).get("end"),
                         "trial_no": (meta0 or {}).get("trial_no"),
+                        # 覆盖值只在 `job.json` 里（`result.json` 不存它）——
+                        # 不带回来的话，重启后打开一次运行就看不出它当时改了什么。
+                        "overrides": (meta0 or {}).get("overrides") or {},
+                        "param_defaults": _param_defaults(
+                            (meta0 or {}).get("engine"), (meta0 or {}).get("preset"),
+                            (meta0 or {}).get("overrides") or {}),
                         "metrics": None, "queue_position": None, "from_disk": True}
             # ⚠️ **`mode` 与 `trial_no` 要从落盘的 `job.json` 取，不能写死 None。**
             # 写死的后果实测过：服务重启后打开一次 **preview** 运行，`job.mode` 是 null，
@@ -381,6 +405,10 @@ def create_app() -> FastAPI:
                     "mode": meta.get("mode"),
                     "start": hist.start, "end": hist.end,
                     "trial_no": meta.get("trial_no"),
+                    # 覆盖值只在 `job.json` 里（`result.json` 不存它）
+                    "overrides": meta.get("overrides") or {},
+                    "param_defaults": _param_defaults(hist.engine, hist.preset,
+                                                      meta.get("overrides") or {}),
                     "metrics": window_metrics(hist), "queue_position": None,
                     "from_disk": True}
         metrics = job.result.metrics if job.result else None
@@ -388,6 +416,9 @@ def create_app() -> FastAPI:
             "run_id": job.run_id, "engine": job.engine, "preset": job.preset,
             "status": job.status, "error": job.error, "mode": job.mode,
             "start": job.start, "end": job.end,
+            "overrides": dict(job.overrides or {}),
+            "param_defaults": _param_defaults(job.engine, job.preset,
+                                              dict(job.overrides or {})),
             "trial_no": job.trial_no,
             # 指标按**请求窗口**算（与 `/equity` 的曲线同源）—— 见 `window_metrics` 的说明。
               "metrics": window_metrics(job.result) if job.result else None,

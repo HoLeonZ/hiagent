@@ -243,6 +243,26 @@ async function pollLog() {
   return d.done;
 }
 
+// **这次运行改了什么** —— 聚宽的结果页会列出参数，我们原先只在历史列表里
+// 写"改 N 项"，看不到**改了什么、改前是什么**。
+// 而 §5 把"改一改"就当成一次新试验：没有原值就没法判断这次改动的分量。
+function renderRunParams(job) {
+  const el = $("result-params");
+  const ov = job.overrides || {};
+  const keys = Object.keys(ov);
+  if (!keys.length) {
+    el.textContent = "本次运行未改参数：按预设原件回测。";
+    return;
+  }
+  const defs = job.param_defaults || {};
+  el.textContent = "本次运行改了 " + keys.length + " 项参数："
+    + keys.map((k) => {
+        const from = defs[k];
+        const shown = (from === undefined || from === null) ? "—" : String(from);
+        return `${k}：${shown} → ${String(ov[k])}`;
+      }).join("；");
+}
+
 async function showResult(job) {
   $("result").hidden = false;
   // **这块结果属于哪次运行，必须写在它自己头上。**
@@ -252,6 +272,7 @@ async function showResult(job) {
   $("result-source").textContent =
     `${job.engine} / ${job.preset} · ${job.start} ~ ${job.end} · ${mode}`
     + (job.run_id ? ` · 运行 ${job.run_id}` : "");
+  renderRunParams(job);
   // 先清掉上一轮的横幅——否则每跑一次 preview 就多叠一条（审计 K）
   $("result").querySelectorAll(".warn").forEach((el) => el.remove());
   if (job.mode === "preview") {
