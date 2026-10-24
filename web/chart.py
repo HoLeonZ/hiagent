@@ -249,6 +249,24 @@ def chart_payload(engine: str, params: dict[str, Any], trade: dict[str, Any], db
 
     ind = _indicators_on_adj(engine, bars)
 
+    # ⚠️ **指标算在复权域（§4.6.1），图上的价却在成交域。必须把指标搬回来。**
+    #
+    # K 线用 `raw_*`，入场/出场/SL/TP 也是引擎的成交价（raw）；而 `_indicators_on_adj`
+    # 在复权域上算 MA/MACD。两条尺子的数画在同一条 y 轴上：
+    # 实测（2026-10-24，603033.SH 2024-07~2025-08）K 线在 10~14，`ma20` 在 75~87
+    # —— 差 **6.1 倍**。蜡烛被压成一条直线、均线悬在顶上，而 y 轴自动缩放，
+    # **图看上去仍然像一张正常的图**。那次运行的 25 笔里 **22 笔**中招。
+    #
+    # 两个域只差当日的复权因子 `k = adj_close / raw_close`，而 MA / MACD（含短反的
+    # `(dif-dea)*2`）都是价格的**线性**组合 ⇒ 除以 `k` 就精确回到 raw 域，
+    # 不需要重算指标（重算会变成"在原始价上算指标"，那是 §4.6.1 明令禁止的）。
+    if ind is not None and {"adj_close", "raw_close"} <= set(ind.columns):
+        k = ind["adj_close"] / ind["raw_close"]
+        k = k.where((k > 0) & k.notna())
+        for c in ("ma5", "ma10", "ma20", "ma60", "macd_dif", "macd_dea", "macd_bar"):
+            if c in ind.columns:
+                ind[c] = ind[c] / k
+
     base_cols = ["raw_open", "raw_high", "raw_low", "raw_close",
                  "adj_open", "adj_high", "adj_low", "adj_close", "volume"]
     # 指标列**只在该引擎真的算它们时**才出现（cycle 一个都没有）。

@@ -123,7 +123,7 @@ def test_indicators_come_from_the_ADJUSTED_domain_not_raw():
 
 
 @pytest.mark.skipif(_db() is None, reason=SKIP_REASON)
-def test_the_PAYLOAD_itself_carries_adjusted_domain_indicators():
+def test_the_PAYLOAD_itself_carries_indicators_on_the_candle_axis():
     """**§4.6.1 真正的守门测试：断言落在 `chart_payload` 的输出版上。**
 
     上面那条只比较 `_indicators_on_adj(bars)` 与本地 raw 域结果，
@@ -131,9 +131,17 @@ def test_the_PAYLOAD_itself_carries_adjusted_domain_indicators():
     `_indicators_on_adj`（例如有人重构时直接在原始价上算），那条**仍然全绿**——
     **它守的是辅助函数，不是用户真正看到的那份数据**。
 
-    本条自足地判定。payload 自带 `raw_close` 与 `adj_close`，
-    所以可以**只用 payload 自己的 bar 序列**在两域上各算一次 ma60，
-    再断言 payload 里的 `ma60` 等于**复权**那一组、且**明显不等于**原始那一组。
+    本条自足地判定，而且判**两件事**：
+
+      ① **算在复权域**：把 payload 的值按当日因子 `k = adj_close/raw_close` 搬回复权域，
+         必须与"直接在复权价上算"逐位相等。若改成在原始价上算，搬回去就是
+         `MA_raw × k`，对不上。
+      ② **画在同一条轴上**：K 线用 `raw_*`、入场/出场/SL/TP 也都是成交价（raw），
+         而指标原先**原样**输出复权值。实测（2026-10-24，603033.SH）：
+         K 线在 10~14、`ma20` 在 75~87（6.1 倍）—— 蜡烛被压成一条直线、
+         均线悬在顶上，而 y 轴自动缩放，**图看上去仍然像一张正常的图**。
+         那次运行的 25 笔里 **22 笔**中招。
+
     不需要跑回测（用合成交易即可），所以它是秒级的——
     上面那条要跑一整年全 universe，40 分钟。
     """
@@ -165,8 +173,21 @@ def test_the_PAYLOAD_itself_carries_adjusted_domain_indicators():
         "这条测试会失去判别力"
     )
 
-    assert np.allclose(got[usable], ma_adj[usable], rtol=1e-9), \
-        "payload 里的 ma60 **不是**复权域算出来的（§4.6.1）"
+    # ① 仍然是**复权域算出来的**
+    k = df["adj_close"] / df["raw_close"]
+    assert np.allclose((got * k)[usable], ma_adj[usable], rtol=1e-9), (
+        "payload 里的 ma60 搬回复权域后与复权域均线不符 —— 它不是在该引擎的复权域上算的"
+        "（§4.6.1），或者搬回成交域时用错了因子"
+    )
+
+    # ② 必须与 K 线**同一条 y 轴**：均线不可能离收盘价 50% 还看不见
+    off = ((got[usable] - df["raw_close"][usable]).abs() / df["raw_close"][usable])
+    assert off.max() < 0.5, (
+        f"ma60 与收盘价最大偏离 {off.max():.2f} 倍 —— 蜡烛会被压成一条直线，"
+        "均线悬在图外（原先 603033.SH 上是 6.1 倍）"
+    )
+
+    # 判别力：两个价域确实不同，否则"搬不搬"都一样，②测不出东西
     rel = ((ma_raw[usable] - ma_adj[usable]).abs() / ma_adj[usable].abs()).max()
     assert rel > 0.01, (
         f"两个价域算出的 ma60 差异只有 {rel:.4f} —— 本库 raw 与 adj 偏差过半，"
