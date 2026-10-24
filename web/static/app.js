@@ -235,6 +235,13 @@ async function pollLog() {
 
 async function showResult(job) {
   $("result").hidden = false;
+  // **这块结果属于哪次运行，必须写在它自己头上。**
+  // 能打开历史运行之后，"屏幕上这批数字是哪一次的"就不再是显然的：
+  // 用户可能刚跑完 A，又点开了历史里的 B。没有这一行，两张图长得一模一样。
+  const mode = job.mode === "preview" ? "preview 模式" : "full 模式";
+  $("result-source").textContent =
+    `${job.engine} / ${job.preset} · ${job.start} ~ ${job.end} · ${mode}`
+    + (job.run_id ? ` · 运行 ${job.run_id}` : "");
   // 先清掉上一轮的横幅——否则每跑一次 preview 就多叠一条（审计 K）
   $("result").querySelectorAll(".warn").forEach((el) => el.remove());
   if (job.mode === "preview") {
@@ -332,6 +339,19 @@ async function loadDailyTables() {
     $("daily-returns").querySelector("thead").innerHTML = "<tr><th>日期</th><th>当日收益</th></tr>";
     $("daily-returns").querySelector("tbody").innerHTML = rows.map((r) =>
       `<tr><td>${r.date}</td><td>${(r.value * 100).toFixed(3)}%</td></tr>`).join("");
+  }
+  // 年度收益：同样复用已取到的 `HP.equity`，不再查库。
+  // ⚠️ 后端给的 `period` 是自然年，但**"某年"在这里不等于"整年"**：
+  // 首尾年份被回测窗口切过。所以区间（from→to）必须**照实显示**，
+  // 不能只写年份 —— 一个只覆盖 3 天的"2025 年收益 12%"读起来像一整年。
+  if (HP.equity && HP.equity.periods) {
+    const per = HP.equity.periods;
+    $("yearly-caveat").textContent = per.caveat || "";
+    $("yearly").querySelector("thead").innerHTML =
+      "<tr><th>年度</th><th>区间</th><th>收益</th></tr>";
+    $("yearly").querySelector("tbody").innerHTML = per.rows.map((r) =>
+      `<tr><td>${r.period}</td><td>${r.from === r.to ? r.from : r.from + " → " + r.to}</td>`
+      + `<td>${fmtValue(r.return, "pct")}</td></tr>`).join("");
   }
   // 每日持仓
   const pr = await fetch(`/api/runs/${HP.runId}/positions`);
@@ -643,6 +663,28 @@ function renderHistory() {
       ` ${h.preset} · ${h.mode} · ${h.start}~${h.end}${ret}`
       + (eff ? ` · 改 ${eff} 项` : " · 原件")
       + (h.has_result ? "" : "（无结果）")));
+    // 「打开结果」：**历史里的每一次回测都要能重新打开。**
+    // 原先只有"刚跑完的那一次"能看结果 —— 于是迭代闭环断在最后一格：
+    // 改了参数之后想回头对比上一次，只能重跑（5–8 分钟），而结果一直躺在磁盘上。
+    // 聚宽的「我的回测」里点任意一条都能看到完整结果页，这里对齐。
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    if (h.has_result) {
+      openBtn.textContent = "打开结果";
+      openBtn.title = "从磁盘读回这次运行的结果（不重跑回测）";
+      openBtn.addEventListener("click", (e) => {
+        e.preventDefault(); e.stopPropagation(); openRun(h.run_id);
+      });
+    } else {
+      // 没有结果的运行（失败/被取消/被杀的）**唯一**能查的就是日志，
+      // 而那正是最需要它的时候：原因就写在那里。
+      openBtn.textContent = "看日志";
+      openBtn.title = "这次运行没有结果文件；打开它的日志看原因";
+      openBtn.addEventListener("click", (e) => {
+        e.preventDefault(); e.stopPropagation(); openRun(h.run_id);
+      });
+    }
+    row.appendChild(openBtn);
     // 「载入」补上迭代闭环：把那次运行的改动载回表单，改完再跑。
     // 没有它，"拿昨天的配置调一下"这条开发期最常见的动作就断了——
     // 历史只能看、不能续。
@@ -664,6 +706,38 @@ function renderHistory() {
     box.appendChild(row);
   }
   updateCompareButton();
+}
+
+async function openRun(runId) {
+  // ⚠️ **先停掉正在进行的轮询。** 否则它每秒把"刚跑的那一次"的状态写进同一条
+  // 状态栏，而你正在看的是另一次 —— 页面上两个地方各说各话。
+  clearInterval(HP.poll);
+  const r = await fetch(`/api/runs/${runId}`);
+  if (!r.ok) {
+    $("run-status").textContent = `打开失败：${(await r.json()).detail}`;
+    return;
+  }
+  const j = await r.json();
+  HP.runId = runId;
+  HP.logOffset = 0;              // 日志从头拉：上一轮的偏移属于另一份文件
+  HP.startedAt = null;
+  $("run").disabled = false;
+  $("cancel").disabled = true;   // 历史运行不能取消
+  $("run-status").textContent =
+    `正在查看运行 #${runId}（${j.status}）` + (j.error ? ` — ${j.error}` : "");
+  $("log").textContent = "";
+  await pollLog();               // 历史运行的日志也在磁盘上，失败的那次尤其要看
+
+  if (j.metrics) {
+    await showResult(j);
+    return;
+  }
+  // **没有结果 → 必须把上一次的结果藏起来。**
+  // 留着的话，屏幕上是"另一条运行的图"，而状态栏写的是这一条 ——
+  // 页面自己跟自己矛盾，而且看起来完全正常。
+  $("result").hidden = true;
+  HP.equity = null;
+  HP.trades = [];
 }
 
 function loadRunIntoForm(h) {

@@ -629,6 +629,21 @@ def test_the_metrics_table_and_the_curve_agree(client, monkeypatch):
     assert abs(m["max_dd"] - max(d["value"] for d in e["drawdown"])) < 1e-9, \
         "指标表的最大回撤必须与曲线回撤序列的最大值一致"
 
+    # 年度收益：**必须与曲线同源（窗口切片后）**，且复利回去要等于累计收益。
+    import math
+    per = e["periods"]["rows"]
+    assert per, "结果页的年度收益表是空的"
+    assert per[0]["period"] == "2025", (
+        f"年度收益用了**没切窗口**的曲线（首段是 {per[0]['period']}）—— "
+        "假曲线故意伸到 2024-12-20，切过的首段只能是 2025"
+    )
+    assert per[0]["from"] >= "2025-01-01", "首段的起点必须是窗口起点，不是曲线起点"
+    comp = math.prod(1 + r["return"] for r in per if r["return"] is not None)
+    assert abs(comp - (1 + e["strategy_return"])) < 1e-9, (
+        f"年度收益复利回去是 {comp - 1}，而累计收益是 {e['strategy_return']} —— "
+        "**可加性**是两个都要显示的相邻数字之间唯一的一致性"
+    )
+
 
 def _fake_run_with_window_leak():
     """一次带"窗口外成交"的假运行 —— 用来验证各处的窗口口径一致。"""

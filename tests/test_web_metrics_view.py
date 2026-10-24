@@ -8,6 +8,7 @@ from web.metrics_view import (
     METRIC_KINDS,
     METRIC_LABELS,
     canonical_metrics,
+    period_returns,
 )
 
 # 形状实测自 Task 2 评审：三个引擎的真实 metrics
@@ -295,3 +296,77 @@ def test_a_run_with_a_curve_does_not_get_the_engine_scoped_marker():
     m = window_metrics(_R())
     assert "engine_scoped" not in m
     assert abs(m["total_return"] - 0.1) < 1e-12
+
+
+# --- 年度/月度收益分解 --------------------------------------------------------
+
+
+def _curve(pairs):
+    return [{"date": d, "equity": v} for d, v in pairs]
+
+
+def test_period_returns_compounds_back_to_the_total():
+    """**可加性**：把每段收益复利回去，必须等于累计收益。
+
+    这是这张表唯一的一致性判据。不成立的表比没有表更坏：用户会拿
+    "分段加起来只有 40%、总收益却说 300%" 去怀疑整个回测。
+    """
+    import math
+
+    c = _curve([("2024-12-30", 100.0), ("2025-01-02", 101.0), ("2025-12-31", 150.0),
+                ("2026-01-02", 160.0), ("2026-06-30", 180.0)])
+    rows = period_returns(c)
+    assert [r["period"] for r in rows] == ["2024", "2025", "2026"]
+    comp = math.prod(1 + r["return"] for r in rows if r["return"] is not None)
+    assert abs(comp - 180.0 / 100.0) < 1e-12, "分段收益复利回去必须等于累计收益"
+    # 中间年份的基期是**上一段的末值**，不是窗口起点
+    assert abs(rows[2]["return"] - (180.0 / 150.0 - 1)) < 1e-12
+
+
+def test_a_period_with_no_measurable_return_is_none_not_zero():
+    """窗口起点落在某年最后一个交易日 → 首段只有一行、它就是自己的基期。
+
+    此时收益是**测不出**（`None`），不是 0。写成 0 会被读成"那年不涨不跌"，
+    而真相是"那年只覆盖了一天，什么都没有发生也什么都没法测"。
+    首段的收益里还**包含**窗口第一天的涨跌（基期是窗口起点），所以更不能写 0。
+    """
+    rows = period_returns(_curve([("2025-12-31", 1.0), ("2026-01-05", 1.1)]))
+    assert rows[0] == {"period": "2025", "from": "2025-12-31", "to": "2025-12-31",
+                       "return": None}
+    assert abs(rows[1]["return"] - 0.1) < 1e-12, "第二段的基期是上一段末值，收益可测"
+
+
+def test_a_period_that_really_did_not_move_is_zero_not_none():
+    """反向守门：**真的有多个交易日而净值没变**时，是 0.0，不是 None。
+
+    没有这条，"一律返回 None" 也能让上一条变绿——而那样整张表都是破折号。
+    """
+    rows = period_returns(_curve([("2025-01-02", 1.0), ("2025-06-30", 1.0),
+                                  ("2025-12-31", 1.0)]))
+    assert rows[0]["return"] == 0.0
+
+
+def test_period_returns_keeps_the_date_range_of_each_period():
+    """每段都带**实际覆盖的区间**。年份标签本身不等于整年：首尾被窗口切过。"""
+    rows = period_returns(_curve([("2025-03-04", 1.0), ("2025-12-31", 1.2),
+                                  ("2026-01-02", 1.3)]))
+    assert (rows[0]["from"], rows[0]["to"]) == ("2025-03-04", "2025-12-31")
+    assert (rows[1]["from"], rows[1]["to"]) == ("2026-01-02", "2026-01-02")
+
+
+def test_period_returns_can_split_by_month():
+    rows = period_returns(_curve([("2025-01-02", 1.0), ("2025-01-31", 1.1),
+                                  ("2025-02-28", 1.21)]), unit="month")
+    assert [r["period"] for r in rows] == ["2025-01", "2025-02"]
+    assert abs(rows[0]["return"] - 0.1) < 1e-12
+    assert abs(rows[1]["return"] - 0.1) < 1e-12
+
+
+def test_period_returns_refuses_an_unknown_unit():
+    with pytest.raises(ValueError, match="period unit"):
+        period_returns(_curve([("2025-01-02", 1.0), ("2025-12-31", 1.1)]), unit="quarter")
+
+
+def test_period_returns_needs_at_least_two_points():
+    assert period_returns([]) == []
+    assert period_returns(_curve([("2025-01-02", 1.0)])) == []

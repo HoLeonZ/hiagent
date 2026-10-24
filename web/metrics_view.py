@@ -191,6 +191,67 @@ def window_trades(trades: list[dict], start: str, end: str) -> list[dict]:
     return [t for t in trades if start <= str(t.get("entry_date", ""))[:10] <= end]
 
 
+def period_returns(curve: list[dict], unit: str = "year") -> list[dict[str, Any]]:
+    """把**已按窗口切好**的净值曲线拆成年（或月）收益。
+
+    为什么要它：聚宽的结果页有「年度收益」，它回答的是一个**决策问题**——
+    *"这个策略的收益是不是全靠某一年？"* 一条 2 年 300% 的曲线，
+    如果 90% 落在同一个季度，那不是策略，那是那一段行情。
+    平台原先只给**累计**收益，于是这个判断只能靠肉眼在图上找拐点。
+
+    为什么在这里算：输入是**已经切片**的同一份 `window_slice` 结果 ——
+    指标表、权益曲线、每日收益、年度收益全部同源。**没有第二份实现。**
+
+    ⚠️ **可加性（必须成立，测试钉住）**：
+    `∏(1 + r_i) == 策略累计收益`（逐位到浮点误差内）。这不是巧合，
+    是构造出来的：每段的基期 = **上一段的末值**，首段基期 = 窗口第一个点。
+    一个"年度收益加起来不等于总收益"的表，比没有这张表更坏。
+
+    ⚠️ 首段**可能没有可测量的收益**：窗口起点落在某年最后一个交易日时，
+    那一段只有一行、且它就是自己的基期。此时 `return` 是 `None`（"测不出"），
+    **不是 0**（§0：缺失与零必须可区分）——0 会被读成"那年不涨不跌"。
+
+    首尾年份天然是**部分区间**（被窗口切过），调用方必须如实说明，不要标成整年。
+    """
+    if unit not in {"year", "month"}:
+        raise ValueError(f"unknown period unit: {unit!r}")
+    cut = 4 if unit == "year" else 7
+    if len(curve) < 2:
+        return []
+
+    out: list[dict[str, Any]] = []
+    key: str | None = None
+    seg_from = seg_to = ""
+    seg_last = 0.0
+    base = float(curve[0]["equity"])      # 首段基期 = 窗口起点（没有更早的点）
+    n_rows = 0
+
+    def flush() -> None:
+        # 首段的基期就是它自己的第一行，所以只有一行时无可测量（None，不是 0）
+        if key is None:
+            return
+        measurable = (n_rows >= 2) if not out else True
+        out.append({
+            "period": key,
+            "from": seg_from,
+            "to": seg_to,
+            "return": _finite_or_none(seg_last / base - 1.0)
+                      if measurable and base > 0 else None,
+        })
+
+    for r in curve:
+        k = str(r["date"])[:cut]
+        if k != key:
+            flush()
+            if key is not None:
+                base = seg_last           # 下一段基期 = **本段末值**（可加性靠这一句）
+            key, seg_from, n_rows = k, str(r["date"])[:10], 0
+        seg_to, seg_last = str(r["date"])[:10], float(r["equity"])
+        n_rows += 1
+    flush()
+    return out
+
+
 def _days_between(a: str, b: str) -> int:
     import datetime as dt
 

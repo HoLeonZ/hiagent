@@ -67,6 +67,7 @@
 
   <section id="result" hidden>
     <h2>结果</h2>
+    <div id="result-source" class="hint"></div>
     <div id="equity-summary"></div>
     <div id="equity-caveat" class="hint"></div>
     <div id="equity-chart" style="width:100%;height:360px"></div>
@@ -74,6 +75,11 @@
     <details id="daily-returns-wrap">
       <summary>每日收益<span class="hint">（共 <b id="dr-count"></b> 个交易日）</span></summary>
       <table id="daily-returns"><thead></thead><tbody></tbody></table>
+    </details>
+    <details id="yearly-wrap">
+      <summary>年度收益<span class="hint">（收益是不是全靠某一年，看这里）</span></summary>
+      <div class="hint" id="yearly-caveat"></div>
+      <table id="yearly"><thead></thead><tbody></tbody></table>
     </details>
     <details id="positions-wrap">
       <summary>每日持仓<span class="hint">（从成交列表推导；「空仓」是空列表，不是缺数据）</span></summary>

@@ -27,6 +27,7 @@ from web.metrics_view import (
     window_metrics,
     window_trades,
     window_slice,
+    period_returns,
 )
 from web.params import OverrideError, split_params, validate_overrides
 from web.runners import RunResult
@@ -579,6 +580,16 @@ def create_app() -> FastAPI:
             "benchmark_label": BENCHMARK_LABEL,     # 界面必须如实显示它不是指数
             "drawdown": dd,
             "daily_returns": daily,
+            # 年度收益：**同一份窗口切片**的曲线（`rows` 就是上面 `strat` 的来源），
+            # 所以它天然可加 —— 复利回去必须等于 `strategy_return`。
+            # 聚宽的结果页有这张表，它回答"收益是不是全靠某一年"这个决策问题。
+            "periods": {
+                "unit": "year",
+                "rows": period_returns(rows, "year"),
+                # 首尾年份被窗口切过，**必须如实说**，不能让它们看起来是整年。
+                "caveat": "按自然年切分。「区间」是该年**在窗口内**实际覆盖的交易日："
+                "中间年份是整年，首尾年份由回测窗口切出（可能只有几天）。",
+            },
             "strategy_return": s_ret,
             "benchmark_return": b_ret,              # 无基准数据时是 None，**不是 0**
             "excess_return": (s_ret - b_ret) if b_ret is not None else None,
