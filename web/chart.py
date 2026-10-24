@@ -81,8 +81,29 @@ def sl_tp_prices(entry_price: float, sl_pct: float, tp_pct: float, direction: st
     return entry_price * (1.0 - sl_pct), entry_price * (1.0 + tp_pct)
 
 
+#: 各引擎**自己的**止盈/止损价位函数（§6 单一来源）——（模块, 函数）。
+#:
+#: 为什么不让平台自己算 ATR 价位：那套公式（含 `atr_pct` 的夹紧上下限）是**引擎的**，
+#: 抄一份进来就是第二份实现，必然漂移 —— 而漂移的表现是"图上那条线差几个百分点"，
+#: 没人看得出来。`chase_up` 那份函数的 docstring 自己写着"与 portfolio.py:simulate_portfolio
+#: 完全一致"。所以这里与 `INDICATORS_BY_ENGINE` 同一个模式：**调用引擎那份**。
+#:
+#: 这份表存在的理由：`chase_up` 的 22/22 个预设都带 `atr_*_mult`，出场价是
+#: `entry × (1 ± atr_pct × mult)` —— 平台原先直接**放弃画**（返回 None），
+#: 于是用户在结果页上看不到任何止损/止盈，而引擎其实每一笔都算过。
+#: 现在用引擎自己的函数算出来，既不是编的，也不会有第二份公式。
+#:
+#: ⚠️ 这两份函数都是**按多头**写的（返回 `(tp, sl)`）；调用方负责换成
+#: 平台约定的 `(sl, tp)` 顺序，并只对多头引擎启用。
+EXIT_LEVELS_BY_ENGINE: dict[str, tuple[str, str]] = {
+    "chase_up": ("chase_up.backtrader_engine", "compute_trade_tp_sl"),
+    "uptrend_pullback": ("uptrend_pullback.backtrader_engine", "compute_trade_tp_sl"),
+}
+
+
 def exit_levels(params: dict[str, Any], entry_price: float, direction: str,
-                atr_pct: float | None = None) -> tuple[float, float] | None:
+                atr_pct: float | None = None, engine: str | None = None,
+                ) -> tuple[float, float] | None:
     """该笔的 `(sl_price, tp_price)`；**只有当引擎确实按这两个百分比出场时才给**，否则 `None`。
 
     ⚠️ **不能一律按 `entry × (1 ± sl_pct)` 画**（原实现就是这样，是错的）：
@@ -107,6 +128,27 @@ def exit_levels(params: dict[str, Any], entry_price: float, direction: str,
     缺失被折成**真的 0**，于是止损线与止盈线**同时落在入场价上**——
     图上看起来"设置了止损"，而它其实是 `0`（三个 ensemble 预设正属此列）。
     """
+    # 先看这个引擎有没有**自己的**价位函数。有就走它 —— 那是唯一的真值来源。
+    spec = EXIT_LEVELS_BY_ENGINE.get(engine) if engine else None
+    if spec is not None:
+        if direction != "long":
+            # 那两份函数是按多头写的；接短线引擎之前必须先改它们，而不是在这里取反。
+            raise ValueError(f"{engine} 的 SL/TP 函数是按多头写的，"
+                             f"不接受 direction={direction!r}")
+        tp_pct, sl_pct = params.get("tp_pct"), params.get("sl_pct")
+        if tp_pct is None or sl_pct is None:
+            return None          # 缺失 ≠ 0：不画，而不是画在入场价上
+        import importlib
+
+        fn = getattr(importlib.import_module(spec[0]), spec[1])
+        tp, sl = fn(entry_price,
+                    fixed_tp_pct=float(tp_pct), fixed_sl_pct=float(sl_pct),
+                    atr_pct=atr_pct,
+                    atr_tp_mult=params.get("atr_tp_mult"),
+                    atr_sl_mult=params.get("atr_sl_mult"))
+        # 引擎返回 (tp, sl)；平台的约定是 (sl, tp)。
+        return float(sl), float(tp)
+
     atr_sl, atr_tp = params.get("atr_sl_mult"), params.get("atr_tp_mult")
     # **逐字镜像引擎的分支条件**（含最后那项 `atr_pct`），不是"见到 atr_* 就不画"：
     # `atr_pct` 是**逐笔的运行时值**，所以预设带全 `atr_*_mult` 时，
@@ -286,7 +328,7 @@ def chart_payload(engine: str, params: dict[str, Any], trade: dict[str, Any], db
     entry_price = float(trade["entry_price"])
     # `None` 表示**这一笔没有可画的 SL/TP 线**：引擎按 ATR 出场，或预设压根没给这两个参数。
     # 前端必须把 `None` 渲染成"不画线 + 一句说明"，而不是画一条编出来的价位（见 `exit_levels`）。
-    levels = exit_levels(params, entry_price, direction, trade.get("atr_pct"))
+    levels = exit_levels(params, entry_price, direction, trade.get("atr_pct"), engine)
     sl_price, tp_price = levels if levels is not None else (None, None)
     return {
         "bars": out_bars,

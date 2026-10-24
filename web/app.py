@@ -116,7 +116,8 @@ def _with_exit_levels(i: int, trade: dict, engine: str, params: dict[str, Any]) 
     entry = trade.get("entry_price")
     if entry is None:
         return {"i": i, **trade, "sl_price": None, "tp_price": None}
-    levels = exit_levels(params, float(entry), ENGINE_DIRECTION[engine], trade.get("atr_pct"))
+    levels = exit_levels(params, float(entry), ENGINE_DIRECTION[engine],
+                         trade.get("atr_pct"), engine)
     sl, tp = levels if levels is not None else (None, None)
     return {"i": i, **trade, "sl_price": sl, "tp_price": tp}
 
