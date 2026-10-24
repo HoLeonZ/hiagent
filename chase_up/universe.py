@@ -44,13 +44,27 @@ def _all_thscodes(db_path: Path, asof_date: str | None = None) -> list[str]:
             ).fetchall()
         else:
             # §3 PIT Mandate: 排除 (a) asof_date 之后才上市的票
-            # (无 date <= asof_date 数据) AND (b) asof_date 之前已退市的票
-            # (MAX(date) < asof_date)
+            # （首现日 MIN(date) > asof）AND (b) asof_date 之前已退市的票
+            # （末根 bar 早于 asof 当日或之前的最后一个交易日）。
+            #
+            # ⚠️ **基准必须是"asof 当日或之前的最后一个交易日"，不是 asof 字面值。**
+            # 原实现把 `date <= asof` 写进了 WHERE，于是 `HAVING MAX(date) >= asof`
+            # 只能在"该票**恰好**在 asof 当天有 bar"时成立 —— 而 asof 落在周末/
+            # 节假日时对每只票都不成立 → **空集** → 回测**静默**产出 0 笔交易。
+            # 实测（2026-10-24）：asof=2025-01-01（元旦）→ **0 只**；
+            # asof=2024-01-01（元旦）→ **0 只**；asof=2025-06-01（周日）→ **0 只**；
+            # asof=2023-06-01（周四，交易日）→ 3086 只。
+            # 于是"平台默认窗口 2025-01-01 起"在 chase_up 上**永远 0 笔**，
+            # 而界面看上去只是"这个策略没信号"。
+            #
+            # ⚠️ **MAX(date) 必须跨全部日期取**，不能只看 `date <= asof` 的那些行 ——
+            # 否则"最后一根 bar 在 asof 之前"就等于"已退市"，把**停牌**的票也误杀。
+            # 停牌不是退市（§1：停牌产生缺失 bar，不是合成 bar）。
             rows = con.execute(
                 "SELECT thscode FROM v_daily "
-                "WHERE date <= ? "
                 "GROUP BY thscode "
-                "HAVING MAX(date) >= ? "
+                "HAVING MIN(date) <= ? "
+                "AND MAX(date) >= (SELECT MAX(date) FROM v_daily WHERE date <= ?) "
                 "ORDER BY thscode",
                 [asof_date, asof_date],
             ).fetchall()
