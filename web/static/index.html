@@ -48,8 +48,8 @@
       <button type="button" data-days="365">近1年</button>
       <button type="button" data-days="1095">近3年</button>
     </div>
-    <span class="hint">窗口不能太短：面板是「窗口 + 240 天」，跨度不足 `min_bars` 时引擎会拒绝
-      （这是保护，不是 bug——否则"0 笔"会与"行情静"混淆）。窗口不能短于约 200 天：面板是「窗口 + 240 天」，而引擎要求每只票至少 200 根 bar。</span>
+    <span class="hint">窗口不能太短：引擎按「窗口 + 240 天」的面板取数，要求每只票至少 200 根 bar，
+      不够时会明确拒绝（这是保护，不是 bug——否则"0 笔成交"会与"这段行情没机会"混淆）。</span>
     <label>模式
       <select id="mode">
         <option value="full">full（全 universe，真值）</option>

@@ -385,6 +385,23 @@ def test_the_result_page_shows_which_parameters_the_run_changed():
     assert "overrides" in js, "没有用这次运行实际的覆盖值"
 
 
+def test_the_default_window_is_computed_from_today():
+    """**默认回测窗口必须从今天算**，不能写死日期。
+
+    原先页面底部直接写 `$("start").value = "2025-01-01"` / `"2026-10-16"` ——
+    那是写代码那一天。几个月后打开首页，默认窗口还停在过去，
+    而数据早就往前走了 —— 用户会把"窗口终点"当成"最新数据"。
+
+    判据：不允许给 start/end 赋字面量日期；且默认值走 `applyWindow`。
+    """
+    import re
+
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    hard = re.findall(r'\$\("(?:start|end)"\)\.value\s*=\s*"', js)
+    assert not hard, f"默认窗口写死了字面量日期：{hard}"
+    assert "applyWindow(" in js, "没有统一的窗口计算函数"
+
+
 def test_the_engine_scope_note_reaches_the_page():
     """**引擎口径说明要真的显示出来**（文案来自服务端）。
 

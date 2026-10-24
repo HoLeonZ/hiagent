@@ -852,18 +852,24 @@ $("compare").addEventListener("click", () => compareSelected().catch(() => {}));
 $("save-config").addEventListener("click", () => saveCurrentConfig().catch(() => {}));
 $("prev-trade").addEventListener("click", () => setTrade(HP.tradeIdx - 1));
 $("next-trade").addEventListener("click", () => setTrade(HP.tradeIdx + 1));
+// 窗口 = 从**今天**往回数 N 天。**唯一**一处算窗口的地方：
+// 快捷按钮与默认值都走它，各写一遍必然漂移。
+function applyWindow(days) {
+  const end = new Date();
+  const start = new Date(end.getTime() - days * 86400000);
+  $("end").value = end.toISOString().slice(0, 10);
+  $("start").value = start.toISOString().slice(0, 10);
+}
 for (const b of document.querySelectorAll(".quick button")) {
-  b.addEventListener("click", () => {
-    const end = new Date();
-    const start = new Date(end.getTime() - Number(b.dataset.days) * 86400000);
-    $("end").value = end.toISOString().slice(0, 10);
-    $("start").value = start.toISOString().slice(0, 10);
-  });
+  b.addEventListener("click", () => applyWindow(Number(b.dataset.days)));
 }
 $("run").addEventListener("click", () => startRun().catch(() => {}));
 $("cancel").addEventListener("click", () => cancelRun().catch(() => {}));
-$("start").value = "2025-01-01";
-$("end").value = "2026-10-16";
+// ⚠️ **默认窗口从今天算，不能写死日期。**
+// 原先写的是 `"2025-01-01" .. "2026-10-16"` —— 那是写代码那一天。
+// 页面会随时间漂：过几个月打开首页，默认窗口的终点停在过去，
+// 而数据早就往前走了（用户会以为"最新数据就是那天"）。
+applyWindow(365);
 loadCatalog();
 loadHistory();
 loadConfigs();
