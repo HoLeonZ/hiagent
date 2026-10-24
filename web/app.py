@@ -516,9 +516,14 @@ def create_app() -> FastAPI:
             # 于是那一类不可比**静默通过**。
             # 与 `get_run` 同一套取法：内存优先、磁盘兜底。
             meta = jobs_mod.meta_persisted(rid) or {}
+            # ⚠️ **覆盖值也要走"内存优先、磁盘兜底"。** 覆盖值只存在 `job.json` 里，
+            # 服务重启后 `job` 是 None —— 原实现那时给 `{}`，于是对比面板上
+            # **两次运行看起来参数完全一样**，而其中一次其实改过东西。
+            ov = dict(job.overrides) if job else dict(meta.get("overrides") or {})
             rows.append({
                 "run_id": rid, "engine": result.engine, "preset": result.preset,
-                "overrides": (job.overrides if job else {}),
+                "overrides": ov,
+                "param_defaults": _param_defaults(result.engine, result.preset, ov),
                 "start": result.start, "end": result.end,
                 "mode": (job.mode if job else None) or meta.get("mode"),
                 "metrics": window_metrics(result),

@@ -825,12 +825,26 @@ async function compareSelected() {
   const comparable = new Set(d.rows.map(sig)).size === 1;
   const warn = comparable ? ""
     : `<p class="warn">所选运行的窗口或模式不同，这些数字不可直接比较。</p>`;
+  // **参数改动**也要并排显示：对比面板的用处是"看出哪个更好"，
+  // 而"两个数字为什么不同"的第一答案就是"参数不一样"。
+  // 原先只显示指标，两次运行看上去参数完全一样 —— 其中一次可能改过东西
+  // （尤其重启之后：覆盖值只在 job.json 里，内存里取不到）。
+  const paramRow = `<tr><td>参数改动</td>${d.rows.map((x) => {
+    const ov = x.overrides || {};
+    const keys = Object.keys(ov);
+    return `<td>${keys.length
+      ? keys.map((k) => `${k}=${ov[k]}`).join("，")
+      : "原件"}</td>`;
+  }).join("")}</tr>`;
+  // 引擎口径的格子（引擎面板口径而非窗口口径）要打 †，与结果页同一套标记。
+  const mark = (x, k) => ((x.metrics && x.metrics.engine_scoped || []).includes(k)) ? "†" : "";
   out.innerHTML = warn
     + `<table><thead><tr><th>指标</th>${d.rows.map((x) =>
       `<th>${x.preset}<br><span class="hint">${x.run_id} · ${x.mode ?? ""}`
       + `<br>${x.start}~${x.end}</span></th>`).join("")}</tr></thead>`
-    + `<tbody>${d.keys.map((k) => `<tr><td>${(meta[k] || {}).label || k}</td>${d.rows.map((x) =>
-      `<td>${fmtValue(x.metrics[k], (meta[k] || {}).kind)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+    + `<tbody>${paramRow}`
+    + `${d.keys.map((k) => `<tr><td>${(meta[k] || {}).label || k}</td>${d.rows.map((x) =>
+      `<td>${fmtValue(x.metrics[k], (meta[k] || {}).kind)}${mark(x, k)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
 }
 
 $("filter").addEventListener("input", (e) => renderCatalog(e.target.value));

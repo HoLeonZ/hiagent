@@ -351,6 +351,47 @@ def test_the_configs_endpoints_round_trip(client):
                                              "preset": "v50_slope", "overrides": {}}).status_code == 400
 
 
+def test_the_compare_panel_sees_the_parameters_of_disk_only_runs(client, monkeypatch):
+    """**对比面板上，两次运行的参数不能因为重启就变成"一模一样"。**
+
+    覆盖值只存在 `job.json` 里；服务重启后内存里没有作业，
+    `/api/compare` 原先给的是 `{}` —— 于是对比表里两次运行**看上去参数完全相同**，
+    而其中一次其实改过东西。用户会因此把"参数不同导致的差异"读成"随机差异"。
+
+    判据：重启后（内存清空）对比接口仍要带出每次运行的覆盖值。
+    """
+    import json
+
+    from web import jobs as jobs_mod
+    from web.runners import RunResult
+
+    def fake_run(*a, **kw):
+        return RunResult("short_reversal", "v50_slope", "2025-01-01", "2025-06-01",
+                         {"trades_count": 0}, [])
+
+    _install_fake_run(monkeypatch, fake_run)
+    rids = []
+    for tp in (0.30, 0.45):
+        rid = client.post("/api/runs", json={
+            "engine": "short_reversal", "preset": "v50_slope",
+            "overrides": {"tp_pct": tp},
+            "start": "2025-01-01", "end": "2025-06-01", "mode": "full",
+        }).json()["run_id"]
+        job = jobs_mod.wait(rid, timeout=60)
+        jobs_mod._persist_result(job, {"start": job.start, "end": job.end,
+                                       "metrics": job.result.metrics,
+                                       "trades": job.result.trades})
+        rids.append(rid)
+
+    # 模拟重启：内存清空，只剩磁盘
+    jobs_mod._JOBS.clear()
+
+    body = client.get(f"/api/compare?ids={','.join(rids)}").json()
+    got = sorted(json.dumps(r["overrides"], sort_keys=True) for r in body["rows"])
+    assert got == ['{"tp_pct": 0.3}', '{"tp_pct": 0.45}'], \
+        f"重启后对比接口丢了覆盖值：{got}"
+
+
 def test_the_run_carries_the_parameters_it_actually_used(client, monkeypatch):
     """**结果页要能看出"这次改了什么、改前是什么"。**
 

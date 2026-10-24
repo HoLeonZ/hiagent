@@ -357,6 +357,20 @@ def test_the_visible_text_carries_no_markdown_asterisks():
     )
 
 
+def test_the_compare_panel_shows_the_parameters_each_run_changed():
+    """**对比面板要并排显示每次运行改了哪些参数。**
+
+    这张表的用处是"看出哪个更好"，而"两个数字为什么不同"的第一答案就是
+    "参数不一样"。只显示指标，两次运行看上去参数完全一样。
+
+    判据：前端从每次运行的 `overrides` 渲染一行"参数改动"，
+    并对引擎口径的格子打 †（与结果页同一套标记）。
+    """
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "参数改动" in js, "对比表里没有参数改动这一行"
+    assert "engine_scoped" in js, "对比表没有对引擎口径的格子打标记"
+
+
 def test_the_result_page_shows_which_parameters_the_run_changed():
     """**结果页要显示"这次改了什么"。** 聚宽的结果页会列参数。
 
