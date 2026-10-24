@@ -8,6 +8,7 @@ async function loadCatalog() {
   // 指标表的中文标签与类型：**只从服务端取**，前端不另写一份（见 showResult 的说明）
   HP.metricMeta = body.metric_meta;
   HP.tradeMeta = body.trade_meta;      // 交易明细的中文列名与平仓原因中文值
+  HP.engineNotes = body.engine_notes || {};   // 每个引擎的口径说明（如逐票独立账户）
   // ⚠️ 元数据到位后**重渲染一次历史**。
   // `loadHistory()` 与 `loadCatalog()` 是**并发**发起的（页面末尾连写三行，都不 await），
   // 历史可能先渲染 —— 那时 `HP.metricMeta` 还没到，`fmtValue` 拿不到 `kind`，
@@ -28,6 +29,7 @@ const HP = { catalog: [], selected: null, runId: null, poll: null, trades: [],
              startedAt: null, logOffset: 0, equity: null, configs: [],
              metricMeta: {},     // 规范指标的 {label, kind}，来自 /api/catalog
              tradeMeta: {},      // 交易明细的中文列名/平仓原因，同样来自 /api/catalog
+             engineNotes: {},    // 每个引擎的口径说明，同样来自 /api/catalog
              edits: new Map(),   // "engine/preset" -> {未提交的键: 值}
              history: [] };      // 运行历史（见审计 P1-E）
 
@@ -282,7 +284,12 @@ async function showResult(job) {
     return `<div class="m${cell === "—" ? " absent" : ""}">${m.label}${mark}<br><b>${cell}</b></div>`;
   }).join("");
   // 文案取服务端的（口径说明写错比不写更坏，且前端不自备第二份）。
-  $("metrics-caveat").textContent = scoped.size ? (metrics.engine_scope_note || "") : "";
+  // ① 引擎自己的口径说明（如 cycle 是**逐票独立账户**、不产生组合曲线）——
+  //    没有它，用户会把它的"胜率/总盈亏"与另外三个引擎的组合口径放在一起比。
+  // ② 那几格引擎口径数的说明（带 † 的那几格）。
+  const engineNote = (HP.engineNotes || {})[job.engine] || "";
+  const scopeNote = scoped.size ? (metrics.engine_scope_note || "") : "";
+  $("metrics-caveat").textContent = [engineNote, scopeNote].filter(Boolean).join(" ");
   await loadTrades();
   await loadEquity();
   await loadDailyTables();

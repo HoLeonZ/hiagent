@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from web import jobs as jobs_mod
-from web.catalog import ENGINES, all_presets
+from web.catalog import ENGINE_NOTES, ENGINES, all_presets
 from web.chart import ENGINE_DIRECTION, chart_payload, exit_levels
 from web.metrics_view import (
     CANONICAL_KEYS,
@@ -307,7 +307,9 @@ def create_app() -> FastAPI:
             # 放在 catalog 里是因为它随预设一起、页面加载时取一次即可；
             # 前端**不再自己写一份**标签表——两份必然会漂移，而且漂移的表现是
             # "某一格格式不对"，不会有人注意到。
-            "metric_meta": {
+            # 引擎口径说明：随 catalog 一起下发，界面按运行的引擎取用
+        "engine_notes": dict(ENGINE_NOTES),
+        "metric_meta": {
                 k: {"label": METRIC_LABELS[k], "kind": METRIC_KINDS[k]}
                 for k in CANONICAL_KEYS
             },

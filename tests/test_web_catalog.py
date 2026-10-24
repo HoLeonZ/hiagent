@@ -117,3 +117,23 @@ def test_declaration_keys_cover_the_audited_contract_set():
         "合规审计开始守这些键，但 DECLARATION_KEYS 未同步（真实被守集合漂移了）: "
         f"{sorted(uncovered)}"
     )
+
+
+def test_the_engine_notes_say_what_they_measure_and_carry_no_markdown():
+    """**引擎口径说明**：讲清"这些数是什么口径"，且不许带 markdown 星号。
+
+    `cycle_price_action` 是**逐票独立账户**回测（每票一个账户），不产生组合净值曲线；
+    它的胜率/总盈亏是各票账户的汇总，与另外三个引擎的**组合口径**不可比。
+    不说明，用户会把两者并排着看。
+
+    判别力：`cycle_price_action` **必须**有说明，而另外三个引擎没有组合口径问题
+    （它们都产出净值曲线），不该被无差别地加上一句。
+    """
+    from web.catalog import ENGINE_NOTES
+
+    assert "cycle_price_action" in ENGINE_NOTES, "逐票独立账户的引擎必须说明口径"
+    note = ENGINE_NOTES["cycle_price_action"]
+    assert "独立账户" in note and "净值曲线" in note, f"说明没说到点子上：{note!r}"
+    assert "**" not in note, "这段会被 textContent 原样显示，星号会露出来"
+    for eng in ("short_reversal", "chase_up", "uptrend_pullback"):
+        assert eng not in ENGINE_NOTES, f"{eng} 产出组合曲线，不需要逐票账户的说明"

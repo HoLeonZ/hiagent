@@ -90,6 +90,21 @@ def test_catalog_ships_the_metric_render_metadata(client):
     assert all(m["kind"] in {"pct", "money", "ratio", "count", "days"} for m in meta.values())
 
 
+def test_the_catalog_ships_the_engine_scope_notes(client):
+    """引擎口径说明随 catalog 下发 —— 界面据此提示"这些数不可比"。
+
+    文案由**服务端**给：前端自备一份必然漂移，而这段话说的是口径，
+    写错比不写更坏（§0）。
+    """
+    got = client.get("/api/catalog").json()
+    notes = got.get("engine_notes")
+    assert isinstance(notes, dict) and notes, "catalog 必须下发 engine_notes"
+    assert "cycle_price_action" in notes
+    assert "**" not in notes["cycle_price_action"], "会被 textContent 原样显示"
+    for eng in ("short_reversal", "chase_up", "uptrend_pullback"):
+        assert eng not in notes, f"{eng} 不需要逐票账户的说明"
+
+
 def test_each_preset_exposes_tunable_and_readonly_declarations(client):
     got = client.get("/api/catalog").json()
     rv = next(p for p in got["presets"] if p["preset"] == "v50_slope")

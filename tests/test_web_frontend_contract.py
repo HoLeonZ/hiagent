@@ -357,6 +357,19 @@ def test_the_visible_text_carries_no_markdown_asterisks():
     )
 
 
+def test_the_engine_scope_note_reaches_the_page():
+    """**引擎口径说明要真的显示出来**（文案来自服务端）。
+
+    `cycle_price_action` 是逐票独立账户回测，它的胜率/总盈亏与另外三个引擎的
+    组合口径不可比。说明在服务端（`web/catalog.ENGINE_NOTES`），
+    界面按运行的引擎取用 —— 前端不自备一份。
+    """
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "engine_notes" in js, "前端没有取 catalog 下发的 engine_notes"
+    assert "engineNotes" in js, "没有把它存下来供结果页使用"
+    assert "metrics-caveat" in js, "没有地方显示它"
+
+
 def test_the_metric_table_marks_the_cells_that_are_not_window_scoped():
     """**引擎面板口径的那几格必须打标记。**
 
