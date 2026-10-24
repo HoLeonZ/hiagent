@@ -90,3 +90,47 @@ def test_daily_equity_change_tracks_price_move_not_notional() -> None:
         f"{notional:,.0f} 的 {worst_abs/notional:.0%} —— 物理上不可能 "
         f"(价格日变动仅 1%)。equity 曲线把建仓名义金额计入了。"
     )
+
+
+def test_mark_to_market_uses_the_execution_price_domain() -> None:
+    """**用 raw 成交，就必须用 raw 估值**（CLAUDE.md §3 双价制）。
+
+    2026-10-24 实测：上面两条修好了"双重计数"，但估值仍用**前复权** close，
+    而 uptrend 的 3 个预设全部声明 `price_source_for_execution="raw_close"`
+    （建仓价、股数、止损止盈都在 raw 域）。于是 equity 曲线依然有一条
+    物理上不可能的尾巴：单日变动最大 **+154%**，6 天超过 ±10%
+    （A 股主板涨跌停 ±10%）。
+
+    判别力：adj 恒为 5.0、raw 从 10.0 走到 11.0。
+      · raw 估值：equity = 10,000 + (11−10)×size = 11,000
+      · adj 估值：equity = 10,000 + (5−10)×size = 5,000
+    """
+    days = pd.date_range("2025-09-01", periods=6, freq="B")
+    panel = pd.DataFrame([
+        {"date": d, "thscode": "EQ.SZ", "open": 5.0, "high": 5.05, "low": 4.95,
+         "close": 5.0, "volume": 1e6, "amount": 1e7, "atr_pct": 0.05,
+         "raw_open": r, "raw_high": r * 1.01, "raw_low": r * 0.99, "raw_close": r,
+         "raw_prev_close": r}
+        for d, r in zip(days, [10.0, 10.0, 11.0, 11.0, 11.0, 11.0])
+    ])
+    entries = pd.DataFrame([
+        {"date": days[0], "thscode": "EQ.SZ", "score": 1.0, "atr_pct": 0.05},
+    ])
+    trades, equity = simulate_portfolio(
+        entries, panel,
+        tp_pct=10.0, sl_pct=10.0, max_hold=99, max_positions=1,
+        start_date=str(days[0].date()), end_date=str(days[-1].date()),
+        initial_capital=10_000.0, position_sizing="all_in",
+        commission_rate=0.0, stamp_duty_rate=0.0, min_commission=0.0,
+        price_source_for_execution="raw_close",
+    )
+    assert len(trades) == 1, f"fixture 应产生 1 笔, 实际 {len(trades)}"
+    assert trades.iloc[0]["entry_price"] == 10.0, "建仓价应当是 raw_open"
+    size = int(trades.iloc[0]["size"])
+
+    got = float(equity.iloc[2]["equity"])
+    expect = 10_000.0 + size * (11.0 - 10.0)
+    assert abs(got - expect) < 1e-6, (
+        f"持仓按 raw 从 10.0 涨到 11.0，equity 应为 {expect:,.2f}，实际 {got:,.2f}。"
+        f"若≈{10_000.0 + size * (5.0 - 10.0):,.2f}，说明估值用了前复权价。"
+    )

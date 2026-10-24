@@ -202,6 +202,27 @@ def _row_at(pi: dict, day: np.datetime64) -> int | None:
     return j
 
 
+def _exec_close(pi: dict, j: int, price_source_for_execution: str) -> float:
+    """该 bar 的**成交域**收盘价 —— 持仓估值与末日强平都必须用它。
+
+    CLAUDE.md §3：指标用复权价、**组合估值与撮合用原始价**。panel 的 `close`
+    是前复权（`v_daily_qfq`），而 uptrend 的 3 个预设**全部**声明
+    `price_source_for_execution="raw_close"`。用 qfq 收盘去算一个 raw 域建仓的
+    仓位的浮盈，等于拿两把尺子量同一根木头。
+
+    实测（2026-10-24，未修时）：单日净值变动最大 **+154%**，6 天超过 ±10%，
+    而 A 股主板涨跌停是 ±10%。曲线喂给 sharpe / max_dd / exposure，
+    于是 §5 的 DSR 输入不可信。
+
+    raw_close 缺失（LEFT JOIN miss）时回退 adj close —— 与 SL/TP 那条一致。
+    """
+    if price_source_for_execution == "raw_close" and "raw_close" in pi:
+        r = float(pi["raw_close"][j])
+        if not np.isnan(r) and r > 0:
+            return r
+    return float(pi["close"][j])
+
+
 def simulate_portfolio(
     entries: pd.DataFrame,
     panel: pd.DataFrame,
@@ -423,9 +444,14 @@ def simulate_portfolio(
                 holdings_val_for_gate = 0.0
                 for code, pos in positions.items():
                     j = _row_at(pidx[code], day)
-                    px = pidx[code]["close"][j] if j is not None else pos["entry_price"]
+                    px = (_exec_close(pidx[code], j, price_source_for_execution)
+                          if j is not None else pos["entry_price"])
                     holdings_val_for_gate += pos["size"] * px
-                nav_now = pf.total_cash + holdings_val_for_gate
+                # ⚠️ **NAV = free + settling + 持仓市值**，不是 `total_cash + 持仓市值`：
+                # total_cash 里含着 locked_margin，而它就是这些持仓已付掉的成本，
+                # 再加一遍市值 = 建仓那天凭空多一个名义金额。这个闸因此永远不可能触发
+                # —— 一个看起来在把关、实际抓不到的闸（与 chase_up 同一处缺陷）。
+                nav_now = pf.free_cash + pf.settling_funds + holdings_val_for_gate
                 if nav_now < initial_capital * nav_gate_ratio:
                     if day not in _nav_gate_logged_dates:
                         logger.warning(
@@ -564,7 +590,8 @@ def simulate_portfolio(
                 pos = positions[code]
                 pi = pidx[code]
                 j = _row_at(pi, day)
-                px = float(pi["close"][j]) if j is not None else pos["entry_price"]
+                px = (_exec_close(pi, j, price_source_for_execution)
+                      if j is not None else pos["entry_price"])
                 pos["bars"] = t - pos["entry_t"]
                 _close_position(code, pos, px, day, "eod")
                 del positions[code]
@@ -574,7 +601,8 @@ def simulate_portfolio(
         unrealized = 0.0
         for code, pos in positions.items():
             j = _row_at(pidx[code], day)
-            px = pidx[code]["close"][j] if j is not None else pos["entry_price"]
+            px = (_exec_close(pidx[code], j, price_source_for_execution)
+                  if j is not None else pos["entry_price"])
             holdings_val += pos["size"] * px
             # total_cash 是「已实现盈亏账本」, 建仓时并不扣减现金 (只有平仓时把
             # net_pnl 计入)。因此持仓期内 NAV 只能加**未实现盈亏**; 若加持仓市值

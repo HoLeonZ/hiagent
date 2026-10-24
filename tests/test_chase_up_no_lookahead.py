@@ -651,6 +651,11 @@ def test_v5_trades_csv_matches_golden_baseline():
             baseline["preset"], baseline["window"][0], baseline["window"][1],
             DB_PATH, panel_ind=panel_ind,
         )
+        # ⚠️ **`results/` 是 gitignore 的本地产物目录，全新克隆里不存在。**
+        # 原实现直接 `to_csv` → `OSError: Cannot save file into a non-existent
+        # directory`，于是这 8 条 golden 在干净环境下**报错**而不是给出判据
+        # （CLAUDE.md §6：缺产物应当 skip/给出有意义的结果，不是 error）。
+        trades_csv.parent.mkdir(parents=True, exist_ok=True)
         res["trades"].to_csv(trades_csv, index=False)
 
     df = pd.read_csv(trades_csv)
@@ -693,6 +698,11 @@ def test_v8_trades_csv_matches_golden_baseline():
             baseline["preset"], baseline["window"][0], baseline["window"][1],
             DB_PATH, panel_ind=panel_ind,
         )
+        # ⚠️ **`results/` 是 gitignore 的本地产物目录，全新克隆里不存在。**
+        # 原实现直接 `to_csv` → `OSError: Cannot save file into a non-existent
+        # directory`，于是这 8 条 golden 在干净环境下**报错**而不是给出判据
+        # （CLAUDE.md §6：缺产物应当 skip/给出有意义的结果，不是 error）。
+        trades_csv.parent.mkdir(parents=True, exist_ok=True)
         res["trades"].to_csv(trades_csv, index=False)
 
     df = pd.read_csv(trades_csv)
@@ -733,6 +743,11 @@ def test_v9_trades_csv_matches_golden_baseline():
             baseline["preset"], baseline["window"][0], baseline["window"][1],
             DB_PATH, panel_ind=panel_ind,
         )
+        # ⚠️ **`results/` 是 gitignore 的本地产物目录，全新克隆里不存在。**
+        # 原实现直接 `to_csv` → `OSError: Cannot save file into a non-existent
+        # directory`，于是这 8 条 golden 在干净环境下**报错**而不是给出判据
+        # （CLAUDE.md §6：缺产物应当 skip/给出有意义的结果，不是 error）。
+        trades_csv.parent.mkdir(parents=True, exist_ok=True)
         res["trades"].to_csv(trades_csv, index=False)
 
     df = pd.read_csv(trades_csv)
@@ -774,6 +789,11 @@ def test_v10_trades_csv_matches_golden_baseline():
             baseline["preset"], baseline["window"][0], baseline["window"][1],
             DB_PATH, panel_ind=panel_ind,
         )
+        # ⚠️ **`results/` 是 gitignore 的本地产物目录，全新克隆里不存在。**
+        # 原实现直接 `to_csv` → `OSError: Cannot save file into a non-existent
+        # directory`，于是这 8 条 golden 在干净环境下**报错**而不是给出判据
+        # （CLAUDE.md §6：缺产物应当 skip/给出有意义的结果，不是 error）。
+        trades_csv.parent.mkdir(parents=True, exist_ok=True)
         res["trades"].to_csv(trades_csv, index=False)
 
     df = pd.read_csv(trades_csv)
@@ -815,6 +835,11 @@ def test_v11_trades_csv_matches_golden_baseline():
             baseline["preset"], baseline["window"][0], baseline["window"][1],
             DB_PATH, panel_ind=panel_ind,
         )
+        # ⚠️ **`results/` 是 gitignore 的本地产物目录，全新克隆里不存在。**
+        # 原实现直接 `to_csv` → `OSError: Cannot save file into a non-existent
+        # directory`，于是这 8 条 golden 在干净环境下**报错**而不是给出判据
+        # （CLAUDE.md §6：缺产物应当 skip/给出有意义的结果，不是 error）。
+        trades_csv.parent.mkdir(parents=True, exist_ok=True)
         res["trades"].to_csv(trades_csv, index=False)
 
     df = pd.read_csv(trades_csv)
@@ -856,6 +881,11 @@ def test_v12_trades_csv_matches_golden_baseline():
             baseline["preset"], baseline["window"][0], baseline["window"][1],
             DB_PATH, panel_ind=panel_ind,
         )
+        # ⚠️ **`results/` 是 gitignore 的本地产物目录，全新克隆里不存在。**
+        # 原实现直接 `to_csv` → `OSError: Cannot save file into a non-existent
+        # directory`，于是这 8 条 golden 在干净环境下**报错**而不是给出判据
+        # （CLAUDE.md §6：缺产物应当 skip/给出有意义的结果，不是 error）。
+        trades_csv.parent.mkdir(parents=True, exist_ok=True)
         res["trades"].to_csv(trades_csv, index=False)
 
     df = pd.read_csv(trades_csv)
@@ -897,6 +927,11 @@ def test_v13_trades_csv_matches_golden_baseline():
             baseline["preset"], baseline["window"][0], baseline["window"][1],
             DB_PATH, panel_ind=panel_ind,
         )
+        # ⚠️ **`results/` 是 gitignore 的本地产物目录，全新克隆里不存在。**
+        # 原实现直接 `to_csv` → `OSError: Cannot save file into a non-existent
+        # directory`，于是这 8 条 golden 在干净环境下**报错**而不是给出判据
+        # （CLAUDE.md §6：缺产物应当 skip/给出有意义的结果，不是 error）。
+        trades_csv.parent.mkdir(parents=True, exist_ok=True)
         res["trades"].to_csv(trades_csv, index=False)
 
     df = pd.read_csv(trades_csv)
@@ -938,6 +973,11 @@ def test_v14_trades_csv_matches_golden_baseline():
             baseline["preset"], baseline["window"][0], baseline["window"][1],
             DB_PATH, panel_ind=panel_ind,
         )
+        # ⚠️ **`results/` 是 gitignore 的本地产物目录，全新克隆里不存在。**
+        # 原实现直接 `to_csv` → `OSError: Cannot save file into a non-existent
+        # directory`，于是这 8 条 golden 在干净环境下**报错**而不是给出判据
+        # （CLAUDE.md §6：缺产物应当 skip/给出有意义的结果，不是 error）。
+        trades_csv.parent.mkdir(parents=True, exist_ok=True)
         res["trades"].to_csv(trades_csv, index=False)
 
     df = pd.read_csv(trades_csv)

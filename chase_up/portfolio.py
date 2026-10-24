@@ -233,6 +233,27 @@ def _row_at(pi: dict, day: np.datetime64) -> int | None:
     return j
 
 
+def _exec_close(pi: dict, j: int, price_source_for_execution: str) -> float:
+    """该 bar 的**成交域**收盘价 —— 持仓估值与末日强平都必须用它。
+
+    CLAUDE.md §3：指标用复权价、**组合估值（mark-to-market）与撮合用原始价**。
+    panel 的 `close` 是**前复权**（`v_daily_qfq`），而 chase_up 的 22 个预设
+    **全部**声明 `price_source_for_execution="raw_close"` —— 用 qfq 收盘去估一个
+    raw 域建仓的仓位，等于拿两把尺子量同一根木头。
+
+    实测（2026-10-24，603277.SH 2023-06-02）：raw_open=23.40 建仓 42,700 股，
+    qfq 收盘 12.60 → 持仓被估成 538,172（raw 域约 928,000），
+    叠加"锁定成本已含现金里、又加一遍市值"（同日净值凭空 +53.8%）。
+
+    raw_close 缺失（LEFT JOIN miss）时回退 adj close —— 与 SL/TP 那条回退一致。
+    """
+    if price_source_for_execution == "raw_close" and "raw_close" in pi:
+        r = float(pi["raw_close"][j])
+        if not np.isnan(r) and r > 0:
+            return r
+    return float(pi["close"][j])
+
+
 def simulate_portfolio(
     entries: pd.DataFrame,
     panel: pd.DataFrame,
@@ -455,12 +476,20 @@ def simulate_portfolio(
                 holdings_val = 0.0
                 for code, pos in positions.items():
                     j = _row_at(pidx[code], day)
-                    px = pidx[code]["close"][j] if j is not None else pos["entry_price"]
+                    px = (_exec_close(pidx[code], j, price_source_for_execution)
+                          if j is not None else pos["entry_price"])
                     holdings_val += pos["size"] * px
-                # Round 16 (CLAUDE.md §2): NAV includes total_cash (settling_funds
-                # are still broker-side assets, just not yet T+0 available for new
-                # entries). Pessimistic Default keeps NAV = total equity, not Free.
-                nav_now = pf.total_cash + holdings_val
+                # ⚠️ **NAV = free + settling + 持仓市值 —— 不是 total_cash + 持仓市值。**
+                # `total_cash` 含 `locked_margin`，而 locked_margin 就是这些持仓
+                # **已经付掉的成本**（`reserve_for_entry` 把 free 挪进 locked）。
+                # 再加一遍市值 = 建仓那天凭空多出一个名义金额。
+                # 实测（2026-10-24, 2023-06-02）：净值 1,000,000 → 1,538,173（+53.8%），
+                # 而当天该股 raw 只从 21.99 走到 21.74。
+                #
+                # 这个闸因此**永远不可能触发**：它看到的 NAV 总被抬高一个持仓市值，
+                # 跌到 5% 以下几乎不可能发生 —— 一个看起来在把关、实际抓不到的闸。
+                # Round 16 的原意（settling 也算资产）保留。
+                nav_now = pf.free_cash + pf.settling_funds + holdings_val
                 if nav_now < initial_capital * nav_gate_ratio:
                     if day not in _nav_gate_logged_dates:
                         logger.warning(
@@ -602,7 +631,8 @@ def simulate_portfolio(
                 pos = positions[code]
                 pi = pidx[code]
                 j = _row_at(pi, day)
-                px = float(pi["close"][j]) if j is not None else pos["entry_price"]
+                px = (_exec_close(pi, j, price_source_for_execution)
+                      if j is not None else pos["entry_price"])
                 pos["bars"] = t - pos["entry_t"]
                 _close_position(code, pos, px, day, "eod")
                 del positions[code]
@@ -611,16 +641,24 @@ def simulate_portfolio(
         holdings_val = 0.0
         for code, pos in positions.items():
             j = _row_at(pidx[code], day)
-            px = pidx[code]["close"][j] if j is not None else pos["entry_price"]
+            px = (_exec_close(pidx[code], j, price_source_for_execution)
+                  if j is not None else pos["entry_price"])
             holdings_val += pos["size"] * px
-        # Round 16 (CLAUDE.md §2): equity row records total_cash (free + locked
-        # + settling) as the back-compat `cash` column. Downstream readers
-        # interpret this as "broker-side total cash on hand".
+        # ⚠️ **equity = free + settling + 持仓市值。** 原式是
+        # `total_cash + holdings_val`，而 `total_cash` 里含着 `locked_margin`
+        # （= 这些持仓的建仓成本）—— 成本被算两遍，建仓那根 bar 的净值凭空
+        # 跳增一个名义金额，平仓时再跳回去。实测（2026-10-24）：
+        #   2023-06-02  +53.8%   2023-06-05 -39.7%   2023-06-08 +96.9% …
+        # 628 个交易日里 **128 天**单日涨跌超过 ±20%，而 A 股主板涨跌停是 ±10%。
+        # 这条曲线喂给 sharpe / max_dd / calmar / 年化波动率，于是 §5 依赖的
+        # DSR 输入全不可信 —— `uptrend_pullback` 早修过同一个坑（见其注释）。
+        #
+        # `cash` 列保持原来的语义（券商侧 total_cash），只改 `equity`。
         equity_rows.append({
             "date": pd.Timestamp(day),
             "cash": pf.total_cash,
             "holdings": holdings_val,
-            "equity": pf.total_cash + holdings_val,
+            "equity": pf.free_cash + pf.settling_funds + holdings_val,
         })
 
     trades_df = (
