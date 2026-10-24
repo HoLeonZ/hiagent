@@ -587,15 +587,15 @@ def create_app() -> FastAPI:
                 "unit": "year",
                 "rows": period_returns(rows, "year"),
                 # 首尾年份被窗口切过，**必须如实说**，不能让它们看起来是整年。
-                "caveat": "按自然年切分。「区间」是该年**在窗口内**实际覆盖的交易日："
+                "caveat": "按自然年切分。「区间」是该年实际覆盖的交易日："
                 "中间年份是整年，首尾年份由回测窗口切出（可能只有几天）。",
             },
             "strategy_return": s_ret,
             "benchmark_return": b_ret,              # 无基准数据时是 None，**不是 0**
             "excess_return": (s_ret - b_ret) if b_ret is not None else None,
             "excess_caveat": (
-                "超额 = 策略 − 基准。基准是等权**多头**篮子而该策略是**空头**，"
-                "故此值含方向性偏差、在熊市被抬高，**不得当作 alpha**。"
+                "超额 = 策略 − 基准。基准是等权多头篮子而该策略是空头，"
+                "故此值含方向性偏差、在熊市被抬高，不得当作 alpha。"
             ),
         }
 

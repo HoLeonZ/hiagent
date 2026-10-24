@@ -336,6 +336,27 @@ def test_history_is_rerendered_once_the_metric_metadata_arrives():
         "loadCatalog 拿到 metric_meta 之后必须重渲染历史，否则并发下收益会是原始浮点"
 
 
+def test_the_visible_text_carries_no_markdown_asterisks():
+    """**页面上的文案里不许有 `**`。** `textContent`/HTML 都不解析 markdown。
+
+    这条规则在仓库里已经写过，然后被违反**三次**（历史标题、超额收益口径说明、
+    年度收益的说明都是 `**在窗口内**` 这种写法原样显示成星号）——
+    因为"浏览器里长得不对"只有**看**才知道，静态契约测试当时查的是别的东西。
+
+    判据：`index.html` 的文本节点（**剔除 HTML 注释**，注释里写给维护者的
+    markdown 星号无妨）不含 `**`。服务端下发的文案由
+    `test_the_metrics_table_and_the_curve_agree` 里那组断言守着。
+    """
+    import re
+
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    visible = re.sub(r"<!--.*?-->", "", html, flags=re.S)
+    assert "**" not in visible, (
+        "index.html 的可见文本里有 `**`：（会被原样显示成星号，不是粗体）\n"
+        + "\n".join(line for line in visible.splitlines() if "**" in line)
+    )
+
+
 def test_the_poller_treats_every_terminal_status_as_terminal():
     """**轮询必须在这里停下来。** 每漏一个终态，那个 `setInterval` 就永远不会清掉。
 

@@ -638,6 +638,13 @@ def test_the_metrics_table_and_the_curve_agree(client, monkeypatch):
         "假曲线故意伸到 2024-12-20，切过的首段只能是 2025"
     )
     assert per[0]["from"] >= "2025-01-01", "首段的起点必须是窗口起点，不是曲线起点"
+    # 服务端下发的**人类可读文案**同样不许带 markdown 星号 —— 前端用 textContent
+    # 原样显示。实测踩过三次（超额口径、年度区间、历史标题）。
+    for key, text in (("excess_caveat", e["excess_caveat"]),
+                      ("periods.caveat", e["periods"]["caveat"]),
+                      ("benchmark_label", e["benchmark_label"])):
+        assert "**" not in text, f"{key} 里带了 markdown 星号，页面上会原样显示：{text!r}"
+
     comp = math.prod(1 + r["return"] for r in per if r["return"] is not None)
     assert abs(comp - (1 + e["strategy_return"])) < 1e-9, (
         f"年度收益复利回去是 {comp - 1}，而累计收益是 {e['strategy_return']} —— "

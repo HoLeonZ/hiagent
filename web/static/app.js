@@ -179,6 +179,14 @@ async function startRun() {
   pollRun();
 }
 
+// 引擎的错误文本可以很长（实测一条 330 字的诊断），整条塞进状态栏会把整页顶下去。
+// **全文在日志里**（子进程收尾时写 `[jobs] 失败：<error>`），状态栏只留给第一屏够用的部分。
+function shortError(e) {
+  if (!e) return "";
+  const s = String(e).replace(/\s+/g, " ").trim();
+  return s.length > 140 ? s.slice(0, 140) + "…（全文见日志）" : s;
+}
+
 function pollRun() {
   clearInterval(HP.poll);
   $("cancel").disabled = false;
@@ -192,7 +200,7 @@ function pollRun() {
     const pos = j.status === "queued" && j.queue_position !== null
       ? `　前面还有 ${j.queue_position} 个` : "";
     $("run-status").textContent =
-      `#${HP.runId} ${j.status}${pos}${waited}` + (j.error ? ` — ${j.error}` : "");
+      `#${HP.runId} ${j.status}${pos}${waited}` + (j.error ? ` — ${shortError(j.error)}` : "");
     if (j.status === "done") {
       clearInterval(HP.poll); $("run").disabled = false; $("cancel").disabled = true;
       await showResult(j);
@@ -724,7 +732,7 @@ async function openRun(runId) {
   $("run").disabled = false;
   $("cancel").disabled = true;   // 历史运行不能取消
   $("run-status").textContent =
-    `正在查看运行 #${runId}（${j.status}）` + (j.error ? ` — ${j.error}` : "");
+    `正在查看运行 #${runId}（${j.status}）` + (j.error ? ` — ${shortError(j.error)}` : "");
   $("log").textContent = "";
   await pollLog();               // 历史运行的日志也在磁盘上，失败的那次尤其要看
 
