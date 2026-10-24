@@ -402,6 +402,20 @@ def test_the_default_window_is_computed_from_today():
     assert "applyWindow(" in js, "没有统一的窗口计算函数"
 
 
+def test_the_period_tables_render_from_the_server_rows():
+    """**年度/月度收益都由服务端下发的 rows 渲染**，前端不自己切分。
+
+    两份实现必然漂移：前端按日期切的"月"与服务端切的"月"边界不同（时区/节假日），
+    而漂移的表现是"两处合计对不上"，没人会去核对。
+    """
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "periods_monthly" in js, "前端没有用服务端的月度收益"
+    assert "renderPeriods" in js, "年度/月度没有共用同一个渲染"
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    for dom_id in ("monthly", "monthly-caveat", "yearly"):
+        assert f'id="{dom_id}"' in html, f"缺 {dom_id}"
+
+
 def test_the_engine_scope_note_reaches_the_page():
     """**引擎口径说明要真的显示出来**（文案来自服务端）。
 

@@ -751,6 +751,16 @@ def test_the_metrics_table_and_the_curve_agree(client, monkeypatch):
                       ("benchmark_label", e["benchmark_label"])):
         assert "**" not in text, f"{key} 里带了 markdown 星号，页面上会原样显示：{text!r}"
 
+    # 月度收益：同一份曲线、同一个 `period_returns`，只是换个切分单位。
+    # 它也必须**可加**（复利回去等于累计收益），否则两张表会给出两个"总收益"。
+    mon = e["periods_monthly"]["rows"]
+    assert mon, "结果页的月度收益表是空的"
+    assert mon[0]["period"] == "2025-01", f"月度首段应是窗口起点所在的月：{mon[0]['period']}"
+    comp_m = math.prod(1 + r["return"] for r in mon if r["return"] is not None)
+    assert abs(comp_m - (1 + e["strategy_return"])) < 1e-9, (
+        f"月度收益复利回去是 {comp_m - 1}，累计收益是 {e['strategy_return']} —— 两张表必须是同一个总和"
+    )
+
     comp = math.prod(1 + r["return"] for r in per if r["return"] is not None)
     assert abs(comp - (1 + e["strategy_return"])) < 1e-9, (
         f"年度收益复利回去是 {comp - 1}，而累计收益是 {e['strategy_return']} —— "

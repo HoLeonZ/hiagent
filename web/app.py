@@ -629,6 +629,14 @@ def create_app() -> FastAPI:
                 "caveat": "按自然年切分。「区间」是该年实际覆盖的交易日："
                 "中间年份是整年，首尾年份由回测窗口切出（可能只有几天）。",
             },
+            # 月度收益：同一份曲线、同一个 `period_returns`，只是换个切分单位。
+            # 聚宽的结果页有月度收益表；它回答"这个月的钱是不是全靠某一个月"。
+            "periods_monthly": {
+                "unit": "month",
+                "rows": period_returns(rows, "month"),
+                "caveat": "按自然月切分。「区间」是该月实际覆盖的交易日："
+                "首尾月份由回测窗口切出（可能只有几天）。",
+            },
             "strategy_return": s_ret,
             "benchmark_return": b_ret,              # 无基准数据时是 None，**不是 0**
             "excess_return": (s_ret - b_ret) if b_ret is not None else None,

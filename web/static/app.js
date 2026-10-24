@@ -386,14 +386,19 @@ async function loadDailyTables() {
   // ⚠️ 后端给的 `period` 是自然年，但**"某年"在这里不等于"整年"**：
   // 首尾年份被回测窗口切过。所以区间（from→to）必须**照实显示**，
   // 不能只写年份 —— 一个只覆盖 3 天的"2025 年收益 12%"读起来像一整年。
-  if (HP.equity && HP.equity.periods) {
-    const per = HP.equity.periods;
-    $("yearly-caveat").textContent = per.caveat || "";
-    $("yearly").querySelector("thead").innerHTML =
-      "<tr><th>年度</th><th>区间</th><th>收益</th></tr>";
-    $("yearly").querySelector("tbody").innerHTML = per.rows.map((r) =>
+  // 年度/月度：同一个渲染，只是切分单位不同（`periods` / `periods_monthly`）。
+  const renderPeriods = (key, data) => {
+    if (!data) return;
+    $(`${key}-caveat`).textContent = data.caveat || "";
+    const head = key === "yearly" ? "年度" : "月份";
+    $(key).querySelector("thead").innerHTML = `<tr><th>${head}</th><th>区间</th><th>收益</th></tr>`;
+    $(key).querySelector("tbody").innerHTML = data.rows.map((r) =>
       `<tr><td>${r.period}</td><td>${r.from === r.to ? r.from : r.from + " → " + r.to}</td>`
       + `<td>${fmtValue(r.return, "pct")}</td></tr>`).join("");
+  };
+  if (HP.equity) {
+    renderPeriods("yearly", HP.equity.periods);
+    renderPeriods("monthly", HP.equity.periods_monthly);
   }
   // 每日持仓
   const pr = await fetch(`/api/runs/${HP.runId}/positions`);
