@@ -5,8 +5,8 @@
     "2026-09-01"
   ],
   "engine": "simulate",
-  "trades_csv_sha256": "ad5d561da837b47de1513c7d765dc0dc299515ec335cb6ff6fc9d4bc0f36a349",
-  "trades_csv_rows": 105,
+  "trades_csv_sha256": "b41249b3a227330f260c51d87a09c149d82fa42d11fe5366eaea2214eb609c6a",
+  "trades_csv_rows": 106,
   "trades_csv_cols": [
     "entry_date",
     "exit_date",
@@ -25,6 +25,17 @@
   ],
   "note": "uptrend_pullback v33_long_reverse_v19 trades.csv sha256 baseline. Multi-run reproducibility invariant: same preset + DB -> byte-equal trades.csv. Drift indicates signal/exit/sizing logic changed.",
   "repinned": {
+    "date": "2026-10-24",
+    "previous": {
+      "trades_csv_sha256": "ad5d561da837b47de1513c7d765dc0dc299515ec335cb6ff6fc9d4bc0f36a349",
+      "trades_csv_rows": 105,
+      "trades_csv_cols_count": 14
+    },
+    "why": "load_universe(asof_date=...) restricted the MAX(date) used by the PIT filter to rows with date <= last_td, so `HAVING MAX(date) >= last_td` still required a bar on exactly that day. A stock merely suspended on the as-of date was therefore read as delisted and dropped from the universe (6 names on 2025-09-19). MAX(date) is now taken over all dates and the listing check is MIN(date) <= asof — the same query chase_up uses. The two siblings are the same code and must not drift apart.",
+    "row_delta_attribution": "105 -> 106 rows. The six names re-enter the universe and change which candidate wins at several decision points in 2026-03..2026-04: four trades appear and three disappear, all inside that window; nothing outside it changed. v20 and v21 are unaffected (their pins still verify), which is why only this file was regenerated.",
+    "reproducibility_check": "sha256 verified byte-identical across two independent runs before pinning."
+  },
+  "previous_repin": {
     "date": "2026-10-13",
     "previous": {
       "trades_csv_sha256": "a6574c10155fd90d524e066f2368ae01a2e2eb110d60b11952634f49acdadec9",

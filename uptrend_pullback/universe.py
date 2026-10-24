@@ -52,16 +52,22 @@ def _all_thscodes(db_path: Path, asof_date: str | None = None) -> list[str]:
             ).fetchall()
         else:
             # §3 PIT Mandate: 排除 (a) asof_date 之后才上市的票
-            # (无 date <= asof_date 数据) AND (b) asof_date 之前已退市的票。
+            # （首现日 MIN(date) > asof）AND (b) asof_date 之前已退市的票。
             # 判定基准必须是「asof 当日或之前的最后一个交易日」, 而不是 asof 字面值:
             # 否则 `HAVING MAX(date) >= asof` 在 asof 是周末/节假日时对每只票都不成立
             # (最后一个交易日 < asof) → 全部被误判为「已退市」→ 空集 → 回测静默产出
             # 0 笔交易。last_td 在交易日上恒等于 asof, 故交易日行为不变。
+            #
+            # ⚠️ **`MAX(date)` 必须跨全部日期取，不能只看 `date <= last_td` 的那些行。**
+            # 原写法把范围也限制在 `date <= last_td`，于是 `HAVING MAX(date) >= last_td`
+            # 又退化成"必须恰好在 last_td 那天有 bar" —— **停牌**的票被当成已退市剔掉
+            # （实测 2025-09-19：少 6 只）。停牌不是退市（§1：停牌产生缺失 bar）。
+            # chase_up/universe.py 用的是同一条 SQL（两边必须一致，别再各自演化）。
             rows = con.execute(
                 "SELECT thscode FROM v_daily "
-                "WHERE date <= (SELECT MAX(date) FROM v_daily WHERE date <= ?) "
                 "GROUP BY thscode "
-                "HAVING MAX(date) >= (SELECT MAX(date) FROM v_daily WHERE date <= ?) "
+                "HAVING MIN(date) <= ? "
+                "AND MAX(date) >= (SELECT MAX(date) FROM v_daily WHERE date <= ?) "
                 "ORDER BY thscode",
                 [asof_date, asof_date],
             ).fetchall()

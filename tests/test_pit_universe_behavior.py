@@ -157,3 +157,40 @@ def test_a_chase_up_backtest_over_a_non_trading_day_start_actually_trades():
         "universe 又被过滤成空集了"
     )
     assert got.trades, "起点是非交易日的 chase_up 回测**一笔成交都没有**"
+
+
+@pytest.mark.skipif(_db() is None, reason=SKIP_REASON)
+def test_a_stock_suspended_on_the_as_of_date_is_still_in_the_universe():
+    """**as-of 当天停牌的票仍是成分** —— 停牌不是退市（§1）。
+
+    `uptrend_pullback` 的 PIT 过滤曾把 `MAX(date)` 的范围也限制在 `date <= last_td`，
+    于是 `HAVING MAX(date) >= last_td` 又退化成"必须恰好在 last_td 那天有 bar"，
+    当天停牌的票被当成已退市剔掉（实测 2025-09-19 少 6 只）。`chase_up` 用的是
+    同一条 SQL —— 两份必须一致，别再各自演化。
+    """
+    import duckdb
+
+    db = _db()
+    asof = "2025-09-19"
+    con = duckdb.connect(str(db), read_only=True)
+    try:
+        row = con.execute(
+            "SELECT thscode FROM v_daily WHERE thscode LIKE '6%.SH' "
+            "AND date < DATE '2025-09-19' "
+            "AND thscode NOT IN (SELECT thscode FROM v_daily WHERE date = DATE '2025-09-19') "
+            "AND thscode IN (SELECT thscode FROM v_daily WHERE date > DATE '2025-09-19') "
+            "LIMIT 1"
+        ).fetchone()
+    finally:
+        con.close()
+    if row is None:
+        pytest.skip("库里没有 as-of 当天停牌的票")
+
+    code = row[0]
+    from chase_up.universe import load_universe as cu
+    from uptrend_pullback.universe import load_universe as up
+
+    assert code in cu("mainboard_only", db, None, asof), \
+        f"{code} 在 {asof} 停牌、之后仍交易 —— chase_up 不该把它当成已退市"
+    assert code in up("mainboard_only", db, None, asof), \
+        f"{code} 在 {asof} 停牌、之后仍交易 —— uptrend_pullback 不该把它当成已退市"
