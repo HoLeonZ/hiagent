@@ -104,6 +104,46 @@ def test_as_trades_normalizes_a_list_of_dicts():
     assert _as_trades([{"thscode": "000001.SZ"}]) == [{"thscode": "000001.SZ"}]
 
 
+def test_as_trades_renames_cycle_fields_to_the_canonical_names():
+    """**引擎的字段名要归一到 14 列规范。**
+
+    `cycle_price_action` 的 `TradeRecord` 用 `shares` / `pnl`，规范用
+    `size` / `net_pnl`。不改名的后果不是"表里少两列"——`window_metrics` 取不到
+    `net_pnl` 就当 0，于是**一次真赚钱的运行在结果页显示"胜率 0.00% / 总盈亏 0.00"**
+    （实测 2026-10-24：cycle PRESET_V1 有 10 笔成交）。
+
+    判别力：规范名**已存在**时不能被引擎名覆盖（规范名优先）。
+    """
+    import datetime as _dt
+
+    from cycle_price_action.metrics import TradeRecord
+
+    rec = TradeRecord(
+        thscode="002189.SZ",
+        entry_date=_dt.date(2025, 10, 8),
+        exit_date=_dt.date(2025, 10, 15),
+        entry_price=10.0,
+        exit_price=11.0,
+        shares=100,
+        pnl=100.0,
+        hold_days=5,
+        k_line_score=2.0,
+        phase_score=1.0,
+        calendar_score=0.0,
+    )
+    got = _as_trades([rec])[0]
+    assert got["size"] == 100, "shares 应当归一为 size"
+    assert got["net_pnl"] == 100.0, "pnl 应当归一为 net_pnl"
+    assert "shares" not in got and "pnl" not in got, "旧名要消失，否则表里两列并存"
+
+    # 规范名已存在时**不覆盖**
+    row = {"size": 7, "shares": 999, "net_pnl": 1.0, "pnl": -1.0}
+    from web.runners import _canonical_field_names
+
+    out = _canonical_field_names(dict(row))
+    assert out["size"] == 7 and out["net_pnl"] == 1.0
+
+
 def test_as_trades_treats_none_and_empty_as_no_trades():
     assert _as_trades(None) == []
     assert _as_trades([]) == []

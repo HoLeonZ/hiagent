@@ -162,11 +162,30 @@ def _as_trades(payload: Any) -> list[dict[str, Any]]:
         return payload.to_dict(orient="records")
     out: list[dict[str, Any]] = []
     for t in payload:
-        if is_dataclass(t) and not isinstance(t, type):
-            out.append(asdict(t))
-        else:
-            out.append(dict(t))
+        row = asdict(t) if (is_dataclass(t) and not isinstance(t, type)) else dict(t)
+        out.append(_canonical_field_names(row))
     return out
+
+
+#: 引擎自己的字段名 → 14 列规范名。**只做等价改名，不造值。**
+#:
+#: `cycle_price_action` 的 `TradeRecord` 用的是 `shares` / `pnl`，而平台与
+#: `core.trade_schema.TRADE_COLS` 认的是 `size` / `net_pnl`。不改名的后果不是"少两列"：
+#: `window_metrics` 用 `net_pnl` 算胜率与总盈亏，取不到就 `or 0.0`，
+#: 于是**一次真赚钱的运行在结果页上显示"胜率 0.00% / 总盈亏 0.00"**（实测 2026-10-24，
+#: cycle PRESET_V1 10 笔成交）—— 丢失被渲染成了零，正是 §0 明令禁止的。
+#:
+#: `pnl = net_out - gross_in`（`cycle_price_action/portfolio.py`），即**扣费后**的净盈亏，
+#: 所以映射到 `net_pnl` 是等价的，不是猜测。
+_FIELD_RENAMES: dict[str, str] = {"shares": "size", "pnl": "net_pnl"}
+
+
+def _canonical_field_names(row: dict[str, Any]) -> dict[str, Any]:
+    """把引擎自己的字段名换成规范名。**目标已存在时不覆盖**（规范名优先）。"""
+    for src, dst in _FIELD_RENAMES.items():
+        if src in row and dst not in row:
+            row[dst] = row.pop(src)
+    return row
 
 
 def _run_short_reversal(preset: str, start: str, end: str, db: Path, params: dict) -> RunResult:

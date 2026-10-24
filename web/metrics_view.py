@@ -275,8 +275,13 @@ def window_metrics(result: Any) -> dict[str, Any]:
     # ---- 成交派生（只用**窗口内入场**的）----
     n = len(trades)
     out["trades_count"] = n
-    if n:
-        net = [float(t.get("net_pnl") or 0.0) for t in trades]
+    # ⚠️ **缺 `net_pnl` 时不许当 0 算。**
+    # 原写法 `float(t.get("net_pnl") or 0.0)` 把"这个引擎没给这个字段"变成"每笔恰好保本"，
+    # 于是结果页显示"胜率 0.00% / 总盈亏 0.00"（实测：cycle 的 TradeRecord 里叫 `pnl`）。
+    # 缺失要么在适配器里改名归一（`web/runners._canonical_field_names` 已做），
+    # 要么如实报 None —— 无论哪种，都不该悄悄变成 0（§0）。
+    if n and all(t.get("net_pnl") is not None for t in trades):
+        net = [float(t["net_pnl"]) for t in trades]
         out["win_rate"] = sum(1 for x in net if x > 0) / n
         holds = [float(t["hold_days"]) for t in trades if t.get("hold_days") is not None]
         if holds:
@@ -322,9 +327,10 @@ def window_metrics(result: Any) -> dict[str, Any]:
             out["calmar"] = out["cagr"] / out["max_dd"]
 
     if len(curve) < 2:
-        # ⚠️ **这个引擎不产出净值曲线** —— 四个引擎里**只有 short_reversal 有**
-        # （实测：chase_up / uptrend_pullback / cycle_price_action 的 metrics 里
-        # 「equity_curve」出现 0 次）。此时曲线派生的键**退回引擎自报的值**。
+        # ⚠️ **这个引擎不产出净值曲线。** 实测（2026-10-24）：short_reversal /
+        # chase_up / uptrend_pullback 都带曲线（chase_up 与 uptrend 的曲线原先被
+        # 适配器丢掉，已在 web/runners.py 接回来），**只有 cycle_price_action 没有**。
+        # 此时曲线派生的键**退回引擎自报的值**。
         #
         # 它们**不是窗口口径**（引擎按它自己的面板算），但那是**唯一可得**的数。
         # 让它们留 `None` 会让这三个引擎的结果页有 **8/13 格是"—"**
@@ -333,12 +339,27 @@ def window_metrics(result: Any) -> dict[str, Any]:
         #
         # 退回的那几个键在此**明确标注来源**，别让人以为它们与 short_reversal 同口径。
         fb = canonical_metrics(result.metrics)
+        # ⚠️ **只标记"真的填上了值"的那几格。**
+        # 原实现无条件把 5 个键都列进 `engine_scoped`，而 cycle_price_action 的 metrics
+        # 里 `cagr`/`sharpe`/`max_dd` 本来就是 None —— 于是界面给 5 格打 † 而其中 3 格
+        # 是"—"。给空单元格标口径，是**噪声**：它没说任何事，还让人以为那里本应有数。
+        filled: list[str] = []
         for k in ("final_capital", "total_return", "cagr", "sharpe", "max_dd"):
             if out.get(k) is None:
-                out[k] = fb.get(k)
-        # 这个标记**不是**规范键（不在 `CANONICAL_KEYS` 里），所以指标表不会渲染它；
-        # 它随 `metrics` 一起走，是为了让**消费方**知道哪几个数是引擎口径的。
-        out["engine_scoped"] = ["final_capital", "total_return", "cagr", "sharpe", "max_dd"]
+                v = fb.get(k)
+                out[k] = v
+                if v is not None:
+                    filled.append(k)
+        # 这个标记**不是**规范键（不在 `CANONICAL_KEYS` 里），所以指标表不会把它当一格渲染；
+        # 它随 `metrics` 一起走，界面据此在那几格上打标记（否则用户会把引擎面板口径的
+        # 数字读成本页窗口的数字 —— 页头明明写着请求窗口）。
+        if filled:
+            out["engine_scoped"] = filled
+            # 文案由**服务端**给：前端自备一份必然漂移，而这段话说的是口径，写错比不写更坏。
+            out["engine_scope_note"] = (
+                "带 † 的指标由引擎按它自己的面板口径自报，不是本页窗口的数字："
+                "该引擎不产出净值曲线，平台无法按请求窗口重算。"
+            )
     return out
 
 

@@ -253,7 +253,7 @@ def _engine_only_result():
 
 
 def test_an_engine_without_an_equity_curve_still_gets_its_metrics():
-    """**四个引擎里只有 short_reversal 产出净值曲线。**
+    """**没有净值曲线的引擎（现在只剩 cycle_price_action）仍要有指标。**
 
     实测（2026-10-21）：`chase_up` / `uptrend_pullback` / `cycle_price_action` 的 metrics 里
     `equity_curve` 出现 **0 次**。而窗口指标是**从曲线算**的 —— 若不给回退，
@@ -262,6 +262,9 @@ def test_an_engine_without_an_equity_curve_still_gets_its_metrics():
 
     这条测试就是为此存在的 —— **原先的窗口测试只用 short_reversal 的曲线，
     所以那个回归一路全绿通过了。**
+
+    （2026-10-24 更新：`chase_up` / `uptrend_pullback` 的曲线原先被适配器丢掉，
+    已在 `web/runners.py` 接回来，现在只剩 cycle 走这条回退。）
     """
     from web.metrics_view import window_metrics
 
@@ -274,10 +277,75 @@ def test_an_engine_without_an_equity_curve_still_gets_its_metrics():
     assert m["trades_count"] == 3 and m["win_rate"] == pytest.approx(2 / 3)
     # 明确标注哪几个数是引擎口径的 —— 消费方要能分辨
     assert set(m["engine_scoped"]) == {"final_capital", "total_return", "cagr", "sharpe", "max_dd"}
+    # **必须同时给出给人看的说明**：标记 † 本身不自解释，而这段话讲的是口径，
+    # 写错比不写更坏 —— 所以它由服务端下发，前端不自备第二份。
+    note = m["engine_scope_note"]
+    assert "†" in note and "窗口" in note, f"说明没说清这几格不是窗口口径：{note!r}"
+    assert "**" not in note, "前端用 textContent 显示，** 会原样出现在页面上"
     # 它是**额外的标记**，不是规范键：指标表按 metric_meta 渲染，不会多出一格
     from web.metrics_view import CANONICAL_KEYS
 
     assert "engine_scoped" not in CANONICAL_KEYS
+    assert "engine_scope_note" not in CANONICAL_KEYS
+
+
+def test_missing_pnl_is_not_reported_as_zero():
+    """**缺 `net_pnl` 时不许报 0。**
+
+    原写法 `float(t.get("net_pnl") or 0.0)` 把"这个引擎没给这个字段"变成
+    "每笔恰好保本"，于是结果页显示"胜率 0.00% / 总盈亏 0.00" —— 一次真赚钱的
+    运行被渲染成了全平。§0：缺失与零必须可区分。
+
+    适配器已经把 cycle 的 `pnl` 归一成 `net_pnl`（见 `web/runners`），但引擎
+    以后长出新形态时，这一层仍要**如实报 None**，而不是编一个 0。
+    """
+    from web.metrics_view import window_metrics
+
+    class _NoPnl:
+        start, end = "2025-10-08", "2025-10-20"
+
+        def __init__(self):
+            self.metrics = {"trades_count": 2}
+            self.trades = [
+                {"entry_date": "2025-10-08", "exit_date": "2025-10-15",
+                 "thscode": "002189.SZ", "entry_price": 10.0, "exit_price": 11.0,
+                 "hold_days": 5},
+                {"entry_date": "2025-10-09", "exit_date": "2025-10-15",
+                 "thscode": "002190.SZ", "entry_price": 10.0, "exit_price": 9.0,
+                 "hold_days": 4},
+            ]
+
+    m = window_metrics(_NoPnl())
+    assert m["trades_count"] == 2, "成交笔数不依赖 pnl，照样要报"
+    assert m["win_rate"] is None, f"缺 pnl 时胜率必须是 None（现在报的是 {m['win_rate']}）"
+    assert m["total_pnl"] is None, f"缺 pnl 时总盈亏必须是 None（现在报的是 {m['total_pnl']}）"
+
+
+def test_only_the_cells_that_actually_got_a_value_are_marked():
+    """**只标记真的填上了值的那几格。**
+
+    `cycle_price_action` 的 metrics 里 `cagr` / `sharpe` / `max_dd` 本来就是 `None`
+    （它不产出净值曲线，也不自算这三个）。原实现无条件把 5 个键全列进 `engine_scoped`，
+    于是界面上 5 格都带 †，其中 3 格是"—" —— 给空单元格标口径是**噪声**：
+    它什么也没说，还让人以为那里本该有个数。
+    """
+    from web.metrics_view import window_metrics
+
+    class _Cycle:
+        start, end = "2025-10-08", "2025-10-20"
+
+        def __init__(self):
+            self.metrics = {"trades_count": 2, "total_pnl": 1234.0,
+                            "cagr": None, "sharpe": None, "max_dd": None,
+                            "win_rate": 0.5, "avg_hold_days": 1.9}
+            self.trades = []
+
+    m = window_metrics(_Cycle())
+    assert m["cagr"] is None and m["sharpe"] is None and m["max_dd"] is None
+    # 引擎没给的，平台上也算不出来 —— 标记列表里不该出现它们
+    assert "cagr" not in (m.get("engine_scoped") or [])
+    assert "sharpe" not in (m.get("engine_scoped") or [])
+    assert "max_dd" not in (m.get("engine_scoped") or [])
 
 
 def test_a_run_with_a_curve_does_not_get_the_engine_scoped_marker():
@@ -295,6 +363,7 @@ def test_a_run_with_a_curve_does_not_get_the_engine_scoped_marker():
 
     m = window_metrics(_R())
     assert "engine_scoped" not in m
+    assert "engine_scope_note" not in m, "没有标记却给说明，页面上会出现一句无主的警告"
     assert abs(m["total_return"] - 0.1) < 1e-12
 
 

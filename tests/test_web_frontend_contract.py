@@ -357,6 +357,22 @@ def test_the_visible_text_carries_no_markdown_asterisks():
     )
 
 
+def test_the_metric_table_marks_the_cells_that_are_not_window_scoped():
+    """**引擎面板口径的那几格必须打标记。**
+
+    页头写着请求窗口，而 `engine_scoped` 里的几项（期末资金/总收益率/年化/夏普/
+    最大回撤）是引擎按它自己的面板自报的。不打标记，用户会把它们读成窗口数字。
+    后端早就把清单和文案都下发好了，界面却**一个消费者都没有** ——
+    "看起来在把关、实际抓不到"的另一种形态：数据在、没人读。
+
+    判据：指标格渲染读 `engine_scoped`，说明位渲染 `engine_scope_note`（文案来自服务端）。
+    """
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "engine_scoped" in js, "指标表没有读引擎口径标记"
+    assert "engine_scope_note" in js, "口径说明没有从服务端取（前端自备一份必然漂移）"
+    assert 'metrics-caveat' in js, "没有地方显示那句说明"
+
+
 def test_the_poller_treats_every_terminal_status_as_terminal():
     """**轮询必须在这里停下来。** 每漏一个终态，那个 `setInterval` 就永远不会清掉。
 

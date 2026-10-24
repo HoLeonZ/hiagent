@@ -271,12 +271,18 @@ async function showResult(job) {
   //  ③ 键的顺序取自 `metric_meta`（服务端 `CANONICAL_KEYS` 的顺序），前端不再自己排。
   const meta = HP.metricMeta || {};
   const order = Object.keys(meta);
+  const metrics = job.metrics || {};
+  // **哪几格不是本页窗口的数**：引擎不产出净值曲线时，这几个退回引擎自报的面板口径。
+  // 页头写着请求窗口，不打标记的话这些数会被当成窗口数字读 —— 而它们不是。
+  const scoped = new Set(metrics.engine_scoped || []);
   $("metrics").innerHTML = order.map((k) => {
     const m = meta[k];
-    const v = (job.metrics || {})[k];
-    const cell = fmtValue(v, m.kind);
-    return `<div class="m${cell === "—" ? " absent" : ""}">${m.label}<br><b>${cell}</b></div>`;
+    const cell = fmtValue(metrics[k], m.kind);
+    const mark = scoped.has(k) ? "<sup>†</sup>" : "";
+    return `<div class="m${cell === "—" ? " absent" : ""}">${m.label}${mark}<br><b>${cell}</b></div>`;
   }).join("");
+  // 文案取服务端的（口径说明写错比不写更坏，且前端不自备第二份）。
+  $("metrics-caveat").textContent = scoped.size ? (metrics.engine_scope_note || "") : "";
   await loadTrades();
   await loadEquity();
   await loadDailyTables();
