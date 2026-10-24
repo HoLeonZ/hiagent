@@ -19,6 +19,7 @@ from typing import Optional
 
 from core.dual_price import (
     STAMP_DUTY_RATE,  # Round 9 (2026-09-28): canonical 万5 sell-only stamp duty
+    MissingBarError,  # 停牌 ⇒ 没有 bar ⇒ 不成交（§1）
 )
 
 
@@ -94,7 +95,12 @@ class ReplayBroker:
         if qty <= 0 or qty % 100 != 0:
             raise ValueError("qty must be positive multiple of 100")
         fill_date = self._next_trading_date(decision_date)
-        price = self._open_price(thscode, fill_date)
+        try:
+            price = self._open_price(thscode, fill_date)
+        except MissingBarError:
+            # 停牌 ⇒ 没有 bar ⇒ **不成交**（§1）。返回 None 是这个方法
+            # 早就声明好的语义（`-> Optional[TradeFill]`）。
+            return None
         fee = self._fee("buy", qty, price, atr_pct=atr_pct, participation=participation)
         self._open_positions[thscode] = self._open_positions.get(thscode, 0) + qty
         return TradeFill(fill_date, thscode, "buy", qty, price, fee)
@@ -117,7 +123,12 @@ class ReplayBroker:
         if qty <= 0 or qty % 100 != 0:
             raise ValueError("qty must be positive multiple of 100")
         fill_date = self._next_trading_date(decision_date)
-        price = self._open_price(thscode, fill_date)
+        try:
+            price = self._open_price(thscode, fill_date)
+        except MissingBarError:
+            # 停牌 ⇒ 卖不掉 ⇒ **不成交**，仓位留着，等复牌再卖（§1）。
+            # 强行"按上一个收盘价卖掉"是编造一笔不存在的成交。
+            return None
         fee = self._fee("sell", qty, price, atr_pct=atr_pct, participation=participation)
         self._open_positions[thscode] -= qty
         if self._open_positions[thscode] == 0:

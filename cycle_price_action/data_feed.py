@@ -22,6 +22,7 @@ import pandas as pd
 
 from core.dual_price import (
     LAYOUT_CYCLE_PRICE,
+    MissingBarError,
     extract_execution_bar,
 )
 from cycle_price_action.universe import apply_liquidity_filter, is_main_board
@@ -110,7 +111,20 @@ class ReplayDataProvider:
                 [thscode, on_date],
             ).fetchone()
             if row is None:
-                raise RuntimeError(f"no data for {thscode} on {on_date}")
+                # 停牌 → 没有 bar → **不得成交**（§1）。具名的异常让调用方
+                # 能把它与"数据坏了"（ValueError）分开处理。
+                #
+                # ⚠️ 但"这只票在库里**根本不存在**"是**真正的数据缺口**，必须 fail-fast
+                # （§0）：那是 universe 与数据不一致，不是停牌。所以这里多问一句。
+                known = con.execute(
+                    "SELECT 1 FROM v_daily WHERE thscode = ? LIMIT 1", [thscode]
+                ).fetchone()
+                if known is None:
+                    raise RuntimeError(
+                        f"{thscode} has no data at all in the database "
+                        f"(requested {on_date}) — a real data gap, not a suspension"
+                    )
+                raise MissingBarError(f"no data for {thscode} on {on_date}")
             # Keep None as None; _safe() in core.dual_price converts to 0.0.
             bar_row = {"open": row[0], "high": row[1],
                        "low": row[2], "close": row[3]}

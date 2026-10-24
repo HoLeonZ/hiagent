@@ -61,6 +61,26 @@ LAYOUT_CYCLE_PRICE = "layout_c_raw_only"  # 仅 open/high/low/close (=raw)
 
 # ----------------------------------------------------------- data structures
 
+class MissingBarError(RuntimeError):
+    """**该票在这天没有 bar** —— 通常是停牌。
+
+    为什么要具名、且放在 `core`：调用方要能区分"这天停牌，没有成交"
+    （**正常**，§1：停牌产生缺失 bar，不是合成 bar）与"数据坏了"
+    （`extract_execution_bar` 的 ValueError，那必须往上抛）。
+
+    原来一律抛 RuntimeError，于是**一只票停牌一天，整个回测直接崩**
+    （实测 2026-10-24：起点 2025-06-01 的 cycle 回测报
+    `no data for 000908.SZ on 2025-06-13` 而挂掉 —— 平台上表现为"一次失败的运行"，
+    而原因只是那天它停牌了）。
+
+    放在 `core` 是因为执行层（broker）与数据层（data_feed）都要用它，
+    而 broker 必须与 duckdb 解耦（§6：Execution Broker is DB-free）——
+    从 `core` 取，两边都不多依赖任何东西。
+
+    继承 RuntimeError：老的 `except RuntimeError` 仍然接得住。
+    """
+
+
 @dataclass(frozen=True)
 class ExecutionBar:
     """执行域 (raw) 单根 bar — 所有 4 个 engine 共用。

@@ -171,6 +171,13 @@ class CyclePriceActionStrategy(bt.Strategy):
                 threshold=self.p.limit_up_threshold,
             ):
                 return  # skip entry: limit-up open, no shares available
+            # ⚠️ **停牌 ⇒ 不成交**（§1：停牌产生缺失 bar，复牌前不得有成交）。
+            # 原实现建仓后去取成交价，取不到就抛 `RuntimeError`，**整个回测挂掉**
+            # （实测：起点 2025-06-01 的 cycle 回测因 `000908.SZ` 当天停牌而崩）。
+            # 现在 broker 对"没有 bar"返回 None（不成交），下面据此**撤销建仓**，
+            # 不留幻影仓位（§0）。
+            # ⚠️ 这里**不再**先问一次"能不能成交"：那会把同一个价格查两遍
+            # （每个入场信号多一次 DB 查询，回测慢一倍）。撤销路径已经覆盖了。
             state = self._portfolio.try_enter(
                 self.datas[0]._name,
                 bar["close"],
@@ -187,6 +194,10 @@ class CyclePriceActionStrategy(bt.Strategy):
                 qty=state.shares,
                 decision_date=bar["date"],
             )
+            if fill is None:
+                # 没有 bar（停牌）⇒ 没有成交 ⇒ 撤销刚才的建仓，别留幻影仓位（§0）。
+                self._portfolio.cancel_entry()
+                return
             if fill is not None:
                 self._entry_day = fill.date
         elif self._portfolio.position is not None and self._portfolio.hold_days(bar["date"]) >= self.p.max_hold:

@@ -274,6 +274,20 @@ class Portfolio:
         )
         return self._pos
 
+    def cancel_entry(self) -> None:
+        """撤销一次**没有成交**的建仓（停牌等）。
+
+        为什么需要：`try_enter` 先锁现金、建持仓，**成交**是之后的事。
+        若成交拿不到（停牌 → 没有 bar）而不管它，账户里就留下一个
+        **从未成交的持仓** —— 幻影仓位（§0：不得有）。
+        """
+        if self._pos is None:
+            return
+        cost = self._buy_cost(self._pos.entry_price, self._pos.shares)
+        self.release_margin(cost)
+        self._pos = None
+        self.cash = self.total_cash
+
     def try_exit(self, exit_date: date, fill_price: float) -> float:
         if self._pos is None:
             raise ValueError("no open position")

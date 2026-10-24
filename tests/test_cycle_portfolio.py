@@ -260,3 +260,37 @@ def test_intraday_check_p3_no_same_day_exit():
             tp_pct=0.06,
             sl_pct=0.05,
         )
+
+
+def test_cancel_entry_restores_the_cash_and_leaves_no_position():
+    """**撤销一次没有成交的建仓** —— 停牌时用得上。
+
+    `try_enter` 先锁现金、建持仓，**成交**是之后的事。若成交拿不到
+    （停牌 → 那天没有 bar），而不管它，账户里就留下一个**从未成交的持仓**
+    （幻影仓位）—— 而它还会占着"单仓"的位子，让后面每一根 bar 都不再开仓。
+
+    判据：现金账本**逐分**回到建仓前（free / locked / settling 三池），
+    且 `position is None`。
+    """
+    pf = Portfolio(cash=100_000.0)
+    before = (pf.free_cash, pf.locked_margin, pf.settling_funds)
+    state = pf.try_enter("600000.SH", 9.87, date(2024, 6, 3), {"k_line_score": 1.5})
+    assert state is not None and pf.position is not None
+    assert pf.free_cash < before[0], "fixture 应当真的锁了现金，否则这条没有判别力"
+
+    pf.cancel_entry()
+
+    assert pf.position is None, "撤销后不该还有持仓"
+    assert (pf.free_cash, pf.locked_margin, pf.settling_funds) == before, \
+        "撤销必须把三池现金**逐分**还原，否则账本会悄悄漏钱"
+    # 撤销后能正常再开仓（"单仓"的位子没有被占住）
+    again = pf.try_enter("000001.SZ", 12.0, date(2024, 6, 4), {"k_line_score": 1.5})
+    assert again is not None
+
+
+def test_cancel_entry_is_a_noop_without_a_position():
+    """没有持仓时撤销 = 什么都不做（不能把现金凭空加一笔）。"""
+    pf = Portfolio(cash=100_000.0)
+    before = (pf.free_cash, pf.locked_margin, pf.settling_funds, pf.position)
+    pf.cancel_entry()
+    assert (pf.free_cash, pf.locked_margin, pf.settling_funds, pf.position) == before
