@@ -106,16 +106,32 @@ pytest tests/ -v
 
 ## 工具脚本
 
-### tools/update_db_direct.py —— DB 增量更新
+### 更新本地行情库 —— 首选 `hithink-finance data sync`
+
+```bash
+# 需要 API Key: hithink-finance auth status
+export HITHINK_FINANCE_DUCKDB_MEMORY_LIMIT=6GiB
+hithink-finance data sync --format json
+hithink-finance data validate --format json
+```
+
+- **同时刷新** `raw_kline_daily` 与 `calc_adjust_factor_daily`(复权因子),并重建 `v_daily_hfq` / `v_daily_qfq` 依赖的派生数据。
+- 全量 `10y` 重建是**替换**不是追加 ⇒ 历史起点会前移约 25 个自然日(§13.214 / §13.216)。窗口暖机余量吃紧时先读 §13.216(c)。
+- 默认 DuckDB 内存上限是 `min(1 GiB, 总内存×25%)`;全量合并会 OOM ⇒ 用上面的 `6GiB`(§13.214(a))。
+- 刷完必须重钉 `tests/test_data_layer_premises_are_pinned.py` 的 `PINNED` 并同步 §13 的覆盖事实 —— 该守卫**按设计先红**。
+
+#### `tools/update_db_direct.py` —— 旧路径(只在 CLI 不可用时)
 
 绕开 `marketdb` Python 包(来自外部私有仓库 `Financial-API`,本机无),用 `requests + duckdb` 直接调 REST API 拉数据并 `INSERT OR IGNORE` 进 `raw_kline_daily`。仅依赖环境变量:
 
 ```bash
 export FINANCIAL_API_BASE_URL=https://fuyao.aicubes.cn
 export FINANCIAL_API_KEY=sk-...
-python3 -m tools.update_db_direct --db "$DNA_STRAT_DB" --target 2026-09-30 --days 14
+python3 -m tools.update_db_direct --db "$DNA_STRAT_DB" --target <YYYY-MM-DD> --days 14
 ```
 
+> ⚠️ **它只写 `raw_kline_daily`,不更新复权因子** ⇒ 用它更新会**复现 §13 的因子缺口**;而且 `--target` 的默认值是过期的,不带参数会往**旧日期**同步(§13.214(d))。
+>
 > 替代 2026-09 之前基于 `marketdb` 的 `tools/update_db.py`(已删除;该脚本在本机因 `ModuleNotFoundError: No module named 'marketdb'` 无法运行)。
 
 ## 已知缺口(本仓库不提供)
